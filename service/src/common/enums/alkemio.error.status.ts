@@ -1,0 +1,4 @@
+export enum AlkemioErrorStatus {
+  NOT_SUPPORTED = 'NOT_SUPPORTED',
+  MATRIX_NOT_AVAILABLE = 'MATRIX_NOT_AVAILABLE',
+}
