@@ -7,7 +7,7 @@ import { MatrixAdapterEventType } from '@alkemio/matrix-adapter-lib';
 import {
   BaseEventPayload,
   RoomDetailsPayload,
-} from '@alkemio/matrix-adapter-lib/dist/dto';
+} from '@alkemio/matrix-adapter-lib';
 
 @Controller()
 export class AppController {

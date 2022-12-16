@@ -1,4 +1,4 @@
-import { RoomResult } from "./room.base.result";
+import { RoomResult } from "./room";
 
 export class RoomDirectResult extends RoomResult {
   receiverID?: string;

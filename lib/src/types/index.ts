@@ -1,3 +1,3 @@
 export * from './message';
-export * from './room.base.result';
-export * from './room.direct.result';
+export * from './room';
+export * from './room.direct';
