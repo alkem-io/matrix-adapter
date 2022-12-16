@@ -20,7 +20,8 @@
       "@test/*": ["test/*"],
       "@config/*": ["src/config/*"],
       "@common/*": ["src/common/*"],
-      "@core/*": ["src/core/*"]
+      "@core/*": ["src/core/*"],
+      "@services/*": ["src/services/*"]
     }
   },
   "exclude": ["node_modules", "dist"],
