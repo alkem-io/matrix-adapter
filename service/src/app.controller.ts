@@ -1,47 +1,57 @@
 import { Controller, Inject, LoggerService } from '@nestjs/common';
-import { Ctx, EventPattern, Payload, RmqContext } from '@nestjs/microservices';
-import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { Channel, Message } from 'amqplib';
-import { LogContext } from './common/enums';
-import { MatrixAdapterEventType } from '@alkemio/matrix-adapter-lib';
 import {
-  BaseEventPayload,
-  RoomDetailsPayload,
+  Ctx,
+  MessagePattern,
+  Payload,
+  RmqContext,
+  RpcException,
+} from '@nestjs/microservices';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+import { LogContext } from './common/enums';
+import {
+  MatrixAdapterEventType,
+  RoomDetailsResponsePayload,
 } from '@alkemio/matrix-adapter-lib';
+import { RoomDetailsPayload } from '@alkemio/matrix-adapter-lib';
+import { CommunicationAdapter } from './services/communication-adapter/communication.adapter';
 
 @Controller()
 export class AppController {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService
+    private readonly logger: LoggerService,
+    private communicationAdapter: CommunicationAdapter
   ) {}
 
-  @EventPattern(MatrixAdapterEventType.ROOM_DETAILS)
+  @MessagePattern(MatrixAdapterEventType.ROOM_DETAILS)
   async roomDetails(
-    // todo is auto validation possible
-    @Payload() eventPayload: RoomDetailsPayload,
+    @Payload() data: RoomDetailsPayload,
     @Ctx() context: RmqContext
-  ) {
-    this.roomDetailsImpl(
-      eventPayload,
-      context,
-      MatrixAdapterEventType.ROOM_DETAILS
-    );
-  }
-
-  private async roomDetailsImpl(
-    @Payload() eventPayload: BaseEventPayload,
-    @Ctx() context: RmqContext,
-    eventName: string
-  ) {
+  ): Promise<RoomDetailsResponsePayload> {
     this.logger.verbose?.(
-      `[Event received: ${eventName}]: ${JSON.stringify(eventPayload)}`,
-      LogContext.MATRIX
+      `${MatrixAdapterEventType.ROOM_DETAILS} - payload: ${JSON.stringify(
+        data
+      )}`,
+      LogContext.COMMUNICATION
     );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
 
-    const channel: Channel = context.getChannelRef();
-    const originalMsg = context.getMessage() as Message;
+    try {
+      const room = await this.communicationAdapter.getCommunityRoom(
+        data.roomID
+      );
+      channel.ack(originalMsg);
+      const response: RoomDetailsResponsePayload = {
+        room: room,
+      };
 
-    channel.ack(originalMsg);
+      return response;
+    } catch (error) {
+      const errorMessage = `Error when creating identity: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
   }
 }

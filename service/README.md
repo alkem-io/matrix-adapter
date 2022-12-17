@@ -10,3 +10,14 @@ Alkemio Matrix Adapter service.
 ## To test
 
 1. Start quickstart-services from the server repo with defaults.
+2. Go to http://localhost:15672/#/queues/%2F/alkemio-matrix-adapter.
+3. Under publish message, go to `properties` and add a new property with name `content_type` and value `application/json`.
+4. Select payload:
+
+```json
+{
+  {"pattern":{"cmd":"roomDetails"},"data":{"triggeredBy":"","roomID":"!xfyCOHLZQkCkAeilNd:alkemio.matrix.host"},"id":"35285bf3-09d8-4cdf-983e-8ca5054491c2"}
+}
+```
+
+5. Click publish.
