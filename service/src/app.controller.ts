@@ -14,6 +14,8 @@ import {
 } from '@alkemio/matrix-adapter-lib';
 import { RoomDetailsPayload } from '@alkemio/matrix-adapter-lib';
 import { CommunicationAdapter } from './services/communication-adapter/communication.adapter';
+import { RoomSendMessagePayload } from '@alkemio/matrix-adapter-lib';
+import { RoomSendMessageResponsePayload } from '@alkemio/matrix-adapter-lib';
 
 @Controller()
 export class AppController {
@@ -49,6 +51,36 @@ export class AppController {
       return response;
     } catch (error) {
       const errorMessage = `Error when getting room details: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
+  }
+
+  @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_SEND_MESSAGE })
+  async roomSendMessage(
+    @Payload() data: RoomSendMessagePayload,
+    @Ctx() context: RmqContext
+  ): Promise<RoomSendMessageResponsePayload> {
+    this.logger.verbose?.(
+      `${MatrixAdapterEventType.ROOM_SEND_MESSAGE} - payload: ${JSON.stringify(
+        data
+      )}`,
+      LogContext.COMMUNICATION
+    );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
+
+    try {
+      const message = await this.communicationAdapter.sendMessage(data);
+      channel.ack(originalMsg);
+      const response: RoomSendMessageResponsePayload = {
+        message: message,
+      };
+
+      return response;
+    } catch (error) {
+      const errorMessage = `Error when sending message to room: ${error}`;
       this.logger.error(errorMessage, LogContext.COMMUNICATION);
       channel.ack(originalMsg);
       throw new RpcException(errorMessage);
