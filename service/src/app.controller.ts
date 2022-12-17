@@ -447,13 +447,10 @@ export class AppController {
     const originalMsg = context.getMessage();
 
     try {
-      const result = await this.communicationAdapter.addUserToRoom(
-        data.roomID,
-        data.userID
-      );
+      await this.communicationAdapter.addUserToRoom(data.roomID, data.userID);
       channel.ack(originalMsg);
       const response: AddUserToRoomResponsePayload = {
-        success: result,
+        success: true,
       };
 
       return response;
