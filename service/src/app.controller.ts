@@ -23,7 +23,7 @@ export class AppController {
     private communicationAdapter: CommunicationAdapter
   ) {}
 
-  @MessagePattern(MatrixAdapterEventType.ROOM_DETAILS)
+  @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_DETAILS })
   async roomDetails(
     @Payload() data: RoomDetailsPayload,
     @Ctx() context: RmqContext
@@ -48,7 +48,7 @@ export class AppController {
 
       return response;
     } catch (error) {
-      const errorMessage = `Error when creating identity: ${error}`;
+      const errorMessage = `Error when getting room details: ${error}`;
       this.logger.error(errorMessage, LogContext.COMMUNICATION);
       channel.ack(originalMsg);
       throw new RpcException(errorMessage);
