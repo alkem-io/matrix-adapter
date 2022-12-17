@@ -64,7 +64,7 @@ export class CommunicationAdapter {
     // Todo: replace with proper data validation
     const message = sendMessageData.message;
 
-    const senderCommunicationID = sendMessageData.senderCommunicationsID;
+    const senderCommunicationID = sendMessageData.senderID;
     const matrixAgent = await this.acquireMatrixAgent(senderCommunicationID);
 
     await this.matrixUserAdapter.verifyRoomMembershipOrFail(
@@ -102,7 +102,7 @@ export class CommunicationAdapter {
     return {
       id: messageId,
       message: message,
-      sender: sendMessageData.senderCommunicationsID,
+      sender: sendMessageData.senderID,
       timestamp: timestamp,
     };
   }
