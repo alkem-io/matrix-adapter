@@ -15,13 +15,12 @@ import { IOperationalMatrixUser } from '@services/matrix/adapter-user/matrix.use
 import { MatrixAgent } from '@services/matrix/agent/matrix.agent';
 import { MatrixAgentService } from '@services/matrix/agent/matrix.agent.service';
 import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service';
-import { CommunicationDeleteMessageInput } from './dto/communication.dto.message.delete';
 import { CommunicationEditMessageInput } from './dto/communication.dto.message.edit';
-import { CommunicationSendMessageInput } from './dto/communication.dto.message.send';
-import { CommunicationSendMessageUserInput } from './dto/communication.dto.message.send.user';
-import { IMessage } from '@alkemio/matrix-adapter-lib';
+import { IMessage, RoomSendMessagePayload } from '@alkemio/matrix-adapter-lib';
 import { RoomResult } from '@alkemio/matrix-adapter-lib';
 import { RoomDirectResult } from '@alkemio/matrix-adapter-lib';
+import { RoomDeleteMessagePayload } from '@alkemio/matrix-adapter-lib';
+import { SendMessageToUserPayload } from '@alkemio/matrix-adapter-lib';
 
 @Injectable()
 export class CommunicationAdapter {
@@ -59,7 +58,7 @@ export class CommunicationAdapter {
   }
 
   async sendMessage(
-    sendMessageData: CommunicationSendMessageInput
+    sendMessageData: RoomSendMessagePayload
   ): Promise<IMessage> {
     // Todo: replace with proper data validation
     const message = sendMessageData.message;
@@ -125,7 +124,7 @@ export class CommunicationAdapter {
   }
 
   async deleteMessage(
-    deleteMessageData: CommunicationDeleteMessageInput
+    deleteMessageData: RoomDeleteMessagePayload
   ): Promise<string> {
     // when deleting a message use the global admin account
     // the possibility to use native matrix power levels is there
@@ -135,16 +134,16 @@ export class CommunicationAdapter {
     await this.matrixAgentService.deleteMessage(
       matrixAgent,
       deleteMessageData.roomID,
-      deleteMessageData.messageId
+      deleteMessageData.messageID
     );
-    return deleteMessageData.messageId;
+    return deleteMessageData.messageID;
   }
 
   async sendMessageToUser(
-    sendMessageUserData: CommunicationSendMessageUserInput
+    sendMessageUserData: SendMessageToUserPayload
   ): Promise<string> {
     const matrixAgent = await this.acquireMatrixAgent(
-      sendMessageUserData.senderCommunicationsID
+      sendMessageUserData.senderID
     );
 
     // todo: not always reinitiate the room connection
@@ -152,7 +151,7 @@ export class CommunicationAdapter {
       matrixAgent,
       {
         text: '',
-        matrixID: sendMessageUserData.receiverCommunicationsID,
+        matrixID: sendMessageUserData.receiverID,
       }
     );
 
