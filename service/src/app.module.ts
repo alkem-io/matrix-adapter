@@ -6,6 +6,7 @@ import { AppController } from './app.controller';
 import { WinstonConfigService } from './config';
 import configuration from './config/configuration';
 import { HttpExceptionsFilter } from './core';
+import { CommunicationAdapterModule } from './services/communication-adapter/communication-adapter.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { HttpExceptionsFilter } from './core';
     WinstonModule.forRootAsync({
       useClass: WinstonConfigService,
     }),
+    CommunicationAdapterModule,
   ],
   providers: [
     {
