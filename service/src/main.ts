@@ -5,12 +5,15 @@ import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { AppModule } from './app.module';
 import { ConfigurationTypes } from './common/enums';
 import './config/aliases';
+import { BootstrapService } from './core/bootstrap/bootstrap.service';
 
 const bootstrap = async () => {
   const app = await NestFactory.create(AppModule);
   const logger = app.get(WINSTON_MODULE_NEST_PROVIDER);
   const configService: ConfigService = app.get(ConfigService);
+  const bootstrapService: BootstrapService = app.get(BootstrapService);
   app.useLogger(logger);
+  await bootstrapService.bootstrap();
   const connectionOptions = configService.get(
     ConfigurationTypes.RABBIT_MQ
   )?.connection;
