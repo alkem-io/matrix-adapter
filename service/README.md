@@ -16,7 +16,12 @@ Alkemio Matrix Adapter service.
 
 ```json
 {
-  {"pattern":{"cmd":"roomDetails"},"data":{"triggeredBy":"","roomID":"!xfyCOHLZQkCkAeilNd:alkemio.matrix.host"},"id":"35285bf3-09d8-4cdf-983e-8ca5054491c2"}
+  "pattern": { "cmd": "roomDetails" },
+  "data": {
+    "triggeredBy": "",
+    "roomID": "!xfyCOHLZQkCkAeilNd:alkemio.matrix.host"
+  },
+  "id": "35285bf3-09d8-4cdf-983e-8ca5054491c2"
 }
 ```
 

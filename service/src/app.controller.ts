@@ -62,7 +62,7 @@ export class AppController {
       `${MatrixAdapterEventType.ROOM_DETAILS} - payload: ${JSON.stringify(
         data
       )}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -94,7 +94,7 @@ export class AppController {
       `${MatrixAdapterEventType.ROOM_SEND_MESSAGE} - payload: ${JSON.stringify(
         data
       )}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -124,7 +124,7 @@ export class AppController {
       `${
         MatrixAdapterEventType.ROOM_DELETE_MESSAGE
       } - payload: ${JSON.stringify(data)}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -154,7 +154,7 @@ export class AppController {
       `${
         MatrixAdapterEventType.ROOM_MESSAGE_SENDER
       } - payload: ${JSON.stringify(data)}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -187,7 +187,7 @@ export class AppController {
       `${MatrixAdapterEventType.CREATE_GROUP} - payload: ${JSON.stringify(
         data
       )}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -220,7 +220,7 @@ export class AppController {
       `${MatrixAdapterEventType.CREATE_ROOM} - payload: ${JSON.stringify(
         data
       )}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -252,7 +252,7 @@ export class AppController {
   ): Promise<RoomsUserResponsePayload> {
     this.logger.verbose?.(
       `${MatrixAdapterEventType.ROOMS_USER} - payload: ${JSON.stringify(data)}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -282,7 +282,7 @@ export class AppController {
   ): Promise<RoomsUserDirectResponsePayload> {
     this.logger.verbose?.(
       `${MatrixAdapterEventType.ROOMS_USER} - payload: ${JSON.stringify(data)}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -310,7 +310,7 @@ export class AppController {
   ): Promise<RoomsResponsePayload> {
     this.logger.verbose?.(
       `${MatrixAdapterEventType.ROOMS} - payload: ${JSON.stringify(data)}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -340,7 +340,7 @@ export class AppController {
       `${
         MatrixAdapterEventType.REMOVE_USER_FROM_ROOMS
       } - payload: ${JSON.stringify(data)}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -373,7 +373,7 @@ export class AppController {
       `${
         MatrixAdapterEventType.REPLICATE_ROOM_MEMBERSHIP
       } - payload: ${JSON.stringify(data)}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -407,7 +407,7 @@ export class AppController {
       `${MatrixAdapterEventType.ADD_USER_TO_ROOMS} - payload: ${JSON.stringify(
         data
       )}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -441,7 +441,7 @@ export class AppController {
       `${MatrixAdapterEventType.ADD_USER_TO_ROOMS} - payload: ${JSON.stringify(
         data
       )}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -471,7 +471,7 @@ export class AppController {
       `${
         MatrixAdapterEventType.SEND_MESSAGE_TO_USER
       } - payload: ${JSON.stringify(data)}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
@@ -501,7 +501,7 @@ export class AppController {
       `${MatrixAdapterEventType.REGISTER_NEW_USER} - payload: ${JSON.stringify(
         data
       )}`,
-      LogContext.COMMUNICATION
+      LogContext.EVENTS
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
