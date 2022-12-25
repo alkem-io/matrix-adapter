@@ -1,6 +1,6 @@
 
-import { BaseEventPayload } from './base.event.payload';
+import { BaseMatrixAdapterEventPayload } from './base.event.payload';
 
-export interface RemoveRoomPayload extends BaseEventPayload {
+export interface RemoveRoomPayload extends BaseMatrixAdapterEventPayload {
   roomID: string;
 }

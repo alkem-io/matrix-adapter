@@ -1,7 +1,7 @@
 
-import { BaseEventPayload } from './base.event.payload';
+import { BaseMatrixAdapterEventPayload } from './base.event.payload';
 
-export interface AddUserToRoomPayload extends BaseEventPayload {
+export interface AddUserToRoomPayload extends BaseMatrixAdapterEventPayload {
   roomID: string;
   userID: string;
 }
