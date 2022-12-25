@@ -1,5 +1,5 @@
 
-import { BaseEventPayload } from './base.event.payload';
+import { BaseMatrixAdapterEventPayload } from './base.event.payload';
 
-export interface RoomsPayload extends BaseEventPayload {
+export interface RoomsPayload extends BaseMatrixAdapterEventPayload {
 }

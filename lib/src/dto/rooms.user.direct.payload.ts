@@ -1,6 +1,6 @@
 
-import { BaseEventPayload } from './base.event.payload';
+import { BaseMatrixAdapterEventPayload } from './base.event.payload';
 
-export interface RoomsUserDirectPayload extends BaseEventPayload {
+export interface RoomsUserDirectPayload extends BaseMatrixAdapterEventPayload {
   userID: string;
 }

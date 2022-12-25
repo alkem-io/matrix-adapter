@@ -1,7 +1,7 @@
 
 import { RoomResult } from '..';
-import { BaseEventResponsePayload } from './base.event.response.payload';
+import { BaseMatrixAdapterEventResponsePayload } from './base.event.response.payload';
 
-export interface RemoveUserFromRoomsResponsePayload extends BaseEventResponsePayload {
+export interface RemoveUserFromRoomsResponsePayload extends BaseMatrixAdapterEventResponsePayload {
   success: boolean;
 }
