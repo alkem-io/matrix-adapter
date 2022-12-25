@@ -11,6 +11,12 @@ import { LogContext } from './common/enums';
 import {
   MatrixAdapterEventType,
   RoomDetailsResponsePayload,
+  RoomJoinRulePayload,
+  RoomJoinRuleResponsePayload,
+  RoomMembersPayload,
+  RoomMembersResponsePayload,
+  UpdateRoomsGuestAccessPayload,
+  UpdateRoomsGuestAccessResponsePayload,
 } from '@alkemio/matrix-adapter-lib';
 import { RoomDetailsPayload } from '@alkemio/matrix-adapter-lib';
 import { CommunicationAdapter } from './services/communication-adapter/communication.adapter';
@@ -79,6 +85,38 @@ export class AppController {
       return response;
     } catch (error) {
       const errorMessage = `Error when getting room details: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
+  }
+
+  @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_MEMBERS })
+  async roomMembers(
+    @Payload() data: RoomMembersPayload,
+    @Ctx() context: RmqContext
+  ): Promise<RoomMembersResponsePayload> {
+    this.logger.verbose?.(
+      `${MatrixAdapterEventType.ROOM_MEMBERS} - payload: ${JSON.stringify(
+        data
+      )}`,
+      LogContext.EVENTS
+    );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
+
+    try {
+      const userIDs = await this.communicationAdapter.getRoomMembers(
+        data.roomID
+      );
+      channel.ack(originalMsg);
+      const response: RoomMembersResponsePayload = {
+        userIDs: userIDs,
+      };
+
+      return response;
+    } catch (error) {
+      const errorMessage = `Error when getting room members: ${error}`;
       this.logger.error(errorMessage, LogContext.COMMUNICATION);
       channel.ack(originalMsg);
       throw new RpcException(errorMessage);
@@ -172,6 +210,69 @@ export class AppController {
       return response;
     } catch (error) {
       const errorMessage = `Error when getting message sender on room: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
+  }
+
+  @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_JOIN_RULE })
+  async roomJoinRule(
+    @Payload() data: RoomJoinRulePayload,
+    @Ctx() context: RmqContext
+  ): Promise<RoomJoinRuleResponsePayload> {
+    this.logger.verbose?.(
+      `${MatrixAdapterEventType.ROOM_JOIN_RULE} - payload: ${JSON.stringify(
+        data
+      )}`,
+      LogContext.EVENTS
+    );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
+
+    try {
+      const rule = await this.communicationAdapter.getRoomJoinRule(data.roomID);
+      channel.ack(originalMsg);
+      const response: RoomJoinRuleResponsePayload = {
+        rule: rule,
+      };
+
+      return response;
+    } catch (error) {
+      const errorMessage = `Error when getting join rule on room: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
+  }
+
+  @MessagePattern({ cmd: MatrixAdapterEventType.UPDATE_ROOMS_GUEST_ACCESS })
+  async updateRoomsGuestAccess(
+    @Payload() data: UpdateRoomsGuestAccessPayload,
+    @Ctx() context: RmqContext
+  ): Promise<UpdateRoomsGuestAccessResponsePayload> {
+    this.logger.verbose?.(
+      `${
+        MatrixAdapterEventType.UPDATE_ROOMS_GUEST_ACCESS
+      } - payload: ${JSON.stringify(data)}`,
+      LogContext.EVENTS
+    );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
+
+    try {
+      const result = await this.communicationAdapter.setMatrixRoomsGuestAccess(
+        data.roomIDs,
+        data.allowGuests
+      );
+      channel.ack(originalMsg);
+      const response: UpdateRoomsGuestAccessResponsePayload = {
+        success: result,
+      };
+
+      return response;
+    } catch (error) {
+      const errorMessage = `Error when getting join rule on room: ${error}`;
       this.logger.error(errorMessage, LogContext.COMMUNICATION);
       channel.ack(originalMsg);
       throw new RpcException(errorMessage);
