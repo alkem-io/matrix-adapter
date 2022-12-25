@@ -1,7 +1,7 @@
 
 import { IMessage } from '..';
-import { BaseEventResponsePayload } from './base.event.response.payload';
+import { BaseMatrixAdapterEventResponsePayload } from './base.event.response.payload';
 
-export interface AddUserToRoomResponsePayload extends BaseEventResponsePayload {
+export interface AddUserToRoomResponsePayload extends BaseMatrixAdapterEventResponsePayload {
   success: boolean;
 }

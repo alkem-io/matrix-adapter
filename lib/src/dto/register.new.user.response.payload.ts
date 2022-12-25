@@ -1,7 +1,7 @@
 
 import { RoomResult } from '..';
-import { BaseEventResponsePayload } from './base.event.response.payload';
+import { BaseMatrixAdapterEventResponsePayload } from './base.event.response.payload';
 
-export interface RegisterNewUserResponsePayload extends BaseEventResponsePayload {
+export interface RegisterNewUserResponsePayload extends BaseMatrixAdapterEventResponsePayload {
   userID?: string;
 }
