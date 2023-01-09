@@ -5,10 +5,9 @@ on:
     branches: [develop]
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
-      # checkout the repo
       - name: 'Checkout GitHub Action'
         uses: actions/checkout@master
 
@@ -17,13 +16,15 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CRED_K8S_NEW }}
 
-      - name: 'Build and push image'
+      - name: 'Login into DockerHub'
         uses: azure/docker-login@v1
         with:
           login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
-      - run: |
+
+      - name: 'Build & Push image'
+        run: |
           docker build -f Dockerfile . -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter:${{ github.sha }} -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter:latest
           docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter:${{ github.sha }}
 
@@ -48,3 +49,38 @@ jobs:
             ${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter:${{ github.sha }}
           imagepullsecrets: |
             alkemio-matrix-adapter-secret
+
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+      steps:
+      - name: 'Checkout GitHub Action'
+        uses: actions/checkout@master
+
+      - uses: Azure/aks-set-context@v1
+        with:
+          creds: ${{ secrets.AZURE_CRED_K8S_NEW }}
+          cluster-name: ${{ secrets.CLUSTER_NAME }}
+          resource-group: ${{ secrets.RESOURCE_GROUP_K8S }}
+
+      - uses: Azure/k8s-create-secret@v1
+        with:
+          container-registry-url: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          container-registry-username: ${{ secrets.REGISTRY_USERNAME }}
+          container-registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+          secret-name: alkemio-server-secret
+
+      - uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.22.0" # default is latest stable, fixing it to a compatible version
+        id: install
+
+      - uses: Azure/k8s-deploy@v1
+        with:
+          manifests: |
+            ??
+          images: |
+            ${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-server:${{ github.sha }}
+          imagepullsecrets: |
+            alkemio-server-secret ??
