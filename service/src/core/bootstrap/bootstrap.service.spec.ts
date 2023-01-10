@@ -1,9 +1,7 @@
-import { Hub } from '@domain/challenge/hub/hub.entity';
 import { Test, TestingModule } from '@nestjs/testing';
-import { MockCacheManager } from '@test/mocks/cache-manager.mock';
-import { MockWinstonProvider } from '@test/mocks/winston.provider.mock';
-import { defaultMockerFactory } from '@test/utils/default.mocker.factory';
-import { repositoryProviderMockFactory } from '@test/utils/repository.provider.mock.factory';
+import { MockWinstonProvider } from '@test/mocks';
+import { defaultMockerFactory } from '@test/utils';
+import { MockConfigServiceProvider } from '@test/mocks';
 import { BootstrapService } from './bootstrap.service';
 
 describe('BootstrapService', () => {
@@ -13,9 +11,8 @@ describe('BootstrapService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BootstrapService,
-        MockCacheManager,
+        MockConfigServiceProvider,
         MockWinstonProvider,
-        repositoryProviderMockFactory(Hub),
       ],
     })
       .useMocker(defaultMockerFactory)

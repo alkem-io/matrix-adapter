@@ -1,0 +1,47 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  namespace: default
+  name: alkemio-matrix-adapter-deployment
+  labels:
+    app: alkemio-matrix-adapter
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alkemio-matrix-adapter
+  template:
+    metadata:
+      labels:
+        app: alkemio-matrix-adapter
+    spec:
+      containers:
+        - name: alkemio-matrix-adapter
+          image: alkemio.azurecr.io/alkemio-matrix-adapter:latest
+          env:
+            - name: RABBITMQ_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: alkemio-rabbitmq-cluster-default-user
+                  key: host
+            - name: RABBITMQ_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: alkemio-rabbitmq-cluster-default-user
+                  key: port
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: alkemio-rabbitmq-cluster-default-user
+                  key: username
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: alkemio-rabbitmq-cluster-default-user
+                  key: password
+          envFrom:
+            - secretRef:
+                name: alkemio-secrets
+            - configMapRef:
+                name: alkemio-config
