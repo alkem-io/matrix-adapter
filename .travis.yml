@@ -1,0 +1,15 @@
+language: node_js
+node_js:
+  - v16.15.0
+cache:
+  directories:
+    - node_modules
+install:
+  - npm install
+services:
+  - mysql
+before_install:
+  - cd service
+  - npm i -g npm@8.5.5
+script:
+  - npm run test:ci:coverage
