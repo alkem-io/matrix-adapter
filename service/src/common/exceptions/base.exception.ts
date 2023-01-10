@@ -1,14 +1,20 @@
-import { ApolloError } from 'apollo-server-express';
 import { LogContext, AlkemioErrorStatus } from '@common/enums';
 
-export class BaseException extends ApolloError {
-  private context: LogContext;
+export class BaseException extends Error {
+  private readonly context: LogContext;
+  private readonly code: AlkemioErrorStatus | undefined;
+
   constructor(error: string, context: LogContext, code?: AlkemioErrorStatus) {
-    super(error, code?.toLocaleString());
+    super(error);
+    this.code = code;
     this.context = context;
   }
 
-  getContext(): LogContext {
+  public getContext(): LogContext {
     return this.context;
+  }
+
+  public getCode(): AlkemioErrorStatus | undefined {
+    return this.code;
   }
 }
