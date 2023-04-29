@@ -8,7 +8,6 @@ import { ConfigService } from '@nestjs/config';
 import { MatrixAgentPool } from '@services/matrix/agent-pool/matrix.agent.pool';
 import { MatrixClient } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixGroupAdapter } from '@services/matrix/adapter-group/matrix.group.adapter';
 import { MatrixRoomAdapter } from '@services/matrix/adapter-room/matrix.room.adapter';
 import { MatrixUserAdapter } from '@services/matrix/adapter-user/matrix.user.adapter';
 import { IOperationalMatrixUser } from '@services/matrix/adapter-user/matrix.user.interface';
@@ -39,8 +38,7 @@ export class CommunicationAdapter {
     private configService: ConfigService,
     private matrixUserManagementService: MatrixUserManagementService,
     private matrixUserAdapter: MatrixUserAdapter,
-    private matrixRoomAdapter: MatrixRoomAdapter,
-    private matrixGroupAdapter: MatrixGroupAdapter
+    private matrixRoomAdapter: MatrixRoomAdapter
   ) {
     this.adminEmail = this.configService.get(
       ConfigurationTypes.MATRIX
@@ -272,44 +270,7 @@ export class CommunicationAdapter {
     }
   }
 
-  async convertMatrixLocalGroupIdToMatrixID(groupID: string): Promise<string> {
-    return this.matrixGroupAdapter.convertMatrixLocalGroupIdToMatrixID(groupID);
-  }
-
-  async createCommunityGroup(
-    communityId: string,
-    communityName: string
-  ): Promise<string> {
-    // If not enabled just return an empty string
-    if (!this.enabled) {
-      return '';
-    }
-    if (!communityId || !communityName) {
-      this.logger.error?.(
-        `Attempt to register community group with empty data ${communityId}`,
-        LogContext.COMMUNICATION
-      );
-      return '';
-    }
-    const elevatedMatrixAgent = await this.getMatrixManagementAgentElevated();
-    const group = await this.matrixGroupAdapter.createGroup(
-      elevatedMatrixAgent.matrixClient,
-      {
-        groupId: communityId,
-        profile: {
-          name: communityName,
-        },
-      }
-    );
-    this.logger.verbose?.(
-      `Created group using communityID '${communityId}', communityName '${communityName}': ${group}`,
-      LogContext.COMMUNICATION
-    );
-    return group;
-  }
-
   async createCommunityRoom(
-    groupID: string,
     name: string,
     metadata?: Record<string, string>
   ): Promise<string> {
@@ -321,7 +282,6 @@ export class CommunicationAdapter {
     const room = await this.matrixRoomAdapter.createRoom(
       elevatedMatrixAgent.matrixClient,
       {
-        groupId: groupID,
         metadata,
         createOpts: {
           name,
@@ -329,14 +289,13 @@ export class CommunicationAdapter {
       }
     );
     this.logger.verbose?.(
-      `Created community room on group '${groupID}': ${room}`,
+      `Created community room: ${room}`,
       LogContext.COMMUNICATION
     );
     return room;
   }
 
   async grantUserAccesToRooms(
-    groupID: string,
     roomIDs: string[],
     matrixUserID: string
   ): Promise<boolean> {
@@ -345,7 +304,6 @@ export class CommunicationAdapter {
       return false;
     }
     try {
-      await this.addUserToGroup(groupID, matrixUserID);
       await this.addUserToRooms(roomIDs, matrixUserID);
     } catch (error) {
       this.logger.warn?.(
@@ -363,24 +321,29 @@ export class CommunicationAdapter {
     if (!this.enabled) {
       return rooms;
     }
+
+    this.logger(
+      `Retrieving rooms for user: ${matrixUserID}`,
+      LogContext.COMMUNICATION
+    );
     // use the global admin account when reading the contents of rooms
     // as protected via the graphql api
     // the possibility to use native matrix power levels is there
     // but we still don't have the infrastructure to support it
-    const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
+    // const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
 
-    const matrixAgent = await this.matrixAgentPool.acquire(matrixUserID);
+    // const matrixAgent = await this.matrixAgentPool.acquire(matrixUserID);
 
-    const matrixCommunityRooms =
-      await this.matrixAgentService.getCommunityRooms(matrixAgent);
-    for (const matrixRoom of matrixCommunityRooms) {
-      const room =
-        await this.matrixRoomAdapter.convertMatrixRoomToCommunityRoom(
-          matrixAgentElevated.matrixClient,
-          matrixRoom
-        );
-      rooms.push(room);
-    }
+    // const matrixCommunityRooms =
+    //   await this.matrixAgentService.getCommunityRooms(matrixAgent);
+    // for (const matrixRoom of matrixCommunityRooms) {
+    //   const room =
+    //     await this.matrixRoomAdapter.convertMatrixRoomToCommunityRoom(
+    //       matrixAgentElevated.matrixClient,
+    //       matrixRoom
+    //     );
+    //   rooms.push(room);
+    // }
     return rooms;
   }
 
@@ -526,13 +489,20 @@ export class CommunicationAdapter {
         if (matrixUserID === elevatedAgent.matrixClient.getUserId()) continue;
         const userAgent = await this.acquireMatrixAgent(matrixUserID);
 
+        const userID = userAgent.matrixClient.getUserId();
+        if (!userID) {
+          throw new MatrixEntityNotFoundException(
+            `Unable to retrieve user on agent: ${userAgent}`,
+            LogContext.MATRIX
+          );
+        }
         userAgent.attachOnceConditional({
           id: targetRoomID,
           roomMemberMembershipMonitor:
             userAgent.resolveAutoAcceptRoomMembershipOneTimeMonitor(
               // subscribe for events for a specific room
               targetRoomID,
-              userAgent.matrixClient.getUserId(),
+              userID,
               // once we have joined the room detach the subscription
               () => userAgent.detach(targetRoomID)
             ),
@@ -552,21 +522,6 @@ export class CommunicationAdapter {
       return false;
     }
     return true;
-  }
-
-  private async addUserToGroup(groupID: string, matrixUserID: string) {
-    const elevatedAgent = await this.getMatrixManagementAgentElevated();
-    const userAgent = await this.matrixAgentPool.acquire(matrixUserID);
-    if (await this.isUserInGroup(userAgent.matrixClient, groupID)) {
-      // nothing to do...
-      return;
-    }
-
-    await this.matrixGroupAdapter.inviteUserToGroup(
-      elevatedAgent.matrixClient,
-      groupID,
-      userAgent.matrixClient
-    );
   }
 
   public async addUserToRoom(
@@ -614,13 +569,20 @@ export class CommunicationAdapter {
         `[Membership] Inviting user (${matrixUserID}) is join room: ${roomID}`,
         LogContext.COMMUNICATION
       );
+      const userID = userAgent.matrixClient.getUserId();
+      if (!userID) {
+        throw new MatrixEntityNotFoundException(
+          `Unable to retrieve user on agent: ${userAgent}`,
+          LogContext.MATRIX
+        );
+      }
       userAgent.attachOnceConditional({
         id: roomID,
         roomMemberMembershipMonitor:
           userAgent.resolveAutoAcceptRoomMembershipOneTimeMonitor(
             // subscribe for events for a specific room
             roomID,
-            userAgent.matrixClient.getUserId(),
+            userID,
             // once we have joined the room detach the subscription
             () => userAgent.detach(roomID)
           ),
@@ -653,25 +615,6 @@ export class CommunicationAdapter {
       return [];
     }
     return applicableRoomIDs;
-  }
-
-  async isUserInGroup(
-    matrixClient: MatrixClient,
-    groupID: string
-  ): Promise<boolean> {
-    // Filter down to exclude the rooms the user is already a member of
-    const joinedGroups = await this.matrixUserAdapter.getJoinedGroups(
-      matrixClient
-    );
-    const groupFound = joinedGroups.find(gID => gID === groupID);
-    if (groupFound) {
-      this.logger.verbose?.(
-        `User (${matrixClient.getUserId()}) is already in group: ${groupID}`,
-        LogContext.COMMUNICATION
-      );
-      return true;
-    }
-    return false;
   }
 
   async removeRoom(matrixRoomID: string) {

@@ -23,9 +23,12 @@ export class MatrixMessageAdapter {
     // const isRelation = message.isRelation('m.replace');
     // const mRelatesTo = message.getWireContent()['m.relates_to'];
 
+    // todo: additional logging?
+    const sendingUserID = sender ? sender.userId : '';
+
     return {
       message: content.body,
-      sender: sender.userId,
+      sender: sendingUserID,
       timestamp: event.origin_server_ts || 0,
       id: event.event_id || '',
     };
