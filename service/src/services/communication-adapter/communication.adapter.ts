@@ -322,7 +322,7 @@ export class CommunicationAdapter {
       return rooms;
     }
 
-    this.logger(
+    this.logger.verbose?.(
       `Retrieving rooms for user: ${matrixUserID}`,
       LogContext.COMMUNICATION
     );
