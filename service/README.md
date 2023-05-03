@@ -31,4 +31,4 @@ Alkemio Matrix Adapter service.
 
 Execute the following command from the workspace root:
 
-`docker build -t alkemio/alkemio-adapter:2.0-test .`
+`docker build -t alkemio/matrix-adapter:v0.2.0 .`
