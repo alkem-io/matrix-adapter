@@ -26,3 +26,9 @@ Alkemio Matrix Adapter service.
 ```
 
 5. Click publish.
+
+## To build a new docker image locally
+
+Execute the following command from the workspace root:
+
+`docker build -t alkemio/alkemio-adapter:2.0-test .`
