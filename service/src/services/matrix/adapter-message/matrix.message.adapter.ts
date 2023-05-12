@@ -3,6 +3,7 @@ import { LogContext } from '@common/enums';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixRoomResponseMessage } from '../adapter-room/matrix.room.dto.response.message';
+import { MatrixEntityNotFoundException } from '@src/common/exceptions';
 
 @Injectable()
 export class MatrixMessageAdapter {
@@ -23,8 +24,13 @@ export class MatrixMessageAdapter {
     // const isRelation = message.isRelation('m.replace');
     // const mRelatesTo = message.getWireContent()['m.relates_to'];
 
-    // todo: additional logging?
-    const sendingUserID = sender ? sender.userId : '';
+    if (!sender) {
+      throw new MatrixEntityNotFoundException(
+        `Unable to locate userId for sender: ${sender}`,
+        LogContext.MATRIX
+      );
+    }
+    const sendingUserID = sender.userId;
 
     return {
       message: content.body,

@@ -70,17 +70,15 @@ export class MatrixEventDispatcher
   }
 
   private initMonitor<T>(
-    event: string,
+    event: any,
     handler: keyof IMatrixEventDispatcher,
     monitor: MatrixEventHandler
   ) {
     monitor = monitor.bind(this);
-    console.log(`${event} - ${monitor}`);
-    //const matrixClient = this._client;
-    //matrixClient.on(event, monitor);
+    this._client.on(event, monitor);
 
     this[handler] = fromEvent<T>(this._emmiter, handler) as any;
-    //this._disposables.push(() => this._client.off(event, monitor));
+    this._disposables.push(() => this._client.off(event, monitor));
   }
 
   private _syncMonitor(syncState: string, oldSyncState: string) {
