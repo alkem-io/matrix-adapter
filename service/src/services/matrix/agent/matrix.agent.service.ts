@@ -2,14 +2,12 @@ import { ConfigurationTypes, LogContext } from '@common/enums';
 import { MatrixEntityNotFoundException } from '@common/exceptions';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createClient, IContent } from 'matrix-js-sdk';
+import { createClient, IContent, MatrixClient } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixGroupAdapter } from '../adapter-group/matrix.group.adapter';
 import { MatrixRoom } from '../adapter-room/matrix.room';
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
 import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter';
 import { IOperationalMatrixUser } from '../adapter-user/matrix.user.interface';
-import { MatrixClient } from '../types/matrix.client.type';
 import { MatrixAgent } from './matrix.agent';
 import { MatrixAgentMessageRequest } from './matrix.agent.dto.message.request';
 import { MatrixAgentMessageRequestDirect } from './matrix.agent.dto.message.request.direct';
@@ -22,7 +20,6 @@ export class MatrixAgentService {
     private configService: ConfigService,
     private matrixUserAdapter: MatrixUserAdapter,
     private matrixRoomAdapter: MatrixRoomAdapter,
-    private matrixGroupAdapter: MatrixGroupAdapter,
     private matrixMessageAdapter: MatrixMessageAdapter,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: LoggerService
@@ -60,37 +57,6 @@ export class MatrixAgentService {
     });
   }
 
-  async getCommunityRooms(matrixAgent: IMatrixAgent): Promise<MatrixRoom[]> {
-    const matrixClient = matrixAgent.matrixClient;
-    const rooms: MatrixRoom[] = [];
-
-    // Community rooms
-    const communityMap = await this.matrixGroupAdapter.communityRoomsMap(
-      matrixClient
-    );
-    for (const groupID of Object.keys(communityMap)) {
-      const roomIds = communityMap[groupID] || [];
-
-      for (const roomId of roomIds) {
-        try {
-          const room = await this.getRoom(matrixAgent, roomId);
-          room.isDirect = false;
-          rooms.push(room);
-        } catch (error) {
-          // We can cause a lot of damage with the exception thrown in getRoom
-          // There are cases where the room exists but the user is not yet invited to it.
-          // Because of one missing room the user might not be able to access none of them.
-          // Need to decide on an approach
-          this.logger.warn(
-            `A room with ID [${roomId}] is not longer present. This might be due to erroneous state.`,
-            LogContext.COMMUNICATION
-          );
-        }
-      }
-    }
-    return rooms;
-  }
-
   async getDirectRooms(matrixAgent: IMatrixAgent): Promise<MatrixRoom[]> {
     const matrixClient = matrixAgent.matrixClient;
     const rooms: MatrixRoom[] = [];
@@ -116,9 +82,7 @@ export class MatrixAgentService {
     matrixAgent: IMatrixAgent,
     roomId: string
   ): Promise<MatrixRoom> {
-    const matrixRoom: MatrixRoom = await matrixAgent.matrixClient.getRoom(
-      roomId
-    );
+    const matrixRoom = await matrixAgent.matrixClient.getRoom(roomId);
     if (!matrixRoom) {
       throw new MatrixEntityNotFoundException(
         `[User: ${matrixAgent.matrixClient.getUserId()}] Unable to access Room (${roomId}). Room either does not exist or user does not have access.`,
@@ -206,8 +170,7 @@ export class MatrixAgentService {
     const response = await matrixAgent.matrixClient.sendEvent(
       roomId,
       this.matrixMessageAdapter.EVENT_TYPE_MESSAGE,
-      { body: messageRequest.text, msgtype: 'm.text' },
-      ''
+      { body: messageRequest.text, msgtype: 'm.text' }
     );
 
     return response.event_id;
@@ -237,21 +200,6 @@ export class MatrixAgentService {
         newContent
       )
     );
-
-    // const response = await matrixAgent.matrixClient.sendEvent(
-    //   roomId,
-    //   'm.replace',
-    //   {
-    //     body: messageRequest.text,
-    //     msgtype: 'm.text',
-    //   }
-    // );
-
-    // need to find a way to retrieve the correct content for the event
-    // const replacementMessage = await matrixAgent.matrixClient.fetchRoomEvent(
-    //   roomId,
-    //   response.event_id
-    // );
   }
 
   async deleteMessage(

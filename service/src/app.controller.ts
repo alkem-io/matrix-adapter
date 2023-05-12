@@ -28,8 +28,6 @@ import {
 } from '@alkemio/matrix-adapter-lib';
 import { RoomMessageSenderResponsePayload } from '@alkemio/matrix-adapter-lib';
 import { RoomMessageSenderPayload } from '@alkemio/matrix-adapter-lib';
-import { CreateGroupPayload } from '@alkemio/matrix-adapter-lib';
-import { CreateGroupResponsePayload } from '@alkemio/matrix-adapter-lib';
 import { CreateRoomPayload } from '@alkemio/matrix-adapter-lib';
 import { CreateRoomResponsePayload } from '@alkemio/matrix-adapter-lib';
 import { RoomsUserResponsePayload } from '@alkemio/matrix-adapter-lib';
@@ -279,39 +277,6 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: MatrixAdapterEventType.CREATE_GROUP })
-  async createGroup(
-    @Payload() data: CreateGroupPayload,
-    @Ctx() context: RmqContext
-  ): Promise<CreateGroupResponsePayload> {
-    this.logger.verbose?.(
-      `${MatrixAdapterEventType.CREATE_GROUP} - payload: ${JSON.stringify(
-        data
-      )}`,
-      LogContext.EVENTS
-    );
-    const channel = context.getChannelRef();
-    const originalMsg = context.getMessage();
-
-    try {
-      const groupID = await this.communicationAdapter.createCommunityGroup(
-        data.communityID,
-        data.communityDisplayName
-      );
-      channel.ack(originalMsg);
-      const response: CreateGroupResponsePayload = {
-        groupID: groupID,
-      };
-
-      return response;
-    } catch (error) {
-      const errorMessage = `Error when creating group: ${error}`;
-      this.logger.error(errorMessage, LogContext.COMMUNICATION);
-      channel.ack(originalMsg);
-      throw new RpcException(errorMessage);
-    }
-  }
-
   @MessagePattern({ cmd: MatrixAdapterEventType.CREATE_ROOM })
   async createRoom(
     @Payload() data: CreateRoomPayload,
@@ -328,7 +293,6 @@ export class AppController {
 
     try {
       const roomID = await this.communicationAdapter.createCommunityRoom(
-        data.groupID,
         data.roomName,
         data.metadata
       );
@@ -515,7 +479,6 @@ export class AppController {
 
     try {
       const result = await this.communicationAdapter.grantUserAccesToRooms(
-        data.groupID,
         data.roomIDs,
         data.userID
       );

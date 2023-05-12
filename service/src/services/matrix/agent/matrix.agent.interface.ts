@@ -1,5 +1,5 @@
+import { MatrixClient } from 'matrix-js-sdk';
 import { MatrixEventDispatcher } from '../events/matrix.event.dispatcher';
-import { MatrixClient } from '../types/matrix.client.type';
 
 export interface IMatrixAgent {
   matrixClient: MatrixClient;

@@ -3,8 +3,8 @@ import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { IMatrixUser } from './matrix.user.interface';
-import { MatrixClient } from '../types/matrix.client.type';
 import { MatrixUserMembershipException } from '@common/exceptions/matrix.membership.exception';
+import { MatrixClient } from 'matrix-js-sdk';
 
 @Injectable()
 export class MatrixUserAdapter {
@@ -21,14 +21,6 @@ export class MatrixUserAdapter {
       joined_rooms: string[];
     };
     return response.joined_rooms;
-  }
-
-  async getJoinedGroups(matrixClient: MatrixClient): Promise<string[]> {
-    const groupsResponse = await matrixClient.getJoinedGroups();
-    const response = groupsResponse as any as {
-      groups: string[];
-    };
-    return response.groups;
   }
 
   async verifyRoomMembershipOrFail(

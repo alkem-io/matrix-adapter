@@ -1,16 +1,14 @@
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { EventEmitter } from 'events';
-import { MatrixEvent } from 'matrix-js-sdk';
+import { MatrixClient, MatrixEvent } from 'matrix-js-sdk';
 import { first, fromEvent, Observable, Observer, Subscription } from 'rxjs';
 import { MatrixRoom } from '../adapter-room/matrix.room';
-import { MatrixClient } from '../types/matrix.client.type';
 import { MatrixEventHandler } from '../types/matrix.event.handler.type';
 export interface IMatrixEventDispatcher {
   syncMonitor?: Observable<{ syncState: string; oldSyncState: string }>;
   roomMonitor?: Observable<{ room: MatrixRoom }>;
   roomTimelineMonitor?: Observable<RoomTimelineEvent>;
   roomMemberMembershipMonitor?: Observable<{ event: any; member: any }>;
-  groupMyMembershipMonitor?: Observable<{ group: any }>;
 }
 
 export interface IMatrixEventHandler {
@@ -19,7 +17,6 @@ export interface IMatrixEventHandler {
   roomMonitor?: Observer<{ room: MatrixRoom }>;
   roomTimelineMonitor?: Observer<RoomTimelineEvent>;
   roomMemberMembershipMonitor?: Observer<{ event: any; member: any }>;
-  groupMyMembershipMonitor?: Observer<{ group: any }>;
 }
 
 export interface IConditionalMatrixEventHandler {
@@ -48,7 +45,6 @@ export class MatrixEventDispatcher
   roomMonitor!: Observable<{ room: MatrixRoom }>;
   roomTimelineMonitor!: Observable<RoomTimelineEvent>;
   roomMemberMembershipMonitor!: Observable<{ event: any; member: any }>;
-  groupMyMembershipMonitor!: Observable<{ group: any }>;
 
   constructor(private _client: MatrixClient) {
     this.init();
@@ -71,15 +67,10 @@ export class MatrixEventDispatcher
       'roomMemberMembershipMonitor',
       this._roomMemberMembershipMonitor
     );
-    this.initMonitor<{ group: any }>(
-      'Group.myMembership',
-      'groupMyMembershipMonitor',
-      this._groupMyMembershipMonitor
-    );
   }
 
   private initMonitor<T>(
-    event: string,
+    event: any,
     handler: keyof IMatrixEventDispatcher,
     monitor: MatrixEventHandler
   ) {
@@ -116,10 +107,6 @@ export class MatrixEventDispatcher
     this._emmiter.emit('roomMemberMembershipMonitor', { event, member });
   }
 
-  private _groupMyMembershipMonitor(group: any) {
-    this._emmiter.emit('groupMyMembershipMonitor', { group });
-  }
-
   attach(handler: IMatrixEventHandler) {
     this.detach(handler.id);
 
@@ -139,13 +126,6 @@ export class MatrixEventDispatcher
       subscriptions.push(
         this.roomMemberMembershipMonitor.subscribe(
           handler.roomMemberMembershipMonitor
-        )
-      );
-    }
-    if (handler.groupMyMembershipMonitor) {
-      subscriptions.push(
-        this.groupMyMembershipMonitor.subscribe(
-          handler.groupMyMembershipMonitor
         )
       );
     }

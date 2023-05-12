@@ -9,7 +9,8 @@ import { MatrixRoomInvitationReceived } from '@src/services/communication-adapte
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
 import { MatrixRoom } from '../adapter-room/matrix.room';
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
-import { MatrixClient } from '../types/matrix.client.type';
+import { MatrixClient } from 'matrix-js-sdk';
+import { MatrixEntityNotFoundException } from '@src/common/exceptions';
 
 const noop = function () {
   // empty
@@ -143,7 +144,7 @@ export class RoomTimelineMonitorFactory {
         // TODO Notifications - Allow the client to see the event and then mark it as read
         // With the current behavior the message will automatically be marked as read
         // to ensure that we are returning only the actual updates
-        await matrixClient.sendReadReceipt(event, {});
+        await matrixClient.sendReadReceipt(event);
 
         if (!ignoreMessage) {
           const message = messageAdapter.convertFromMatrixMessage(event);
@@ -154,10 +155,18 @@ export class RoomTimelineMonitorFactory {
             LogContext.COMMUNICATION
           );
 
+          const userID = matrixClient.getUserId();
+          if (!userID) {
+            throw new MatrixEntityNotFoundException(
+              `Unable to locate userId for client: ${matrixClient}`,
+              LogContext.MATRIX
+            );
+          }
+
           onMessageReceived({
             message,
             roomId: room.roomId,
-            communicationID: matrixClient.getUserId(),
+            communicationID: userID,
             communityId: undefined,
             roomName: room.name,
           });
