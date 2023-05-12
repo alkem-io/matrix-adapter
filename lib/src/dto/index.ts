@@ -17,8 +17,6 @@ export * from './remove.user.from.rooms.payload';
 export * from './remove.user.from.rooms.response.payload';
 export * from './replicate.room.membership.payload';
 export * from './replicate.room.membership.response.payload';
-export * from './create.group.payload';
-export * from './create.group.response.payload';
 export * from './create.room.payload';
 export * from './create.room.response.payload';
 export * from './add.user.to.rooms.payload';

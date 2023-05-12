@@ -8,7 +8,6 @@ import {
   RoomMonitorFactory,
   RoomTimelineMonitorFactory,
 } from '@services/matrix/events/matrix.event.adapter.room';
-import { AutoAcceptGroupMembershipMonitorFactory } from '@services/matrix/events/matrix.event.adapter.group';
 import {
   IConditionalMatrixEventHandler,
   IMatrixEventHandler,
@@ -16,14 +15,13 @@ import {
 } from '@services/matrix/events/matrix.event.dispatcher';
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
-import { MatrixClient } from '../types/matrix.client.type';
 import { IMatrixAgent } from './matrix.agent.interface';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
+import { MatrixClient } from 'matrix-js-sdk';
 
 export type MatrixAgentStartOptions = {
   registerTimelineMonitor?: boolean;
   registerRoomMonitor?: boolean;
-  registerGroupMembershipMonitor?: boolean;
 };
 
 // Wraps an instance of the client sdk
@@ -59,11 +57,9 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
 
   async start(
     {
-      registerGroupMembershipMonitor = true,
       registerRoomMonitor = true,
       registerTimelineMonitor = false,
     }: MatrixAgentStartOptions = {
-      registerGroupMembershipMonitor: true,
       registerRoomMonitor: true,
       registerTimelineMonitor: false,
     }
@@ -87,11 +83,6 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     const eventHandler: IMatrixEventHandler = {
       id: 'root',
     };
-
-    if (registerGroupMembershipMonitor) {
-      eventHandler['groupMyMembershipMonitor'] =
-        this.resolveGroupMembershipMonitor();
-    }
 
     if (registerTimelineMonitor) {
       eventHandler['roomTimelineMonitor'] =
@@ -169,13 +160,6 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
       ),
       condition: roomMembershipLeaveGuardFactory(userId, roomId),
     };
-  }
-
-  resolveGroupMembershipMonitor() {
-    return AutoAcceptGroupMembershipMonitorFactory.create(
-      this.matrixClient,
-      this.logger
-    );
   }
 
   resolveRoomTimelineEventHandler() {

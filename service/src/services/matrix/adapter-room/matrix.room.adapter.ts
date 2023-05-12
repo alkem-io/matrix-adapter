@@ -4,10 +4,15 @@ import { IMessage } from '@alkemio/matrix-adapter-lib';
 import { LogContext } from '@common/enums';
 import { MatrixEntityNotFoundException } from '@common/exceptions';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
-import { Direction, IContent, TimelineWindow } from 'matrix-js-sdk';
+import {
+  Direction,
+  IContent,
+  ICreateRoomOpts,
+  MatrixClient,
+  TimelineWindow,
+} from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
-import { MatrixClient } from '../types/matrix.client.type';
 import { MatrixRoom } from './matrix.room';
 import { Preset, Visibility } from './matrix.room.dto.create.options';
 import { IRoomOpts } from './matrix.room.dto.options';
@@ -44,6 +49,12 @@ export class MatrixRoomAdapter {
       : {};
 
     const userId = matrixClient.getUserId();
+    if (!userId) {
+      throw new MatrixEntityNotFoundException(
+        `Unable to locate userId for client: ${matrixClient}`,
+        LogContext.MATRIX
+      );
+    }
 
     // there is a bug in the sdk
     const selfDMs = eventContent[userId];
@@ -59,9 +70,9 @@ export class MatrixRoomAdapter {
     matrixClient: MatrixClient,
     options: IRoomOpts
   ): Promise<string> {
-    const { dmUserId, groupId, metadata } = options;
+    const { dmUserId, metadata } = options;
     // adjust options
-    const createOpts = options.createOpts || {};
+    const createOpts: ICreateRoomOpts = options.createOpts || {};
 
     // all rooms will by default be public
     const defaultPreset = Preset.PublicChat;
@@ -83,10 +94,6 @@ export class MatrixRoomAdapter {
       `[MatrixRoom] Created new room with id: ${roomID}`,
       LogContext.COMMUNICATION
     );
-
-    if (groupId) {
-      await matrixClient.addRoomToGroup(groupId, roomResult.room_id, true);
-    }
 
     if (metadata) {
       await matrixClient.setRoomAccountData(
@@ -181,6 +188,12 @@ export class MatrixRoomAdapter {
     // not very well documented but we can validate whether the user has membership like this
     // seen in https://github.com/matrix-org/matrix-js-sdk/blob/3c36be9839091bf63a4850f4babed0c976d48c0e/src/models/room-member.ts#L29
     const userId = matrixClient.getUserId();
+    if (!userId) {
+      throw new MatrixEntityNotFoundException(
+        `Unable to locate userId for client: ${matrixClient}`,
+        LogContext.MATRIX
+      );
+    }
     if (room.hasMembershipState(userId, 'join')) {
       return;
     }
@@ -202,6 +215,12 @@ export class MatrixRoomAdapter {
     matrixClient: MatrixClient
   ) {
     const matrixUserID = matrixClient.getUserId();
+    if (!matrixUserID) {
+      throw new MatrixEntityNotFoundException(
+        `Unable to locate userId for client: ${matrixClient}`,
+        LogContext.MATRIX
+      );
+    }
     try {
       this.logger.verbose?.(
         `[Membership] User (${matrixUserID}) being removed from room: ${roomID}`,
