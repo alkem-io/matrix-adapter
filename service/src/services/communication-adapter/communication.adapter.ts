@@ -55,6 +55,15 @@ export class CommunicationAdapter {
     this.enabled = true;
   }
 
+  public async initiateMatrixConnection() {
+    await this.logServerVersion();
+    this.logger.verbose?.(
+      `Matrix admin identifier: ${this.adminCommunicationsID}`,
+      LogContext.BOOTSTRAP
+    );
+    await this.getMatrixManagementAgentElevated();
+  }
+
   async sendMessage(
     sendMessageData: RoomSendMessagePayload
   ): Promise<IMessage> {
@@ -239,6 +248,21 @@ export class CommunicationAdapter {
     });
 
     return this.matrixElevatedAgent;
+  }
+
+  private async logServerVersion() {
+    try {
+      const version = await this.matrixUserManagementService.getServerVersion();
+      this.logger.verbose?.(
+        `Synapse server version: ${version}`,
+        LogContext.BOOTSTRAP
+      );
+    } catch (error: any) {
+      this.logger.verbose?.(
+        `Unable to get synapse server version: ${error}`,
+        LogContext.BOOTSTRAP
+      );
+    }
   }
 
   private async registerNewAdminUser(): Promise<IOperationalMatrixUser> {

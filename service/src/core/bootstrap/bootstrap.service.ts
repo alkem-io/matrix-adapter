@@ -3,11 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { ConfigurationTypes, LogContext } from '@common/enums';
 import { BootstrapException } from '@src/common/exceptions/bootstrap.exception';
+import { CommunicationAdapter } from '@src/services/communication-adapter/communication.adapter';
 
 @Injectable()
 export class BootstrapService {
   constructor(
     private configService: ConfigService,
+    private communicationAdapter: CommunicationAdapter,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: LoggerService
   ) {}
@@ -19,6 +21,7 @@ export class BootstrapService {
         LogContext.BOOTSTRAP
       );
       this.logConfiguration();
+      await this.communicationAdapter.initiateMatrixConnection();
     } catch (error: any) {
       throw new BootstrapException(error.message);
     }

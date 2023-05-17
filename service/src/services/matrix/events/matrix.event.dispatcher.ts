@@ -1,6 +1,13 @@
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { EventEmitter } from 'events';
-import { MatrixClient, MatrixEvent } from 'matrix-js-sdk';
+import {
+  ClientEvent,
+  EmittedEvents,
+  MatrixClient,
+  MatrixEvent,
+  RoomEvent,
+  RoomMemberEvent,
+} from 'matrix-js-sdk';
 import { first, fromEvent, Observable, Observer, Subscription } from 'rxjs';
 import { MatrixRoom } from '../adapter-room/matrix.room';
 import { MatrixEventHandler } from '../types/matrix.event.handler.type';
@@ -52,25 +59,27 @@ export class MatrixEventDispatcher
 
   private init() {
     this.initMonitor<{ syncState: string; oldSyncState: string }>(
-      'sync',
+      ClientEvent.Sync,
       'syncMonitor',
       this._syncMonitor
     );
-    this.initMonitor<any>('Room', 'roomMonitor', this._roomMonitor);
+    this.initMonitor<any>(ClientEvent.Room, 'roomMonitor', this._roomMonitor);
+
     this.initMonitor<RoomTimelineEvent>(
-      'Room.timeline',
+      RoomEvent.Timeline,
       'roomTimelineMonitor',
       this._roomTimelineMonitor
     );
+
     this.initMonitor<{ event: any; member: any }>(
-      'RoomMember.membership',
+      RoomMemberEvent.Membership,
       'roomMemberMembershipMonitor',
       this._roomMemberMembershipMonitor
     );
   }
 
   private initMonitor<T>(
-    event: any,
+    event: EmittedEvents,
     handler: keyof IMatrixEventDispatcher,
     monitor: MatrixEventHandler
   ) {
