@@ -1,6 +1,13 @@
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { EventEmitter } from 'events';
-import { ClientEvent, MatrixClient, MatrixEvent } from 'matrix-js-sdk';
+import {
+  ClientEvent,
+  EmittedEvents,
+  MatrixClient,
+  MatrixEvent,
+  RoomEvent,
+  RoomMemberEvent,
+} from 'matrix-js-sdk';
 import { first, fromEvent, Observable, Observer, Subscription } from 'rxjs';
 import { MatrixRoom } from '../adapter-room/matrix.room';
 import { MatrixEventHandler } from '../types/matrix.event.handler.type';
@@ -58,29 +65,26 @@ export class MatrixEventDispatcher
     );
     this.initMonitor<any>(ClientEvent.Room, 'roomMonitor', this._roomMonitor);
 
-    // Todo: check if these are needed?
-    // this.initMonitor<RoomTimelineEvent>(
-    //   'Room.timeline',
-    //   'roomTimelineMonitor',
-    //   this._roomTimelineMonitor
-    // );
-    // this.initMonitor<{ event: any; member: any }>(
-    //   'RoomMember.membership',
-    //   'roomMemberMembershipMonitor',
-    //   this._roomMemberMembershipMonitor
-    // );
+    this.initMonitor<RoomTimelineEvent>(
+      RoomEvent.Timeline,
+      'roomTimelineMonitor',
+      this._roomTimelineMonitor
+    );
+
+    this.initMonitor<{ event: any; member: any }>(
+      RoomMemberEvent.Membership,
+      'roomMemberMembershipMonitor',
+      this._roomMemberMembershipMonitor
+    );
   }
 
   private initMonitor<T>(
-    event: ClientEvent,
+    event: EmittedEvents,
     handler: keyof IMatrixEventDispatcher,
     monitor: MatrixEventHandler
   ) {
     monitor = monitor.bind(this);
-    console.log(`${event} - ${monitor}`);
-    const matrixClient = this._client;
-
-    matrixClient.on(event, monitor);
+    this._client.on(event, monitor);
 
     this[handler] = fromEvent<T>(this._emmiter, handler) as any;
     this._disposables.push(() => this._client.off(event, monitor));
