@@ -259,7 +259,19 @@ export class MatrixRoomAdapter {
       }
     }
 
-    return timelineWindow.getEvents();
+    const events = timelineWindow.getEvents();
+    let i = 1;
+    for (const event of events) {
+      this.logger.verbose?.(
+        `Event [${i}] - [${event.getType()}] - content: ${JSON.stringify(
+          event.getContent()
+        )}`,
+        LogContext.COMMUNICATION
+      );
+      i++;
+    }
+
+    return events;
   }
 
   async convertMatrixRoomToDirectRoom(
