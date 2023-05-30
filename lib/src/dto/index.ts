@@ -35,3 +35,6 @@ export * from './send.message.to.user.payload';
 export * from './send.message.to.user.response.payload';
 export * from './register.new.user.payload';
 export * from './register.new.user.response.payload';
+export * from './room.send.message.reply.payload';
+export * from './room.add.message.reaction.payload';
+export * from './room.remove.message.reaction.payload';

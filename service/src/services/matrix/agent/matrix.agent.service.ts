@@ -13,6 +13,8 @@ import { MatrixAgentMessageRequest } from './matrix.agent.dto.message.request';
 import { MatrixAgentMessageRequestDirect } from './matrix.agent.dto.message.request.direct';
 import { IMatrixAgent } from './matrix.agent.interface';
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
+import { MatrixAgentMessageReply } from './matrix.agent.dto.message.reply';
+import { MatrixAgentMessageReaction } from './matrix.agent.dto.message.reaction';
 
 @Injectable()
 export class MatrixAgentService {
@@ -174,6 +176,59 @@ export class MatrixAgentService {
     );
 
     return response.event_id;
+  }
+
+  async sendReplyToMessage(
+    matrixAgent: IMatrixAgent,
+    roomId: string,
+    messageRequest: MatrixAgentMessageReply
+  ): Promise<string> {
+    const response = await matrixAgent.matrixClient.sendEvent(
+      roomId,
+      this.matrixMessageAdapter.EVENT_TYPE_MESSAGE,
+      {
+        msgtype: 'm.text',
+        body: messageRequest.text,
+        ['m.relates_to']: {
+          rel_type: 'm.thread',
+          event_id: messageRequest.threadID,
+          is_falling_back: true,
+          ['m.in_reply_to']: {
+            event_id: messageRequest.lastMessageID,
+          },
+        },
+      }
+    );
+
+    return response.event_id;
+  }
+
+  async addReactionOnMessage(
+    matrixAgent: IMatrixAgent,
+    roomId: string,
+    messageReaction: MatrixAgentMessageReaction
+  ): Promise<string> {
+    const response = await matrixAgent.matrixClient.sendEvent(
+      roomId,
+      this.matrixMessageAdapter.EVENT_TYPE_REACTION,
+      {
+        'm.relates_to': {
+          rel_type: 'm.annotation',
+          event_id: messageReaction.messageID,
+          key: messageReaction.text,
+        },
+      }
+    );
+
+    return response.event_id;
+  }
+
+  async removeReactionOnMessage(
+    matrixAgent: IMatrixAgent,
+    roomId: string,
+    reactionID: string
+  ) {
+    await matrixAgent.matrixClient.redactEvent(roomId, reactionID);
   }
 
   // TODO - see if the js sdk supports message aggregation

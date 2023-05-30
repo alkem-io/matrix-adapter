@@ -8,6 +8,11 @@ import { MatrixEntityNotFoundException } from '@src/common/exceptions';
 @Injectable()
 export class MatrixMessageAdapter {
   readonly EVENT_TYPE_MESSAGE = 'm.room.message';
+  readonly EVENT_TYPE_REACTION = 'm.reaction';
+  readonly FILTERED_EVENT_TYPES = [
+    this.EVENT_TYPE_MESSAGE,
+    this.EVENT_TYPE_REACTION,
+  ];
 
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
@@ -43,9 +48,9 @@ export class MatrixMessageAdapter {
   isEventToIgnore(message: MatrixRoomResponseMessage): boolean {
     const event = message.event;
     // Only handle events that are for messages (more in there)
-    if (event.type !== this.EVENT_TYPE_MESSAGE) {
+    if (event.type && this.FILTERED_EVENT_TYPES.includes(event.type)) {
       this.logger.verbose?.(
-        `[Timeline] Ignoring event of type: ${event.type} as it is not '${this.EVENT_TYPE_MESSAGE}' type `,
+        `[Timeline] Ignoring event of type: ${event.type} as it is not one of '${this.FILTERED_EVENT_TYPES}' types `,
         LogContext.COMMUNICATION
       );
       return true;
@@ -68,7 +73,7 @@ export class MatrixMessageAdapter {
     //   //return true;
     // }
     this.logger.verbose?.(
-      `[Timeline] Processing event which is a message: ${event.type} - ${event.event_id}`,
+      `[Timeline] Processing event: ${event.type} - ${event.event_id}`,
       LogContext.COMMUNICATION
     );
     return false;

@@ -15,7 +15,13 @@ import { MatrixAgent } from '@services/matrix/agent/matrix.agent';
 import { MatrixAgentService } from '@services/matrix/agent/matrix.agent.service';
 import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service';
 import { CommunicationEditMessageInput } from './dto/communication.dto.message.edit';
-import { IMessage, RoomSendMessagePayload } from '@alkemio/matrix-adapter-lib';
+import {
+  IMessage,
+  RoomSendMessagePayload,
+  RoomSendMessageReplyPayload,
+  RoomAddMessageReactionPayload,
+  RoomRemoveMessageReactionPayload,
+} from '@alkemio/matrix-adapter-lib';
 import { RoomResult } from '@alkemio/matrix-adapter-lib';
 import { RoomDirectResult } from '@alkemio/matrix-adapter-lib';
 import { RoomDeleteMessagePayload } from '@alkemio/matrix-adapter-lib';
@@ -111,6 +117,142 @@ export class CommunicationAdapter {
       sender: sendMessageData.senderID,
       timestamp: timestamp,
     };
+  }
+
+  async sendMessageReply(
+    sendMessageData: RoomSendMessageReplyPayload
+  ): Promise<IMessage> {
+    // Todo: replace with proper data validation
+    const message = sendMessageData.message;
+
+    const senderCommunicationID = sendMessageData.senderID;
+    const matrixAgent = await this.acquireMatrixAgent(senderCommunicationID);
+
+    await this.matrixUserAdapter.verifyRoomMembershipOrFail(
+      matrixAgent.matrixClient,
+      sendMessageData.roomID
+    );
+    this.logger.verbose?.(
+      `[Message sending] Sending message to room: ${sendMessageData.roomID}`,
+      LogContext.COMMUNICATION
+    );
+    let messageId = '';
+    try {
+      messageId = await this.matrixAgentService.sendReplyToMessage(
+        matrixAgent,
+        sendMessageData.roomID,
+        {
+          text: sendMessageData.message,
+          threadID: sendMessageData.threadID,
+          lastMessageID: sendMessageData.lastMessageID,
+        }
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `[Message sending] Unable to send reply on message for user (${senderCommunicationID}): ${error}`,
+        LogContext.COMMUNICATION
+      );
+      throw error;
+    }
+    this.logger.verbose?.(
+      `...message sent to room: ${sendMessageData.roomID}`,
+      LogContext.COMMUNICATION
+    );
+
+    // Create the 'equivalent' message. Note that this can have a very minor timestamp offset
+    // from the actual message.
+    const timestamp = new Date().getTime();
+    return {
+      id: messageId,
+      message: message,
+      sender: sendMessageData.senderID,
+      timestamp: timestamp,
+    };
+  }
+
+  async addReactionToMessage(
+    addReactionData: RoomAddMessageReactionPayload
+  ): Promise<IMessage> {
+    // Todo: replace with proper data validation
+    const message = addReactionData.text;
+
+    const senderCommunicationID = addReactionData.senderID;
+    const matrixAgent = await this.acquireMatrixAgent(senderCommunicationID);
+
+    await this.matrixUserAdapter.verifyRoomMembershipOrFail(
+      matrixAgent.matrixClient,
+      addReactionData.roomID
+    );
+    this.logger.verbose?.(
+      `[Adding reaction] Adding reaction to message in room: ${addReactionData.roomID}`,
+      LogContext.COMMUNICATION
+    );
+    let messageId = '';
+    try {
+      messageId = await this.matrixAgentService.addReactionOnMessage(
+        matrixAgent,
+        addReactionData.roomID,
+        {
+          text: addReactionData.text,
+          messageID: addReactionData.messageID,
+        }
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `[Adding reaction] Unable to add reaction to message for user (${senderCommunicationID}): ${error}`,
+        LogContext.COMMUNICATION
+      );
+      throw error;
+    }
+    this.logger.verbose?.(
+      `...reaction added to message in room: ${addReactionData.roomID}`,
+      LogContext.COMMUNICATION
+    );
+
+    // Create the 'equivalent' message. Note that this can have a very minor timestamp offset
+    // from the actual message.
+    const timestamp = new Date().getTime();
+    return {
+      id: messageId,
+      message: message,
+      sender: addReactionData.senderID,
+      timestamp: timestamp,
+    };
+  }
+
+  async removeReactionToMessage(
+    removeReactionData: RoomRemoveMessageReactionPayload
+  ): Promise<boolean> {
+    const senderCommunicationID = removeReactionData.senderID;
+    const matrixAgent = await this.acquireMatrixAgent(senderCommunicationID);
+
+    await this.matrixUserAdapter.verifyRoomMembershipOrFail(
+      matrixAgent.matrixClient,
+      removeReactionData.roomID
+    );
+    this.logger.verbose?.(
+      `[Adding reaction] Removing reaction to message in room: ${removeReactionData.roomID}`,
+      LogContext.COMMUNICATION
+    );
+    try {
+      await this.matrixAgentService.removeReactionOnMessage(
+        matrixAgent,
+        removeReactionData.roomID,
+        removeReactionData.reactionID
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `[Message sending] Unable to add reaction to message for user (${senderCommunicationID}): ${error}`,
+        LogContext.COMMUNICATION
+      );
+      throw error;
+    }
+    this.logger.verbose?.(
+      `...reaction added to message in room: ${removeReactionData.roomID}`,
+      LogContext.COMMUNICATION
+    );
+
+    return true;
   }
 
   async editMessage(

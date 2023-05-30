@@ -263,9 +263,9 @@ export class MatrixRoomAdapter {
     let i = 1;
     for (const event of events) {
       this.logger.verbose?.(
-        `Event [${i}] - [${event.getType()}] - content: ${JSON.stringify(
-          event.getContent()
-        )}`,
+        `Event [${i}] - [${event.getType()}] - [${
+          event.event.event_id
+        }] - content: ${JSON.stringify(event.getContent())}`,
         LogContext.COMMUNICATION
       );
       i++;
