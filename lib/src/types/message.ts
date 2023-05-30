@@ -1,3 +1,4 @@
+import { IReaction } from './reaction';
 
 export class IMessage {
   id!: string;
@@ -7,4 +8,6 @@ export class IMessage {
   sender!: string;
 
   timestamp!: number;
+
+  reactions?: IReaction[];
 }

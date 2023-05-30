@@ -17,6 +17,7 @@ import { MatrixRoom } from './matrix.room';
 import { Preset, Visibility } from './matrix.room.dto.create.options';
 import { IRoomOpts } from './matrix.room.dto.options';
 import { MatrixRoomResponseMessage } from './matrix.room.dto.response.message';
+import { IReaction } from '../../../../../lib/dist';
 
 @Injectable()
 export class MatrixRoomAdapter {
@@ -328,14 +329,31 @@ export class MatrixRoomAdapter {
     timeline: MatrixRoomResponseMessage[]
   ): Promise<IMessage[]> {
     const messages: IMessage[] = [];
+    const reactionsMap = new Map<string, IReaction[]>();
 
-    for (const timelineMessage of timeline) {
-      if (this.matrixMessageAdapter.isEventToIgnore(timelineMessage)) continue;
-      const message =
-        this.matrixMessageAdapter.convertFromMatrixMessage(timelineMessage);
+    for (const timelineEvent of timeline) {
+      if (this.matrixMessageAdapter.isEventToIgnore(timelineEvent)) continue;
+      if (this.matrixMessageAdapter.isEventMessage(timelineEvent)) {
+        const message =
+          this.matrixMessageAdapter.convertFromMatrixMessage(timelineEvent);
 
-      messages.push(message);
+        messages.push(message);
+      }
+      if (this.matrixMessageAdapter.isEventReaction(timelineEvent)) {
+        const reaction =
+          this.matrixMessageAdapter.convertFromMatrixReaction(timelineEvent);
+
+        const messageReactions = reactionsMap.get(reaction.messageId) ?? [];
+        if (messageReactions) {
+          messageReactions.push(reaction);
+        }
+        reactionsMap.set(reaction.messageId, messageReactions);
+      }
     }
+    for (const message of messages) {
+      message.reactions = reactionsMap.get(message.id);
+    }
+
     this.logger.verbose?.(
       `[MatrixRoom] Timeline converted: ${timeline.length} events ==> ${messages.length} messages`,
       LogContext.COMMUNICATION
