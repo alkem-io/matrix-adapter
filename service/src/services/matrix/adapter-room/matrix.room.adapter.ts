@@ -17,7 +17,6 @@ import { MatrixRoom } from './matrix.room';
 import { Preset, Visibility } from './matrix.room.dto.create.options';
 import { IRoomOpts } from './matrix.room.dto.options';
 import { MatrixRoomResponseMessage } from './matrix.room.dto.response.message';
-import { IReaction } from '../../../../../lib/dist';
 
 @Injectable()
 export class MatrixRoomAdapter {
