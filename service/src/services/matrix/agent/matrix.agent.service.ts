@@ -194,7 +194,7 @@ export class MatrixAgentService {
           event_id: messageRequest.threadID,
           is_falling_back: true,
           ['m.in_reply_to']: {
-            event_id: messageRequest.lastMessageID,
+            event_id: messageRequest.threadID,
           },
         },
       }

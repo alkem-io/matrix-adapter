@@ -144,7 +144,6 @@ export class CommunicationAdapter {
         {
           text: sendMessageData.message,
           threadID: sendMessageData.threadID,
-          lastMessageID: sendMessageData.lastMessageID,
         }
       );
     } catch (error: any) {

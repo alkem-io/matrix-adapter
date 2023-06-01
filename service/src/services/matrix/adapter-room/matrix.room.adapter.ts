@@ -1,6 +1,5 @@
 import { RoomDirectResult } from '@alkemio/matrix-adapter-lib';
-import { RoomResult } from '@alkemio/matrix-adapter-lib';
-import { IMessage } from '@alkemio/matrix-adapter-lib';
+import { RoomResult, IMessage, IReaction } from '@alkemio/matrix-adapter-lib';
 import { LogContext } from '@common/enums';
 import { MatrixEntityNotFoundException } from '@common/exceptions';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
