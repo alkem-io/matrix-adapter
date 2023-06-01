@@ -5,6 +5,5 @@ export interface RoomSendMessageReplyPayload
   roomID: string;
   senderID: string;
   threadID: string;
-  lastMessageID: string;
   message: string;
 }
