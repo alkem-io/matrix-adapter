@@ -193,6 +193,7 @@ export class MatrixAgentService {
           rel_type: 'm.thread',
           event_id: messageRequest.threadID,
           is_falling_back: true,
+          // when events need to be represented in an unthreaded client, this field makes the event a reply to the thread root event
           ['m.in_reply_to']: {
             event_id: messageRequest.threadID,
           },
