@@ -1,7 +1,7 @@
 export class IReaction {
   id!: string;
 
-  text!: string;
+  emoji!: string;
 
   sender!: string;
 

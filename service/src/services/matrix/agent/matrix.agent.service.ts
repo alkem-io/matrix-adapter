@@ -216,7 +216,7 @@ export class MatrixAgentService {
         'm.relates_to': {
           rel_type: 'm.annotation',
           event_id: messageReaction.messageID,
-          key: messageReaction.text,
+          key: messageReaction.emoji,
         },
       }
     );

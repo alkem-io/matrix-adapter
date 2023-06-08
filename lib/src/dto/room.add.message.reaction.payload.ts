@@ -5,5 +5,5 @@ export interface RoomAddMessageReactionPayload
   roomID: string;
   senderID: string;
   messageID: string;
-  text: string;
+  emoji: string;
 }

@@ -27,6 +27,7 @@ import {
   RoomDeleteMessageResponsePayload,
   RoomSendMessageReplyPayload,
   RoomAddMessageReactionPayload,
+  RoomAddMessageReactionResponsePayload,
   RoomRemoveMessageReactionPayload,
 } from '@alkemio/matrix-adapter-lib';
 import { RoomMessageSenderResponsePayload } from '@alkemio/matrix-adapter-lib';
@@ -190,7 +191,7 @@ export class AppController {
   async roomAddReactionToMessage(
     @Payload() data: RoomAddMessageReactionPayload,
     @Ctx() context: RmqContext
-  ): Promise<RoomSendMessageResponsePayload> {
+  ): Promise<RoomAddMessageReactionResponsePayload> {
     this.logger.verbose?.(
       `${
         MatrixAdapterEventType.ROOM_ADD_REACTION_TO_MESSAGE
@@ -201,12 +202,12 @@ export class AppController {
     const originalMsg = context.getMessage();
 
     try {
-      const message = await this.communicationAdapter.addReactionToMessage(
+      const reaction = await this.communicationAdapter.addReactionToMessage(
         data
       );
       channel.ack(originalMsg);
-      const response: RoomSendMessageResponsePayload = {
-        message: message,
+      const response: RoomAddMessageReactionResponsePayload = {
+        reaction,
       };
 
       return response;

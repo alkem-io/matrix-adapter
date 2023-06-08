@@ -65,7 +65,7 @@ export class MatrixMessageAdapter {
     const sendingUserID = sender.userId;
 
     return {
-      text: content['m.relates_to']?.key || '',
+      emoji: content['m.relates_to']?.key || '',
       messageId: content['m.relates_to']?.event_id || '',
       sender: sendingUserID,
       timestamp: event.origin_server_ts || 0,

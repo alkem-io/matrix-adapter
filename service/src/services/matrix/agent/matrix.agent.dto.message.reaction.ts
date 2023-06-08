@@ -1,5 +1,4 @@
-import { MatrixAgentMessageRequest } from './matrix.agent.dto.message.request';
-
-export class MatrixAgentMessageReaction extends MatrixAgentMessageRequest {
+export class MatrixAgentMessageReaction {
   messageID!: string;
+  emoji!: string;
 }

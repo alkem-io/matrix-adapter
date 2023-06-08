@@ -1,7 +1,7 @@
-import { IMessage } from '..';
+import { IReaction } from '..';
 import { BaseMatrixAdapterEventResponsePayload } from './base.event.response.payload';
 
-export interface RoomSendMessageResponsePayload
+export interface RoomAddMessageReactionResponsePayload
   extends BaseMatrixAdapterEventResponsePayload {
-  message: IMessage;
+  reaction: IReaction;
 }

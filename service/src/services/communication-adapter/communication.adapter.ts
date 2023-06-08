@@ -26,6 +26,7 @@ import { RoomResult } from '@alkemio/matrix-adapter-lib';
 import { RoomDirectResult } from '@alkemio/matrix-adapter-lib';
 import { RoomDeleteMessagePayload } from '@alkemio/matrix-adapter-lib';
 import { SendMessageToUserPayload } from '@alkemio/matrix-adapter-lib';
+import { IReaction } from '@alkemio/matrix-adapter-lib';
 
 @Injectable()
 export class CommunicationAdapter {
@@ -171,9 +172,9 @@ export class CommunicationAdapter {
 
   async addReactionToMessage(
     addReactionData: RoomAddMessageReactionPayload
-  ): Promise<IMessage> {
+  ): Promise<IReaction> {
     // Todo: replace with proper data validation
-    const message = addReactionData.text;
+    const emoji = addReactionData.emoji;
 
     const senderCommunicationID = addReactionData.senderID;
     const matrixAgent = await this.acquireMatrixAgent(senderCommunicationID);
@@ -186,13 +187,13 @@ export class CommunicationAdapter {
       `[Adding reaction] Adding reaction to message in room: ${addReactionData.roomID}`,
       LogContext.COMMUNICATION
     );
-    let messageId = '';
+    let reactionId = '';
     try {
-      messageId = await this.matrixAgentService.addReactionOnMessage(
+      reactionId = await this.matrixAgentService.addReactionOnMessage(
         matrixAgent,
         addReactionData.roomID,
         {
-          text: addReactionData.text,
+          emoji: addReactionData.emoji,
           messageID: addReactionData.messageID,
         }
       );
@@ -212,8 +213,9 @@ export class CommunicationAdapter {
     // from the actual message.
     const timestamp = new Date().getTime();
     return {
-      id: messageId,
-      message: message,
+      id: reactionId,
+      messageId: addReactionData.messageID,
+      emoji: emoji,
       sender: addReactionData.senderID,
       timestamp: timestamp,
     };
