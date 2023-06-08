@@ -11,6 +11,8 @@ export * from './room.send.message.payload';
 export * from './room.send.message.response.payload';
 export * from './room.delete.message.payload';
 export * from './room.delete.message.response.payload';
+export * from './room.reaction.sender.payload';
+export * from './room.reaction.sender.response.payload';
 export * from './room.message.sender.payload';
 export * from './room.message.sender.response.payload';
 export * from './remove.user.from.rooms.payload';

@@ -338,6 +338,32 @@ export class CommunicationAdapter {
     return matchingMessage.sender;
   }
 
+  async getReactionSender(roomID: string, reactionID: string): Promise<string> {
+    // only the admin agent has knowledge of all rooms and synchronizes the state
+    const matrixElevatedAgent = await this.getMatrixManagementAgentElevated();
+    const matrixRoom = await this.matrixAgentService.getRoom(
+      matrixElevatedAgent,
+      roomID
+    );
+
+    const reactions =
+      await this.matrixRoomAdapter.getMatrixRoomTimelineReactions(
+        matrixElevatedAgent.matrixClient,
+        matrixRoom
+      );
+    const matchingReaction = reactions.find(
+      reaction => reaction.id === reactionID
+    );
+    if (!matchingReaction) {
+      throw new MatrixEntityNotFoundException(
+        `Unable to locate message (id: ${reactionID}) in room: ${matrixRoom.name} (${roomID})`,
+        LogContext.COMMUNICATION
+      );
+    }
+
+    return matchingReaction.sender;
+  }
+
   private async acquireMatrixAgent(matrixUserId: string) {
     if (!this.enabled) {
       throw new NotEnabledException(

@@ -31,6 +31,8 @@ import {
 } from '@alkemio/matrix-adapter-lib';
 import { RoomMessageSenderResponsePayload } from '@alkemio/matrix-adapter-lib';
 import { RoomMessageSenderPayload } from '@alkemio/matrix-adapter-lib';
+import { RoomReactionSenderResponsePayload } from '@alkemio/matrix-adapter-lib';
+import { RoomReactionSenderPayload } from '@alkemio/matrix-adapter-lib';
 import { CreateRoomPayload } from '@alkemio/matrix-adapter-lib';
 import { CreateRoomResponsePayload } from '@alkemio/matrix-adapter-lib';
 import { RoomsUserResponsePayload } from '@alkemio/matrix-adapter-lib';
@@ -302,6 +304,39 @@ export class AppController {
       return response;
     } catch (error) {
       const errorMessage = `Error when getting message sender on room: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
+  }
+
+  @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_REACTION_SENDER })
+  async roomReactionSender(
+    @Payload() data: RoomReactionSenderPayload,
+    @Ctx() context: RmqContext
+  ): Promise<RoomReactionSenderResponsePayload> {
+    this.logger.verbose?.(
+      `${
+        MatrixAdapterEventType.ROOM_MESSAGE_SENDER
+      } - payload: ${JSON.stringify(data)}`,
+      LogContext.EVENTS
+    );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
+
+    try {
+      const senderID = await this.communicationAdapter.getReactionSender(
+        data.roomID,
+        data.reactionID
+      );
+      channel.ack(originalMsg);
+      const response: RoomReactionSenderResponsePayload = {
+        senderID: senderID,
+      };
+
+      return response;
+    } catch (error) {
+      const errorMessage = `Error when getting reaction sender on room: ${error}`;
       this.logger.error(errorMessage, LogContext.COMMUNICATION);
       channel.ack(originalMsg);
       throw new RpcException(errorMessage);

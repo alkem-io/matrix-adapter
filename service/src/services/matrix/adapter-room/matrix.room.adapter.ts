@@ -8,6 +8,7 @@ import {
   IContent,
   ICreateRoomOpts,
   MatrixClient,
+  MatrixEvent,
   TimelineWindow,
 } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
@@ -323,6 +324,25 @@ export class MatrixRoomAdapter {
     return [];
   }
 
+  async getMatrixRoomTimelineReactions(
+    matrixClient: MatrixClient,
+    matrixRoom: MatrixRoom
+  ): Promise<IReaction[]> {
+    this.logger.verbose?.(
+      `[MatrixRoom] Obtaining messages on room: ${matrixRoom.name}`,
+      LogContext.COMMUNICATION
+    );
+
+    const timelineEvents = await this.getAllRoomEvents(
+      matrixClient,
+      matrixRoom
+    );
+    if (timelineEvents) {
+      return await this.convertMatrixTimelineToReactions(timelineEvents);
+    }
+    return [];
+  }
+
   async convertMatrixTimelineToMessages(
     timeline: MatrixRoomResponseMessage[]
   ): Promise<IMessage[]> {
@@ -357,6 +377,28 @@ export class MatrixRoomAdapter {
       LogContext.COMMUNICATION
     );
     return messages;
+  }
+
+  async convertMatrixTimelineToReactions(
+    timeline: MatrixEvent[]
+  ): Promise<IReaction[]> {
+    const reactions: IReaction[] = [];
+
+    for (const timelineEvent of timeline) {
+      if (this.matrixMessageAdapter.isEventToIgnore(timelineEvent)) continue;
+      if (this.matrixMessageAdapter.isEventReaction(timelineEvent)) {
+        const reaction =
+          this.matrixMessageAdapter.convertFromMatrixReaction(timelineEvent);
+
+        reactions.push(reaction);
+      }
+    }
+
+    this.logger.verbose?.(
+      `[MatrixRoom] Timeline converted: ${timeline.length} events ==> ${reactions.length} reactions`,
+      LogContext.COMMUNICATION
+    );
+    return reactions;
   }
 
   async getMatrixRoomMembers(

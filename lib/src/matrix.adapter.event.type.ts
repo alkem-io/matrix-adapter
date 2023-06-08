@@ -8,6 +8,7 @@ export enum MatrixAdapterEventType {
   ROOM_REMOVE_REACTION_TO_MESSAGE = 'roomRemoveReactionToMessage',
   ROOM_DELETE_MESSAGE = 'roomDeleteMessage',
   ROOM_MESSAGE_SENDER = 'roomMessageSender',
+  ROOM_REACTION_SENDER = 'roomReactionSender',
   ROOMS_USER = 'roomsUser',
   ROOMS_USER_DIRECT = 'roomsUserDirect',
   ROOMS = 'rooms',
