@@ -20,7 +20,7 @@ export class MatrixMessageAdapter {
   ) {}
 
   convertFromMatrixMessage(message: MatrixRoomResponseMessage): IMessage {
-    const { event, sender } = message;
+    const { event, sender, threadRootId } = message;
 
     // need to use getContent - should be able to resolve the edited value if any
     const content = message.getContent();
@@ -43,6 +43,7 @@ export class MatrixMessageAdapter {
       timestamp: event.origin_server_ts || 0,
       id: event.event_id || '',
       reactions: [],
+      threadID: threadRootId,
     };
   }
 

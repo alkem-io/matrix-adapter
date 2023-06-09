@@ -5,6 +5,8 @@ export class IMessage {
 
   message!: string;
 
+  threadID?: string;
+
   sender!: string;
 
   timestamp!: number;
