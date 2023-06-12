@@ -1,6 +1,7 @@
+import { IReaction } from '..';
 import { BaseMatrixAdapterEventResponsePayload } from './base.event.response.payload';
 
-export interface RoomMessageSenderResponsePayload
+export interface RoomAddMessageReactionResponsePayload
   extends BaseMatrixAdapterEventResponsePayload {
-  senderID: string;
+  reaction: IReaction;
 }

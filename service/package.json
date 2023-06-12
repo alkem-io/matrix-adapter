@@ -1,6 +1,6 @@
 {
   "name": "alkemio-matrix-adapter",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Alkemio Matrix Adapter service",
   "author": "Alkemio Foundation",
   "private": false,
@@ -34,7 +34,7 @@
     "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js --config src/config/typeorm.cli.config.ts"
   },
   "dependencies": {
-    "@alkemio/matrix-adapter-lib": "^0.2.1",
+    "@alkemio/matrix-adapter-lib": "^0.3.5",
     "@nestjs/axios": "^2.0.0",
     "@nestjs/common": "^9.4.0",
     "@nestjs/config": "^2.3.1",

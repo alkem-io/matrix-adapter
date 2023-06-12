@@ -1,4 +1,4 @@
-import { IMessage } from '@alkemio/matrix-adapter-lib';
+import { IMessage, IReaction } from '@alkemio/matrix-adapter-lib';
 import { LogContext } from '@common/enums';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
@@ -8,6 +8,11 @@ import { MatrixEntityNotFoundException } from '@src/common/exceptions';
 @Injectable()
 export class MatrixMessageAdapter {
   readonly EVENT_TYPE_MESSAGE = 'm.room.message';
+  readonly EVENT_TYPE_REACTION = 'm.reaction';
+  readonly FILTERED_EVENT_TYPES = [
+    this.EVENT_TYPE_MESSAGE,
+    this.EVENT_TYPE_REACTION,
+  ];
 
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
@@ -15,7 +20,7 @@ export class MatrixMessageAdapter {
   ) {}
 
   convertFromMatrixMessage(message: MatrixRoomResponseMessage): IMessage {
-    const { event, sender } = message;
+    const { event, sender, threadRootId } = message;
 
     // need to use getContent - should be able to resolve the edited value if any
     const content = message.getContent();
@@ -37,24 +42,83 @@ export class MatrixMessageAdapter {
       sender: sendingUserID,
       timestamp: event.origin_server_ts || 0,
       id: event.event_id || '',
+      reactions: [],
+      threadID: threadRootId,
     };
+  }
+
+  convertFromMatrixReaction(reaction: MatrixRoomResponseMessage): IReaction {
+    const { event, sender } = reaction;
+
+    // need to use getContent - should be able to resolve the edited value if any
+    const content = reaction.getContent();
+
+    // these are used to detect whether a message is a replacement one
+    // const isRelation = message.isRelation('m.replace');
+    // const mRelatesTo = message.getWireContent()['m.relates_to'];
+
+    if (!sender) {
+      throw new MatrixEntityNotFoundException(
+        `Unable to locate userId for sender: ${sender}`,
+        LogContext.MATRIX
+      );
+    }
+    const sendingUserID = sender.userId;
+
+    return {
+      emoji: content['m.relates_to']?.key || '',
+      messageId: content['m.relates_to']?.event_id || '',
+      sender: sendingUserID,
+      timestamp: event.origin_server_ts || 0,
+      id: event.event_id || '',
+    };
+  }
+
+  isEventMessage(timelineEvent: MatrixRoomResponseMessage): boolean {
+    const event = timelineEvent.event;
+
+    if (event.type == this.EVENT_TYPE_MESSAGE) return true;
+    return false;
+  }
+
+  isEventReaction(timelineEvent: MatrixRoomResponseMessage): boolean {
+    const event = timelineEvent.event;
+
+    if (event.type == this.EVENT_TYPE_REACTION) return true;
+    return false;
   }
 
   isEventToIgnore(message: MatrixRoomResponseMessage): boolean {
     const event = message.event;
-    // Only handle events that are for messages (more in there)
-    if (event.type !== this.EVENT_TYPE_MESSAGE) {
+
+    if (event.type && !this.FILTERED_EVENT_TYPES.includes(event.type)) {
       this.logger.verbose?.(
-        `[Timeline] Ignoring event of type: ${event.type} as it is not '${this.EVENT_TYPE_MESSAGE}' type `,
+        `[Timeline] Ignoring event of type: ${event.type} as it is not one of '${this.FILTERED_EVENT_TYPES}' types `,
         LogContext.COMMUNICATION
       );
       return true;
     }
 
     const content = message.getContent();
-    if (!content || !content.body) {
+    if (!content) {
       this.logger.verbose?.(
-        `[Timeline] Ignoring event with no content: ${event.type}`,
+        `[Timeline] Ignoring event with no content: ${event.type} - id: ${event.event_id}`,
+        LogContext.COMMUNICATION
+      );
+      return true;
+    }
+
+    if (event.type === this.EVENT_TYPE_MESSAGE && !content.body) {
+      this.logger.verbose?.(
+        `[Timeline] Ignoring mesage event with no content body: ${event.type} - id: ${event.event_id}`,
+        LogContext.COMMUNICATION
+      );
+      return true;
+    }
+
+    if (event.type === this.EVENT_TYPE_REACTION && !content['m.relates_to']) {
+      this.logger.verbose?.(
+        `[Timeline] Ignoring reaction event with no realates_to property: ${event.type} - id: ${event.event_id}`,
         LogContext.COMMUNICATION
       );
       return true;
@@ -68,7 +132,7 @@ export class MatrixMessageAdapter {
     //   //return true;
     // }
     this.logger.verbose?.(
-      `[Timeline] Processing event which is a message: ${event.type} - ${event.event_id}`,
+      `[Timeline] Processing event: ${event.type} - ${event.event_id}`,
       LogContext.COMMUNICATION
     );
     return false;

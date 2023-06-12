@@ -1,6 +1,5 @@
 import { RoomDirectResult } from '@alkemio/matrix-adapter-lib';
-import { RoomResult } from '@alkemio/matrix-adapter-lib';
-import { IMessage } from '@alkemio/matrix-adapter-lib';
+import { RoomResult, IMessage, IReaction } from '@alkemio/matrix-adapter-lib';
 import { LogContext } from '@common/enums';
 import { MatrixEntityNotFoundException } from '@common/exceptions';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
@@ -9,6 +8,7 @@ import {
   IContent,
   ICreateRoomOpts,
   MatrixClient,
+  MatrixEvent,
   TimelineWindow,
 } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
@@ -259,7 +259,19 @@ export class MatrixRoomAdapter {
       }
     }
 
-    return timelineWindow.getEvents();
+    const events = timelineWindow.getEvents();
+    let i = 1;
+    for (const event of events) {
+      this.logger.verbose?.(
+        `Event [${i}] - [${event.getType()}] - [${
+          event.event.event_id
+        }] - content: ${JSON.stringify(event.getContent())}`,
+        LogContext.COMMUNICATION
+      );
+      i++;
+    }
+
+    return events;
   }
 
   async convertMatrixRoomToDirectRoom(
@@ -312,23 +324,81 @@ export class MatrixRoomAdapter {
     return [];
   }
 
+  async getMatrixRoomTimelineReactions(
+    matrixClient: MatrixClient,
+    matrixRoom: MatrixRoom
+  ): Promise<IReaction[]> {
+    this.logger.verbose?.(
+      `[MatrixRoom] Obtaining messages on room: ${matrixRoom.name}`,
+      LogContext.COMMUNICATION
+    );
+
+    const timelineEvents = await this.getAllRoomEvents(
+      matrixClient,
+      matrixRoom
+    );
+    if (timelineEvents) {
+      return await this.convertMatrixTimelineToReactions(timelineEvents);
+    }
+    return [];
+  }
+
   async convertMatrixTimelineToMessages(
     timeline: MatrixRoomResponseMessage[]
   ): Promise<IMessage[]> {
     const messages: IMessage[] = [];
+    const reactionsMap = new Map<string, IReaction[]>();
 
-    for (const timelineMessage of timeline) {
-      if (this.matrixMessageAdapter.isEventToIgnore(timelineMessage)) continue;
-      const message =
-        this.matrixMessageAdapter.convertFromMatrixMessage(timelineMessage);
+    for (const timelineEvent of timeline) {
+      if (this.matrixMessageAdapter.isEventToIgnore(timelineEvent)) continue;
+      if (this.matrixMessageAdapter.isEventMessage(timelineEvent)) {
+        const message =
+          this.matrixMessageAdapter.convertFromMatrixMessage(timelineEvent);
 
-      messages.push(message);
+        messages.push(message);
+      }
+      if (this.matrixMessageAdapter.isEventReaction(timelineEvent)) {
+        const reaction =
+          this.matrixMessageAdapter.convertFromMatrixReaction(timelineEvent);
+
+        const messageReactions = reactionsMap.get(reaction.messageId) ?? [];
+        if (messageReactions) {
+          messageReactions.push(reaction);
+        }
+        reactionsMap.set(reaction.messageId, messageReactions);
+      }
     }
+    for (const message of messages) {
+      message.reactions = reactionsMap.get(message.id);
+    }
+
     this.logger.verbose?.(
       `[MatrixRoom] Timeline converted: ${timeline.length} events ==> ${messages.length} messages`,
       LogContext.COMMUNICATION
     );
     return messages;
+  }
+
+  async convertMatrixTimelineToReactions(
+    timeline: MatrixEvent[]
+  ): Promise<IReaction[]> {
+    const reactions: IReaction[] = [];
+
+    for (const timelineEvent of timeline) {
+      if (this.matrixMessageAdapter.isEventToIgnore(timelineEvent)) continue;
+      if (this.matrixMessageAdapter.isEventReaction(timelineEvent)) {
+        const reaction =
+          this.matrixMessageAdapter.convertFromMatrixReaction(timelineEvent);
+
+        reactions.push(reaction);
+      }
+    }
+
+    this.logger.verbose?.(
+      `[MatrixRoom] Timeline converted: ${timeline.length} events ==> ${reactions.length} reactions`,
+      LogContext.COMMUNICATION
+    );
+    return reactions;
   }
 
   async getMatrixRoomMembers(
