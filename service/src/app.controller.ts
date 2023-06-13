@@ -25,9 +25,15 @@ import {
   RoomSendMessageResponsePayload,
   RoomDeleteMessagePayload,
   RoomDeleteMessageResponsePayload,
+  RoomSendMessageReplyPayload,
+  RoomAddMessageReactionPayload,
+  RoomAddMessageReactionResponsePayload,
+  RoomRemoveMessageReactionPayload,
 } from '@alkemio/matrix-adapter-lib';
 import { RoomMessageSenderResponsePayload } from '@alkemio/matrix-adapter-lib';
 import { RoomMessageSenderPayload } from '@alkemio/matrix-adapter-lib';
+import { RoomReactionSenderResponsePayload } from '@alkemio/matrix-adapter-lib';
+import { RoomReactionSenderPayload } from '@alkemio/matrix-adapter-lib';
 import { CreateRoomPayload } from '@alkemio/matrix-adapter-lib';
 import { CreateRoomResponsePayload } from '@alkemio/matrix-adapter-lib';
 import { RoomsUserResponsePayload } from '@alkemio/matrix-adapter-lib';
@@ -151,6 +157,97 @@ export class AppController {
     }
   }
 
+  @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_SEND_MESSAGE_REPLY })
+  async roomSendMessageReply(
+    @Payload() data: RoomSendMessageReplyPayload,
+    @Ctx() context: RmqContext
+  ): Promise<RoomSendMessageResponsePayload> {
+    this.logger.verbose?.(
+      `${
+        MatrixAdapterEventType.ROOM_SEND_MESSAGE_REPLY
+      } - payload: ${JSON.stringify(data)}`,
+      LogContext.EVENTS
+    );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
+
+    try {
+      const message = await this.communicationAdapter.sendMessageReply(data);
+      channel.ack(originalMsg);
+      const response: RoomSendMessageResponsePayload = {
+        message: message,
+      };
+
+      return response;
+    } catch (error) {
+      const errorMessage = `Error when sending message to room: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
+  }
+
+  @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_ADD_REACTION_TO_MESSAGE })
+  async roomAddReactionToMessage(
+    @Payload() data: RoomAddMessageReactionPayload,
+    @Ctx() context: RmqContext
+  ): Promise<RoomAddMessageReactionResponsePayload> {
+    this.logger.verbose?.(
+      `${
+        MatrixAdapterEventType.ROOM_ADD_REACTION_TO_MESSAGE
+      } - payload: ${JSON.stringify(data)}`,
+      LogContext.EVENTS
+    );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
+
+    try {
+      const reaction = await this.communicationAdapter.addReactionToMessage(
+        data
+      );
+      channel.ack(originalMsg);
+      const response: RoomAddMessageReactionResponsePayload = {
+        reaction,
+      };
+
+      return response;
+    } catch (error) {
+      const errorMessage = `Error when adding reaction to message in room: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
+  }
+
+  @MessagePattern({
+    cmd: MatrixAdapterEventType.ROOM_REMOVE_REACTION_TO_MESSAGE,
+  })
+  async roomRemoveReactionToMessage(
+    @Payload() data: RoomRemoveMessageReactionPayload,
+    @Ctx() context: RmqContext
+  ): Promise<boolean> {
+    this.logger.verbose?.(
+      `${
+        MatrixAdapterEventType.ROOM_REMOVE_REACTION_TO_MESSAGE
+      } - payload: ${JSON.stringify(data)}`,
+      LogContext.EVENTS
+    );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
+
+    try {
+      await this.communicationAdapter.removeReactionToMessage(data);
+      channel.ack(originalMsg);
+
+      return true;
+    } catch (error) {
+      const errorMessage = `Error when removing reaction to message in room: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
+  }
+
   @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_DELETE_MESSAGE })
   async roomDeleteMessage(
     @Payload() data: RoomDeleteMessagePayload,
@@ -208,6 +305,39 @@ export class AppController {
       return response;
     } catch (error) {
       const errorMessage = `Error when getting message sender on room: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
+  }
+
+  @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_REACTION_SENDER })
+  async roomReactionSender(
+    @Payload() data: RoomReactionSenderPayload,
+    @Ctx() context: RmqContext
+  ): Promise<RoomReactionSenderResponsePayload> {
+    this.logger.verbose?.(
+      `${
+        MatrixAdapterEventType.ROOM_MESSAGE_SENDER
+      } - payload: ${JSON.stringify(data)}`,
+      LogContext.EVENTS
+    );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
+
+    try {
+      const senderID = await this.communicationAdapter.getReactionSender(
+        data.roomID,
+        data.reactionID
+      );
+      channel.ack(originalMsg);
+      const response: RoomReactionSenderResponsePayload = {
+        senderID: senderID,
+      };
+
+      return response;
+    } catch (error) {
+      const errorMessage = `Error when getting reaction sender on room: ${error}`;
       this.logger.error(errorMessage, LogContext.COMMUNICATION);
       channel.ack(originalMsg);
       throw new RpcException(errorMessage);
