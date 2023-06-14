@@ -369,7 +369,7 @@ export class MatrixRoomAdapter {
       }
     }
     for (const message of messages) {
-      message.reactions = reactionsMap.get(message.id);
+      message.reactions = reactionsMap.get(message.id) ?? [];
     }
 
     this.logger.verbose?.(
