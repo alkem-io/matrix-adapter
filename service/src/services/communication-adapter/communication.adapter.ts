@@ -169,6 +169,7 @@ export class CommunicationAdapter {
       sender: sendMessageData.senderID,
       timestamp: timestamp,
       reactions: [],
+      threadID: sendMessageData.threadID,
     };
   }
 
