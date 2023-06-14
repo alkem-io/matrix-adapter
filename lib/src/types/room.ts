@@ -1,4 +1,4 @@
-import { IMessage } from "./message";
+import { IMessage } from './message';
 
 export class RoomResult {
   id!: string;
