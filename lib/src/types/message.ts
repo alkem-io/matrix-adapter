@@ -11,5 +11,5 @@ export class IMessage {
 
   timestamp!: number;
 
-  reactions?: IReaction[];
+  reactions!: IReaction[];
 }

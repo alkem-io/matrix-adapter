@@ -117,6 +117,7 @@ export class CommunicationAdapter {
       message: message,
       sender: sendMessageData.senderID,
       timestamp: timestamp,
+      reactions: [],
     };
   }
 
@@ -167,6 +168,7 @@ export class CommunicationAdapter {
       message: message,
       sender: sendMessageData.senderID,
       timestamp: timestamp,
+      reactions: [],
     };
   }
 
