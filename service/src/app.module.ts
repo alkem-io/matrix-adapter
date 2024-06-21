@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER } from '@nestjs/core';
 import { WinstonModule } from 'nest-winston';
+import { HealthModule } from '@services/health';
 import { AppController } from './app.controller';
 import { WinstonConfigService } from './config';
 import configuration from './config/configuration';
@@ -21,6 +22,7 @@ import { CommunicationAdapterModule } from './services/communication-adapter/com
     }),
     BootstrapModule,
     CommunicationAdapterModule,
+    HealthModule,
   ],
   providers: [
     {
