@@ -62,6 +62,8 @@ hosting:
 
   # the size of the agent pool to use for managing agent wrappers around Matrix client
   agentpool_size: ${COMMUNICATIONS_AGENTPOOL_SIZE}:50
+  # The port exposing the REST endpoint
+  port: ${PORT}:4006
 
 # matrix configuration #
 matrix:
