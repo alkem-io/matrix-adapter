@@ -77,6 +77,14 @@ matrix:
     # Synapse shared secret, defined in homeserver.yaml on the Synapse instance.
     shared_secret: ${SYNAPSE_SERVER_SHARED_SECRET}:n#P.uIl8IDOYPR-fiLzDoFw9ZPvTIlYg7*F9*~eaDZFK#;.KRg
 
+  client:
+    # The URL of the timeline support client
+    timelineSupport: ${MATRIX_CLIENT_TIMELINE_SUPPORT}:true
+    # The polling timeout of the timeline support client
+    startupPollTimeout: ${MATRIX_CLIENT_STARTUP_POLL_TIMEOUT}:100000
+    # The polling timeout of the timeline support client
+    startupInitialSyncLimit: ${MATRIX_CLIENT_STARTUP_SYNC_LIMIT}:20
+
   admin:
     # The admin account that is created / used to administer the regular users on the Synapse server
     username: ${SYNAPSE_ADMIN_USERNAME}:matrixadmin@alkem.io
