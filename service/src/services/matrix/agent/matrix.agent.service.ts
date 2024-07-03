@@ -2,7 +2,12 @@ import { ConfigurationTypes, LogContext } from '@common/enums';
 import { MatrixEntityNotFoundException } from '@common/exceptions';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createClient, IContent, MatrixClient } from 'matrix-js-sdk';
+import {
+  createClient,
+  IContent,
+  MatrixClient,
+  ICreateClientOpts,
+} from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixRoom } from '../adapter-room/matrix.room';
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
@@ -51,12 +56,17 @@ export class MatrixAgentService {
       throw new Error('Matrix configuration is not provided');
     }
 
-    return createClient({
+    const timelineSupport: boolean = this.configService.get(
+      ConfigurationTypes.MATRIX
+    )?.client.timelineSupport;
+    const createClientInput: ICreateClientOpts = {
       baseUrl: baseUrl,
       idBaseUrl: idBaseUrl,
       userId: operator.username,
       accessToken: operator.accessToken,
-    });
+      timelineSupport: timelineSupport,
+    };
+    return createClient(createClientInput);
   }
 
   async getDirectRooms(matrixAgent: IMatrixAgent): Promise<MatrixRoom[]> {
