@@ -40,6 +40,7 @@ export class MatrixAgentService {
       matrixClient,
       this.matrixRoomAdapter,
       this.matrixMessageAdapter,
+      this.configService,
       this.logger
     );
   }
@@ -59,6 +60,11 @@ export class MatrixAgentService {
     const timelineSupport: boolean = this.configService.get(
       ConfigurationTypes.MATRIX
     )?.client.timelineSupport;
+
+    this.logger.verbose?.(
+      `Creating Matrix Client for ${operator.username} using timeline flag: ${timelineSupport}`,
+      LogContext.MATRIX
+    );
     const createClientInput: ICreateClientOpts = {
       baseUrl: baseUrl,
       idBaseUrl: idBaseUrl,

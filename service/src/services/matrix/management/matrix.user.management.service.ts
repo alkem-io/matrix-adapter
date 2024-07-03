@@ -43,6 +43,10 @@ export class MatrixUserManagementService {
     const timelineSupport: boolean = this.configService.get(
       ConfigurationTypes.MATRIX
     )?.client.timelineSupport;
+    this.logger.verbose?.(
+      `Creating Matrix Client for management using timeline flag: ${timelineSupport}`,
+      LogContext.MATRIX
+    );
     const createClientInput: ICreateClientOpts = {
       baseUrl: this.baseUrl,
       idBaseUrl: this.idBaseUrl,
