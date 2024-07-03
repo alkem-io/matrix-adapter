@@ -1,4 +1,4 @@
-import { LogContext } from '@common/enums';
+import { ConfigurationTypes, LogContext } from '@common/enums';
 import { LoggerService } from '@nestjs/common';
 import {
   autoAcceptRoomGuardFactory,
@@ -17,7 +17,8 @@ import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter'
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
 import { IMatrixAgent } from './matrix.agent.interface';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
-import { MatrixClient } from 'matrix-js-sdk';
+import { MatrixClient, IStartClientOpts } from 'matrix-js-sdk';
+import { ConfigService } from '@nestjs/config';
 
 export type MatrixAgentStartOptions = {
   registerTimelineMonitor?: boolean;
@@ -30,17 +31,20 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
   eventDispatcher: MatrixEventDispatcher;
   roomAdapter: MatrixRoomAdapter;
   messageAdapter: MatrixMessageAdapter;
+  configService: ConfigService;
 
   constructor(
     matrixClient: MatrixClient,
     roomAdapter: MatrixRoomAdapter,
     messageAdapter: MatrixMessageAdapter,
+    configService: ConfigService,
     private logger: LoggerService
   ) {
     this.matrixClient = matrixClient;
     this.eventDispatcher = new MatrixEventDispatcher(this.matrixClient);
     this.roomAdapter = roomAdapter;
     this.messageAdapter = messageAdapter;
+    this.configService = configService;
   }
 
   attach(handler: IMatrixEventHandler) {
@@ -77,7 +81,27 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
       );
     });
 
-    await this.matrixClient.startClient({});
+    const pollTimeout = Number(
+      this.configService.get(ConfigurationTypes.MATRIX)?.client
+        .startupPollTimeout
+    );
+
+    const initialSyncLimit = Number(
+      this.configService.get(ConfigurationTypes.MATRIX)?.client
+        .startupInitialSyncLimit
+    );
+
+    this.logger.verbose?.(
+      `starting up with pollTimeout: ${pollTimeout} and initialSyncLimit: ${initialSyncLimit}`,
+      LogContext.MATRIX
+    );
+
+    const startClientOptions: IStartClientOpts = {
+      disablePresence: true,
+      initialSyncLimit: initialSyncLimit,
+      pollTimeout: pollTimeout,
+    };
+    await this.matrixClient.startClient(startClientOptions);
     await startComplete;
 
     const eventHandler: IMatrixEventHandler = {

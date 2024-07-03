@@ -80,6 +80,10 @@ matrix:
   client:
     # The URL of the timeline support client
     timelineSupport: ${MATRIX_CLIENT_TIMELINE_SUPPORT}:true
+    # The polling timeout of the timeline support client
+    startupPollTimeout: ${MATRIX_CLIENT_STARTUP_POLL_TIMEOUT}:100000
+    # The polling timeout of the timeline support client
+    startupInitialSyncLimit: ${MATRIX_CLIENT_STARTUP_SYNC_LIMIT}:20
 
   admin:
     # The admin account that is created / used to administer the regular users on the Synapse server
