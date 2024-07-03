@@ -4,9 +4,11 @@ import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   createClient,
-  IContent,
   MatrixClient,
   ICreateClientOpts,
+  EventType,
+  MsgType,
+  RelationType,
 } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixRoom } from '../adapter-room/matrix.room';
@@ -20,6 +22,10 @@ import { IMatrixAgent } from './matrix.agent.interface';
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
 import { MatrixAgentMessageReply } from './matrix.agent.dto.message.reply';
 import { MatrixAgentMessageReaction } from './matrix.agent.dto.message.reaction';
+// import {
+//   ReactionEventContent,
+//   RoomMessageEventContent,
+// } from 'matrix-js-sdk/lib/types';
 
 @Injectable()
 export class MatrixAgentService {
@@ -185,10 +191,14 @@ export class MatrixAgentService {
     roomId: string,
     messageRequest: MatrixAgentMessageRequest
   ): Promise<string> {
+    const content: any = {
+      body: messageRequest.text,
+      msgtype: MsgType.Text,
+    };
     const response = await matrixAgent.matrixClient.sendEvent(
       roomId,
-      this.matrixMessageAdapter.EVENT_TYPE_MESSAGE,
-      { body: messageRequest.text, msgtype: 'm.text' }
+      EventType.RoomMessage,
+      content
     );
 
     return response.event_id;
@@ -199,22 +209,24 @@ export class MatrixAgentService {
     roomId: string,
     messageRequest: MatrixAgentMessageReply
   ): Promise<string> {
+    const content: any = {
+      msgtype: MsgType.Text,
+      body: messageRequest.text,
+      ['m.relates_to']: {
+        rel_type: RelationType.Thread,
+        event_id: messageRequest.threadID,
+        //is_falling_back: true,
+        // when events need to be represented in an unthreaded client, this field makes the event a reply to the thread root event
+        // ['m.in_reply_to']: {
+        //   event_id: messageRequest.threadID,
+        // },
+      },
+    };
+
     const response = await matrixAgent.matrixClient.sendEvent(
       roomId,
-      this.matrixMessageAdapter.EVENT_TYPE_MESSAGE,
-      {
-        msgtype: 'm.text',
-        body: messageRequest.text,
-        ['m.relates_to']: {
-          rel_type: 'm.thread',
-          event_id: messageRequest.threadID,
-          is_falling_back: true,
-          // when events need to be represented in an unthreaded client, this field makes the event a reply to the thread root event
-          ['m.in_reply_to']: {
-            event_id: messageRequest.threadID,
-          },
-        },
-      }
+      EventType.RoomMessage,
+      content
     );
 
     return response.event_id;
@@ -225,16 +237,18 @@ export class MatrixAgentService {
     roomId: string,
     messageReaction: MatrixAgentMessageReaction
   ): Promise<string> {
+    const content: any = {
+      'm.relates_to': {
+        rel_type: RelationType.Annotation,
+        event_id: messageReaction.messageID,
+        key: messageReaction.emoji,
+      },
+    };
+
     const response = await matrixAgent.matrixClient.sendEvent(
       roomId,
-      this.matrixMessageAdapter.EVENT_TYPE_REACTION,
-      {
-        'm.relates_to': {
-          rel_type: 'm.annotation',
-          event_id: messageReaction.messageID,
-          key: messageReaction.emoji,
-        },
-      }
+      EventType.Reaction,
+      content
     );
 
     return response.event_id;
@@ -255,23 +269,24 @@ export class MatrixAgentService {
     messageId: string,
     messageRequest: MatrixAgentMessageRequest
   ) {
-    const newContent: IContent = {
-      msgtype: 'm.text',
-      body: messageRequest.text,
-    };
-    await matrixAgent.matrixClient.sendMessage(
-      roomId,
-      Object.assign(
-        {
-          'm.new_content': newContent,
-          'm.relates_to': {
-            rel_type: 'm.replace',
-            event_id: messageId,
-          },
-        },
-        newContent
-      )
+    this.logger.verbose?.(
+      `Editing message: ${messageId} ${matrixAgent} ${roomId} ${messageRequest}`,
+      LogContext.COMMUNICATION
     );
+    // const newContent: IContent = {
+    //   msgtype: MsgType.Text,
+    //   body: messageRequest.text,
+    // };
+    // const content: RoomMessageEventContent = {
+    //   msgtype: MsgType.Text,
+    //   'm.new_content': newContent,
+    //   'm.relates_to': {
+    //     rel_type: 'm.replace',
+    //     event_id: messageId,
+    //   },
+    //   body: messageRequest.text,
+    // };
+    // await matrixAgent.matrixClient.sendMessage(roomId, content);
   }
 
   async deleteMessage(
