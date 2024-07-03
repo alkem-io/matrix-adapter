@@ -40,10 +40,13 @@ export class MatrixUserManagementService {
 
     // Create a single instance of the matrix client - non authenticated
     // Todo: should be handed (injected) to this client instance externally!
+    const timelineSupport: boolean = this.configService.get(
+      ConfigurationTypes.MATRIX
+    )?.client.timelineSupport;
     const createClientInput: ICreateClientOpts = {
       baseUrl: this.baseUrl,
       idBaseUrl: this.idBaseUrl,
-      timelineSupport: true,
+      timelineSupport: timelineSupport,
     };
     this._matrixClient = createClient(createClientInput);
   }

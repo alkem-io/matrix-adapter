@@ -56,12 +56,15 @@ export class MatrixAgentService {
       throw new Error('Matrix configuration is not provided');
     }
 
+    const timelineSupport: boolean = this.configService.get(
+      ConfigurationTypes.MATRIX
+    )?.client.timelineSupport;
     const createClientInput: ICreateClientOpts = {
       baseUrl: baseUrl,
       idBaseUrl: idBaseUrl,
       userId: operator.username,
       accessToken: operator.accessToken,
-      timelineSupport: true,
+      timelineSupport: timelineSupport,
     };
     return createClient(createClientInput);
   }
