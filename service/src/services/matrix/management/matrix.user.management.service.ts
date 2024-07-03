@@ -2,7 +2,7 @@ import { AxiosError } from 'axios';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { MatrixClient, createClient, ICreateClientOpts } from 'matrix-js-sdk';
+import { MatrixClient, createClient } from 'matrix-js-sdk';
 import { MatrixCryptographyService } from '@services/matrix/cryptography/matrix.cryptography.service';
 import { ConfigurationTypes, LogContext } from '@common/enums';
 import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter';
@@ -47,7 +47,7 @@ export class MatrixUserManagementService {
       `Creating Matrix Client for management using timeline flag: ${timelineSupport}`,
       LogContext.MATRIX
     );
-    const createClientInput: ICreateClientOpts = {
+    const createClientInput: any = {
       baseUrl: this.baseUrl,
       idBaseUrl: this.idBaseUrl,
       timelineSupport: timelineSupport,
