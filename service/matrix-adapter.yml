@@ -81,7 +81,8 @@ matrix:
     # The URL of the timeline support client
     timelineSupport: ${MATRIX_CLIENT_TIMELINE_SUPPORT}:true
     # The polling timeout of the timeline support client
-    startupPollTimeout: ${MATRIX_CLIENT_STARTUP_POLL_TIMEOUT}:10000
+    startupPollTimeout: ${MATRIX_CLIENT_STARTUP_POLL_TIMEOUT}:30000 # not used anyway?
+
     # The polling timeout of the timeline support client
     startupInitialSyncLimit: ${MATRIX_CLIENT_STARTUP_SYNC_LIMIT}:20
 
