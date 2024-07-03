@@ -1,6 +1,6 @@
 {
   "name": "alkemio-matrix-adapter",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "Alkemio Matrix Adapter service",
   "author": "Alkemio Foundation",
   "private": false,
@@ -46,7 +46,7 @@
     "cross-env": "^7.0.3",
     "crypto-js": "^4.1.1",
     "dotenv": "^10.0.0",
-    "matrix-js-sdk": "^25.0.0",
+    "matrix-js-sdk": "^32.4.0",
     "module-alias": "^2.2.2",
     "nest-winston": "^1.9.1",
     "winston": "^3.3.3",

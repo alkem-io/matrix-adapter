@@ -4,15 +4,11 @@ import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixRoomResponseMessage } from '../adapter-room/matrix.room.dto.response.message';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions';
+import { EventType } from 'matrix-js-sdk';
 
 @Injectable()
 export class MatrixMessageAdapter {
-  readonly EVENT_TYPE_MESSAGE = 'm.room.message';
-  readonly EVENT_TYPE_REACTION = 'm.reaction';
-  readonly FILTERED_EVENT_TYPES = [
-    this.EVENT_TYPE_MESSAGE,
-    this.EVENT_TYPE_REACTION,
-  ];
+  readonly FILTERED_EVENT_TYPES = [EventType.RoomMessage, EventType.Reaction];
 
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
@@ -77,26 +73,30 @@ export class MatrixMessageAdapter {
   isEventMessage(timelineEvent: MatrixRoomResponseMessage): boolean {
     const event = timelineEvent.event;
 
-    if (event.type == this.EVENT_TYPE_MESSAGE) return true;
+    if (event.type == EventType.RoomMessage) return true;
     return false;
   }
 
   isEventReaction(timelineEvent: MatrixRoomResponseMessage): boolean {
     const event = timelineEvent.event;
 
-    if (event.type == this.EVENT_TYPE_REACTION) return true;
+    if (event.type == EventType.Reaction) return true;
     return false;
   }
 
   isEventToIgnore(message: MatrixRoomResponseMessage): boolean {
     const event = message.event;
 
-    if (event.type && !this.FILTERED_EVENT_TYPES.includes(event.type)) {
-      this.logger.verbose?.(
-        `[Timeline] Ignoring event of type: ${event.type} as it is not one of '${this.FILTERED_EVENT_TYPES}' types `,
-        LogContext.COMMUNICATION
-      );
-      return true;
+    if (event.type) {
+      for (const type of this.FILTERED_EVENT_TYPES) {
+        if (event.type === type) {
+          this.logger.verbose?.(
+            `[Timeline] Ignoring event of type: ${event.type} as it is not one of '${this.FILTERED_EVENT_TYPES}' types `,
+            LogContext.COMMUNICATION
+          );
+          return true;
+        }
+      }
     }
 
     const content = message.getContent();
@@ -108,7 +108,7 @@ export class MatrixMessageAdapter {
       return true;
     }
 
-    if (event.type === this.EVENT_TYPE_MESSAGE && !content.body) {
+    if (event.type === EventType.RoomMessage && !content.body) {
       this.logger.verbose?.(
         `[Timeline] Ignoring mesage event with no content body: ${event.type} - id: ${event.event_id}`,
         LogContext.COMMUNICATION
@@ -116,7 +116,7 @@ export class MatrixMessageAdapter {
       return true;
     }
 
-    if (event.type === this.EVENT_TYPE_REACTION && !content['m.relates_to']) {
+    if (event.type === EventType.Reaction && !content['m.relates_to']) {
       this.logger.verbose?.(
         `[Timeline] Ignoring reaction event with no realates_to property: ${event.type} - id: ${event.event_id}`,
         LogContext.COMMUNICATION

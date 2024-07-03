@@ -6,7 +6,7 @@ import {
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MatrixAgentPool } from '@services/matrix/agent-pool/matrix.agent.pool';
-import { MatrixClient } from 'matrix-js-sdk';
+import { JoinRule, MatrixClient } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixRoomAdapter } from '@services/matrix/adapter-room/matrix.room.adapter';
 import { MatrixUserAdapter } from '@services/matrix/adapter-user/matrix.user.adapter';
@@ -889,7 +889,7 @@ export class CommunicationAdapter {
             elevatedAgent.matrixClient,
             roomID,
             // not sure where to find the enums - reverse engineered this from synapse
-            allowGuests ? 'public' : 'invite'
+            allowGuests ? JoinRule.Public : JoinRule.Invite
           );
 
           const oldRoom = await this.matrixRoomAdapter.getMatrixRoom(

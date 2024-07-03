@@ -5,8 +5,10 @@ import { MatrixEntityNotFoundException } from '@common/exceptions';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import {
   Direction,
+  EventType,
   IContent,
   ICreateRoomOpts,
+  JoinRule,
   MatrixClient,
   MatrixEvent,
   TimelineWindow,
@@ -17,6 +19,7 @@ import { MatrixRoom } from './matrix.room';
 import { Preset, Visibility } from './matrix.room.dto.create.options';
 import { IRoomOpts } from './matrix.room.dto.options';
 import { MatrixRoomResponseMessage } from './matrix.room.dto.response.message';
+// import { RoomJoinRulesEventContent } from 'matrix-js-sdk/lib/types';
 
 @Injectable()
 export class MatrixRoomAdapter {
@@ -129,7 +132,7 @@ export class MatrixRoomAdapter {
   async changeRoomJoinRuleState(
     matrixClient: MatrixClient,
     roomID: string,
-    state: string
+    state: JoinRule
   ): Promise<void> {
     if (roomID === '')
       throw new MatrixEntityNotFoundException(
@@ -137,9 +140,11 @@ export class MatrixRoomAdapter {
         LogContext.COMMUNICATION
       );
 
-    await matrixClient.sendStateEvent(roomID, 'm.room.join_rules', {
+    // This was 'm.room.join_rules'
+    const content: any = {
       join_rule: state,
-    });
+    };
+    await matrixClient.sendStateEvent(roomID, EventType.RoomJoinRules, content);
   }
 
   public async getJoinRule(
