@@ -328,10 +328,17 @@ export class CommunicationAdapter {
     // when deleting a message use the global admin account
     // the possibility to use native matrix power levels is there
     // but we still don't have the infrastructure to support it
-    const matrixAgent = await this.getMatrixManagementAgentElevated();
+    const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
+
+    const matrixClient = matrixAgentElevated.matrixClient;
+    const adminUser = this.getUserIdFromMatrixClient(matrixClient);
+
+    const roomID = deleteMessageData.roomID;
+    await this.addUserToRoom(roomID, adminUser);
+    this.logger.verbose?.(`User added to ${roomID} room`);
 
     await this.matrixAgentService.deleteMessage(
-      matrixAgent,
+      matrixAgentElevated,
       deleteMessageData.roomID,
       deleteMessageData.messageID
     );
