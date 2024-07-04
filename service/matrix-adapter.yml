@@ -88,6 +88,6 @@ matrix:
 
   admin:
     # The admin account that is created / used to administer the regular users on the Synapse server
-    username: ${SYNAPSE_ADMIN_USERNAME}:matrixadmin19@alkem.io
+    username: ${SYNAPSE_ADMIN_USERNAME}:matrixadmin@alkem.io
     password: ${SYNAPSE_ADMIN_PASSWORD}:change_me_now
 
