@@ -102,6 +102,7 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
       pollTimeout: pollTimeout,
       lazyLoadMembers: true,
     };
+
     await this.matrixClient.startClient(startClientOptions);
     await startComplete;
 

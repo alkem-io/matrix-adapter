@@ -6,8 +6,10 @@ import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import {
   Direction,
   EventType,
+  HistoryVisibility,
   IContent,
   ICreateRoomOpts,
+  IJoinRoomOpts,
   JoinRule,
   MatrixClient,
   MatrixEvent,
@@ -19,7 +21,11 @@ import { MatrixRoom } from './matrix.room';
 import { Preset, Visibility } from './matrix.room.dto.create.options';
 import { IRoomOpts } from './matrix.room.dto.options';
 import { MatrixRoomResponseMessage } from './matrix.room.dto.response.message';
-// import { RoomJoinRulesEventContent } from 'matrix-js-sdk/lib/types';
+import {
+  RoomHistoryVisibilityEventContent,
+  RoomJoinRulesEventContent,
+} from 'matrix-js-sdk/lib/types';
+import { MatrixAgent } from '../agent/matrix.agent';
 
 @Injectable()
 export class MatrixRoomAdapter {
@@ -109,18 +115,17 @@ export class MatrixRoomAdapter {
     return roomID;
   }
 
-  async joinRoomSafe(
-    matrixClient: MatrixClient,
-    roomID: string
-  ): Promise<void> {
+  async joinRoomSafe(matrixAgent: MatrixAgent, roomID: string): Promise<void> {
     if (roomID === '')
       throw new MatrixEntityNotFoundException(
         'No room ID specified',
         LogContext.COMMUNICATION
       );
 
+    const matrixClient = matrixAgent.matrixClient;
     try {
-      await matrixClient.joinRoom(roomID);
+      const roomJoinOpts: IJoinRoomOpts = {};
+      await matrixClient.joinRoom(roomID, roomJoinOpts);
     } catch (ex: any) {
       this.logger.error?.(
         `[Membership] Exception user joining a room (user: ${matrixClient.getUserId()}) room: ${roomID}) - ${ex.toString()}`,
@@ -129,7 +134,7 @@ export class MatrixRoomAdapter {
     }
   }
 
-  async changeRoomJoinRuleState(
+  async changeRoomStateJoinRule(
     matrixClient: MatrixClient,
     roomID: string,
     state: JoinRule
@@ -141,10 +146,32 @@ export class MatrixRoomAdapter {
       );
 
     // This was 'm.room.join_rules'
-    const content: any = {
+    const content: RoomJoinRulesEventContent = {
       join_rule: state,
     };
     await matrixClient.sendStateEvent(roomID, EventType.RoomJoinRules, content);
+  }
+
+  async changeRoomStateHistoryVisibility(
+    matrixClient: MatrixClient,
+    roomID: string,
+    state: HistoryVisibility
+  ): Promise<void> {
+    if (roomID === '')
+      throw new MatrixEntityNotFoundException(
+        'No room ID specified',
+        LogContext.COMMUNICATION
+      );
+
+    // This was 'm.room.join_rules'
+    const content: RoomHistoryVisibilityEventContent = {
+      history_visibility: state,
+    };
+    await matrixClient.sendStateEvent(
+      roomID,
+      EventType.RoomHistoryVisibility,
+      content
+    );
   }
 
   public async getJoinRule(
@@ -154,6 +181,15 @@ export class MatrixRoomAdapter {
     const room = await this.getMatrixRoom(adminMatrixClient, roomID);
     const roomState = room.currentState;
     return roomState.getJoinRule();
+  }
+
+  public async getHistoryVisibility(
+    adminMatrixClient: MatrixClient,
+    roomID: string
+  ): Promise<HistoryVisibility> {
+    const room = await this.getMatrixRoom(adminMatrixClient, roomID);
+    const roomState = room.currentState;
+    return roomState.getHistoryVisibility();
   }
 
   async getMatrixRoom(

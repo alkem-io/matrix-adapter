@@ -22,10 +22,12 @@ import { IMatrixAgent } from './matrix.agent.interface';
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
 import { MatrixAgentMessageReply } from './matrix.agent.dto.message.reply';
 import { MatrixAgentMessageReaction } from './matrix.agent.dto.message.reaction';
-// import {
-//   ReactionEventContent,
-//   RoomMessageEventContent,
-// } from 'matrix-js-sdk/lib/types';
+import {
+  ReactionEventContent,
+  RoomMessageEventContent,
+} from 'matrix-js-sdk/lib/types';
+import { AlkemioMatrixLogger } from '../types/matrix.logger';
+import { sleep } from 'matrix-js-sdk/lib/utils';
 
 @Injectable()
 export class MatrixAgentService {
@@ -71,12 +73,16 @@ export class MatrixAgentService {
       `Creating Matrix Client for ${operator.username} using timeline flag: ${timelineSupport}`,
       LogContext.MATRIX
     );
+
+    const alkemioMatrixLogger = new AlkemioMatrixLogger(this.logger);
+
     const createClientInput: ICreateClientOpts = {
       baseUrl: baseUrl,
       idBaseUrl: idBaseUrl,
       userId: operator.username,
       accessToken: operator.accessToken,
       timelineSupport: timelineSupport,
+      logger: alkemioMatrixLogger,
     };
     return createClient(createClientInput);
   }
@@ -106,7 +112,20 @@ export class MatrixAgentService {
     matrixAgent: IMatrixAgent,
     roomId: string
   ): Promise<MatrixRoom> {
-    const matrixRoom = await matrixAgent.matrixClient.getRoom(roomId);
+    let matrixRoom = matrixAgent.matrixClient.getRoom(roomId);
+
+    // TODO: temporary work around to allow room membership to complete
+    const maxRetries = 10;
+    let reTries = 0;
+    while (!matrixRoom && reTries < maxRetries) {
+      await sleep(100);
+      matrixRoom = matrixAgent.matrixClient.getRoom(roomId);
+      reTries++;
+      this.logger.verbose?.(
+        `Retrying to get room ${roomId}`,
+        LogContext.COMMUNICATION
+      );
+    }
     if (!matrixRoom) {
       throw new MatrixEntityNotFoundException(
         `[User: ${matrixAgent.matrixClient.getUserId()}] Unable to access Room (${roomId}). Room either does not exist or user does not have access.`,
@@ -191,7 +210,7 @@ export class MatrixAgentService {
     roomId: string,
     messageRequest: MatrixAgentMessageRequest
   ): Promise<string> {
-    const content: any = {
+    const content: RoomMessageEventContent = {
       body: messageRequest.text,
       msgtype: MsgType.Text,
     };
@@ -209,7 +228,7 @@ export class MatrixAgentService {
     roomId: string,
     messageRequest: MatrixAgentMessageReply
   ): Promise<string> {
-    const content: any = {
+    const content: RoomMessageEventContent = {
       msgtype: MsgType.Text,
       body: messageRequest.text,
       ['m.relates_to']: {
@@ -237,7 +256,7 @@ export class MatrixAgentService {
     roomId: string,
     messageReaction: MatrixAgentMessageReaction
   ): Promise<string> {
-    const content: any = {
+    const content: ReactionEventContent = {
       'm.relates_to': {
         rel_type: RelationType.Annotation,
         event_id: messageReaction.messageID,
