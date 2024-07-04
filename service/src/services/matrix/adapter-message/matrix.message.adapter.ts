@@ -8,7 +8,7 @@ import { EventType } from 'matrix-js-sdk';
 
 @Injectable()
 export class MatrixMessageAdapter {
-  readonly FILTERED_EVENT_TYPES = [EventType.RoomMessage, EventType.Reaction];
+  readonly ALLOWED_EVENT_TYPES = [EventType.RoomMessage, EventType.Reaction];
 
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
@@ -87,16 +87,15 @@ export class MatrixMessageAdapter {
   isEventToIgnore(message: MatrixRoomResponseMessage): boolean {
     const event = message.event;
 
-    if (event.type) {
-      for (const type of this.FILTERED_EVENT_TYPES) {
-        if (event.type === type) {
-          this.logger.verbose?.(
-            `[Timeline] Ignoring event of type: ${event.type} as it is not one of '${this.FILTERED_EVENT_TYPES}' types `,
-            LogContext.COMMUNICATION
-          );
-          return true;
-        }
-      }
+    if (
+      event.type &&
+      this.ALLOWED_EVENT_TYPES.every(type => event.type !== type)
+    ) {
+      this.logger.verbose?.(
+        `[Timeline] Ignoring event of type: ${event.type} as it is not one of '${this.ALLOWED_EVENT_TYPES}' types `,
+        LogContext.COMMUNICATION
+      );
+      return true;
     }
 
     const content = message.getContent();
