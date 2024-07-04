@@ -89,7 +89,7 @@ export class MatrixMessageAdapter {
 
     if (
       event.type &&
-      !this.ALLOWED_EVENT_TYPES.every(type => event.type !== type)
+      this.ALLOWED_EVENT_TYPES.every(type => event.type !== type)
     ) {
       this.logger.verbose?.(
         `[Timeline] Ignoring event of type: ${event.type} as it is not one of '${this.ALLOWED_EVENT_TYPES}' types `,
