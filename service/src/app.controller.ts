@@ -11,12 +11,9 @@ import { LogContext } from './common/enums';
 import {
   MatrixAdapterEventType,
   RoomDetailsResponsePayload,
-  RoomJoinRulePayload,
-  RoomJoinRuleResponsePayload,
   RoomMembersPayload,
   RoomMembersResponsePayload,
-  UpdateRoomsGuestAccessPayload,
-  UpdateRoomsGuestAccessResponsePayload,
+  UpdateRoomStatePayload,
 } from '@alkemio/matrix-adapter-lib';
 import { RoomDetailsPayload } from '@alkemio/matrix-adapter-lib';
 import { CommunicationAdapter } from './services/communication-adapter/communication.adapter';
@@ -344,13 +341,13 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_JOIN_RULE })
-  async roomJoinRule(
-    @Payload() data: RoomJoinRulePayload,
+  @MessagePattern({ cmd: MatrixAdapterEventType.UPDATE_ROOM_STATE })
+  async updateRoomState(
+    @Payload() data: UpdateRoomStatePayload,
     @Ctx() context: RmqContext
-  ): Promise<RoomJoinRuleResponsePayload> {
+  ): Promise<RoomDetailsResponsePayload> {
     this.logger.verbose?.(
-      `${MatrixAdapterEventType.ROOM_JOIN_RULE} - payload: ${JSON.stringify(
+      `${MatrixAdapterEventType.UPDATE_ROOM_STATE} - payload: ${JSON.stringify(
         data
       )}`,
       LogContext.EVENTS
@@ -359,46 +356,10 @@ export class AppController {
     const originalMsg = context.getMessage();
 
     try {
-      const rule = await this.communicationAdapter.getRoomJoinRule(data.roomID);
+      const result = await this.communicationAdapter.updateRoomState(data);
       channel.ack(originalMsg);
-      const response: RoomJoinRuleResponsePayload = {
-        rule: rule,
-      };
 
-      return response;
-    } catch (error) {
-      const errorMessage = `Error when getting join rule on room: ${error}`;
-      this.logger.error(errorMessage, LogContext.COMMUNICATION);
-      channel.ack(originalMsg);
-      throw new RpcException(errorMessage);
-    }
-  }
-
-  @MessagePattern({ cmd: MatrixAdapterEventType.UPDATE_ROOMS_GUEST_ACCESS })
-  async updateRoomsGuestAccess(
-    @Payload() data: UpdateRoomsGuestAccessPayload,
-    @Ctx() context: RmqContext
-  ): Promise<UpdateRoomsGuestAccessResponsePayload> {
-    this.logger.verbose?.(
-      `${
-        MatrixAdapterEventType.UPDATE_ROOMS_GUEST_ACCESS
-      } - payload: ${JSON.stringify(data)}`,
-      LogContext.EVENTS
-    );
-    const channel = context.getChannelRef();
-    const originalMsg = context.getMessage();
-
-    try {
-      const result = await this.communicationAdapter.setMatrixRoomsGuestAccess(
-        data.roomIDs,
-        data.allowGuests
-      );
-      channel.ack(originalMsg);
-      const response: UpdateRoomsGuestAccessResponsePayload = {
-        success: result,
-      };
-
-      return response;
+      return result;
     } catch (error) {
       const errorMessage = `Error when getting join rule on room: ${error}`;
       this.logger.error(errorMessage, LogContext.COMMUNICATION);

@@ -6,6 +6,7 @@ import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import {
   Direction,
   EventType,
+  HistoryVisibility,
   IContent,
   ICreateRoomOpts,
   JoinRule,
@@ -19,7 +20,10 @@ import { MatrixRoom } from './matrix.room';
 import { Preset, Visibility } from './matrix.room.dto.create.options';
 import { IRoomOpts } from './matrix.room.dto.options';
 import { MatrixRoomResponseMessage } from './matrix.room.dto.response.message';
-// import { RoomJoinRulesEventContent } from 'matrix-js-sdk/lib/types';
+import {
+  RoomHistoryVisibilityEventContent,
+  RoomJoinRulesEventContent,
+} from 'matrix-js-sdk/lib/types';
 
 @Injectable()
 export class MatrixRoomAdapter {
@@ -129,7 +133,7 @@ export class MatrixRoomAdapter {
     }
   }
 
-  async changeRoomJoinRuleState(
+  async changeRoomStateJoinRule(
     matrixClient: MatrixClient,
     roomID: string,
     state: JoinRule
@@ -141,10 +145,32 @@ export class MatrixRoomAdapter {
       );
 
     // This was 'm.room.join_rules'
-    const content: any = {
+    const content: RoomJoinRulesEventContent = {
       join_rule: state,
     };
     await matrixClient.sendStateEvent(roomID, EventType.RoomJoinRules, content);
+  }
+
+  async changeRoomStateHistoryVisibility(
+    matrixClient: MatrixClient,
+    roomID: string,
+    state: HistoryVisibility
+  ): Promise<void> {
+    if (roomID === '')
+      throw new MatrixEntityNotFoundException(
+        'No room ID specified',
+        LogContext.COMMUNICATION
+      );
+
+    // This was 'm.room.join_rules'
+    const content: RoomHistoryVisibilityEventContent = {
+      history_visibility: state,
+    };
+    await matrixClient.sendStateEvent(
+      roomID,
+      EventType.RoomHistoryVisibility,
+      content
+    );
   }
 
   public async getJoinRule(
@@ -154,6 +180,15 @@ export class MatrixRoomAdapter {
     const room = await this.getMatrixRoom(adminMatrixClient, roomID);
     const roomState = room.currentState;
     return roomState.getJoinRule();
+  }
+
+  public async getHistoryVisibility(
+    adminMatrixClient: MatrixClient,
+    roomID: string
+  ): Promise<HistoryVisibility> {
+    const room = await this.getMatrixRoom(adminMatrixClient, roomID);
+    const roomState = room.currentState;
+    return roomState.getHistoryVisibility();
   }
 
   async getMatrixRoom(
