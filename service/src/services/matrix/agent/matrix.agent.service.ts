@@ -27,6 +27,7 @@ import {
   RoomMessageEventContent,
 } from 'matrix-js-sdk/lib/types';
 import { AlkemioMatrixLogger } from '../types/matrix.logger';
+import { sleep } from 'matrix-js-sdk/lib/utils';
 
 @Injectable()
 export class MatrixAgentService {
@@ -111,7 +112,20 @@ export class MatrixAgentService {
     matrixAgent: IMatrixAgent,
     roomId: string
   ): Promise<MatrixRoom> {
-    const matrixRoom = await matrixAgent.matrixClient.getRoom(roomId);
+    let matrixRoom = matrixAgent.matrixClient.getRoom(roomId);
+
+    // TODO: temporary work around to allow room membership to complete
+    const maxRetries = 10;
+    let reTries = 0;
+    while (!matrixRoom && reTries < maxRetries) {
+      await sleep(100);
+      matrixRoom = matrixAgent.matrixClient.getRoom(roomId);
+      reTries++;
+      this.logger.verbose?.(
+        `Retrying to get room ${roomId}`,
+        LogContext.COMMUNICATION
+      );
+    }
     if (!matrixRoom) {
       throw new MatrixEntityNotFoundException(
         `[User: ${matrixAgent.matrixClient.getUserId()}] Unable to access Room (${roomId}). Room either does not exist or user does not have access.`,

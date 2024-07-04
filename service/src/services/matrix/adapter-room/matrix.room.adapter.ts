@@ -9,6 +9,7 @@ import {
   HistoryVisibility,
   IContent,
   ICreateRoomOpts,
+  IJoinRoomOpts,
   JoinRule,
   MatrixClient,
   MatrixEvent,
@@ -24,6 +25,7 @@ import {
   RoomHistoryVisibilityEventContent,
   RoomJoinRulesEventContent,
 } from 'matrix-js-sdk/lib/types';
+import { MatrixAgent } from '../agent/matrix.agent';
 
 @Injectable()
 export class MatrixRoomAdapter {
@@ -113,18 +115,17 @@ export class MatrixRoomAdapter {
     return roomID;
   }
 
-  async joinRoomSafe(
-    matrixClient: MatrixClient,
-    roomID: string
-  ): Promise<void> {
+  async joinRoomSafe(matrixAgent: MatrixAgent, roomID: string): Promise<void> {
     if (roomID === '')
       throw new MatrixEntityNotFoundException(
         'No room ID specified',
         LogContext.COMMUNICATION
       );
 
+    const matrixClient = matrixAgent.matrixClient;
     try {
-      await matrixClient.joinRoom(roomID);
+      const roomJoinOpts: IJoinRoomOpts = {};
+      await matrixClient.joinRoom(roomID, roomJoinOpts);
     } catch (ex: any) {
       this.logger.error?.(
         `[Membership] Exception user joining a room (user: ${matrixClient.getUserId()}) room: ${roomID}) - ${ex.toString()}`,
