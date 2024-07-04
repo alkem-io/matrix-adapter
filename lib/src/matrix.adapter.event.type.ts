@@ -1,6 +1,5 @@
 export enum MatrixAdapterEventType {
   ROOM_DETAILS = 'roomDetails',
-  ROOM_JOIN_RULE = 'roomJoinRule',
   ROOM_MEMBERS = 'roomMembers',
   ROOM_SEND_MESSAGE = 'roomSendMessage',
   ROOM_SEND_MESSAGE_REPLY = 'roomSendMessageReply',
@@ -19,7 +18,7 @@ export enum MatrixAdapterEventType {
   ADD_USER_TO_ROOMS = 'addUserToRooms',
   ADD_USER_TO_ROOM = 'addUserToRoom',
   REMOVE_ROOM = 'removeRoom',
-  UPDATE_ROOMS_GUEST_ACCESS = 'updateRoomsGuestAccess',
+  UPDATE_ROOM_STATE = 'updateRoomState',
   SEND_MESSAGE_TO_USER = 'sendMessageToUser',
   REGISTER_NEW_USER = 'registerNewUser',
 }
