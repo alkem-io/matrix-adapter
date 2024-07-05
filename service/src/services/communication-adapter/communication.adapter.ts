@@ -75,7 +75,7 @@ export class CommunicationAdapter {
   }
 
   async getCommunityRoom(
-    roomId: string,
+    roomID: string,
     withState = false
   ): Promise<RoomResult> {
     // If not enabled just return an empty room
@@ -89,15 +89,11 @@ export class CommunicationAdapter {
       return result;
     }
     const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
-    const matrixClient = matrixAgentElevated.matrixClient;
-    const adminUser = this.getUserIdFromMatrixClient(matrixClient);
-
-    await this.addUserToRoom(roomId, adminUser);
-    this.logger.verbose?.(`User added to ${roomId} room`);
+    await this.ensureElevatedAgentIsAdmin(roomID);
 
     const matrixRoom = await this.matrixAgentService.getRoom(
       matrixAgentElevated,
-      roomId
+      roomID
     );
     const result =
       await this.matrixRoomAdapter.convertMatrixRoomToCommunityRoom(
@@ -106,11 +102,11 @@ export class CommunicationAdapter {
       );
     if (withState) {
       result.joinRule = await this.getRoomStateJoinRule(
-        roomId,
+        roomID,
         matrixAgentElevated
       );
       result.historyVisibility = await this.getRoomStateHistoryVisibility(
-        roomId,
+        roomID,
         matrixAgentElevated
       );
     }
@@ -321,6 +317,26 @@ export class CommunicationAdapter {
       }
     );
   }
+  private async ensureElevatedAgentIsAdmin(roomID: string): Promise<void> {
+    const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
+    const matrixClient = matrixAgentElevated.matrixClient;
+    const adminUser = this.getUserIdFromMatrixClient(matrixClient);
+    await this.addUserToRoom(roomID, adminUser);
+
+    //     const roomState = await client.getRoomState(roomId);
+
+    // // Find the user's power level event (usually type "m.room.power_levels")
+    // const powerLevelsEvent = roomState.find((event) => event.type === "m.room.power_levels");
+
+    // // Update the user's power level (e.g., set them as an admin)
+    // const newPowerLevels = { ...powerLevelsEvent.content };
+    // newPowerLevels.users[userId] = 100; // Set the desired power level (100 for admin)
+
+    // // Send the updated power levels event
+    // await client.sendStateEvent(roomId, "m.room.power_levels", newPowerLevels);
+
+    this.logger.verbose?.(`User added to ${roomID} room`);
+  }
 
   async deleteMessage(
     deleteMessageData: RoomDeleteMessagePayload
@@ -330,12 +346,7 @@ export class CommunicationAdapter {
     // but we still don't have the infrastructure to support it
     const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
 
-    const matrixClient = matrixAgentElevated.matrixClient;
-    const adminUser = this.getUserIdFromMatrixClient(matrixClient);
-
-    const roomID = deleteMessageData.roomID;
-    await this.addUserToRoom(roomID, adminUser);
-    this.logger.verbose?.(`User added to ${roomID} room`);
+    await this.ensureElevatedAgentIsAdmin(deleteMessageData.roomID);
 
     await this.matrixAgentService.deleteMessage(
       matrixAgentElevated,
