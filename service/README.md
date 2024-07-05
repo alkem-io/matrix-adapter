@@ -32,3 +32,12 @@ Alkemio Matrix Adapter service.
 Execute the following command from the workspace root:
 
 `docker build -t alkemio/matrix-adapter:v0.2.0 .`
+
+## Explainer
+
+The way syncing works with Matrix SDK client is that you see the rooms in the MatrixClient that you are a member of.
+
+For the way we use it this can mean that the admin account can potentially have a lot of rooms that it is a member of, and hence take a long time to sync.
+
+To address this, an admin account is only added as a member at the moment that it needs to read the room. This does mean the sync time will increase over time, but it
+is then trivial to go to a new admin account and have that gradually join the rooms that are needed.

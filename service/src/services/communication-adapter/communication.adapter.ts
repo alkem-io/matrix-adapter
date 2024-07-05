@@ -6,7 +6,7 @@ import {
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MatrixAgentPool } from '@services/matrix/agent-pool/matrix.agent.pool';
-import { JoinRule, MatrixClient } from 'matrix-js-sdk';
+import { HistoryVisibility, JoinRule, MatrixClient } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixRoomAdapter } from '@services/matrix/adapter-room/matrix.room.adapter';
 import { MatrixUserAdapter } from '@services/matrix/adapter-user/matrix.user.adapter';
@@ -21,12 +21,15 @@ import {
   RoomSendMessageReplyPayload,
   RoomAddMessageReactionPayload,
   RoomRemoveMessageReactionPayload,
+  UpdateRoomStatePayload,
+  RoomDetailsResponsePayload,
 } from '@alkemio/matrix-adapter-lib';
 import { RoomResult } from '@alkemio/matrix-adapter-lib';
 import { RoomDirectResult } from '@alkemio/matrix-adapter-lib';
 import { RoomDeleteMessagePayload } from '@alkemio/matrix-adapter-lib';
 import { SendMessageToUserPayload } from '@alkemio/matrix-adapter-lib';
 import { IReaction } from '@alkemio/matrix-adapter-lib';
+import { sleep } from 'matrix-js-sdk/lib/utils';
 
 @Injectable()
 export class CommunicationAdapter {
@@ -69,6 +72,49 @@ export class CommunicationAdapter {
       LogContext.BOOTSTRAP
     );
     await this.getMatrixManagementAgentElevated();
+  }
+
+  async getCommunityRoom(
+    roomId: string,
+    withState = false
+  ): Promise<RoomResult> {
+    // If not enabled just return an empty room
+    if (!this.enabled) {
+      const result: RoomResult = {
+        id: 'communications-not-enabled',
+        messages: [],
+        displayName: '',
+        members: [],
+      };
+      return result;
+    }
+    const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
+    const matrixClient = matrixAgentElevated.matrixClient;
+    const adminUser = this.getUserIdFromMatrixClient(matrixClient);
+
+    await this.addUserToRoom(roomId, adminUser);
+    this.logger.verbose?.(`User added to ${roomId} room`);
+
+    const matrixRoom = await this.matrixAgentService.getRoom(
+      matrixAgentElevated,
+      roomId
+    );
+    const result =
+      await this.matrixRoomAdapter.convertMatrixRoomToCommunityRoom(
+        matrixAgentElevated.matrixClient,
+        matrixRoom
+      );
+    if (withState) {
+      result.joinRule = await this.getRoomStateJoinRule(
+        roomId,
+        matrixAgentElevated
+      );
+      result.historyVisibility = await this.getRoomStateHistoryVisibility(
+        roomId,
+        matrixAgentElevated
+      );
+    }
+    return result;
   }
 
   async sendMessage(
@@ -282,10 +328,17 @@ export class CommunicationAdapter {
     // when deleting a message use the global admin account
     // the possibility to use native matrix power levels is there
     // but we still don't have the infrastructure to support it
-    const matrixAgent = await this.getMatrixManagementAgentElevated();
+    const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
+
+    const matrixClient = matrixAgentElevated.matrixClient;
+    const adminUser = this.getUserIdFromMatrixClient(matrixClient);
+
+    const roomID = deleteMessageData.roomID;
+    await this.addUserToRoom(roomID, adminUser);
+    this.logger.verbose?.(`User added to ${roomID} room`);
 
     await this.matrixAgentService.deleteMessage(
-      matrixAgent,
+      matrixAgentElevated,
       deleteMessageData.roomID,
       deleteMessageData.messageID
     );
@@ -567,27 +620,6 @@ export class CommunicationAdapter {
     return rooms;
   }
 
-  async getCommunityRoom(roomId: string): Promise<RoomResult> {
-    // If not enabled just return an empty room
-    if (!this.enabled) {
-      return {
-        id: 'communications-not-enabled',
-        messages: [],
-        displayName: '',
-        members: [],
-      };
-    }
-    const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
-    const matrixRoom = await this.matrixAgentService.getRoom(
-      matrixAgentElevated,
-      roomId
-    );
-    return await this.matrixRoomAdapter.convertMatrixRoomToCommunityRoom(
-      matrixAgentElevated.matrixClient,
-      matrixRoom
-    );
-  }
-
   async removeUserFromRooms(
     roomIDs: string[],
     matrixUserID: string
@@ -720,23 +752,34 @@ export class CommunicationAdapter {
     return true;
   }
 
-  public async addUserToRoom(
-    // groupID: string, according to matrix docs groups are getting deprecated
-    roomID: string,
-    matrixUserID: string
-  ) {
-    const userAgent = await this.matrixAgentPool.acquire(matrixUserID);
+  public async addUserToRoom(roomID: string, matrixUserID: string) {
+    let userAgent = await this.getMatrixManagementAgentElevated();
+    if (matrixUserID !== this.adminCommunicationsID) {
+      userAgent = await this.matrixAgentPool.acquire(matrixUserID);
+    }
 
-    const isUserMember = await this.matrixUserAdapter.isUserMemberOfRoom(
+    let isUserMember = await this.matrixUserAdapter.isUserMemberOfRoom(
       userAgent.matrixClient,
       roomID
     );
     try {
       if (isUserMember === false) {
-        await this.matrixRoomAdapter.joinRoomSafe(
-          userAgent.matrixClient,
-          roomID
+        this.logger.verbose?.(
+          `User (${matrixUserID}) joining room: ${roomID} - invitation not yet accepted, waiting`,
+          LogContext.COMMUNICATION
         );
+        await this.matrixRoomAdapter.joinRoomSafe(userAgent, roomID);
+        // TODO: temporary work around to allow room membership to complete
+        const maxRetries = 30;
+        let reTries = 0;
+        while (!isUserMember && reTries < maxRetries) {
+          await sleep(100);
+          isUserMember = await this.matrixUserAdapter.isUserMemberOfRoom(
+            userAgent.matrixClient,
+            roomID
+          );
+          reTries++;
+        }
       }
     } catch (ex: any) {
       this.logger.error?.(
@@ -748,7 +791,10 @@ export class CommunicationAdapter {
 
   private async addUserToRooms(roomIDs: string[], matrixUserID: string) {
     const elevatedAgent = await this.getMatrixManagementAgentElevated();
-    const userAgent = await this.matrixAgentPool.acquire(matrixUserID);
+    let userAgent = elevatedAgent;
+    if (matrixUserID !== this.adminCommunicationsID) {
+      userAgent = await this.matrixAgentPool.acquire(matrixUserID);
+    }
 
     const roomsToAdd = await this.getRoomsUserIsNotMember(
       userAgent.matrixClient,
@@ -765,13 +811,8 @@ export class CommunicationAdapter {
         `[Membership] Inviting user (${matrixUserID}) is join room: ${roomID}`,
         LogContext.COMMUNICATION
       );
-      const userID = userAgent.matrixClient.getUserId();
-      if (!userID) {
-        throw new MatrixEntityNotFoundException(
-          `Unable to retrieve user on agent: ${userAgent}`,
-          LogContext.MATRIX
-        );
-      }
+      const userID = this.getUserIdFromMatrixClient(userAgent.matrixClient);
+
       userAgent.attachOnceConditional({
         id: roomID,
         roomMemberMembershipMonitor:
@@ -790,6 +831,17 @@ export class CommunicationAdapter {
         userAgent.matrixClient
       );
     }
+  }
+
+  public getUserIdFromMatrixClient(matrixClient: MatrixClient): string {
+    const userID = matrixClient.getUserId();
+    if (!userID) {
+      throw new MatrixEntityNotFoundException(
+        `Unable to retrieve user on agent: ${matrixClient}`,
+        LogContext.MATRIX
+      );
+    }
+    return userID;
   }
 
   async getRoomsUserIsNotMember(
@@ -871,47 +923,89 @@ export class CommunicationAdapter {
     return userIDs;
   }
 
-  async getRoomJoinRule(roomID: string): Promise<string> {
-    const elevatedAgent = await this.getMatrixManagementAgentElevated();
+  async getRoomStateJoinRule(
+    roomID: string,
+    matrixAgent: MatrixAgent
+  ): Promise<string> {
     return await this.matrixRoomAdapter.getJoinRule(
-      elevatedAgent.matrixClient,
+      matrixAgent.matrixClient,
       roomID
     );
   }
 
-  async setMatrixRoomsGuestAccess(roomIDs: string[], allowGuests = true) {
+  async getRoomStateHistoryVisibility(
+    roomID: string,
+    matrixAgent: MatrixAgent
+  ): Promise<HistoryVisibility> {
+    return await this.matrixRoomAdapter.getHistoryVisibility(
+      matrixAgent.matrixClient,
+      roomID
+    );
+  }
+
+  async updateRoomState(
+    roomData: UpdateRoomStatePayload
+  ): Promise<RoomDetailsResponsePayload> {
     const elevatedAgent = await this.getMatrixManagementAgentElevated();
 
-    try {
-      for (const roomID of roomIDs) {
-        if (roomID.length > 0) {
-          await this.matrixRoomAdapter.changeRoomJoinRuleState(
-            elevatedAgent.matrixClient,
-            roomID,
-            // not sure where to find the enums - reverse engineered this from synapse
-            allowGuests ? JoinRule.Public : JoinRule.Invite
-          );
-
-          const oldRoom = await this.matrixRoomAdapter.getMatrixRoom(
-            elevatedAgent.matrixClient,
-            roomID
-          );
-          const rule = oldRoom.getJoinRule();
-          this.logger.verbose?.(
-            `Room ${roomID} join rule is now: ${rule}`,
-            LogContext.COMMUNICATION
-          );
-        }
-      }
-      return true;
-    } catch (error) {
-      this.logger.error?.(
-        `Unable to change guest access for rooms to (${
-          allowGuests ? 'Public' : 'Private'
-        }): ${error}`,
+    if (roomData.roomID.length === 0) {
+      throw new MatrixEntityNotFoundException(
+        `No room ID provided: ${JSON.stringify(roomData)}`,
         LogContext.COMMUNICATION
       );
-      return false;
     }
+
+    try {
+      const roomID = roomData.roomID;
+      if (roomData.historyWorldVisibile) {
+        await this.matrixRoomAdapter.changeRoomStateHistoryVisibility(
+          elevatedAgent.matrixClient,
+          roomID,
+          // not sure where to find the enums - reverse engineered this from synapse
+          roomData.historyWorldVisibile
+            ? HistoryVisibility.WorldReadable
+            : HistoryVisibility.Joined
+        );
+
+        const oldRoom = await this.matrixRoomAdapter.getMatrixRoom(
+          elevatedAgent.matrixClient,
+          roomID
+        );
+        const rule = oldRoom.getGuestAccess();
+        this.logger.verbose?.(
+          `Room ${roomID} guest access is now: ${rule}`,
+          LogContext.COMMUNICATION
+        );
+      }
+
+      if (roomData.allowJoining) {
+        await this.matrixRoomAdapter.changeRoomStateJoinRule(
+          elevatedAgent.matrixClient,
+          roomID,
+          // not sure where to find the enums - reverse engineered this from synapse
+          roomData.allowJoining ? JoinRule.Public : JoinRule.Invite
+        );
+
+        const oldRoom = await this.matrixRoomAdapter.getMatrixRoom(
+          elevatedAgent.matrixClient,
+          roomID
+        );
+        const rule = oldRoom.getJoinRule();
+        this.logger.verbose?.(
+          `Room ${roomID} join rule is now: ${rule}`,
+          LogContext.COMMUNICATION
+        );
+      }
+    } catch (error) {
+      this.logger.error?.(
+        `Unable to change state access for rooms to (${roomData}}): ${error}`,
+        LogContext.COMMUNICATION
+      );
+    }
+    const roomDetails = await this.getCommunityRoom(roomData.roomID);
+    const result: RoomDetailsResponsePayload = {
+      room: roomDetails,
+    };
+    return result;
   }
 }

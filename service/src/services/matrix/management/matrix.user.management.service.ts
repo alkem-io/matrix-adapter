@@ -12,6 +12,7 @@ import { MatrixUserLoginException } from '@common/exceptions/matrix.login.except
 import { MatrixUserRegistrationException } from '@common/exceptions/matrix.registration.exception';
 import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint';
 import { URL } from 'url';
+import { AlkemioMatrixLogger } from '../types/matrix.logger';
 
 @Injectable()
 export class MatrixUserManagementService {
@@ -47,10 +48,13 @@ export class MatrixUserManagementService {
       `Creating Matrix Client for management using timeline flag: ${timelineSupport}`,
       LogContext.MATRIX
     );
+    const alkemioMatrixLogger = new AlkemioMatrixLogger(this.logger);
+
     const createClientInput: any = {
       baseUrl: this.baseUrl,
       idBaseUrl: this.idBaseUrl,
       timelineSupport: timelineSupport,
+      logger: alkemioMatrixLogger,
     };
     this._matrixClient = createClient(createClientInput);
   }

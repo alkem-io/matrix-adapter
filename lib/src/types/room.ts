@@ -9,4 +9,8 @@ export class RoomResult {
 
   // The communication IDs of the room members
   members!: string[];
+
+  joinRule?: string;
+  
+  historyVisibility?: string;
 }
