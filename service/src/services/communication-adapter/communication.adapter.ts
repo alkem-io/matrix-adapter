@@ -6,7 +6,12 @@ import {
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MatrixAgentPool } from '@services/matrix/agent-pool/matrix.agent.pool';
-import { HistoryVisibility, JoinRule, MatrixClient } from 'matrix-js-sdk';
+import {
+  EventType,
+  HistoryVisibility,
+  JoinRule,
+  MatrixClient,
+} from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixRoomAdapter } from '@services/matrix/adapter-room/matrix.room.adapter';
 import { MatrixUserAdapter } from '@services/matrix/adapter-user/matrix.user.adapter';
@@ -30,6 +35,7 @@ import { RoomDeleteMessagePayload } from '@alkemio/matrix-adapter-lib';
 import { SendMessageToUserPayload } from '@alkemio/matrix-adapter-lib';
 import { IReaction } from '@alkemio/matrix-adapter-lib';
 import { sleep } from 'matrix-js-sdk/lib/utils';
+import { RoomPowerLevelsEventContent } from 'matrix-js-sdk/lib/types';
 
 @Injectable()
 export class CommunicationAdapter {
@@ -318,24 +324,64 @@ export class CommunicationAdapter {
     );
   }
   private async ensureElevatedAgentIsAdmin(roomID: string): Promise<void> {
-    const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
-    const matrixClient = matrixAgentElevated.matrixClient;
-    const adminUser = this.getUserIdFromMatrixClient(matrixClient);
-    await this.addUserToRoom(roomID, adminUser);
+    try {
+      const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
+      const matrixClient = matrixAgentElevated.matrixClient;
+      const adminUser = this.getUserIdFromMatrixClient(matrixClient);
+      await this.addUserToRoom(roomID, adminUser);
+      this.logger.verbose?.(
+        `Elevated admin (${adminUser}) added to room: ${roomID}`,
+        LogContext.COMMUNICATION
+      );
+      // await this.matrixAgentService.getRoom(matrixAgentElevated, roomID);
+      // this.logger.verbose?.(
+      //   `Elevated admin (${adminUser}) retrieved room: ${roomID}`,
+      //   LogContext.COMMUNICATION
+      // );
 
-    //     const roomState = await client.getRoomState(roomId);
+      const roomState = await matrixClient.roomState(roomID);
 
-    // // Find the user's power level event (usually type "m.room.power_levels")
-    // const powerLevelsEvent = roomState.find((event) => event.type === "m.room.power_levels");
+      // Find the user's power level event (usually type "m.room.power_levels")
+      const powerLevelsEvent = roomState.find(
+        event => event.type === 'm.room.power_levels'
+      );
+      if (!powerLevelsEvent) {
+        throw new MatrixEntityNotFoundException(
+          `Unable to update power level for admin in room: ${roomID}`,
+          LogContext.COMMUNICATION
+        );
+      }
+      // powerLevelsEvent.content
 
-    // // Update the user's power level (e.g., set them as an admin)
-    // const newPowerLevels = { ...powerLevelsEvent.content };
-    // newPowerLevels.users[userId] = 100; // Set the desired power level (100 for admin)
+      // const members = await matrixClient.getJoinedRoomMembers(roomID);
+      this.logger.verbose?.(
+        `Admins: ${JSON.stringify(powerLevelsEvent.content.users)}`,
+        LogContext.COMMUNICATION
+      );
 
-    // // Send the updated power levels event
-    // await client.sendStateEvent(roomId, "m.room.power_levels", newPowerLevels);
+      // Update the user's power level (e.g., set them as an admin)
+      const updatedPowerLevelsInput: RoomPowerLevelsEventContent = {
+        ...powerLevelsEvent.content,
+        users: {
+          [adminUser]: 100,
+        },
+      };
 
-    this.logger.verbose?.(`User added to ${roomID} room`);
+      //Send the updated power levels event
+      await matrixClient.sendStateEvent(
+        roomID,
+        EventType.RoomPowerLevels,
+        updatedPowerLevelsInput
+      );
+      this.logger.verbose?.(
+        `Elevated admin (${adminUser}) power level set to 100 for room: ${roomID}, ${updatedPowerLevelsInput.users}`,
+        LogContext.COMMUNICATION
+      );
+    } catch (error) {
+      const errorMessage = `Unable to elevate admin privilege on room: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      throw error;
+    }
   }
 
   async deleteMessage(
@@ -542,10 +588,10 @@ export class CommunicationAdapter {
     const room = await this.matrixRoomAdapter.createRoom(
       elevatedMatrixAgent.matrixClient,
       {
+        name,
+      },
+      {
         metadata,
-        createOpts: {
-          name,
-        },
       }
     );
     this.logger.verbose?.(
