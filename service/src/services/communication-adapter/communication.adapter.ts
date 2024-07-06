@@ -89,7 +89,7 @@ export class CommunicationAdapter {
       return result;
     }
     const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
-    await this.ensureElevatedAgentIsAdmin(roomID);
+    await this.ensureElevatedAgentIsMemberOfRoom(roomID);
 
     const matrixRoom = await this.matrixAgentService.getRoom(
       matrixAgentElevated,
@@ -317,7 +317,9 @@ export class CommunicationAdapter {
       }
     );
   }
-  private async ensureElevatedAgentIsAdmin(roomID: string): Promise<void> {
+  private async ensureElevatedAgentIsMemberOfRoom(
+    roomID: string
+  ): Promise<void> {
     try {
       const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
       const matrixClient = matrixAgentElevated.matrixClient;
@@ -342,7 +344,7 @@ export class CommunicationAdapter {
     // but we still don't have the infrastructure to support it
     const matrixAgentElevated = await this.getMatrixManagementAgentElevated();
 
-    await this.ensureElevatedAgentIsAdmin(deleteMessageData.roomID);
+    await this.ensureElevatedAgentIsMemberOfRoom(deleteMessageData.roomID);
 
     await this.matrixAgentService.deleteMessage(
       matrixAgentElevated,
@@ -382,7 +384,7 @@ export class CommunicationAdapter {
   async getMessageSender(roomID: string, messageID: string): Promise<string> {
     // only the admin agent has knowledge of all rooms and synchronizes the state
     const matrixElevatedAgent = await this.getMatrixManagementAgentElevated();
-    await this.ensureElevatedAgentIsAdmin(roomID);
+    await this.ensureElevatedAgentIsMemberOfRoom(roomID);
     const matrixRoom = await this.matrixAgentService.getRoom(
       matrixElevatedAgent,
       roomID

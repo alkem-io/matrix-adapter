@@ -22,7 +22,9 @@ export class MatrixAdminService {
     private matrixUserAdapter: MatrixUserAdapter
   ) {}
 
-  private async getPowerLevelsEventForRoom(roomID: string) {
+  private async getPowerLevelsEventForRoom(
+    roomID: string
+  ): Promise<IStateEventWithRoomId> {
     const matrixAgentElevated =
       await this.communicationAdapter.getMatrixManagementAgentElevated();
     const matrixClient = matrixAgentElevated.matrixClient;
@@ -98,7 +100,7 @@ export class MatrixAdminService {
     resetAdminRoomsData: MatrixAdminEventResetAdminRoomsInput
   ) {
     this.logger.verbose?.(
-      `Resetting power level in rooms for admin: ${resetAdminRoomsData.adminEmail}`,
+      `*** Resetting power level in rooms for admin: ${resetAdminRoomsData.adminEmail} ***`,
       LogContext.COMMUNICATION
     );
     const adminUser = await this.getGlobalAdminUser(
@@ -141,7 +143,7 @@ export class MatrixAdminService {
           await this.getPowerLevelsEventForRoom(roomID);
         } else {
           this.logger.verbose?.(
-            `Room power levels event skipped as current user is not empowered by: ${JSON.stringify(
+            `...power level update skipped as current user is not empowered by: ${JSON.stringify(
               powerLevelsEventUsers
             )}`,
             LogContext.COMMUNICATION

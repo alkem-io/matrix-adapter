@@ -4,6 +4,7 @@ import { CommunicationAdapterModule } from '../communication-adapter/communicati
 import { MatrixAgentModule } from '../matrix/agent/matrix.agent.module';
 import { MatrixUserManagementModule } from '../matrix/management/matrix.user.management.module';
 import { MatrixUserAdapterModule } from '../matrix/adapter-user/matrix.user.adapter.module';
+import { MatrixAdminController } from './matrix.admin.controller';
 
 @Module({
   imports: [
@@ -14,5 +15,6 @@ import { MatrixUserAdapterModule } from '../matrix/adapter-user/matrix.user.adap
   ],
   providers: [MatrixAdminService],
   exports: [MatrixAdminService],
+  controllers: [MatrixAdminController],
 })
 export class MatrixAdminModule {}

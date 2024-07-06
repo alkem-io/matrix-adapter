@@ -5,7 +5,6 @@ import {
   Payload,
   RmqContext,
   RpcException,
-  Transport,
 } from '@nestjs/microservices';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { LogContext } from './common/enums';
@@ -52,10 +51,8 @@ import { AddUserToRoomResponsePayload } from '@alkemio/matrix-adapter-lib';
 import { AddUserToRoomPayload } from '@alkemio/matrix-adapter-lib';
 import { RegisterNewUserPayload } from '@alkemio/matrix-adapter-lib';
 import { RegisterNewUserResponsePayload } from '@alkemio/matrix-adapter-lib';
-import { MatrixAdminEventType } from './services/matrix-admin/matrix.admin.event.type';
 import { MatrixAdminEventResetAdminRoomsInput } from './services/matrix-admin/dto/matrix.admin.dto.event.reset.admin.rooms';
 import { MatrixAdminService } from './services/matrix-admin/matrix.admin.service';
-import { MatrixAdminBaseEventResponsePayload } from './services/matrix-admin/dto/matrix.admin.base.event.response.payload';
 
 @Controller()
 export class AppController {
@@ -694,34 +691,6 @@ export class AppController {
       return response;
     } catch (error) {
       const errorMessage = `Error when registering a new user: ${error}`;
-      this.logger.error(errorMessage, LogContext.COMMUNICATION);
-      channel.ack(originalMsg);
-      throw new RpcException(errorMessage);
-    }
-  }
-
-  @MessagePattern('adminRoomsReset', Transport.RMQ)
-  async matrixAdminRoomsReset(
-    @Payload() data: MatrixAdminEventResetAdminRoomsInput,
-    @Ctx() context: RmqContext
-  ): Promise<MatrixAdminBaseEventResponsePayload> {
-    this.logger.verbose?.(
-      `${MatrixAdminEventType.ADMIN_ROOMS_RESET} - payload: ${JSON.stringify(
-        data
-      )}`,
-      LogContext.EVENTS
-    );
-    const channel = context.getChannelRef();
-    const originalMsg = context.getMessage();
-
-    try {
-      await this.matrixAdminService.updatePowerLevelsInRoomsForAdmin(data);
-      channel.ack(originalMsg);
-      const response: MatrixAdminBaseEventResponsePayload = {};
-
-      return response;
-    } catch (error) {
-      const errorMessage = `Error when resetting matrix rooms for admin: ${error}`;
       this.logger.error(errorMessage, LogContext.COMMUNICATION);
       channel.ack(originalMsg);
       throw new RpcException(errorMessage);
