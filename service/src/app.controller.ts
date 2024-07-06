@@ -51,16 +51,13 @@ import { AddUserToRoomResponsePayload } from '@alkemio/matrix-adapter-lib';
 import { AddUserToRoomPayload } from '@alkemio/matrix-adapter-lib';
 import { RegisterNewUserPayload } from '@alkemio/matrix-adapter-lib';
 import { RegisterNewUserResponsePayload } from '@alkemio/matrix-adapter-lib';
-import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './services/matrix-admin/dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
-import { MatrixAdminService } from './services/matrix-admin/matrix.admin.service';
 
 @Controller()
 export class AppController {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: LoggerService,
-    private communicationAdapter: CommunicationAdapter,
-    private matrixAdminService: MatrixAdminService
+    private communicationAdapter: CommunicationAdapter
   ) {}
 
   @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_DETAILS })
@@ -263,7 +260,6 @@ export class AppController {
     const originalMsg = context.getMessage();
 
     try {
-      await this.testPowerLevelResetOtherAdminUser();
       const messageID = await this.communicationAdapter.deleteMessage(data);
       channel.ack(originalMsg);
       const response: RoomDeleteMessageResponsePayload = {
@@ -277,18 +273,6 @@ export class AppController {
       channel.ack(originalMsg);
       throw new RpcException(errorMessage);
     }
-  }
-
-  private async testPowerLevelResetOtherAdminUser() {
-    // Hack for now
-    const adminResetInput: MatrixAdminEventUpdateRoomStateForAdminRoomsInput = {
-      adminEmail: 'matrixadmin3@alkem.io',
-      adminPassword: 'change_me_now',
-      powerLevel: {
-        users_default: 50,
-      },
-    };
-    await this.matrixAdminService.updateRoomStateForAdminRooms(adminResetInput);
   }
 
   @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_MESSAGE_SENDER })

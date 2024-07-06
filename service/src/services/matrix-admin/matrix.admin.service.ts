@@ -125,12 +125,14 @@ export class MatrixAdminService {
         const roomID = room.roomId;
 
         const powerLevelsEvent = await this.getPowerLevelsEventForRoom(roomID);
-        const powerLevelsEventUsers = powerLevelsEvent.content.users;
         const newPowerLevelDefaultUser =
           updateRoomStateForAdminRooms.powerLevel.users_default;
+        const newPowerLevelRedact =
+          updateRoomStateForAdminRooms.powerLevel.redact;
 
-        const userStr = JSON.stringify(powerLevelsEventUsers);
-        const usersMap = this.convertUsersStringToMap(userStr);
+        const usersMap = this.convertUsersStringToMap(
+          JSON.stringify(powerLevelsEvent.content.users)
+        );
 
         const userPowerLevel = usersMap.get(adminUserID);
         if (userPowerLevel && userPowerLevel === 100) {
@@ -138,6 +140,7 @@ export class MatrixAdminService {
           const updatedPowerLevelsInput: RoomPowerLevelsEventContent = {
             ...powerLevelsEvent.content,
             users_default: newPowerLevelDefaultUser,
+            redact: newPowerLevelRedact,
           };
 
           await matrixClient.sendStateEvent(
@@ -154,7 +157,7 @@ export class MatrixAdminService {
           if (!userPowerLevel) {
             this.logger.verbose?.(
               `...room state update __skipped__ as current user is not a known user: ${JSON.stringify(
-                powerLevelsEventUsers
+                powerLevelsEvent.content.users
               )}`,
               LogContext.MATRIX_ADMIN
             );
@@ -193,7 +196,24 @@ export class MatrixAdminService {
       logRoomStateData.roomID
     );
     this.logger.verbose?.(
-      `Room (${logRoomStateData.roomID}: ${JSON.stringify(roomState)}`,
+      `Room (${logRoomStateData.roomID}:`,
+      LogContext.MATRIX_ADMIN
+    );
+    const usersMap = this.convertUsersStringToMap(
+      JSON.stringify(roomState.content.users)
+    );
+    usersMap.forEach((value, key) => {
+      this.logger.verbose?.(
+        `...user: ${key} - power level: ${value}`,
+        LogContext.MATRIX_ADMIN
+      );
+    });
+    this.logger.verbose?.(
+      `...user_default: ${roomState.content.users_default}`,
+      LogContext.MATRIX_ADMIN
+    );
+    this.logger.verbose?.(
+      `...redact: ${roomState.content.redact}`,
       LogContext.MATRIX_ADMIN
     );
   }

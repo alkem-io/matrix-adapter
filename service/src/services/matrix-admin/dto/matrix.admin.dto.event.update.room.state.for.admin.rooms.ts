@@ -8,4 +8,5 @@ export class MatrixAdminEventUpdateRoomStateForAdminRoomsInput {
 
 export class RoomStatePowerLevel {
   users_default!: number;
+  redact!: number;
 }

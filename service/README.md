@@ -58,3 +58,7 @@ The way Alkemio uses rooms is that new members of a room get a power level that 
 In rooms created before mid-2024, the users_default power level was set to zero. This meant that they cannot delete messages. After this point the default power level for new users in a room is set to 100 so that they can carry out all actions.
 
 The power levels in rooms will need to be tidied up before the rooms in Matrix could be exposed outside of the cluster.
+
+References:
+
+- https://spec.matrix.org/v1.3/client-server-api/#room-events and then search for "m.room.power_levels"

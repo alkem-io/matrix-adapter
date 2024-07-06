@@ -1,4 +1,3 @@
-
 import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from '../src/services/matrix-admin/dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
 
 const messageBody: CmdMatrixAdminEventResetAdminRoomsInput = {
@@ -7,10 +6,10 @@ const messageBody: CmdMatrixAdminEventResetAdminRoomsInput = {
     adminEmail: "matrixadmin@alkem.io",
     adminPassword: "change_me_now",
     powerLevel: {
-      users_default: 50
+      users_default: 50,
+      redact: 0
     }
   }
-
 }
 
 // {
@@ -19,7 +18,8 @@ const messageBody: CmdMatrixAdminEventResetAdminRoomsInput = {
 //     "adminEmail": "matrixadmin@alkem.io",
 //     "adminPassword": "change_me_now",
 //     "powerLevel": {
-//       "users_default": 50
+//       "users_default": 50,
+//       "redact": 0
 //     }
 //   }
 // }

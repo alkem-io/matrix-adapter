@@ -104,10 +104,11 @@ export class MatrixRoomAdapter {
     //   {"m.room.name":50,"m.room.power_levels":100,"m.room.history_visibility":100,"m.room.canonical_alias":50,
     //     "m.room.avatar":50,"m.room.tombstone":100,"m.room.server_acl":100,"m.room.encryption":100},
     //     "events_default":0,"state_default":50,"ban":50,"kick":50,"redact":50,"invite":50,"historical":100} - {}
-    // See: https://spec.matrix.org/v1.3/client-server-api/
+    // See: https://spec.matrix.org/v1.3/client-server-api/ + search on m.room.power_levels
     // Explicitly set that new users have full admin power
     createRoomOptions.power_level_content_override = {
-      users_default: 100,
+      users_default: 50,
+      redact: 0,
     };
 
     const roomResult = await matrixClient.createRoom(createRoomOptions);
