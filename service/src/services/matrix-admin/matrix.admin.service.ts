@@ -124,17 +124,20 @@ export class MatrixAdminService {
 
         const powerLevelsEvent = await this.getPowerLevelsEventForRoom(roomID);
         const powerLevelsEventUsers = powerLevelsEvent.content.users;
-
-        const userStr = JSON.stringify(powerLevelsEventUsers);
         const newPowerLevelDefaultUser =
           updateRoomStateForAdminRooms.powerLevel.users_default;
-        if (userStr.includes(adminUserID)) {
+
+        const userStr = JSON.stringify(powerLevelsEventUsers);
+        const usersMap = this.convertUsersStringToMap(userStr);
+
+        const userPowerLevel = usersMap.get(adminUserID);
+        if (userPowerLevel && userPowerLevel === 100) {
           // Update the user's power level (e.g., set them as an admin)
           const updatedPowerLevelsInput: RoomPowerLevelsEventContent = {
             ...powerLevelsEvent.content,
             users_default: newPowerLevelDefaultUser,
           };
-          //Send the updated power levels event
+
           await matrixClient.sendStateEvent(
             roomID,
             EventType.RoomPowerLevels,
@@ -146,12 +149,19 @@ export class MatrixAdminService {
             LogContext.MATRIX_ADMIN
           );
         } else {
-          this.logger.verbose?.(
-            `...room state update __skipped__ as current user is not empowered by: ${JSON.stringify(
-              powerLevelsEventUsers
-            )}`,
-            LogContext.MATRIX_ADMIN
-          );
+          if (!userPowerLevel) {
+            this.logger.verbose?.(
+              `...room state update __skipped__ as current user is not a known user: ${JSON.stringify(
+                powerLevelsEventUsers
+              )}`,
+              LogContext.MATRIX_ADMIN
+            );
+          } else {
+            this.logger.verbose?.(
+              `...room state update __skipped__ as current user (${adminUserID}) power level is too low: ${userPowerLevel}`,
+              LogContext.MATRIX_ADMIN
+            );
+          }
         }
       }
       this.logger.verbose?.(
@@ -163,6 +173,15 @@ export class MatrixAdminService {
       this.logger.error(errorMessage, LogContext.MATRIX_ADMIN);
       throw error;
     }
+  }
+
+  private convertUsersStringToMap(usersString: string): Map<string, number> {
+    const usersMap = new Map<string, number>();
+    const users = JSON.parse(usersString);
+    for (const user in users) {
+      usersMap.set(user, users[user]);
+    }
+    return usersMap;
   }
 
   public async logRoomState(

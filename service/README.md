@@ -35,9 +35,26 @@ Execute the following command from the workspace root:
 
 ## Explainer
 
-The way syncing works with Matrix SDK client is that you see the rooms in the MatrixClient that you are a member of.
+This service uses the Matrix JS SDK to create a client for user.
 
-For the way we use it this can mean that the admin account can potentially have a lot of rooms that it is a member of, and hence take a long time to sync.
+This is done in two ways:
 
-To address this, an admin account is only added as a member at the moment that it needs to read the room. This does mean the sync time will increase over time, but it
-is then trivial to go to a new admin account and have that gradually join the rooms that are needed.
+- there is an elevated admin user that is used to create rooms
+- each Alkemio user for sending messages to a room
+
+The Matrix Client created for a user knows about all rooms **that the user is a member of**. This is key: if the user is not a member of a room then the client does not know about that room.
+
+For this reason the resulting setup is that the admin user ends up being a member of many rooms, as the user is added to rooms to allow reading from the room. This means that the admin user can potentially take a long time to sync up.
+
+To address this, an admin account is only added as a member at the moment that it needs to read the room. This does mean the sync time will increase over time.
+However it is then trivial to go to a new admin account and have that gradually join the rooms that are needed.
+
+### Usage of power levels
+
+Each room has a state. This state specifies what is the power level needed for particular actions. And crucially what is the power level that is assigned to new members of the room.
+
+The way Alkemio uses rooms is that new members of a room get a power level that is high enough so that they can delete / carry out other actions on the room.
+
+In rooms created before mid-2024, the users_default power level was set to zero. This meant that they cannot delete messages. After this point the default power level for new users in a room is set to 100 so that they can carry out all actions.
+
+The power levels in rooms will need to be tidied up before the rooms in Matrix could be exposed outside of the cluster.
