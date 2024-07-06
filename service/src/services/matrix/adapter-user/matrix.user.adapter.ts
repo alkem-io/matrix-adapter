@@ -3,7 +3,6 @@ import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { IMatrixUser } from './matrix.user.interface';
-import { MatrixUserMembershipException } from '@common/exceptions/matrix.membership.exception';
 import { MatrixClient } from 'matrix-js-sdk';
 
 @Injectable()
@@ -21,20 +20,6 @@ export class MatrixUserAdapter {
       joined_rooms: string[];
     };
     return response.joined_rooms;
-  }
-
-  async verifyRoomMembershipOrFail(
-    matrixClient: MatrixClient,
-    roomID: string
-  ): Promise<boolean> {
-    const result = await this.isUserMemberOfRoom(matrixClient, roomID);
-    if (!result) {
-      throw new MatrixUserMembershipException(
-        `[Membership] user (${matrixClient.getUserId()}) is NOT a member of: ${roomID}`,
-        LogContext.COMMUNICATION
-      );
-    }
-    return result;
   }
 
   async isUserMemberOfRoom(

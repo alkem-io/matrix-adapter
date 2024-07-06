@@ -13,19 +13,20 @@ import {
   JoinRule,
   MatrixClient,
   MatrixEvent,
+  Preset,
   TimelineWindow,
+  Visibility,
 } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
 import { MatrixRoom } from './matrix.room';
-import { Preset, Visibility } from './matrix.room.dto.create.options';
-import { IRoomOpts } from './matrix.room.dto.options';
 import { MatrixRoomResponseMessage } from './matrix.room.dto.response.message';
 import {
   RoomHistoryVisibilityEventContent,
   RoomJoinRulesEventContent,
 } from 'matrix-js-sdk/lib/types';
 import { MatrixAgent } from '../agent/matrix.agent';
+import { IRoomOpts } from './matrix.room.dto.options';
 
 @Injectable()
 export class MatrixRoomAdapter {
@@ -77,27 +78,40 @@ export class MatrixRoomAdapter {
 
   async createRoom(
     matrixClient: MatrixClient,
-    options: IRoomOpts
+    createRoomOptions: ICreateRoomOpts,
+    alkemioOptions: IRoomOpts
   ): Promise<string> {
-    const { dmUserId, metadata } = options;
-    // adjust options
-    const createOpts: ICreateRoomOpts = options.createOpts || {};
+    const { dmUserId, metadata } = alkemioOptions;
 
     // all rooms will by default be public
     const defaultPreset = Preset.PublicChat;
-    createOpts.preset = createOpts.preset || defaultPreset;
+    createRoomOptions.preset = createRoomOptions.preset || defaultPreset;
     // all rooms will by default be public and visible - need to revise this
     // once the Synapse server is community accessible
-    createOpts.visibility = createOpts.visibility || Visibility.Public;
+    createRoomOptions.visibility =
+      createRoomOptions.visibility || Visibility.Public;
 
-    if (dmUserId && createOpts.invite === undefined) {
-      createOpts.invite = [dmUserId];
+    if (dmUserId && createRoomOptions.invite === undefined) {
+      createRoomOptions.invite = [dmUserId];
     }
-    if (dmUserId && createOpts.is_direct === undefined) {
-      createOpts.is_direct = true;
+    if (dmUserId && createRoomOptions.is_direct === undefined) {
+      createRoomOptions.is_direct = true;
     }
 
-    const roomResult = await matrixClient.createRoom(createOpts);
+    // Set the pwer levels for the room. Example content of this event below.
+    // [m.room.power_levels] - [$ltIxj3IMlH1Plkm-1dOmahrrO3brsPNAvLiUM43liWI] - content: {
+    //   "users":{"@matrixadmin4=alkem.io:alkemio.matrix.host":100},"users_default":0,"events":
+    //   {"m.room.name":50,"m.room.power_levels":100,"m.room.history_visibility":100,"m.room.canonical_alias":50,
+    //     "m.room.avatar":50,"m.room.tombstone":100,"m.room.server_acl":100,"m.room.encryption":100},
+    //     "events_default":0,"state_default":50,"ban":50,"kick":50,"redact":50,"invite":50,"historical":100} - {}
+    // See: https://spec.matrix.org/v1.3/client-server-api/ + search on m.room.power_levels
+    // Explicitly set that new users have full admin power
+    createRoomOptions.power_level_content_override = {
+      users_default: 50,
+      redact: 0,
+    };
+
+    const roomResult = await matrixClient.createRoom(createRoomOptions);
     const roomID = roomResult.room_id;
     this.logger.verbose?.(
       `[MatrixRoom] Created new room with id: ${roomID}`,

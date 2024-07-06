@@ -9,6 +9,7 @@ import configuration from './config/configuration';
 import { HttpExceptionsFilter } from './core';
 import { BootstrapModule } from './core/bootstrap/bootstrap.module';
 import { CommunicationAdapterModule } from './services/communication-adapter/communication-adapter.module';
+import { MatrixAdminModule } from './services/matrix-admin/matrix.admin.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { CommunicationAdapterModule } from './services/communication-adapter/com
     }),
     BootstrapModule,
     CommunicationAdapterModule,
+    MatrixAdminModule,
     HealthModule,
   ],
   providers: [
