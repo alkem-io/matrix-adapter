@@ -298,7 +298,9 @@ export class CommunicationAdapter {
         LogContext.COMMUNICATION
       );
     } catch (error) {
-      const errorMessage = `Unable to elevate admin privilege on room: ${error}`;
+      const errorMessage = `Unable to add user ${this.getUserIdFromMatrixClient(
+        matrixClient
+      )} to room: ${error}`;
       this.logger.error(errorMessage, LogContext.COMMUNICATION);
       throw error;
     }
