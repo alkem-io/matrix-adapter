@@ -10,9 +10,10 @@ import {
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { LogContext } from '../../common/enums';
 import { MatrixAdminEventType } from './matrix.admin.event.type';
-import { MatrixAdminEventResetAdminRoomsInput } from './dto/matrix.admin.dto.event.reset.admin.rooms';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
 import { MatrixAdminService } from './matrix.admin.service';
 import { MatrixAdminBaseEventResponsePayload } from './dto/matrix.admin.base.event.response.payload';
+import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.dto.event.log.room.state';
 
 @Controller()
 export class MatrixAdminController {
@@ -22,13 +23,43 @@ export class MatrixAdminController {
     private matrixAdminService: MatrixAdminService
   ) {}
 
-  @MessagePattern('adminRoomsReset', Transport.RMQ)
+  @MessagePattern('updateRoomStateForAdminRooms', Transport.RMQ)
   async matrixAdminRoomsReset(
-    @Payload() data: MatrixAdminEventResetAdminRoomsInput,
+    @Payload() data: MatrixAdminEventUpdateRoomStateForAdminRoomsInput,
     @Ctx() context: RmqContext
   ): Promise<MatrixAdminBaseEventResponsePayload> {
     this.logger.verbose?.(
-      `${MatrixAdminEventType.ADMIN_ROOMS_RESET} - payload: ${JSON.stringify(
+      `${
+        MatrixAdminEventType.UPDATE_ROOM_STATE_FOR_ADMIN_ROOMS
+      } - payload: ${JSON.stringify(data)}`,
+      LogContext.MATRIX_ADMIN_EVENTS
+    );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
+
+    try {
+      await this.matrixAdminService.updateRoomStateForAdminRooms(data);
+      channel.ack(originalMsg);
+      const response: MatrixAdminBaseEventResponsePayload = {};
+
+      return response;
+    } catch (error) {
+      const errorMessage = `Error when resetting matrix rooms for admin: ${error}, payload: ${JSON.stringify(
+        data
+      )}`;
+      this.logger.error(errorMessage, LogContext.MATRIX_ADMIN);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
+  }
+
+  @MessagePattern('logRoomState', Transport.RMQ)
+  async matrixAdminRoomState(
+    @Payload() data: MatrixAdminEventLogRoomStateInput,
+    @Ctx() context: RmqContext
+  ): Promise<MatrixAdminBaseEventResponsePayload> {
+    this.logger.verbose?.(
+      `${MatrixAdminEventType.LOG_ROOM_STATE} - payload: ${JSON.stringify(
         data
       )}`,
       LogContext.MATRIX_ADMIN_EVENTS
@@ -37,7 +68,7 @@ export class MatrixAdminController {
     const originalMsg = context.getMessage();
 
     try {
-      await this.matrixAdminService.updatePowerLevelsInRoomsForAdmin(data);
+      await this.matrixAdminService.logRoomState(data);
       channel.ack(originalMsg);
       const response: MatrixAdminBaseEventResponsePayload = {};
 

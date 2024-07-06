@@ -5,11 +5,12 @@ import { LogContext } from '@src/common/enums/logging.context';
 import { RoomPowerLevelsEventContent } from 'matrix-js-sdk/lib/types';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 import { EventType, IStateEventWithRoomId } from 'matrix-js-sdk';
-import { MatrixAdminEventResetAdminRoomsInput } from './dto/matrix.admin.dto.event.reset.admin.rooms';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput as MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
 import { IOperationalMatrixUser } from '../matrix/adapter-user/matrix.user.interface';
 import { MatrixUserManagementService } from '../matrix/management/matrix.user.management.service';
 import { MatrixAgentService } from '../matrix/agent/matrix.agent.service';
 import { MatrixUserAdapter } from '../matrix/adapter-user/matrix.user.adapter';
+import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.dto.event.log.room.state';
 
 @Injectable()
 export class MatrixAdminService {
@@ -36,7 +37,7 @@ export class MatrixAdminService {
     if (!powerLevelsEvent) {
       throw new MatrixEntityNotFoundException(
         `Unable to retrieve power level for admin in room: ${roomID}`,
-        LogContext.COMMUNICATION
+        LogContext.MATRIX_ADMIN
       );
     }
     this.logRoomPowerLevelsEvent(powerLevelsEvent);
@@ -47,12 +48,12 @@ export class MatrixAdminService {
     const powerLevelsEventUsers = powerLevelsEvent.content.users;
     const poserLevelsEventDefaultUser = powerLevelsEvent.content.users_default;
     this.logger.verbose?.(
-      `Room (${
+      `...room (${
         powerLevelsEvent.room_id
-      }) - power levels event sent by: ${JSON.stringify(
+      }) state event: - users: ${JSON.stringify(
         powerLevelsEventUsers
-      )} - default users level: ${poserLevelsEventDefaultUser}`,
-      LogContext.COMMUNICATION
+      )} - user_default: ${poserLevelsEventDefaultUser}`,
+      LogContext.MATRIX_ADMIN
     );
   }
 
@@ -82,12 +83,12 @@ export class MatrixAdminService {
       // trying to reset an admin that is not known!
       throw new MatrixEntityNotFoundException(
         `trying to reset an admin that is not known: ${username}`,
-        LogContext.COMMUNICATION
+        LogContext.MATRIX_ADMIN
       );
     }
     this.logger.verbose?.(
-      `Admin user is registered: ${username}, logging in...`,
-      LogContext.COMMUNICATION
+      `User is registered: ${username}, logging in...`,
+      LogContext.MATRIX_ADMIN
     );
     const adminUser = await this.matrixUserManagementService.login(
       adminCommunicationsID,
@@ -96,16 +97,16 @@ export class MatrixAdminService {
     return adminUser;
   }
 
-  public async updatePowerLevelsInRoomsForAdmin(
-    resetAdminRoomsData: MatrixAdminEventResetAdminRoomsInput
+  public async updateRoomStateForAdminRooms(
+    updateRoomStateForAdminRooms: MatrixAdminEventUpdateRoomStateForAdminRoomsInput
   ) {
     this.logger.verbose?.(
-      `*** Resetting power level in rooms for admin: ${resetAdminRoomsData.adminEmail} ***`,
-      LogContext.COMMUNICATION
+      `*** Updating room state in rooms for admin: ${updateRoomStateForAdminRooms.adminEmail} ***`,
+      LogContext.MATRIX_ADMIN
     );
     const adminUser = await this.getGlobalAdminUser(
-      resetAdminRoomsData.adminEmail,
-      resetAdminRoomsData.adminPassword
+      updateRoomStateForAdminRooms.adminEmail,
+      updateRoomStateForAdminRooms.adminPassword
     );
     const adminAgent = await this.createMatrixClientForAdmin(adminUser);
     const matrixClient = adminAgent.matrixClient;
@@ -115,6 +116,10 @@ export class MatrixAdminService {
     let roomsUpdated = 0;
     try {
       for (const room of rooms) {
+        this.logger.verbose?.(
+          `Updating room state (power levels) in room: ${room.roomId}`,
+          LogContext.MATRIX_ADMIN
+        );
         const roomID = room.roomId;
 
         const powerLevelsEvent = await this.getPowerLevelsEventForRoom(roomID);
@@ -122,7 +127,7 @@ export class MatrixAdminService {
 
         const userStr = JSON.stringify(powerLevelsEventUsers);
         const newPowerLevelDefaultUser =
-          resetAdminRoomsData.powerLevel.users_default;
+          updateRoomStateForAdminRooms.powerLevel.users_default;
         if (userStr.includes(adminUserID)) {
           // Update the user's power level (e.g., set them as an admin)
           const updatedPowerLevelsInput: RoomPowerLevelsEventContent = {
@@ -137,27 +142,38 @@ export class MatrixAdminService {
           );
           roomsUpdated++;
           this.logger.verbose?.(
-            `...power level update sent for room ${roomID}`,
-            LogContext.COMMUNICATION
+            `...===> room state update sent for room ${roomID}`,
+            LogContext.MATRIX_ADMIN
           );
-          await this.getPowerLevelsEventForRoom(roomID);
         } else {
           this.logger.verbose?.(
-            `...power level update skipped as current user is not empowered by: ${JSON.stringify(
+            `...room state update __skipped__ as current user is not empowered by: ${JSON.stringify(
               powerLevelsEventUsers
             )}`,
-            LogContext.COMMUNICATION
+            LogContext.MATRIX_ADMIN
           );
         }
       }
       this.logger.verbose?.(
-        `Power levels updated in ${roomsUpdated} rooms for admin: ${resetAdminRoomsData.adminEmail}`,
-        LogContext.COMMUNICATION
+        `*** Power levels updated in ${roomsUpdated} rooms for admin: ${updateRoomStateForAdminRooms.adminEmail} ***`,
+        LogContext.MATRIX_ADMIN
       );
     } catch (error) {
       const errorMessage = `Unable to update power levels in rooms: ${error}`;
-      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      this.logger.error(errorMessage, LogContext.MATRIX_ADMIN);
       throw error;
     }
+  }
+
+  public async logRoomState(
+    logRoomStateData: MatrixAdminEventLogRoomStateInput
+  ) {
+    const roomState = await this.getPowerLevelsEventForRoom(
+      logRoomStateData.roomID
+    );
+    this.logger.verbose?.(
+      `Room (${logRoomStateData.roomID}: ${JSON.stringify(roomState)}`,
+      LogContext.MATRIX_ADMIN
+    );
   }
 }

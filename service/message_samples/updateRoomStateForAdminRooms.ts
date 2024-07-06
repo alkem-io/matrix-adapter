@@ -1,8 +1,8 @@
 
-import { MatrixAdminEventResetAdminRoomsInput } from '../src/services/matrix-admin/dto/matrix.admin.dto.event.reset.admin.rooms';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from '../src/services/matrix-admin/dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
 
 const messageBody: CmdMatrixAdminEventResetAdminRoomsInput = {
-  pattern: 'adminRoomsReset',
+  pattern: 'updateRoomStateForAdminRooms',
   payload: {
     adminEmail: "matrixadmin@alkem.io",
     adminPassword: "change_me_now",
@@ -14,7 +14,7 @@ const messageBody: CmdMatrixAdminEventResetAdminRoomsInput = {
 }
 
 // {
-//   "pattern": "adminRoomsReset",
+//   "pattern": "updateRoomStateForAdminRooms",
 //   "data": {
 //     "adminEmail": "matrixadmin@alkem.io",
 //     "adminPassword": "change_me_now",
@@ -26,5 +26,5 @@ const messageBody: CmdMatrixAdminEventResetAdminRoomsInput = {
 
 export class CmdMatrixAdminEventResetAdminRoomsInput {
   pattern: string;
-  payload: MatrixAdminEventResetAdminRoomsInput;
+  payload: MatrixAdminEventUpdateRoomStateForAdminRoomsInput;
 }

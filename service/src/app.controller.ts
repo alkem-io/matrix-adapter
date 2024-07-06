@@ -51,7 +51,7 @@ import { AddUserToRoomResponsePayload } from '@alkemio/matrix-adapter-lib';
 import { AddUserToRoomPayload } from '@alkemio/matrix-adapter-lib';
 import { RegisterNewUserPayload } from '@alkemio/matrix-adapter-lib';
 import { RegisterNewUserResponsePayload } from '@alkemio/matrix-adapter-lib';
-import { MatrixAdminEventResetAdminRoomsInput } from './services/matrix-admin/dto/matrix.admin.dto.event.reset.admin.rooms';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './services/matrix-admin/dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
 import { MatrixAdminService } from './services/matrix-admin/matrix.admin.service';
 
 @Controller()
@@ -281,16 +281,14 @@ export class AppController {
 
   private async testPowerLevelResetOtherAdminUser() {
     // Hack for now
-    const adminResetInput: MatrixAdminEventResetAdminRoomsInput = {
+    const adminResetInput: MatrixAdminEventUpdateRoomStateForAdminRoomsInput = {
       adminEmail: 'matrixadmin3@alkem.io',
       adminPassword: 'change_me_now',
       powerLevel: {
         users_default: 50,
       },
     };
-    await this.matrixAdminService.updatePowerLevelsInRoomsForAdmin(
-      adminResetInput
-    );
+    await this.matrixAdminService.updateRoomStateForAdminRooms(adminResetInput);
   }
 
   @MessagePattern({ cmd: MatrixAdapterEventType.ROOM_MESSAGE_SENDER })

@@ -1,3 +1,4 @@
 export enum MatrixAdminEventType {
-  ADMIN_ROOMS_RESET = 'adminRoomsReset',
+  UPDATE_ROOM_STATE_FOR_ADMIN_ROOMS = 'updateRoomStateForAdminRooms',
+  LOG_ROOM_STATE = 'logRoomState',
 }

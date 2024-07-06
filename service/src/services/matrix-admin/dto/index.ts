@@ -1,1 +1,1 @@
-export * from './matrix.admin.dto.event.reset.admin.rooms';
+export * from './matrix.admin.dto.event.update.room.state.for.admin.rooms';

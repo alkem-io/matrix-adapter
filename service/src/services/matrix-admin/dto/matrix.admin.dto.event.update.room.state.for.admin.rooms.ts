@@ -1,4 +1,4 @@
-export class MatrixAdminEventResetAdminRoomsInput {
+export class MatrixAdminEventUpdateRoomStateForAdminRoomsInput {
   adminEmail!: string;
 
   adminPassword!: string;
