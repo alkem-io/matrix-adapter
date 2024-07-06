@@ -286,7 +286,7 @@ export class CommunicationAdapter {
       }
     );
   }
-  private async ensureMatrixClientIsMemberOfRoom(
+  public async ensureMatrixClientIsMemberOfRoom(
     matrixClient: MatrixClient,
     roomID: string
   ): Promise<void> {
