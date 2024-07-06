@@ -55,7 +55,10 @@ export class CommunicationAdapter {
   ): Promise<RoomResult> {
     const matrixAgentElevated =
       await this.communicationAdminUserService.getMatrixManagementAgentElevated();
-    await this.ensureElevatedAgentIsMemberOfRoom(roomID);
+    await this.ensureMatrixClientIsMemberOfRoom(
+      matrixAgentElevated.matrixClient,
+      roomID
+    );
 
     const matrixRoom = await this.matrixAgentService.getRoom(
       matrixAgentElevated,
@@ -88,7 +91,7 @@ export class CommunicationAdapter {
     const senderCommunicationID = sendMessageData.senderID;
     const matrixAgent = await this.acquireMatrixAgent(senderCommunicationID);
 
-    await this.matrixUserAdapter.verifyRoomMembershipOrFail(
+    await this.ensureMatrixClientIsMemberOfRoom(
       matrixAgent.matrixClient,
       sendMessageData.roomID
     );
@@ -138,7 +141,7 @@ export class CommunicationAdapter {
     const senderCommunicationID = sendMessageData.senderID;
     const matrixAgent = await this.acquireMatrixAgent(senderCommunicationID);
 
-    await this.matrixUserAdapter.verifyRoomMembershipOrFail(
+    await this.ensureMatrixClientIsMemberOfRoom(
       matrixAgent.matrixClient,
       sendMessageData.roomID
     );
@@ -190,7 +193,7 @@ export class CommunicationAdapter {
     const senderCommunicationID = addReactionData.senderID;
     const matrixAgent = await this.acquireMatrixAgent(senderCommunicationID);
 
-    await this.matrixUserAdapter.verifyRoomMembershipOrFail(
+    await this.ensureMatrixClientIsMemberOfRoom(
       matrixAgent.matrixClient,
       addReactionData.roomID
     );
@@ -238,7 +241,7 @@ export class CommunicationAdapter {
     const senderCommunicationID = removeReactionData.senderID;
     const matrixAgent = await this.acquireMatrixAgent(senderCommunicationID);
 
-    await this.matrixUserAdapter.verifyRoomMembershipOrFail(
+    await this.ensureMatrixClientIsMemberOfRoom(
       matrixAgent.matrixClient,
       removeReactionData.roomID
     );
@@ -283,17 +286,15 @@ export class CommunicationAdapter {
       }
     );
   }
-  private async ensureElevatedAgentIsMemberOfRoom(
+  private async ensureMatrixClientIsMemberOfRoom(
+    matrixClient: MatrixClient,
     roomID: string
   ): Promise<void> {
     try {
-      const matrixAgentElevated =
-        await this.communicationAdminUserService.getMatrixManagementAgentElevated();
-      const matrixClient = matrixAgentElevated.matrixClient;
-      const adminUser = this.getUserIdFromMatrixClient(matrixClient);
-      await this.addUserToRoom(roomID, adminUser);
+      const user = this.getUserIdFromMatrixClient(matrixClient);
+      await this.addUserToRoom(roomID, user);
       this.logger.verbose?.(
-        `Admin (${adminUser}) added to room: ${roomID}`,
+        `Admin (${user}) added to room: ${roomID}`,
         LogContext.COMMUNICATION
       );
     } catch (error) {
@@ -309,13 +310,21 @@ export class CommunicationAdapter {
     // when deleting a message use the global admin account
     // the possibility to use native matrix power levels is there
     // but we still don't have the infrastructure to support it
-    const matrixAgentElevated =
-      await this.communicationAdminUserService.getMatrixManagementAgentElevated();
+    // const matrixAgentElevated =
+    //   await this.communicationAdminUserService.getMatrixManagementAgentElevated();
 
-    await this.ensureElevatedAgentIsMemberOfRoom(deleteMessageData.roomID);
+    // Prefer to delete with the current user to ensure audit trail is maintained in matrix
+    const matrixAgent = await this.acquireMatrixAgent(
+      deleteMessageData.triggeredBy
+    );
+
+    await this.ensureMatrixClientIsMemberOfRoom(
+      matrixAgent.matrixClient,
+      deleteMessageData.roomID
+    );
 
     await this.matrixAgentService.deleteMessage(
-      matrixAgentElevated,
+      matrixAgent,
       deleteMessageData.roomID,
       deleteMessageData.messageID
     );
@@ -353,7 +362,10 @@ export class CommunicationAdapter {
     // only the admin agent has knowledge of all rooms and synchronizes the state
     const matrixElevatedAgent =
       await this.communicationAdminUserService.getMatrixManagementAgentElevated();
-    await this.ensureElevatedAgentIsMemberOfRoom(roomID);
+    await this.ensureMatrixClientIsMemberOfRoom(
+      matrixElevatedAgent.matrixClient,
+      roomID
+    );
     const matrixRoom = await this.matrixAgentService.getRoom(
       matrixElevatedAgent,
       roomID
