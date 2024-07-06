@@ -149,6 +149,7 @@ export class MatrixAgentService {
     // Room does not exist, create...
     const targetRoomId = await this.matrixRoomAdapter.createRoom(
       matrixAgent.matrixClient,
+      {},
       {
         dmUserId: messageRequest.matrixID,
       }
