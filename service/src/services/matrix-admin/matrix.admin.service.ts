@@ -11,6 +11,7 @@ import { MatrixUserManagementService } from '../matrix/management/matrix.user.ma
 import { MatrixAgentService } from '../matrix/agent/matrix.agent.service';
 import { MatrixUserAdapter } from '../matrix/adapter-user/matrix.user.adapter';
 import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.dto.event.log.room.state';
+import { CommunicationAdminUserService } from '../communication-admin-user/communication.admin.user.service';
 
 @Injectable()
 export class MatrixAdminService {
@@ -20,14 +21,15 @@ export class MatrixAdminService {
     private communicationAdapter: CommunicationAdapter,
     private matrixUserManagementService: MatrixUserManagementService,
     private matrixAgentService: MatrixAgentService,
-    private matrixUserAdapter: MatrixUserAdapter
+    private matrixUserAdapter: MatrixUserAdapter,
+    private communicationAdminUserService: CommunicationAdminUserService
   ) {}
 
   private async getPowerLevelsEventForRoom(
     roomID: string
   ): Promise<IStateEventWithRoomId> {
     const matrixAgentElevated =
-      await this.communicationAdapter.getMatrixManagementAgentElevated();
+      await this.communicationAdminUserService.getMatrixManagementAgentElevated();
     const matrixClient = matrixAgentElevated.matrixClient;
     const roomState = await matrixClient.roomState(roomID);
     // Find the user's power level event (usually type "m.room.power_levels")
