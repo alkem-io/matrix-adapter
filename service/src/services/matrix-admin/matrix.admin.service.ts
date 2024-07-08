@@ -24,79 +24,6 @@ export class MatrixAdminService {
     private matrixUserAdapter: MatrixUserAdapter,
     private communicationAdminUserService: CommunicationAdminUserService
   ) {}
-
-  private async getPowerLevelsEventForRoom(
-    matrixClient: MatrixClient,
-    roomID: string
-  ): Promise<IStateEventWithRoomId> {
-    const roomState = await matrixClient.roomState(roomID);
-    // Find the user's power level event (usually type "m.room.power_levels")
-    const powerLevelsEvent = roomState.find(
-      event => event.type === 'm.room.power_levels'
-    );
-    if (!powerLevelsEvent) {
-      throw new MatrixEntityNotFoundException(
-        `Unable to retrieve power level for admin in room: ${roomID}`,
-        LogContext.MATRIX_ADMIN
-      );
-    }
-    this.logRoomPowerLevelsEvent(powerLevelsEvent);
-    return powerLevelsEvent;
-  }
-
-  private logRoomPowerLevelsEvent(powerLevelsEvent: IStateEventWithRoomId) {
-    const powerLevelsEventUsers = powerLevelsEvent.content.users;
-    const poserLevelsEventDefaultUser = powerLevelsEvent.content.users_default;
-    this.logger.verbose?.(
-      `...room (${
-        powerLevelsEvent.room_id
-      }) state event: - users: ${JSON.stringify(
-        powerLevelsEventUsers
-      )} - user_default: ${poserLevelsEventDefaultUser}`,
-      LogContext.MATRIX_ADMIN
-    );
-  }
-
-  private async createMatrixClientForAdmin(adminUser: IOperationalMatrixUser) {
-    const adminAgent = await this.matrixAgentService.createMatrixAgent(
-      adminUser
-    );
-
-    await adminAgent.start({
-      registerTimelineMonitor: false,
-      registerRoomMonitor: false,
-    });
-
-    return adminAgent;
-  }
-
-  private async getGlobalAdminUser(
-    username: string,
-    password: string
-  ): Promise<IOperationalMatrixUser> {
-    const adminCommunicationsID =
-      this.matrixUserAdapter.convertEmailToMatrixID(username);
-    const adminExists = await this.matrixUserManagementService.isRegistered(
-      adminCommunicationsID
-    );
-    if (!adminExists) {
-      // trying to reset an admin that is not known!
-      throw new MatrixEntityNotFoundException(
-        `trying to reset an admin that is not known: ${username}`,
-        LogContext.MATRIX_ADMIN
-      );
-    }
-    this.logger.verbose?.(
-      `User is registered: ${username}, logging in...`,
-      LogContext.MATRIX_ADMIN
-    );
-    const adminUser = await this.matrixUserManagementService.login(
-      adminCommunicationsID,
-      password
-    );
-    return adminUser;
-  }
-
   public async updateRoomStateForAdminRooms(
     updateRoomStateForAdminRooms: MatrixAdminEventUpdateRoomStateForAdminRoomsInput
   ) {
@@ -188,15 +115,6 @@ export class MatrixAdminService {
     }
   }
 
-  private convertUsersStringToMap(usersString: string): Map<string, number> {
-    const usersMap = new Map<string, number>();
-    const users = JSON.parse(usersString);
-    for (const user in users) {
-      usersMap.set(user, users[user]);
-    }
-    return usersMap;
-  }
-
   public async logRoomState(
     logRoomStateData: MatrixAdminEventLogRoomStateInput
   ) {
@@ -233,5 +151,86 @@ export class MatrixAdminService {
       `...redact: ${roomState.content.redact}`,
       LogContext.MATRIX_ADMIN
     );
+  }
+
+  private async getPowerLevelsEventForRoom(
+    matrixClient: MatrixClient,
+    roomID: string
+  ): Promise<IStateEventWithRoomId> {
+    const roomState = await matrixClient.roomState(roomID);
+    // Find the user's power level event (usually type "m.room.power_levels")
+    const powerLevelsEvent = roomState.find(
+      event => event.type === 'm.room.power_levels'
+    );
+    if (!powerLevelsEvent) {
+      throw new MatrixEntityNotFoundException(
+        `Unable to retrieve power levels for room: ${roomID}`,
+        LogContext.MATRIX_ADMIN
+      );
+    }
+    this.logRoomPowerLevelsEvent(powerLevelsEvent);
+    return powerLevelsEvent;
+  }
+
+  private logRoomPowerLevelsEvent(powerLevelsEvent: IStateEventWithRoomId) {
+    const powerLevelsEventUsers = powerLevelsEvent.content.users;
+    const poserLevelsEventDefaultUser = powerLevelsEvent.content.users_default;
+    this.logger.verbose?.(
+      `...room (${
+        powerLevelsEvent.room_id
+      }) state event: - users: ${JSON.stringify(
+        powerLevelsEventUsers
+      )} - user_default: ${poserLevelsEventDefaultUser}`,
+      LogContext.MATRIX_ADMIN
+    );
+  }
+
+  private async createMatrixClientForAdmin(adminUser: IOperationalMatrixUser) {
+    const adminAgent = await this.matrixAgentService.createMatrixAgent(
+      adminUser
+    );
+
+    await adminAgent.start({
+      registerTimelineMonitor: false,
+      registerRoomMonitor: false,
+    });
+
+    return adminAgent;
+  }
+
+  private async getGlobalAdminUser(
+    username: string,
+    password: string
+  ): Promise<IOperationalMatrixUser> {
+    const adminCommunicationsID =
+      this.matrixUserAdapter.convertEmailToMatrixID(username);
+    const adminExists = await this.matrixUserManagementService.isRegistered(
+      adminCommunicationsID
+    );
+    if (!adminExists) {
+      // trying to reset an admin that is not known!
+      throw new MatrixEntityNotFoundException(
+        `trying to reset an admin that is not known: ${username}`,
+        LogContext.MATRIX_ADMIN
+      );
+    }
+    this.logger.verbose?.(
+      `User is registered: ${username}, logging in...`,
+      LogContext.MATRIX_ADMIN
+    );
+    const adminUser = await this.matrixUserManagementService.login(
+      adminCommunicationsID,
+      password
+    );
+    return adminUser;
+  }
+
+  private convertUsersStringToMap(usersString: string): Map<string, number> {
+    const usersMap = new Map<string, number>();
+    const users = JSON.parse(usersString);
+    for (const user in users) {
+      usersMap.set(user, users[user]);
+    }
+    return usersMap;
   }
 }

@@ -36,6 +36,24 @@ export class CommunicationAdminUserService {
     );
   }
 
+  public async getMatrixManagementAgentElevated() {
+    if (this.matrixElevatedAgent) {
+      return this.matrixElevatedAgent;
+    }
+
+    const adminUser = await this.getGlobalAdminUser();
+    this.matrixElevatedAgent = await this.matrixAgentService.createMatrixAgent(
+      adminUser
+    );
+
+    await this.matrixElevatedAgent.start({
+      registerTimelineMonitor: false,
+      registerRoomMonitor: false,
+    });
+
+    return this.matrixElevatedAgent;
+  }
+
   private async getGlobalAdminUser() {
     if (this.adminUser) {
       return this.adminUser;
@@ -59,24 +77,6 @@ export class CommunicationAdminUserService {
 
     this.adminUser = await this.registerNewAdminUser();
     return this.adminUser;
-  }
-
-  public async getMatrixManagementAgentElevated() {
-    if (this.matrixElevatedAgent) {
-      return this.matrixElevatedAgent;
-    }
-
-    const adminUser = await this.getGlobalAdminUser();
-    this.matrixElevatedAgent = await this.matrixAgentService.createMatrixAgent(
-      adminUser
-    );
-
-    await this.matrixElevatedAgent.start({
-      registerTimelineMonitor: false,
-      registerRoomMonitor: false,
-    });
-
-    return this.matrixElevatedAgent;
   }
 
   private async registerNewAdminUser(): Promise<IOperationalMatrixUser> {

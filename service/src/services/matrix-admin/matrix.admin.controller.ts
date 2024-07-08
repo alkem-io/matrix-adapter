@@ -36,19 +36,16 @@ export class MatrixAdminController {
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
+    channel.ack(originalMsg);
 
     try {
       await this.matrixAdminService.updateRoomStateForAdminRooms(data);
-      channel.ack(originalMsg);
-      const response: MatrixAdminBaseEventResponsePayload = {};
-
-      return response;
-    } catch (error) {
-      const errorMessage = `Error when resetting matrix rooms for admin: ${error}, payload: ${JSON.stringify(
-        data
-      )}`;
-      this.logger.error(errorMessage, LogContext.MATRIX_ADMIN);
-      channel.ack(originalMsg);
+      return {};
+    } catch (error: any) {
+      const errorMessage = `Error when resetting matrix rooms for admin '${
+        data.adminEmail
+      }': ${error?.message ?? error}, payload: ${JSON.stringify(data)}`;
+      this.logger.error(errorMessage, undefined, LogContext.MATRIX_ADMIN);
       throw new RpcException(errorMessage);
     }
   }
@@ -66,19 +63,16 @@ export class MatrixAdminController {
     );
     const channel = context.getChannelRef();
     const originalMsg = context.getMessage();
+    channel.ack(originalMsg);
 
     try {
       await this.matrixAdminService.logRoomState(data);
-      channel.ack(originalMsg);
-      const response: MatrixAdminBaseEventResponsePayload = {};
-
-      return response;
-    } catch (error) {
-      const errorMessage = `Error when resetting matrix rooms for admin: ${error}, payload: ${JSON.stringify(
-        data
-      )}`;
-      this.logger.error(errorMessage, LogContext.MATRIX_ADMIN);
-      channel.ack(originalMsg);
+      return {};
+    } catch (error: any) {
+      const errorMessage = `Error when rooms for admin: ${
+        error?.message ?? error
+      }, payload: ${JSON.stringify(data)}`;
+      this.logger.error(errorMessage, error?.stack, LogContext.MATRIX_ADMIN);
       throw new RpcException(errorMessage);
     }
   }

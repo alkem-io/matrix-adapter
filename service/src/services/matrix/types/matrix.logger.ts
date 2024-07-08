@@ -23,7 +23,11 @@ export class AlkemioMatrixLogger implements Logger {
   }
 
   public error(message: string) {
-    this.winstonLogger.error?.(`${this.prefix}: ${message}`, LogContext.MATRIX);
+    this.winstonLogger.error?.(
+      `${this.prefix}: ${message}`,
+      undefined,
+      LogContext.MATRIX
+    );
   }
   public trace(message: string) {
     this.winstonLogger.verbose?.(
