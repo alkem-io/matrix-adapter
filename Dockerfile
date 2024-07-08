@@ -34,4 +34,4 @@ ENV NODE_ENV=${ENV_ARG}
 
 EXPOSE 4006
 
-CMD ["/bin/sh", "-c", "npm run start:prod"]
+CMD ["/bin/sh", "-c", "npm run start:prod NODE_OPTIONS=--max-old-space-size=2048"]
