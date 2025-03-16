@@ -10,6 +10,8 @@ import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { LogContext } from './common/enums';
 import {
   MatrixAdapterEventType,
+  RemoveRoomPayload,
+  RemoveRoomResponsePayload,
   RoomDetailsResponsePayload,
   RoomMembersPayload,
   RoomMembersResponsePayload,
@@ -514,6 +516,36 @@ export class AppController {
       return response;
     } catch (error) {
       const errorMessage = `Error when removing user from rooms: ${error}`;
+      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      channel.ack(originalMsg);
+      throw new RpcException(errorMessage);
+    }
+  }
+
+  @MessagePattern({ cmd: MatrixAdapterEventType.REMOVE_ROOM })
+  async removeRoom(
+    @Payload() data: RemoveRoomPayload,
+    @Ctx() context: RmqContext
+  ): Promise<RemoveRoomResponsePayload> {
+    this.logger.verbose?.(
+      `${MatrixAdapterEventType.REMOVE_ROOM} - payload: ${JSON.stringify(
+        data
+      )}`,
+      LogContext.EVENTS
+    );
+    const channel = context.getChannelRef();
+    const originalMsg = context.getMessage();
+
+    try {
+      const result = await this.communicationAdapter.removeRoom(data.roomID);
+      channel.ack(originalMsg);
+      const response: RemoveRoomResponsePayload = {
+        success: result,
+      };
+
+      return response;
+    } catch (error) {
+      const errorMessage = `Error when removing room '${data.roomID}': ${error}`;
       this.logger.error(errorMessage, LogContext.COMMUNICATION);
       channel.ack(originalMsg);
       throw new RpcException(errorMessage);
