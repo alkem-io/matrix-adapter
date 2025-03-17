@@ -4,6 +4,20 @@ import { utilities as nestWinstonModuleUtilities } from 'nest-winston';
 import { ConfigService } from '@nestjs/config';
 import * as WinstonElasticsearch from 'winston-elasticsearch';
 import { ConfigurationTypes } from '@common/enums';
+import * as logform from 'logform';
+
+const LOG_LABEL = 'matrix-adapter';
+
+const consoleLoggingStandardFormat: logform.Format[] = [
+  winston.format.timestamp(),
+  nestWinstonModuleUtilities.format.nestLike(),
+];
+
+const consoleLoggingProdFormat: logform.Format[] = [
+  winston.format.timestamp(),
+  winston.format.label({ label: LOG_LABEL }),
+  winston.format.json({ deterministic: true }),
+];
 
 @Injectable()
 export class WinstonConfigService {
@@ -16,8 +30,10 @@ export class WinstonConfigService {
     const transports: any[] = [
       new winston.transports.Console({
         format: winston.format.combine(
-          winston.format.timestamp(),
-          nestWinstonModuleUtilities.format.nestLike()
+          ...(this.configService.get(ConfigurationTypes.MONITORING)?.logging
+            ?.json
+            ? consoleLoggingProdFormat
+            : consoleLoggingStandardFormat)
         ),
         level: this.configService
           .get(ConfigurationTypes.MONITORING)
