@@ -793,7 +793,7 @@ export class CommunicationAdapter {
       const elevatedAgent =
         await this.communicationAdminUserService.getMatrixManagementAgentElevated();
       this.logger.verbose?.(
-        `[Membership] Removing members from matrix room: ${matrixRoomID}`,
+        `[Membership] Removing matrix room: ${matrixRoomID}`,
         LogContext.COMMUNICATION
       );
       const room = await this.matrixRoomAdapter.getMatrixRoom(
@@ -812,7 +812,7 @@ export class CommunicationAdapter {
         );
       }
       this.logger.verbose?.(
-        `[Membership] Removed members from room: ${room.name}`,
+        `[Membership] Removed matrix room: ${room.name}`,
         LogContext.COMMUNICATION
       );
     } catch (error) {

@@ -28,6 +28,10 @@ monitoring:
     # Valid values are log|error|warn|debug|verbose.
     level: ${LOGGING_LEVEL_CONSOLE}:verbose
 
+    # The logging format will be in json - useful for parsing
+    # if disabled - will be in a human readable form
+    json: ${LOGGING_FORMAT_JSON}:false
+
   # Elastic logging configuration
   elastic:
     # A flag setting whether Winston Elastic transport will be enabled.
