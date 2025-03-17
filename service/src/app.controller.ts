@@ -118,11 +118,12 @@ export class AppController {
       };
 
       return response;
-    } catch (error) {
+    } catch (error: any) {
       const errorMessage = `Error when getting room members: ${error}`;
-      this.logger.error(errorMessage, LogContext.COMMUNICATION);
+      this.logger.error(errorMessage, error?.stack, LogContext.COMMUNICATION);
       channel.ack(originalMsg);
-      throw new RpcException(errorMessage);
+
+      throw error;
     }
   }
 
