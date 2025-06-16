@@ -18,7 +18,7 @@ export class MatrixAgentPool
   implements Disposable, OnModuleDestroy, OnModuleInit
 {
   private _cache: Record<string, { agent: MatrixAgent; expiresOn: number }>;
-  private _intervalService!: NodeJS.Timer;
+  private _intervalService!: NodeJS.Timeout;
   private _agentPoolSize: number;
 
   constructor(
