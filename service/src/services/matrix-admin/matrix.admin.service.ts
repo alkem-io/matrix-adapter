@@ -58,9 +58,8 @@ export class MatrixAdminService {
   }
 
   private async createMatrixClientForAdmin(adminUser: IOperationalMatrixUser) {
-    const adminAgent = await this.matrixAgentService.createMatrixAgent(
-      adminUser
-    );
+    const adminAgent =
+      await this.matrixAgentService.createMatrixAgent(adminUser);
 
     await adminAgent.start({
       registerTimelineMonitor: false,

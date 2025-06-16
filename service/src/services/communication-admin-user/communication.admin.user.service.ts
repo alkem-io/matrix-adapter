@@ -67,9 +67,8 @@ export class CommunicationAdminUserService {
     }
 
     const adminUser = await this.getGlobalAdminUser();
-    this.matrixElevatedAgent = await this.matrixAgentService.createMatrixAgent(
-      adminUser
-    );
+    this.matrixElevatedAgent =
+      await this.matrixAgentService.createMatrixAgent(adminUser);
 
     await this.matrixElevatedAgent.start({
       registerTimelineMonitor: false,

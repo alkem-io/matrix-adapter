@@ -92,9 +92,8 @@ export class MatrixAgentService {
     const rooms: MatrixRoom[] = [];
 
     // Direct rooms
-    const dmRoomMap = await this.matrixRoomAdapter.getDirectMessageRoomsMap(
-      matrixClient
-    );
+    const dmRoomMap =
+      this.matrixRoomAdapter.getDirectMessageRoomsMap(matrixClient);
     for (const matrixUsername of Object.keys(dmRoomMap)) {
       const room = await this.getRoom(
         matrixAgent,

@@ -105,9 +105,8 @@ export class MatrixAgentPool
       }
 
       const operatingUser = await this.acquireMatrixUser(matrixUserID);
-      const client = await this.matrixAgentService.createMatrixAgent(
-        operatingUser
-      );
+      const client =
+        await this.matrixAgentService.createMatrixAgent(operatingUser);
 
       if (autoStart) {
         await client.start();
@@ -125,9 +124,8 @@ export class MatrixAgentPool
   }
 
   private async acquireMatrixUser(matrixUserID: string) {
-    const isRegistered = await this.matrixUserManagementService.isRegistered(
-      matrixUserID
-    );
+    const isRegistered =
+      await this.matrixUserManagementService.isRegistered(matrixUserID);
 
     if (isRegistered) {
       return await this.matrixUserManagementService.login(matrixUserID);
