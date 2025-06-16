@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-var-requires */
 import { ConfigurationTypes, LogContext } from '@common/enums';
 import {
   MatrixAgentPoolException,

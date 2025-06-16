@@ -6,7 +6,6 @@
   "private": false,
   "license": "EUPL-1.2",
   "main": "src/main.ts",
-  "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/alkem-io/matrix-adapter.git"
@@ -25,14 +24,13 @@
     "lint": "tsc --noEmit && eslint src/**/*.ts{,x}",
     "lint:prod": "tsc --noEmit && cross-env NODE_ENV=production eslint src/**/*.ts{,x}",
     "lint:fix": "tsc --noEmit && eslint src/**/*.ts{,x} --fix",
-    "test": "jest --config=./test/config/jest.config.js",
-    "test:dev": "jest --config=./test/config/jest.config.js --no-cache --coverage=true --detectOpenHandles --runInBand --logHeapUsage",
+    "test": "jest --config=./test/config/jest.config.mjs",
+    "test:dev": "jest --config=./test/config/jest.config.mjs --no-cache --coverage=true --detectOpenHandles --runInBand --logHeapUsage",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:ci:coverage": "jest --runInBand --config ./test/config/jest.config.ci.js && cat ./coverage-ci/lcov.info | coveralls",
-    "test:ci": "jest --runInBand --config ./test/config/jest.config.ci.js",
-    "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js --config src/config/typeorm.cli.config.ts"
+    "test:ci:coverage": "jest --runInBand --config ./test/config/jest.config.ci.mjs && cat ./coverage-ci/lcov.info | coveralls",
+    "test:ci": "jest --runInBand --config ./test/config/jest.config.ci.mjs"
   },
   "dependencies": {
     "@alkemio/matrix-adapter-lib": "^0.4.1",
@@ -46,7 +44,7 @@
     "cross-env": "^7.0.3",
     "crypto-js": "^4.1.1",
     "dotenv": "^16.5.0",
-    "matrix-js-sdk": "^35.0.0",
+    "matrix-js-sdk": "^32.4.0",
     "module-alias": "^2.2.3",
     "nest-winston": "^1.10.2",
     "winston": "^3.13.1",
@@ -55,6 +53,7 @@
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.2",
+    "@nestjs/testing": "^10.4.19",
     "@types/amqplib": "^0.10.5",
     "@types/crypto-js": "^4.2.2",
     "@types/express": "^5.0.3",
@@ -80,16 +79,19 @@
     "tsconfig-paths": "^4.2.0",
     "typescript": "5.3.3"
   },
-  "_moduleAliases": {
-    "@src": "./dist"
-  },
   "husky": {
     "hooks": {
       "pre-commit": "lint-staged"
     }
   },
+  "_moduleAliases": {
+    "@src": "./dist"
+  },
+  "lint-staged": {
+    "*.ts": "eslint --fix"
+  },
   "engines": {
-    "node": ">=18.15.0",
-    "npm": ">=8.5.5"
+    "node": ">=20.0.0",
+    "npm": ">=10.0"
   }
 }
