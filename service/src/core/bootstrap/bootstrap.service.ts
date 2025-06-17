@@ -1,9 +1,9 @@
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { ConfigurationTypes, LogContext } from '@common/enums/index.js';
-import { BootstrapException } from '@src/common/exceptions/bootstrap.exception.js';
-import { CommunicationAdapter } from '@src/services/communication-adapter/communication.adapter.js';
+import { ConfigurationTypes, LogContext } from '../../common/enums/index.js';
+import { BootstrapException } from '../../common/exceptions/bootstrap.exception.js';
+import { CommunicationAdapter } from '../../services/communication-adapter/communication.adapter.js';
 
 @Injectable()
 export class BootstrapService {

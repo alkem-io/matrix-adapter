@@ -27,5 +27,6 @@
     }
   },
   "exclude": ["node_modules", "dist"],
-  "include": ["./src/**/*.ts", "./test/**/*.ts"]
+  "include": ["typings/global.d.ts", "src/**/*", "test/**/*"],
+
 }

@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER } from '@nestjs/core';
 import { WinstonModule } from 'nest-winston';
-import { HealthModule } from '@services/health/health.module.js';
+import { HealthModule } from './services/health/health.module.js';
 import { AppController } from './app.controller.js';
 import { WinstonConfigService } from './config/winston.config.js';
 import configuration from './config/configuration.js';

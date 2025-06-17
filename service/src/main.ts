@@ -4,7 +4,7 @@ import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { AppModule } from './app.module.js';
 import { ConfigurationTypes } from './common/enums/index.js';
-import './config/aliases';
+import './config/aliases.js';
 import { BootstrapService } from './core/bootstrap/bootstrap.service.js';
 
 const bootstrap = async () => {
