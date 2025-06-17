@@ -23,10 +23,13 @@
       "@config/*": ["src/config/*"],
       "@common/*": ["src/common/*"],
       "@core/*": ["src/core/*"],
-      "@services/*": ["src/services/*"]
+      "@services/*": ["src/services/*"],
+      "#*": ["./src/*"],
+      "#app/*": ["./src/app/*"],
+      "#common/*": ["./src/common/*"]
     }
   },
   "exclude": ["node_modules", "dist"],
-  "include": ["typings/global.d.ts", "src/**/*", "test/**/*"],
+  "include": ["typings/global.d.ts", "src/**/*", "test/**/*", "loader.mjs"],
 
 }
