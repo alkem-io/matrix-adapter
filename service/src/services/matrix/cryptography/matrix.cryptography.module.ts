@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { MatrixCryptographyService } from '@services/matrix/cryptography/matrix.cryptography.service';
+import { MatrixCryptographyService } from '@services/matrix/cryptography/matrix.cryptography.service.js';
 
 @Module({
   providers: [MatrixCryptographyService],

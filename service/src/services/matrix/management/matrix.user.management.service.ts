@@ -3,16 +3,17 @@ import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { MatrixClient, createClient } from 'matrix-js-sdk';
-import { MatrixCryptographyService } from '@services/matrix/cryptography/matrix.cryptography.service';
-import { ConfigurationTypes, LogContext } from '@common/enums';
-import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter';
-import { IOperationalMatrixUser } from '../adapter-user/matrix.user.interface';
+import { MatrixCryptographyService } from '@services/matrix/cryptography/matrix.cryptography.service.js';
+import { ConfigurationTypes } from '@common/enums/configuration.type.js';
+import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter.js';
+import { IOperationalMatrixUser } from '../adapter-user/matrix.user.interface.js';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixUserLoginException } from '@common/exceptions/matrix.login.exception';
-import { MatrixUserRegistrationException } from '@common/exceptions/matrix.registration.exception';
-import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint';
+import { MatrixUserLoginException } from '@common/exceptions/matrix.login.exception.js';
+import { MatrixUserRegistrationException } from '@common/exceptions/matrix.registration.exception.js';
+import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint.js';
 import { URL } from 'url';
-import { AlkemioMatrixLogger } from '../types/matrix.logger';
+import { AlkemioMatrixLogger } from '../types/matrix.logger.js';
+import { LogContext } from '@src/common/enums/logging.context.js';
 
 @Injectable()
 export class MatrixUserManagementService {

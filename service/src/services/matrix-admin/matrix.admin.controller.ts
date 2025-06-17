@@ -8,12 +8,12 @@ import {
   Transport,
 } from '@nestjs/microservices';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { LogContext } from '../../common/enums';
-import { MatrixAdminEventType } from './matrix.admin.event.type';
-import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
-import { MatrixAdminService } from './matrix.admin.service';
-import { MatrixAdminBaseEventResponsePayload } from './dto/matrix.admin.base.event.response.payload';
-import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.dto.event.log.room.state';
+import { LogContext } from '../../common/enums/index.js';
+import { MatrixAdminEventType } from './matrix.admin.event.type.js';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.dto.event.update.room.state.for.admin.rooms.js';
+import { MatrixAdminService } from './matrix.admin.service.js';
+import { MatrixAdminBaseEventResponsePayload } from './dto/matrix.admin.base.event.response.payload.js';
+import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.dto.event.log.room.state.js';
 
 @Controller()
 export class MatrixAdminController {

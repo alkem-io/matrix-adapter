@@ -1,7 +1,7 @@
 import { RoomDirectResult } from '@alkemio/matrix-adapter-lib';
 import { RoomResult, IMessage, IReaction } from '@alkemio/matrix-adapter-lib';
-import { LogContext } from '@common/enums';
-import { MatrixEntityNotFoundException } from '@common/exceptions';
+import { LogContext } from '@common/enums/index.js';
+import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception.js';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import {
   Direction,
@@ -18,15 +18,15 @@ import {
   Visibility,
 } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
-import { MatrixRoom } from './matrix.room';
-import { MatrixRoomResponseMessage } from './matrix.room.dto.response.message';
+import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter.js';
+import { MatrixRoom } from './matrix.room.js';
+import { MatrixRoomResponseMessage } from './matrix.room.dto.response.message.js';
 import {
   RoomHistoryVisibilityEventContent,
   RoomJoinRulesEventContent,
-} from 'matrix-js-sdk/lib/types';
-import { MatrixAgent } from '../agent/matrix.agent';
-import { IRoomOpts } from './matrix.room.dto.options';
+} from 'matrix-js-sdk/lib/types.js';
+import { MatrixAgent } from '../agent/matrix.agent.js';
+import { IRoomOpts } from './matrix.room.dto.options.js';
 
 @Injectable()
 export class MatrixRoomAdapter {

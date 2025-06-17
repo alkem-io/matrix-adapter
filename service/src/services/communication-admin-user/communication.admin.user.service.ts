@@ -1,12 +1,12 @@
-import { ConfigurationTypes, LogContext } from '@common/enums';
+import { ConfigurationTypes, LogContext } from '@common/enums/index.js';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixUserAdapter } from '@services/matrix/adapter-user/matrix.user.adapter';
-import { IOperationalMatrixUser } from '@services/matrix/adapter-user/matrix.user.interface';
-import { MatrixAgent } from '@services/matrix/agent/matrix.agent';
-import { MatrixAgentService } from '@services/matrix/agent/matrix.agent.service';
-import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service';
+import { MatrixUserAdapter } from '@services/matrix/adapter-user/matrix.user.adapter.js';
+import { IOperationalMatrixUser } from '@services/matrix/adapter-user/matrix.user.interface.js';
+import { MatrixAgent } from '@services/matrix/agent/matrix.agent.js';
+import { MatrixAgentService } from '@services/matrix/agent/matrix.agent.service.js';
+import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service.js';
 
 @Injectable()
 export class CommunicationAdminUserService {

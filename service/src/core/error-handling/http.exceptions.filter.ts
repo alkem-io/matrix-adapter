@@ -7,8 +7,8 @@ import {
   LoggerService,
 } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { LogContext } from '@common/enums';
-import { BaseException } from '@common/exceptions/base.exception';
+import { LogContext } from '@common/enums/index.js';
+import { BaseException } from '@common/exceptions/base.exception.js';
 
 @Injectable()
 @Catch()

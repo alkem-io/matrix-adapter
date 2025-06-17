@@ -1,4 +1,4 @@
-import { ConfigurationTypes, LogContext } from '@common/enums';
+import { LogContext } from '@common/enums/logging.context.js';
 import { LoggerService } from '@nestjs/common';
 import {
   autoAcceptRoomGuardFactory,
@@ -7,18 +7,19 @@ import {
   roomMembershipLeaveGuardFactory,
   RoomMonitorFactory,
   RoomTimelineMonitorFactory,
-} from '@services/matrix/events/matrix.event.adapter.room';
+} from '@services/matrix/events/matrix.event.adapter.room.js';
 import {
   IConditionalMatrixEventHandler,
   IMatrixEventHandler,
   MatrixEventDispatcher,
-} from '@services/matrix/events/matrix.event.dispatcher';
-import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
-import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
-import { IMatrixAgent } from './matrix.agent.interface';
-import { Disposable } from '@src/common/interfaces/disposable.interface';
+} from '@services/matrix/events/matrix.event.dispatcher.js';
+import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter.js';
+import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter.js';
+import { IMatrixAgent } from './matrix.agent.interface.js';
+import { Disposable } from '@src/common/interfaces/disposable.interface.js';
 import { MatrixClient, IStartClientOpts } from 'matrix-js-sdk';
 import { ConfigService } from '@nestjs/config';
+import { ConfigurationTypes } from '@src/common/enums/configuration.type.js';
 
 export type MatrixAgentStartOptions = {
   registerTimelineMonitor?: boolean;

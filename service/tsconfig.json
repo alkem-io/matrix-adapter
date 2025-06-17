@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "Node",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "target": "ES2023",
     "lib": ["ES2023"],
     "sourceMap": true,

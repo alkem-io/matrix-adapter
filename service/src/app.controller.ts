@@ -7,7 +7,7 @@ import {
   RpcException,
 } from '@nestjs/microservices';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { LogContext } from './common/enums';
+import { LogContext } from './common/enums/logging.context.js';
 import {
   MatrixAdapterEventType,
   RemoveRoomPayload,
@@ -18,7 +18,7 @@ import {
   UpdateRoomStatePayload,
 } from '@alkemio/matrix-adapter-lib';
 import { RoomDetailsPayload } from '@alkemio/matrix-adapter-lib';
-import { CommunicationAdapter } from './services/communication-adapter/communication.adapter';
+import { CommunicationAdapter } from './services/communication-adapter/communication.adapter.js';
 import {
   RoomSendMessagePayload,
   RoomSendMessageResponsePayload,

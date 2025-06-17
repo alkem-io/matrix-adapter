@@ -5,7 +5,8 @@
   "author": "Alkemio Foundation",
   "private": false,
   "license": "EUPL-1.2",
-  "main": "src/main.ts",
+  "exports": "./index.js",
+  "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/alkem-io/matrix-adapter.git"

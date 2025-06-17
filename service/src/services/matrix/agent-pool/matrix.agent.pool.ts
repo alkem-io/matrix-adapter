@@ -1,16 +1,17 @@
-import { ConfigurationTypes, LogContext } from '@common/enums';
+import { ConfigurationTypes } from '@common/enums/configuration.type.js';
 import {
   MatrixAgentPoolException,
-  NotSupportedException,
-} from '@common/exceptions';
+} from '@common/exceptions/matrix.agent.pool.exception.js';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
-import { OnModuleDestroy, OnModuleInit } from '@nestjs/common/interfaces';
-import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service';
+import { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service.js';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixAgent } from '../agent/matrix.agent';
-import { MatrixAgentService } from '../agent/matrix.agent.service';
+import { MatrixAgent } from '../agent/matrix.agent.js';
+import { MatrixAgentService } from '../agent/matrix.agent.service.js';
 import { ConfigService } from '@nestjs/config';
-import { Disposable } from '@src/common/interfaces/disposable.interface';
+import { Disposable } from '@src/common/interfaces/disposable.interface.js';
+import { NotSupportedException } from '@src/common/exceptions/not.supported.exception.js';
+import { LogContext } from '@src/common/enums/logging.context.js';
 
 @Injectable()
 export class MatrixAgentPool

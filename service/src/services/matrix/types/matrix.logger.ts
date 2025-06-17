@@ -1,6 +1,6 @@
 import { LoggerService } from '@nestjs/common';
-import { LogContext } from '@src/common/enums/logging.context';
-import { Logger } from 'matrix-js-sdk/lib/logger';
+import { LogContext } from '@src/common/enums/logging.context.js';
+import { Logger } from 'matrix-js-sdk/lib/logger.js';
 
 export class AlkemioMatrixLogger implements Logger {
   private winstonLogger!: LoggerService;

@@ -1,5 +1,5 @@
-import { AlkemioErrorStatus, LogContext } from '@common/enums';
-import { BaseException } from './base.exception';
+import { AlkemioErrorStatus, LogContext } from '@common/enums/index.js';
+import { BaseException } from './base.exception.js';
 
 export class BootstrapException extends BaseException {
   constructor(error: string) {

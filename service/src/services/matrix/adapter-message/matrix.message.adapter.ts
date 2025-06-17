@@ -1,9 +1,9 @@
 import { IMessage, IReaction } from '@alkemio/matrix-adapter-lib';
-import { LogContext } from '@common/enums';
+import { LogContext } from '@common/enums/index.js';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixRoomResponseMessage } from '../adapter-room/matrix.room.dto.response.message';
-import { MatrixEntityNotFoundException } from '@src/common/exceptions';
+import { MatrixRoomResponseMessage } from '../adapter-room/matrix.room.dto.response.message.js';
+import { MatrixEntityNotFoundException } from '@src/common/exceptions/index.js';
 import { EventType } from 'matrix-js-sdk';
 
 @Injectable()
