@@ -7,7 +7,7 @@ Alkemio Matrix Adapter service.
 [![BCH compliance](https://bettercodehub.com/edge/badge/alkem-io/matrix-adapter?branch=develop)](https://bettercodehub.com/)
 [![Deploy to DockerHub](https://github.com/alkem-io/matrix-adapter/actions/workflows/build-release-docker-hub.yml/badge.svg)](https://github.com/alkem-io/matrix-adapter/actions/workflows/build-release-docker-hub.yml)
 
-## To test
+## To test2
 
 1. Start quickstart-services from the server repo with defaults.
 2. Go to http://localhost:15672/#/queues/%2F/alkemio-matrix-adapter.

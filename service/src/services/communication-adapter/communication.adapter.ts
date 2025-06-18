@@ -431,9 +431,8 @@ export class CommunicationAdapter {
     try {
       const matrixUserID = this.matrixUserAdapter.convertEmailToMatrixID(email);
 
-      const isRegistered = await this.matrixUserManagementService.isRegistered(
-        matrixUserID
-      );
+      const isRegistered =
+        await this.matrixUserManagementService.isRegistered(matrixUserID);
 
       if (!isRegistered) {
         await this.matrixUserManagementService.register(matrixUserID);
@@ -519,9 +518,8 @@ export class CommunicationAdapter {
 
     const matrixAgent = await this.getUserAgent(matrixUserID);
 
-    const matrixDirectRooms = await this.matrixAgentService.getDirectRooms(
-      matrixAgent
-    );
+    const matrixDirectRooms =
+      await this.matrixAgentService.getDirectRooms(matrixAgent);
     for (const matrixRoom of matrixDirectRooms) {
       // todo: likely a bug in the email mapping below
       const room = await this.matrixRoomAdapter.convertMatrixRoomToDirectRoom(
@@ -772,9 +770,8 @@ export class CommunicationAdapter {
     roomIDs: string[]
   ): Promise<string[]> {
     // Filter down to exclude the rooms the user is already a member of
-    const joinedRooms = await this.matrixUserAdapter.getJoinedRooms(
-      matrixClient
-    );
+    const joinedRooms =
+      await this.matrixUserAdapter.getJoinedRooms(matrixClient);
     const applicableRoomIDs = roomIDs.filter(
       rId => !joinedRooms.find(joinedRoomId => joinedRoomId === rId)
     );
