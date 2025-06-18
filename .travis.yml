@@ -5,13 +5,13 @@ node_js:
 cache:
   directories:
     - node_modules
-install:
-  - npm install
-services:
-  - mysql
 before_install:
   - cd service
   - npm i -g pnpm@9.14.2
+install:
+  - pnpm install
+services:
+  - mysql
 script:
-  - npm run test:ci:coverage
+  - pnpm run test:ci:coverage
 
