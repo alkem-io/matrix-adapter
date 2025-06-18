@@ -46,14 +46,14 @@ export class MatrixRoomAdapter {
     const dmRooms = this.getDirectMessageRoomsMap(matrixClient);
 
     dmRooms[userId] = [roomId];
-    await matrixClient.setAccountData('m.direct', dmRooms);
+    await matrixClient.setAccountData(EventType.Direct, dmRooms);
   }
 
   // there could be more than one dm room per user
   getDirectMessageRoomsMap(
     matrixClient: MatrixClient
   ): Record<string, string[]> {
-    const mDirectEvent = matrixClient.getAccountData('m.direct');
+    const mDirectEvent = matrixClient.getAccountData(EventType.Direct);
     // todo: tidy up this logic
     const eventContent = mDirectEvent
       ? mDirectEvent.getContent<IContent>()
