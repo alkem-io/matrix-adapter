@@ -1,22 +1,20 @@
 {
+  "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
-    "target": "ES2023",
-    "lib": ["ES2023"],
-    "sourceMap": true,
-    "outDir": "./dist",
-    "removeComments": true,
-    "strict": true,
     "baseUrl": ".",
-    "allowSyntheticDefaultImports": true,
+    "module": "esnext",
+    "target": "esnext",
+    "moduleResolution": "Bundler",
     "esModuleInterop": true,
-    "experimentalDecorators": true,
+    "strict": true,
+    "outDir": "dist",
+    "sourceMap": true,
+    "inlineSources": true,
     "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "downlevelIteration": true,
     "paths": {
       "@src/*": ["src/*"],
       "@test/*": ["test/*"],
@@ -24,12 +22,8 @@
       "@common/*": ["src/common/*"],
       "@core/*": ["src/core/*"],
       "@services/*": ["src/services/*"],
-      "#*": ["./src/*"],
-      "#app/*": ["./src/app/*"],
-      "#common/*": ["./src/common/*"]
-    }
+    },
+    "types": ["vitest/globals"]
   },
-  "exclude": ["node_modules", "dist"],
-  "include": ["typings/global.d.ts", "src/**/*", "test/**/*", "loader.mjs"],
-
+  "exclude": ["node_modules", "dist"]
 }

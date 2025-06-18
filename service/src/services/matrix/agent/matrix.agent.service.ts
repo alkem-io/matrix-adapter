@@ -1,6 +1,7 @@
 import { ConfigurationTypes, LogContext } from '@common/enums/index.js';
 import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception.js';
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
 import { ConfigService } from '@nestjs/config';
 import {
   createClient,
@@ -37,7 +38,7 @@ export class MatrixAgentService {
     private matrixRoomAdapter: MatrixRoomAdapter,
     private matrixMessageAdapter: MatrixMessageAdapter,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService
+    private readonly logger: pkg.LoggerService
   ) {}
 
   async createMatrixAgent(

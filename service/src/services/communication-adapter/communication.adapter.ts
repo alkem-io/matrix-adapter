@@ -1,6 +1,7 @@
 import { LogContext } from '@common/enums/index.js';
 import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception.js';
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
 import { MatrixAgentPool } from '@services/matrix/agent-pool/matrix.agent.pool.js';
 import { HistoryVisibility, JoinRule, MatrixClient } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
@@ -31,7 +32,7 @@ import { CommunicationAdminUserService } from '../communication-admin-user/commu
 export class CommunicationAdapter {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService,
+    private readonly logger: pkg.LoggerService,
     private matrixAgentService: MatrixAgentService,
     private matrixAgentPool: MatrixAgentPool,
     private matrixUserManagementService: MatrixUserManagementService,

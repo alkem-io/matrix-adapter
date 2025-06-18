@@ -1,4 +1,5 @@
-import { Controller, Inject, LoggerService } from '@nestjs/common';
+import pkg  from '@nestjs/common';
+const { Inject, Controller } = pkg;
 import {
   Ctx,
   MessagePattern,
@@ -19,7 +20,7 @@ import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.dto.event.
 export class MatrixAdminController {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService,
+    private readonly logger: pkg.LoggerService,
     private matrixAdminService: MatrixAdminService
   ) {}
 

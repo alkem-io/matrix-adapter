@@ -1,5 +1,6 @@
 import { ConfigurationTypes, LogContext } from '@common/enums/index.js';
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixUserAdapter } from '@services/matrix/adapter-user/matrix.user.adapter.js';
@@ -18,7 +19,7 @@ export class CommunicationAdminUserService {
 
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService,
+    private readonly logger: pkg.LoggerService,
     private matrixAgentService: MatrixAgentService,
     private configService: ConfigService,
     private matrixUserManagementService: MatrixUserManagementService,

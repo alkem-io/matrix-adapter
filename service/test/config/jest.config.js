@@ -1,4 +1,4 @@
-module.exports = {
+export default {
   moduleNameMapper: {
     '@common/(.*)': ['<rootDir>/src/common/$1'],
     '@core/(.*)': ['<rootDir>/src/core/$1'],

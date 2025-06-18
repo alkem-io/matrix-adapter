@@ -4,13 +4,13 @@ import {
   IMatrixEventHandler,
   RoomTimelineEvent,
 } from '@services/matrix/events/matrix.event.dispatcher.js';
-import { CommunicationEventMessageReceived } from '@src/services/communication-adapter/dto/communication.dto.event.message.received.js';
-import { MatrixRoomInvitationReceived } from '@src/services/communication-adapter/dto/communication.dto.room.invitation.received.js';
+import { CommunicationEventMessageReceived } from '@src/services/communication-adapter/dto/communication.dto.event.message.received';
+import { MatrixRoomInvitationReceived } from '@src/services/communication-adapter/dto/communication.dto.room.invitation.received';
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter.js';
 import { MatrixRoom } from '../adapter-room/matrix.room.js';
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter.js';
 import { MatrixClient } from 'matrix-js-sdk';
-import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception.js';
+import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 
 const noop = function () {
   // empty

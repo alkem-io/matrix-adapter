@@ -1,21 +1,19 @@
 import {
   ExceptionFilter,
-  Catch,
   ArgumentsHost,
-  Injectable,
-  Inject,
-  LoggerService,
 } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { LogContext } from '@common/enums/index.js';
-import { BaseException } from '@common/exceptions/base.exception.js';
+import { LogContext } from '@common/enums/index';
+import { BaseException } from '@common/exceptions/base.exception';
+import pkg from '@nestjs/common';
+const { Catch, Injectable, Inject } = pkg;
 
 @Injectable()
 @Catch()
 export class HttpExceptionsFilter implements ExceptionFilter {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService
+    private readonly logger: pkg.LoggerService
   ) {}
 
   catch(exception: BaseException, _host: ArgumentsHost) {

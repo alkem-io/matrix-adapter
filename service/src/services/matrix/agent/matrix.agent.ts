@@ -1,5 +1,5 @@
 import { LogContext } from '@common/enums/logging.context.js';
-import { LoggerService } from '@nestjs/common';
+import pkg  from '@nestjs/common';
 import {
   autoAcceptRoomGuardFactory,
   AutoAcceptSpecificRoomMembershipMonitorFactory,
@@ -39,7 +39,7 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     roomAdapter: MatrixRoomAdapter,
     messageAdapter: MatrixMessageAdapter,
     configService: ConfigService,
-    private logger: LoggerService
+    private logger: pkg.LoggerService
   ) {
     this.matrixClient = matrixClient;
     this.eventDispatcher = new MatrixEventDispatcher(this.matrixClient);

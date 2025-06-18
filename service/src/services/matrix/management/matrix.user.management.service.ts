@@ -1,5 +1,4 @@
 import { AxiosError } from 'axios';
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { MatrixClient, createClient } from 'matrix-js-sdk';
@@ -14,7 +13,8 @@ import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint.js';
 import { URL } from 'url';
 import { AlkemioMatrixLogger } from '../types/matrix.logger.js';
 import { LogContext } from '@src/common/enums/logging.context.js';
-
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
 @Injectable()
 export class MatrixUserManagementService {
   _matrixClient: MatrixClient;
@@ -23,7 +23,7 @@ export class MatrixUserManagementService {
 
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService,
+    private readonly logger: pkg.LoggerService,
     private configService: ConfigService,
     private cryptographyService: MatrixCryptographyService,
     private matrixUserAdapter: MatrixUserAdapter,

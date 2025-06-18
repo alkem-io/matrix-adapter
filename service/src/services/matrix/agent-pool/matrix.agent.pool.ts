@@ -1,6 +1,7 @@
 import { ConfigurationTypes } from '@common/enums/configuration.type.js';
 import { MatrixAgentPoolException } from '@common/exceptions/matrix.agent.pool.exception.js';
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
 import { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service.js';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
@@ -24,7 +25,7 @@ export class MatrixAgentPool
     private configService: ConfigService,
     private matrixUserManagementService: MatrixUserManagementService,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService
+    private readonly logger: pkg.LoggerService
   ) {
     this._cache = {};
     this._agentPoolSize = this.configService.get(
