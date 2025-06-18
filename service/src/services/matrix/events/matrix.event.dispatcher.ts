@@ -1,4 +1,4 @@
-import { Disposable } from '@src/common/interfaces/disposable.interface.js';
+import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { EventEmitter } from 'events';
 import {
   ClientEvent,
@@ -9,8 +9,8 @@ import {
   RoomMemberEvent,
 } from 'matrix-js-sdk';
 import { first, fromEvent, Observable, Observer, Subscription } from 'rxjs';
-import { MatrixRoom } from '../adapter-room/matrix.room.js';
-import { MatrixEventHandler } from '../types/matrix.event.handler.type.js';
+import { MatrixRoom } from '../adapter-room/matrix.room';
+import { MatrixEventHandler } from '../types/matrix.event.handler.type';
 export interface IMatrixEventDispatcher {
   syncMonitor?: Observable<{ syncState: string; oldSyncState: string }>;
   roomMonitor?: Observable<{ room: MatrixRoom }>;

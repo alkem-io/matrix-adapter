@@ -2,9 +2,9 @@ import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { ConfigurationTypes, LogContext } from '../../common/enums/index.js';
-import { BootstrapException } from '../../common/exceptions/bootstrap.exception.js';
-import { CommunicationAdapter } from '../../services/communication-adapter/communication.adapter.js';
+import { ConfigurationTypes, LogContext } from '../../common/enums/index';
+import { BootstrapException } from '../../common/exceptions/bootstrap.exception';
+import { CommunicationAdapter } from '../../services/communication-adapter/communication.adapter';
 
 @Injectable()
 export class BootstrapService {

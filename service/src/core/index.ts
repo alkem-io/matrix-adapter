@@ -1,1 +1,1 @@
-export * from './error-handling/index.js';
+export * from './error-handling/index';

@@ -1,1 +1,1 @@
-export * from './communication.dto.room.invitation.received.js';
+export * from './communication.dto.room.invitation.received';

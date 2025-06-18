@@ -1,16 +1,16 @@
-import { LogContext } from '@common/enums/index.js';
-import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception.js';
+import { LogContext } from '@common/enums/index';
+import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception';
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
-import { MatrixAgentPool } from '@services/matrix/agent-pool/matrix.agent.pool.js';
+import { MatrixAgentPool } from '@services/matrix/agent-pool/matrix.agent.pool';
 import { HistoryVisibility, JoinRule, MatrixClient } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixRoomAdapter } from '@services/matrix/adapter-room/matrix.room.adapter.js';
-import { MatrixUserAdapter } from '@services/matrix/adapter-user/matrix.user.adapter.js';
-import { MatrixAgent } from '@services/matrix/agent/matrix.agent.js';
-import { MatrixAgentService } from '@services/matrix/agent/matrix.agent.service.js';
-import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service.js';
-import { CommunicationEditMessageInput } from './dto/communication.dto.message.edit.js';
+import { MatrixRoomAdapter } from '@services/matrix/adapter-room/matrix.room.adapter';
+import { MatrixUserAdapter } from '@services/matrix/adapter-user/matrix.user.adapter';
+import { MatrixAgent } from '@services/matrix/agent/matrix.agent';
+import { MatrixAgentService } from '@services/matrix/agent/matrix.agent.service';
+import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service';
+import { CommunicationEditMessageInput } from './dto/communication.dto.message.edit';
 import {
   IMessage,
   RoomSendMessagePayload,
@@ -26,7 +26,7 @@ import { RoomDeleteMessagePayload } from '@alkemio/matrix-adapter-lib';
 import { SendMessageToUserPayload } from '@alkemio/matrix-adapter-lib';
 import { IReaction } from '@alkemio/matrix-adapter-lib';
 import { sleep } from 'matrix-js-sdk/lib/utils.js';
-import { CommunicationAdminUserService } from '../communication-admin-user/communication.admin.user.service.js';
+import { CommunicationAdminUserService } from '../communication-admin-user/communication.admin.user.service';
 
 @Injectable()
 export class CommunicationAdapter {

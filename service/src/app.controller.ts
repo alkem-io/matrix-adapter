@@ -8,8 +8,8 @@ import {
   RpcException,
 } from '@nestjs/microservices';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { LogContext } from './common/enums/logging.context.js';
-import { CommunicationAdapter } from './services/communication-adapter/communication.adapter.js';
+import { LogContext } from './common/enums/logging.context';
+import { CommunicationAdapter } from './services/communication-adapter/communication.adapter';
 import alkemioMatrixAdapterLib from '@alkemio/matrix-adapter-lib';
 
 @Controller()

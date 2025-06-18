@@ -1,5 +1,5 @@
-import { ConfigurationTypes, LogContext } from '@common/enums/index.js';
-import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception.js';
+import { ConfigurationTypes, LogContext } from '@common/enums/index';
+import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception';
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 import { ConfigService } from '@nestjs/config';
@@ -12,22 +12,22 @@ import {
   RelationType,
 } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixRoom } from '../adapter-room/matrix.room.js';
-import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter.js';
-import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter.js';
-import { IOperationalMatrixUser } from '../adapter-user/matrix.user.interface.js';
-import { MatrixAgent } from './matrix.agent.js';
-import { MatrixAgentMessageRequest } from './matrix.agent.dto.message.request.js';
-import { MatrixAgentMessageRequestDirect } from './matrix.agent.dto.message.request.direct.js';
-import { IMatrixAgent } from './matrix.agent.interface.js';
-import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter.js';
-import { MatrixAgentMessageReply } from './matrix.agent.dto.message.reply.js';
-import { MatrixAgentMessageReaction } from './matrix.agent.dto.message.reaction.js';
+import { MatrixRoom } from '../adapter-room/matrix.room';
+import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
+import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter';
+import { IOperationalMatrixUser } from '../adapter-user/matrix.user.interface';
+import { MatrixAgent } from './matrix.agent';
+import { MatrixAgentMessageRequest } from './matrix.agent.dto.message.request';
+import { MatrixAgentMessageRequestDirect } from './matrix.agent.dto.message.request.direct';
+import { IMatrixAgent } from './matrix.agent.interface';
+import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
+import { MatrixAgentMessageReply } from './matrix.agent.dto.message.reply';
+import { MatrixAgentMessageReaction } from './matrix.agent.dto.message.reaction';
 import {
   ReactionEventContent,
   RoomMessageEventContent,
-} from 'matrix-js-sdk/lib/types.js';
-import { AlkemioMatrixLogger } from '../types/matrix.logger.js';
+} from 'matrix-js-sdk/lib/types';
+import { AlkemioMatrixLogger } from '../types/matrix.logger';
 import { sleep } from 'matrix-js-sdk/lib/utils.js';
 
 @Injectable()

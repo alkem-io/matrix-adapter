@@ -1,1 +1,1 @@
-export * from './winston.config.js';
+export * from './winston.config';

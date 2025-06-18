@@ -1,6 +1,6 @@
-import { LogContext } from '@common/enums/index.js';
-import { AlkemioErrorStatus } from '@common/enums/alkemio.error.status.js';
-import { BaseException } from './base.exception.js';
+import { LogContext } from '@common/enums/index';
+import { AlkemioErrorStatus } from '@common/enums/alkemio.error.status';
+import { BaseException } from './base.exception';
 
 export class MatrixUserMembershipException extends BaseException {
   constructor(error: string, context: LogContext, code?: AlkemioErrorStatus) {

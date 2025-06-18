@@ -1,1 +1,1 @@
-export * from './bootstrap.service.js';
+export * from './bootstrap.service';

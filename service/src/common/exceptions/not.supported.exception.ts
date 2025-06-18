@@ -1,5 +1,5 @@
-import { LogContext, AlkemioErrorStatus } from '../enums/index.js';
-import { BaseException } from './base.exception.js';
+import { LogContext, AlkemioErrorStatus } from '../enums/index';
+import { BaseException } from './base.exception';
 
 export class NotSupportedException extends BaseException {
   constructor(error: string, context: LogContext) {

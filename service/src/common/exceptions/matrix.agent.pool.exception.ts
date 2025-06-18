@@ -1,5 +1,5 @@
-import { LogContext, AlkemioErrorStatus } from '@common/enums/index.js';
-import { BaseException } from './base.exception.js';
+import { LogContext, AlkemioErrorStatus } from '@common/enums/index';
+import { BaseException } from './base.exception';
 
 export class MatrixAgentPoolException extends BaseException {
   constructor(error: string, context: LogContext, code?: AlkemioErrorStatus) {

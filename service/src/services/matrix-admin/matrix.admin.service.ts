@@ -1,18 +1,18 @@
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { CommunicationAdapter } from '../communication-adapter/communication.adapter.js';
-import { LogContext } from '@src/common/enums/logging.context.js';
-import { RoomPowerLevelsEventContent } from 'matrix-js-sdk/lib/types.js';
-import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception.js';
+import { CommunicationAdapter } from '../communication-adapter/communication.adapter';
+import { LogContext } from '@src/common/enums/logging.context';
+import { RoomPowerLevelsEventContent } from 'matrix-js-sdk/lib/types';
+import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 import { EventType, IStateEventWithRoomId, MatrixClient } from 'matrix-js-sdk';
-import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput as MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.dto.event.update.room.state.for.admin.rooms.js';
-import { IOperationalMatrixUser } from '../matrix/adapter-user/matrix.user.interface.js';
-import { MatrixUserManagementService } from '../matrix/management/matrix.user.management.service.js';
-import { MatrixAgentService } from '../matrix/agent/matrix.agent.service.js';
-import { MatrixUserAdapter } from '../matrix/adapter-user/matrix.user.adapter.js';
-import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.dto.event.log.room.state.js';
-import { CommunicationAdminUserService } from '../communication-admin-user/communication.admin.user.service.js';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput as MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
+import { IOperationalMatrixUser } from '../matrix/adapter-user/matrix.user.interface';
+import { MatrixUserManagementService } from '../matrix/management/matrix.user.management.service';
+import { MatrixAgentService } from '../matrix/agent/matrix.agent.service';
+import { MatrixUserAdapter } from '../matrix/adapter-user/matrix.user.adapter';
+import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.dto.event.log.room.state';
+import { CommunicationAdminUserService } from '../communication-admin-user/communication.admin.user.service';
 
 @Injectable()
 export class MatrixAdminService {

@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { MatrixUserAdapter } from './matrix.user.adapter.js';
+import { MatrixUserAdapter } from './matrix.user.adapter';
 
 @Module({
   imports: [],

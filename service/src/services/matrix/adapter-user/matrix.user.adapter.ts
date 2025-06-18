@@ -1,7 +1,7 @@
-import { ConfigurationTypes, LogContext } from '@common/enums/index.js';
+import { ConfigurationTypes, LogContext } from '@common/enums/index';
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { IMatrixUser } from './matrix.user.interface.js';
+import { IMatrixUser } from './matrix.user.interface';
 import { MatrixClient } from 'matrix-js-sdk';
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;

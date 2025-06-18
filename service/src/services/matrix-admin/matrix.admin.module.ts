@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
-import { MatrixAdminService } from './matrix.admin.service.js';
-import { CommunicationAdapterModule } from '../communication-adapter/communication-adapter.module.js';
-import { MatrixAgentModule } from '../matrix/agent/matrix.agent.module.js';
-import { MatrixUserManagementModule } from '../matrix/management/matrix.user.management.module.js';
-import { MatrixUserAdapterModule } from '../matrix/adapter-user/matrix.user.adapter.module.js';
-import { MatrixAdminController } from './matrix.admin.controller.js';
-import { CommunicationAdminUserModule } from '../communication-admin-user/communication.admin.user.module.js';
+import { MatrixAdminService } from './matrix.admin.service';
+import { CommunicationAdapterModule } from '../communication-adapter/communication-adapter.module';
+import { MatrixAgentModule } from '../matrix/agent/matrix.agent.module';
+import { MatrixUserManagementModule } from '../matrix/management/matrix.user.management.module';
+import { MatrixUserAdapterModule } from '../matrix/adapter-user/matrix.user.adapter.module';
+import { MatrixAdminController } from './matrix.admin.controller';
+import { CommunicationAdminUserModule } from '../communication-admin-user/communication.admin.user.module';
 
 @Module({
   imports: [
