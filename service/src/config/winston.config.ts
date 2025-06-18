@@ -3,7 +3,7 @@ import * as winston from 'winston';
 import { utilities as nestWinstonModuleUtilities } from 'nest-winston';
 import { ConfigService } from '@nestjs/config';
 import * as WinstonElasticsearch from 'winston-elasticsearch';
-import { ConfigurationTypes } from '#common/enums/configuration.type.js';
+import { ConfigurationTypes } from '@common/enums/configuration.type.js';
 import * as logform from 'logform';
 
 const LOG_LABEL = 'matrix-adapter';

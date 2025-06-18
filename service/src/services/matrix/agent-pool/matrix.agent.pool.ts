@@ -1,7 +1,5 @@
 import { ConfigurationTypes } from '@common/enums/configuration.type.js';
-import {
-  MatrixAgentPoolException,
-} from '@common/exceptions/matrix.agent.pool.exception.js';
+import { MatrixAgentPoolException } from '@common/exceptions/matrix.agent.pool.exception.js';
 import { Inject, Injectable, LoggerService } from '@nestjs/common';
 import { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service.js';
