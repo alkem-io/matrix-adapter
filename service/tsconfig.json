@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "module": "commonjs",
-    "moduleResolution": "Node",
+    "moduleResolution": "node",
     "target": "ES2023",
     "lib": ["ES2023"],
     "sourceMap": true,
