@@ -24,7 +24,7 @@ export class MatrixUserManagementService {
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: LoggerService,
     private configService: ConfigService,
-    private cryptographyServive: MatrixCryptographyService,
+    private cryptographyService: MatrixCryptographyService,
     private matrixUserAdapter: MatrixUserAdapter,
     private httpService: HttpService
   ) {
@@ -96,7 +96,7 @@ export class MatrixUserManagementService {
       );
 
     const nonce = nonceResponse.data['nonce'];
-    const hmac = this.cryptographyServive.generateHmac(user, nonce, isAdmin);
+    const hmac = this.cryptographyService.generateHmac(user, nonce, isAdmin);
 
     const registerBody = {
       nonce,
@@ -205,9 +205,8 @@ export class MatrixUserManagementService {
       throw error;
     }*/
     try {
-      const isUsernameAvailable = await this._matrixClient.isUsernameAvailable(
-        username
-      );
+      const isUsernameAvailable =
+        await this._matrixClient.isUsernameAvailable(username);
       return !isUsernameAvailable;
     } catch (error: unknown) {
       this.logger.error(

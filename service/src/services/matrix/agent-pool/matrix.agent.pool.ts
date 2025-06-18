@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-var-requires */
 import { ConfigurationTypes, LogContext } from '@common/enums';
 import {
   MatrixAgentPoolException,
@@ -18,7 +17,7 @@ export class MatrixAgentPool
   implements Disposable, OnModuleDestroy, OnModuleInit
 {
   private _cache: Record<string, { agent: MatrixAgent; expiresOn: number }>;
-  private _intervalService!: NodeJS.Timer;
+  private _intervalService!: NodeJS.Timeout;
   private _agentPoolSize: number;
 
   constructor(
@@ -106,9 +105,8 @@ export class MatrixAgentPool
       }
 
       const operatingUser = await this.acquireMatrixUser(matrixUserID);
-      const client = await this.matrixAgentService.createMatrixAgent(
-        operatingUser
-      );
+      const client =
+        await this.matrixAgentService.createMatrixAgent(operatingUser);
 
       if (autoStart) {
         await client.start();
@@ -126,9 +124,8 @@ export class MatrixAgentPool
   }
 
   private async acquireMatrixUser(matrixUserID: string) {
-    const isRegistered = await this.matrixUserManagementService.isRegistered(
-      matrixUserID
-    );
+    const isRegistered =
+      await this.matrixUserManagementService.isRegistered(matrixUserID);
 
     if (isRegistered) {
       return await this.matrixUserManagementService.login(matrixUserID);

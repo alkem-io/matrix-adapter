@@ -1,13 +1,14 @@
 {
   "compilerOptions": {
-    "target": "es2018",
     "module": "commonjs",
-    "lib": ["es2019", "esnext.asynciterable", "ES2020.Promise"],
+    "moduleResolution": "node",
+    "target": "ES2023",
+    "lib": ["ES2023"],
     "sourceMap": true,
     "outDir": "./dist",
     "removeComments": true,
     "strict": true,
-    "baseUrl": "./",
+    "baseUrl": ".",
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "experimentalDecorators": true,
@@ -15,6 +16,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "downlevelIteration": true,
     "paths": {
       "@src/*": ["src/*"],
       "@test/*": ["test/*"],

@@ -202,9 +202,8 @@ export class AppController {
     const originalMsg = context.getMessage();
 
     try {
-      const reaction = await this.communicationAdapter.addReactionToMessage(
-        data
-      );
+      const reaction =
+        await this.communicationAdapter.addReactionToMessage(data);
       channel.ack(originalMsg);
       const response: RoomAddMessageReactionResponsePayload = {
         reaction,
