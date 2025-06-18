@@ -1,7 +1,7 @@
 dist: focal
 language: node_js
 node_js:
-  - v20.19.1
+  - v22.16.0
 cache:
   directories:
     - node_modules
@@ -11,7 +11,7 @@ services:
   - mysql
 before_install:
   - cd service
-  - npm i -g npm@10.5.0
+  - npm i -g pnpm@9.14.2
 script:
   - npm run test:ci:coverage
 
