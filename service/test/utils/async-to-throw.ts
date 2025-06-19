@@ -1,8 +1,4 @@
-import type { Matchers } from '@jest/expect';
-
-type toThrowParameters = Parameters<Matchers<void, any>['toThrow']>[0];
-
-// Utility to test async functions that should throw
+// Utility to test async functions that should throw (Vitest compatible)
 export const asyncToThrow = async (
   actual: () => Promise<unknown>,
   error?: string | RegExp | Error | (new (...args: any[]) => Error)
