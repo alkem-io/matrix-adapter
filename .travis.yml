@@ -13,5 +13,5 @@ install:
 services:
   - mysql
 script:
-  - pnpm run test:ci:coverage
+  - pnpm run test
 
