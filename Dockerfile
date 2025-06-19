@@ -1,4 +1,4 @@
-FROM node:20.19.1-alpine
+FROM node:22.16.0-alpine
 
 
 # Create app directory
@@ -8,12 +8,11 @@ WORKDIR /usr/src/app
 ARG ENV_ARG=production
 
 # Install app dependencies
-# A wildcard is used to ensure both package.json AND package-lock.json are copied
 # where available (npm@5+)
-COPY ./service/package*.json ./
+COPY ./service/package.json ./
 
-RUN npm i -g npm@10.5.0
-RUN npm install
+RUN npm install -g pnpm
+RUN pnpm install
 
 ## Add the wait script to the image
 ADD https://github.com/ufoscout/docker-compose-wait/releases/download/2.7.3/wait /wait
@@ -26,9 +25,12 @@ RUN chmod +x /wait
 COPY ./service/src ./src
 COPY ./service/tsconfig.json .
 COPY ./service/tsconfig.build.json .
+COPY ./service/tsconfig.prod.json .
+COPY ./service/nest-cli.json .
+COPY ./service/.swcrc .
 COPY ./service/matrix-adapter.yml .
 
-RUN npm run build
+RUN pnpm run build
 
 ENV NODE_ENV=${ENV_ARG}
 

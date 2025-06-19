@@ -1,4 +1,5 @@
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { CommunicationAdapter } from '../communication-adapter/communication.adapter';
 import { LogContext } from '@src/common/enums/logging.context';
@@ -17,7 +18,7 @@ import { CommunicationAdminUserService } from '../communication-admin-user/commu
 export class MatrixAdminService {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService,
+    private readonly logger: pkg.LoggerService,
     private communicationAdapter: CommunicationAdapter,
     private matrixUserManagementService: MatrixUserManagementService,
     private matrixAgentService: MatrixAgentService,

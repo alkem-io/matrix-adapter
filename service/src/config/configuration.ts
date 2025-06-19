@@ -1,6 +1,10 @@
 import { readFileSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import YAML from 'yaml';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const YAML_CONFIG_FILENAME = 'matrix-adapter.yml';
 
@@ -36,8 +40,8 @@ function buildYamlNodeValue(nodeValue: any, envConfig: any) {
 
     updatedNodeValue = envConfig[envVariableKey] ?? envVariableDefaultValue;
 
-    if (updatedNodeValue.toLowerCase() === 'true') return true;
-    if (updatedNodeValue.toLowerCase() === 'false') return false;
+    if (typeof updatedNodeValue === 'string' && updatedNodeValue.toLowerCase() === 'true') return true;
+    if (typeof updatedNodeValue === 'string' && updatedNodeValue.toLowerCase() === 'false') return false;
   }
 
   return updatedNodeValue;

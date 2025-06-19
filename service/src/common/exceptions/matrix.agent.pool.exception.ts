@@ -1,4 +1,4 @@
-import { LogContext, AlkemioErrorStatus } from '@common/enums';
+import { LogContext, AlkemioErrorStatus } from '@common/enums/index';
 import { BaseException } from './base.exception';
 
 export class MatrixAgentPoolException extends BaseException {

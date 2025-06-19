@@ -1,4 +1,4 @@
-import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from '../src/services/matrix-admin/dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from '../src/services/matrix-admin/dto/matrix.admin.dto.event.update.room.state.for.admin.rooms.js';
 
 const messageBody: CmdMatrixAdminEventResetAdminRoomsInput = {
   pattern: 'updateRoomStateForAdminRooms',

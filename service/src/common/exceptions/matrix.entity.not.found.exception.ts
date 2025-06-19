@@ -1,4 +1,4 @@
-import { LogContext } from '@common/enums';
+import { LogContext } from '@common/enums/index';
 import { AlkemioErrorStatus } from '@common/enums/alkemio.error.status';
 import { BaseException } from './base.exception';
 

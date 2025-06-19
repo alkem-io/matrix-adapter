@@ -1,4 +1,5 @@
-import { Controller, Inject, LoggerService } from '@nestjs/common';
+import pkg  from '@nestjs/common';
+const { Inject, Controller } = pkg;
 import {
   Ctx,
   MessagePattern,
@@ -8,7 +9,7 @@ import {
   Transport,
 } from '@nestjs/microservices';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { LogContext } from '../../common/enums';
+import { LogContext } from '../../common/enums/index';
 import { MatrixAdminEventType } from './matrix.admin.event.type';
 import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
 import { MatrixAdminService } from './matrix.admin.service';
@@ -19,7 +20,7 @@ import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.dto.event.
 export class MatrixAdminController {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService,
+    private readonly logger: pkg.LoggerService,
     private matrixAdminService: MatrixAdminService
   ) {}
 

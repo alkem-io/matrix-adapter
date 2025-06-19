@@ -1,6 +1,7 @@
-import { LogContext } from '@common/enums';
-import { MatrixEntityNotFoundException } from '@common/exceptions';
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
+import { LogContext } from '@common/enums/index';
+import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception';
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
 import { MatrixAgentPool } from '@services/matrix/agent-pool/matrix.agent.pool';
 import { HistoryVisibility, JoinRule, MatrixClient } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
@@ -24,14 +25,14 @@ import { RoomDirectResult } from '@alkemio/matrix-adapter-lib';
 import { RoomDeleteMessagePayload } from '@alkemio/matrix-adapter-lib';
 import { SendMessageToUserPayload } from '@alkemio/matrix-adapter-lib';
 import { IReaction } from '@alkemio/matrix-adapter-lib';
-import { sleep } from 'matrix-js-sdk/lib/utils';
+import { sleep } from 'matrix-js-sdk/lib/utils.js';
 import { CommunicationAdminUserService } from '../communication-admin-user/communication.admin.user.service';
 
 @Injectable()
 export class CommunicationAdapter {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService,
+    private readonly logger: pkg.LoggerService,
     private matrixAgentService: MatrixAgentService,
     private matrixAgentPool: MatrixAgentPool,
     private matrixUserManagementService: MatrixUserManagementService,

@@ -1,16 +1,16 @@
-import { ConfigurationTypes, LogContext } from '@common/enums';
-import {
-  MatrixAgentPoolException,
-  NotSupportedException,
-} from '@common/exceptions';
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
-import { OnModuleDestroy, OnModuleInit } from '@nestjs/common/interfaces';
+import { ConfigurationTypes } from '@common/enums/configuration.type';
+import { MatrixAgentPoolException } from '@common/exceptions/matrix.agent.pool.exception';
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
+import { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixAgent } from '../agent/matrix.agent';
 import { MatrixAgentService } from '../agent/matrix.agent.service';
 import { ConfigService } from '@nestjs/config';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
+import { NotSupportedException } from '@src/common/exceptions/not.supported.exception';
+import { LogContext } from '@src/common/enums/logging.context';
 
 @Injectable()
 export class MatrixAgentPool
@@ -25,7 +25,7 @@ export class MatrixAgentPool
     private configService: ConfigService,
     private matrixUserManagementService: MatrixUserManagementService,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService
+    private readonly logger: pkg.LoggerService
   ) {
     this._cache = {};
     this._agentPoolSize = this.configService.get(

@@ -1,8 +1,9 @@
 import { RoomDirectResult } from '@alkemio/matrix-adapter-lib';
 import { RoomResult, IMessage, IReaction } from '@alkemio/matrix-adapter-lib';
-import { LogContext } from '@common/enums';
-import { MatrixEntityNotFoundException } from '@common/exceptions';
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
+import { LogContext } from '@common/enums/index';
+import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception';
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
 import {
   Direction,
   EventType,
@@ -32,7 +33,7 @@ import { IRoomOpts } from './matrix.room.dto.options';
 export class MatrixRoomAdapter {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService,
+    private readonly logger: pkg.LoggerService,
     private matrixMessageAdapter: MatrixMessageAdapter
   ) {}
 
@@ -45,14 +46,14 @@ export class MatrixRoomAdapter {
     const dmRooms = this.getDirectMessageRoomsMap(matrixClient);
 
     dmRooms[userId] = [roomId];
-    await matrixClient.setAccountData('m.direct', dmRooms);
+    await matrixClient.setAccountData(EventType.Direct, dmRooms);
   }
 
   // there could be more than one dm room per user
   getDirectMessageRoomsMap(
     matrixClient: MatrixClient
   ): Record<string, string[]> {
-    const mDirectEvent = matrixClient.getAccountData('m.direct');
+    const mDirectEvent = matrixClient.getAccountData(EventType.Direct);
     // todo: tidy up this logic
     const eventContent = mDirectEvent
       ? mDirectEvent.getContent<IContent>()
