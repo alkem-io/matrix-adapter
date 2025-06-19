@@ -1,9 +1,10 @@
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { ConfigurationTypes, LogContext } from '@common/enums';
-import { BootstrapException } from '@src/common/exceptions/bootstrap.exception';
-import { CommunicationAdapter } from '@src/services/communication-adapter/communication.adapter';
+import { ConfigurationTypes, LogContext } from '../../common/enums/index.js';
+import { BootstrapException } from '../../common/exceptions/bootstrap.exception.js';
+import { CommunicationAdapter } from '../../services/communication-adapter/communication.adapter.js';
 
 @Injectable()
 export class BootstrapService {
@@ -11,7 +12,7 @@ export class BootstrapService {
     private configService: ConfigService,
     private communicationAdapter: CommunicationAdapter,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService
+    private readonly logger: pkg.LoggerService
   ) {}
 
   async bootstrap() {

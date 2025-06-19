@@ -1,4 +1,4 @@
-import { LogContext } from '@common/enums';
+import { LogContext } from '@common/enums/logging.context';
 import { LoggerService } from '@nestjs/common';
 import {
   IMatrixEventHandler,
@@ -10,7 +10,7 @@ import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter'
 import { MatrixRoom } from '../adapter-room/matrix.room';
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
 import { MatrixClient } from 'matrix-js-sdk';
-import { MatrixEntityNotFoundException } from '@src/common/exceptions';
+import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 
 const noop = function () {
   // empty

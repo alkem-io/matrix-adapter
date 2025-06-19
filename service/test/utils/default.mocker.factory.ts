@@ -1,14 +1,10 @@
 import { InjectionToken } from '@nestjs/common';
-import { MockFunctionMetadata, ModuleMocker } from 'jest-mock';
+import { vi } from 'vitest';
 
-const moduleMocker = new ModuleMocker(global);
-
+// Simple Vitest-based mocker for NestJS providers
 export const defaultMockerFactory = (token: InjectionToken | undefined) => {
   if (typeof token === 'function') {
-    const mockMetadata = moduleMocker.getMetadata(
-      token
-    ) as MockFunctionMetadata<any, any>;
-    const Mock = moduleMocker.generateFromMetadata(mockMetadata);
-    return new Mock();
+    return vi.fn();
   }
+  return undefined;
 };

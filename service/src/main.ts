@@ -3,7 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { AppModule } from './app.module';
-import { ConfigurationTypes } from './common/enums';
+import { ConfigurationTypes } from './common/enums/index';
 import './config/aliases';
 import { BootstrapService } from './core/bootstrap/bootstrap.service';
 

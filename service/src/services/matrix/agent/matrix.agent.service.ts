@@ -1,6 +1,7 @@
-import { ConfigurationTypes, LogContext } from '@common/enums';
-import { MatrixEntityNotFoundException } from '@common/exceptions';
-import { Inject, Injectable, LoggerService } from '@nestjs/common';
+import { ConfigurationTypes, LogContext } from '@common/enums/index';
+import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception';
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
 import { ConfigService } from '@nestjs/config';
 import {
   createClient,
@@ -27,7 +28,7 @@ import {
   RoomMessageEventContent,
 } from 'matrix-js-sdk/lib/types';
 import { AlkemioMatrixLogger } from '../types/matrix.logger';
-import { sleep } from 'matrix-js-sdk/lib/utils';
+import { sleep } from 'matrix-js-sdk/lib/utils.js';
 
 @Injectable()
 export class MatrixAgentService {
@@ -37,7 +38,7 @@ export class MatrixAgentService {
     private matrixRoomAdapter: MatrixRoomAdapter,
     private matrixMessageAdapter: MatrixMessageAdapter,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
-    private readonly logger: LoggerService
+    private readonly logger: pkg.LoggerService
   ) {}
 
   async createMatrixAgent(

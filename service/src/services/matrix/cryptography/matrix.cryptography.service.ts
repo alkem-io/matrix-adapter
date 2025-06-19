@@ -1,4 +1,4 @@
-import { ConfigurationTypes } from '@common/enums';
+import { ConfigurationTypes } from '@common/enums/configuration.type';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto-js';

@@ -1,5 +1,5 @@
-import { ConfigurationTypes, LogContext } from '@common/enums';
-import { LoggerService } from '@nestjs/common';
+import { LogContext } from '@common/enums/logging.context';
+import pkg  from '@nestjs/common';
 import {
   autoAcceptRoomGuardFactory,
   AutoAcceptSpecificRoomMembershipMonitorFactory,
@@ -19,6 +19,7 @@ import { IMatrixAgent } from './matrix.agent.interface';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { MatrixClient, IStartClientOpts } from 'matrix-js-sdk';
 import { ConfigService } from '@nestjs/config';
+import { ConfigurationTypes } from '@src/common/enums/configuration.type';
 
 export type MatrixAgentStartOptions = {
   registerTimelineMonitor?: boolean;
@@ -38,7 +39,7 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     roomAdapter: MatrixRoomAdapter,
     messageAdapter: MatrixMessageAdapter,
     configService: ConfigService,
-    private logger: LoggerService
+    private logger: pkg.LoggerService
   ) {
     this.matrixClient = matrixClient;
     this.eventDispatcher = new MatrixEventDispatcher(this.matrixClient);
