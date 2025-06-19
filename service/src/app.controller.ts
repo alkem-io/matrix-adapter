@@ -1,4 +1,4 @@
-import pkg  from '@nestjs/common';
+import pkg from '@nestjs/common';
 const { Inject, Controller } = pkg;
 import {
   Ctx,
@@ -20,7 +20,9 @@ export class AppController {
     private communicationAdapter: CommunicationAdapter
   ) {}
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_DETAILS })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_DETAILS,
+  })
   async roomDetails(
     @Payload() data: alkemioMatrixAdapterLib.RoomDetailsPayload,
     @Ctx() context: RmqContext
@@ -52,7 +54,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_MEMBERS })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_MEMBERS,
+  })
   async roomMembers(
     @Payload() data: alkemioMatrixAdapterLib.RoomMembersPayload,
     @Ctx() context: RmqContext
@@ -85,7 +89,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_SEND_MESSAGE })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_SEND_MESSAGE,
+  })
   async roomSendMessage(
     @Payload() data: alkemioMatrixAdapterLib.RoomSendMessagePayload,
     @Ctx() context: RmqContext
@@ -115,7 +121,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_SEND_MESSAGE_REPLY })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_SEND_MESSAGE_REPLY,
+  })
   async roomSendMessageReply(
     @Payload() data: alkemioMatrixAdapterLib.RoomSendMessageReplyPayload,
     @Ctx() context: RmqContext
@@ -145,14 +153,18 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_ADD_REACTION_TO_MESSAGE })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType
+      .ROOM_ADD_REACTION_TO_MESSAGE,
+  })
   async roomAddReactionToMessage(
     @Payload() data: alkemioMatrixAdapterLib.RoomAddMessageReactionPayload,
     @Ctx() context: RmqContext
   ): Promise<alkemioMatrixAdapterLib.RoomAddMessageReactionResponsePayload> {
     this.logger.verbose?.(
       `${
-        alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_ADD_REACTION_TO_MESSAGE
+        alkemioMatrixAdapterLib.MatrixAdapterEventType
+          .ROOM_ADD_REACTION_TO_MESSAGE
       } - payload: ${JSON.stringify(data)}`,
       LogContext.EVENTS
     );
@@ -163,9 +175,10 @@ export class AppController {
       const reaction =
         await this.communicationAdapter.addReactionToMessage(data);
       channel.ack(originalMsg);
-      const response: alkemioMatrixAdapterLib.RoomAddMessageReactionResponsePayload = {
-        reaction,
-      };
+      const response: alkemioMatrixAdapterLib.RoomAddMessageReactionResponsePayload =
+        {
+          reaction,
+        };
 
       return response;
     } catch (error) {
@@ -177,7 +190,8 @@ export class AppController {
   }
 
   @MessagePattern({
-    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_REMOVE_REACTION_TO_MESSAGE,
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType
+      .ROOM_REMOVE_REACTION_TO_MESSAGE,
   })
   async roomRemoveReactionToMessage(
     @Payload() data: alkemioMatrixAdapterLib.RoomRemoveMessageReactionPayload,
@@ -185,7 +199,8 @@ export class AppController {
   ): Promise<boolean> {
     this.logger.verbose?.(
       `${
-        alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_REMOVE_REACTION_TO_MESSAGE
+        alkemioMatrixAdapterLib.MatrixAdapterEventType
+          .ROOM_REMOVE_REACTION_TO_MESSAGE
       } - payload: ${JSON.stringify(data)}`,
       LogContext.EVENTS
     );
@@ -205,7 +220,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_DELETE_MESSAGE })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_DELETE_MESSAGE,
+  })
   async roomDeleteMessage(
     @Payload() data: alkemioMatrixAdapterLib.RoomDeleteMessagePayload,
     @Ctx() context: RmqContext
@@ -222,9 +239,10 @@ export class AppController {
     try {
       const messageID = await this.communicationAdapter.deleteMessage(data);
       channel.ack(originalMsg);
-      const response: alkemioMatrixAdapterLib.RoomDeleteMessageResponsePayload = {
-        messageID: messageID,
-      };
+      const response: alkemioMatrixAdapterLib.RoomDeleteMessageResponsePayload =
+        {
+          messageID: messageID,
+        };
 
       return response;
     } catch (error) {
@@ -235,14 +253,16 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_MESSAGE_SENDER })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_MESSAGE_SENDER,
+  })
   async roomMessageSender(
     @Payload() data: alkemioMatrixAdapterLib.RoomMessageSenderPayload,
     @Ctx() context: RmqContext
   ): Promise<alkemioMatrixAdapterLib.RoomMessageSenderResponsePayload> {
     this.logger.verbose?.(
       `${
-       alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_MESSAGE_SENDER
+        alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_MESSAGE_SENDER
       } - payload: ${JSON.stringify(data)}`,
       LogContext.EVENTS
     );
@@ -255,9 +275,10 @@ export class AppController {
         data.messageID
       );
       channel.ack(originalMsg);
-      const response: alkemioMatrixAdapterLib.RoomMessageSenderResponsePayload = {
-        senderID: senderID,
-      };
+      const response: alkemioMatrixAdapterLib.RoomMessageSenderResponsePayload =
+        {
+          senderID: senderID,
+        };
 
       return response;
     } catch (error) {
@@ -268,7 +289,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_REACTION_SENDER })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOM_REACTION_SENDER,
+  })
   async roomReactionSender(
     @Payload() data: alkemioMatrixAdapterLib.RoomReactionSenderPayload,
     @Ctx() context: RmqContext
@@ -288,9 +311,10 @@ export class AppController {
         data.reactionID
       );
       channel.ack(originalMsg);
-      const response: alkemioMatrixAdapterLib.RoomReactionSenderResponsePayload = {
-        senderID: senderID,
-      };
+      const response: alkemioMatrixAdapterLib.RoomReactionSenderResponsePayload =
+        {
+          senderID: senderID,
+        };
 
       return response;
     } catch (error) {
@@ -301,7 +325,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.UPDATE_ROOM_STATE })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.UPDATE_ROOM_STATE,
+  })
   async updateRoomState(
     @Payload() data: alkemioMatrixAdapterLib.UpdateRoomStatePayload,
     @Ctx() context: RmqContext
@@ -328,7 +354,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.CREATE_ROOM })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.CREATE_ROOM,
+  })
   async createRoom(
     @Payload() data: alkemioMatrixAdapterLib.CreateRoomPayload,
     @Ctx() context: RmqContext
@@ -361,7 +389,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS_USER })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS_USER,
+  })
   async roomsUser(
     @Payload() data: alkemioMatrixAdapterLib.RoomsUserPayload,
     @Ctx() context: RmqContext
@@ -391,13 +421,15 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS_USER_DIRECT })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS_USER_DIRECT,
+  })
   async roomsUserDirect(
     @Payload() data: alkemioMatrixAdapterLib.RoomsUserDirectPayload,
     @Ctx() context: RmqContext
   ): Promise<alkemioMatrixAdapterLib.RoomsUserDirectResponsePayload> {
     this.logger.verbose?.(
-      `${alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS_USER} - payload: ${JSON.stringify(data)}`,
+      `${alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS_USER_DIRECT} - payload: ${JSON.stringify(data)}`,
       LogContext.EVENTS
     );
     const channel = context.getChannelRef();
@@ -419,7 +451,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS_USER })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS_USER,
+  })
   async rooms(
     @Payload() data: alkemioMatrixAdapterLib.RoomsPayload,
     @Ctx() context: RmqContext
@@ -447,7 +481,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.REMOVE_USER_FROM_ROOMS })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.REMOVE_USER_FROM_ROOMS,
+  })
   async removeUserFromRooms(
     @Payload() data: alkemioMatrixAdapterLib.RemoveUserFromRoomsPayload,
     @Ctx() context: RmqContext
@@ -467,9 +503,10 @@ export class AppController {
         data.userID
       );
       channel.ack(originalMsg);
-      const response: alkemioMatrixAdapterLib.RemoveUserFromRoomsResponsePayload = {
-        success: result,
-      };
+      const response: alkemioMatrixAdapterLib.RemoveUserFromRoomsResponsePayload =
+        {
+          success: result,
+        };
 
       return response;
     } catch (error) {
@@ -480,7 +517,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.REMOVE_ROOM })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.REMOVE_ROOM,
+  })
   async removeRoom(
     @Payload() data: alkemioMatrixAdapterLib.RemoveRoomPayload,
     @Ctx() context: RmqContext
@@ -510,7 +549,10 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.REPLICATE_ROOM_MEMBERSHIP })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType
+      .REPLICATE_ROOM_MEMBERSHIP,
+  })
   async replicateRoomMembership(
     @Payload() data: alkemioMatrixAdapterLib.ReplicateRoomMembershipPayload,
     @Ctx() context: RmqContext
@@ -531,9 +573,10 @@ export class AppController {
         data.userToPrioritize
       );
       channel.ack(originalMsg);
-      const response: alkemioMatrixAdapterLib.ReplicateRoomMembershipResponsePayload = {
-        success: result,
-      };
+      const response: alkemioMatrixAdapterLib.ReplicateRoomMembershipResponsePayload =
+        {
+          success: result,
+        };
 
       return response;
     } catch (error) {
@@ -544,7 +587,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ADD_USER_TO_ROOMS })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ADD_USER_TO_ROOMS,
+  })
   async addUserToRooms(
     @Payload() data: alkemioMatrixAdapterLib.AddUserToRoomsPayload,
     @Ctx() context: RmqContext
@@ -577,7 +622,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ADD_USER_TO_ROOM })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ADD_USER_TO_ROOM,
+  })
   async addUserToRoom(
     @Payload() data: alkemioMatrixAdapterLib.AddUserToRoomPayload,
     @Ctx() context: RmqContext
@@ -607,7 +654,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.SEND_MESSAGE_TO_USER })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.SEND_MESSAGE_TO_USER,
+  })
   async sendMessageToUser(
     @Payload() data: alkemioMatrixAdapterLib.SendMessageToUserPayload,
     @Ctx() context: RmqContext
@@ -624,9 +673,10 @@ export class AppController {
     try {
       const result = await this.communicationAdapter.sendMessageToUser(data);
       channel.ack(originalMsg);
-      const response: alkemioMatrixAdapterLib.SendMessageToUserResponsePayload = {
-        messageID: result,
-      };
+      const response: alkemioMatrixAdapterLib.SendMessageToUserResponsePayload =
+        {
+          messageID: result,
+        };
 
       return response;
     } catch (error) {
@@ -637,7 +687,9 @@ export class AppController {
     }
   }
 
-  @MessagePattern({ cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.REGISTER_NEW_USER })
+  @MessagePattern({
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.REGISTER_NEW_USER,
+  })
   async registerNewUser(
     @Payload() data: alkemioMatrixAdapterLib.RegisterNewUserPayload,
     @Ctx() context: RmqContext
