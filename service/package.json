@@ -32,18 +32,15 @@
     "lint:file": "eslint --ignore-path .gitignore",
     "lint:yaml": "chmod +x scripts/lint_yaml.sh && ./scripts/lint_yaml.sh",
     "build:clean": "rimraf dist; exit 0",
-    "typos": "chmod +x scripts/check_typos.sh && ./scripts/check_typos.sh",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "start:services": "docker-compose -f quickstart-mailslurper.yml up --build --force-recreate",
     "lint:prod": "tsc --noEmit && cross-env NODE_ENV=production eslint src/**/*.ts{,x}",
-    "test:dev": "jest --config=./test/config/jest.config.js --no-cache --coverage=true --detectOpenHandles --runInBand --logHeapUsage",
-    "test:watch": "jest --watch",
-    "test:cov": "jest --coverage",
+    "test:dev": "jest --config=./test/config/jest.config.mjs --no-cache --coverage=true --detectOpenHandles --runInBand --logHeapUsage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:ci:coverage": "jest --runInBand --config ./test/config/jest.config.ci.js && cat ./coverage-ci/lcov.info | coveralls",
-    "test:ci": "jest --runInBand --config ./test/config/jest.config.ci.js"
+    "test:ci:coverage": "jest --runInBand --config ./test/config/jest.config.ci.mjs && cat ./coverage-ci/lcov.info | coveralls",
+    "test:ci": "jest --runInBand --config ./test/config/jest.config.ci.mjs"
   },
   "dependencies": {
     "@alkemio/matrix-adapter-lib": "^0.4.1",
