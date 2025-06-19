@@ -20,7 +20,6 @@
     "build": "node --run build:clean && nest build --path tsconfig.prod.json",
     "start": "node dist/main.js",
     "dev": "nest start --watch --debug=0.0.0.0:9229",
-    "calculate-global-test-coverage": "tsx scripts/calculate-global-test-coverage.ts",
     "prepare": "[ -f .husky/install.mjs ] && node .husky/install.mjs || true",
     "lint": "eslint --ignore-path .gitignore . --ext .js,.mjs,cjs,.ts,.mts",
     "lint:fix": "eslint --ignore-path .gitignore . --ext .js,.mjs,cjs,.ts,.mts --fix",
@@ -32,18 +31,13 @@
     "start:prod": "node dist/main",
     "start:services": "docker-compose -f quickstart-mailslurper.yml up --build --force-recreate",
     "lint:prod": "tsc --noEmit && cross-env NODE_ENV=production eslint src/**/*.ts{,x}",
-    "testNew": "rimraf coverage .nyc_output && concurrently 'node --run test:unit' 'node --run test:e2e' && node --run calculate-global-test-coverage",
     "test": "vitest run --config test/config/vitest.config.ts",
     "test:unit": "vitest run --coverage --config vitest.config.unit.ts",
     "test:e2e": "vitest run --coverage --config ./vitest.config.e2e.ts",
     "test:watch": "vitest --config test/config/vitest.config.ts",
     "test:ui": "vitest --ui --config test/config/vitest.config.ts",
     "test:coverage": "vitest run --coverage --config test/config/vitest.config.ts",
-    "test:performance": "k6 run tests/performance/contexts/users/get-users.mjs",
-    "test:dev": "jest --config=./test/config/jest.config.mjs --no-cache --coverage=true --detectOpenHandles --runInBand --logHeapUsage",
-    "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:ci:coverage": "jest --runInBand --config ./test/config/jest.config.ci.mjs && cat ./coverage-ci/lcov.info | coveralls",
-    "test:ci": "jest --runInBand --config ./test/config/jest.config.ci.mjs"
+    "test:calculate-global-test-coverage": "tsx scripts/calculate-global-test-coverage.ts"
   },
   "dependencies": {
     "@alkemio/matrix-adapter-lib": "^0.4.1",
