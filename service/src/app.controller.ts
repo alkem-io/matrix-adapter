@@ -452,7 +452,7 @@ export class AppController {
   }
 
   @MessagePattern({
-    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS_USER,
+    cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS,
   })
   async rooms(
     @Payload() data: alkemioMatrixAdapterLib.RoomsPayload,
