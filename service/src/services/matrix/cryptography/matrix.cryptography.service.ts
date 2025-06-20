@@ -1,7 +1,7 @@
 import { ConfigurationTypes } from '@common/enums/configuration.type';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as crypto from 'crypto-js';
+import * as crypto from 'crypto';
 import { IMatrixUser } from '../adapter-user/matrix.user.interface';
 @Injectable()
 export class MatrixCryptographyService {
@@ -15,19 +15,20 @@ export class MatrixCryptographyService {
       throw new Error('Matrix configuration is not provided');
     }
 
-    const mac = crypto.enc.Utf8.parse(sharedSecret);
-    const hmac = crypto.algo.HMAC.create(crypto.algo.SHA1, mac);
-
-    const toUft8 = (value: string) => crypto.enc.Utf8.parse(value);
-
-    hmac.update(toUft8(nonce));
-    hmac.update(toUft8('\x00'));
-    hmac.update(toUft8(user.name));
-    hmac.update(toUft8('\x00'));
-    hmac.update(toUft8(user.password));
-    hmac.update(toUft8('\x00'));
-    hmac.update(toUft8(isAdmin ? 'admin' : 'notadmin'));
-
-    return crypto.enc.Hex.stringify(hmac.finalize());
+    // Prepare the message as a Buffer
+    const parts = [
+      nonce,
+      '\x00',
+      user.name,
+      '\x00',
+      user.password,
+      '\x00',
+      isAdmin ? 'admin' : 'notadmin',
+    ];
+    // Join and encode as utf8
+    const message = Buffer.from(parts.join(''), 'utf8');
+    const hmac = crypto.createHmac('sha1', Buffer.from(sharedSecret, 'utf8'));
+    hmac.update(message);
+    return hmac.digest('hex');
   }
 }
