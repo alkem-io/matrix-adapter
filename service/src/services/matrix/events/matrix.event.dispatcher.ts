@@ -8,6 +8,8 @@ import {
   RoomEvent,
   RoomMemberEvent,
   RoomMember,
+  SyncState,
+  Room,
 } from 'matrix-js-sdk';
 import { first, fromEvent, Observable, Observer, Subscription } from 'rxjs';
 import { MatrixRoom } from '../adapter-room/matrix.room';
@@ -87,30 +89,37 @@ export class MatrixEventDispatcher
     monitor = monitor.bind(this);
     this._client.on(event, monitor);
 
-    this[handler] = fromEvent<T>(this._emmiter, handler) as any;
+    // Type assertion is necessary here due to dynamic property assignment
+    // The handler key determines which specific Observable type this will be
+    (this as any)[handler] = fromEvent<T>(this._emmiter, handler);
     this._disposables.push(() => this._client.off(event, monitor));
   }
 
-  private _syncMonitor(syncState: string, oldSyncState: string) {
-    this._emmiter.emit('syncMonitor', { syncState, oldSyncState });
+  private _syncMonitor(syncState: SyncState, oldSyncState: SyncState | null) {
+    this._emmiter.emit('syncMonitor', {
+      syncState: syncState.toString(),
+      oldSyncState: oldSyncState?.toString() || ''
+    });
   }
 
-  private _roomMonitor(room: MatrixRoom) {
-    this._emmiter.emit('roomMonitor', { room });
+  private _roomMonitor(room: Room) {
+    this._emmiter.emit('roomMonitor', { room: room as MatrixRoom });
   }
 
   private _roomTimelineMonitor(
     event: MatrixEvent,
-    room: MatrixRoom,
-    toStartOfTimeline: boolean,
+    room: Room | undefined,
+    toStartOfTimeline: boolean | undefined,
     removed: boolean
   ) {
-    this._emmiter.emit('roomTimelineMonitor', {
-      event,
-      room,
-      toStartOfTimeline,
-      removed,
-    });
+    if (room) {
+      this._emmiter.emit('roomTimelineMonitor', {
+        event,
+        room: room as MatrixRoom,
+        toStartOfTimeline: toStartOfTimeline || false,
+        removed,
+      });
+    }
   }
 
   private _roomMemberMembershipMonitor(event: MatrixEvent, member: RoomMember) {
