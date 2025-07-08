@@ -12,12 +12,13 @@ import {
   IConditionalMatrixEventHandler,
   IMatrixEventHandler,
   MatrixEventDispatcher,
+  InternalEventNames,
 } from '@services/matrix/events/matrix.event.dispatcher';
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
 import { IMatrixAgent } from './matrix.agent.interface';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
-import { MatrixClient, IStartClientOpts } from 'matrix-js-sdk';
+import { MatrixClient, IStartClientOpts, SyncState } from 'matrix-js-sdk';
 import { ConfigService } from '@nestjs/config';
 import { ConfigurationTypes } from '@src/common/enums/configuration.type';
 
@@ -72,10 +73,10 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     const startComplete = new Promise<void>((resolve, reject) => {
       const subscription = this.eventDispatcher.syncMonitor.subscribe(
         ({ oldSyncState, syncState }) => {
-          if (syncState === 'SYNCING' && oldSyncState !== 'SYNCING') {
+          if (syncState === SyncState.Syncing && oldSyncState !== SyncState.Syncing) {
             subscription.unsubscribe();
             resolve();
-          } else if (syncState === 'ERROR') {
+          } else if (syncState === SyncState.Error) {
             reject();
           }
         }
@@ -112,12 +113,12 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     };
 
     if (registerTimelineMonitor) {
-      eventHandler['roomTimelineMonitor'] =
+      eventHandler[InternalEventNames.RoomTimelineMonitor] =
         this.resolveRoomTimelineEventHandler();
     }
 
     if (registerRoomMonitor) {
-      eventHandler['roomMonitor'] = this.resolveRoomEventHandler();
+      eventHandler[InternalEventNames.RoomMonitor] = this.resolveRoomEventHandler();
     }
 
     this.attach(eventHandler);
