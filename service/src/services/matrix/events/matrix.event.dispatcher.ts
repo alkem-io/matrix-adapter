@@ -54,7 +54,7 @@ export type RoomTimelineEvent = {
 export class MatrixEventDispatcher
   implements Disposable, IMatrixEventDispatcher
 {
-  private _emmiter = new EventEmitter();
+  private _emitter = new EventEmitter();
   private _disposables: (() => void)[] = [];
   private _subscriptions: Record<string, Subscription[]> = {};
 
@@ -98,19 +98,19 @@ export class MatrixEventDispatcher
 
     // Type assertion is necessary here due to dynamic property assignment
     // The handler key determines which specific Observable type this will be
-    (this as any)[handler] = fromEvent<T>(this._emmiter, handler);
+    (this as any)[handler] = fromEvent<T>(this._emitter, handler);
     this._disposables.push(() => this._client.off(event, monitor));
   }
 
   private _syncMonitor(syncState: SyncState, oldSyncState: SyncState | null) {
-    this._emmiter.emit(InternalEventNames.SyncMonitor, {
+    this._emitter.emit(InternalEventNames.SyncMonitor, {
       syncState: syncState.toString(),
       oldSyncState: oldSyncState?.toString() || ''
     });
   }
 
   private _roomMonitor(room: Room) {
-    this._emmiter.emit(InternalEventNames.RoomMonitor, { room: room as MatrixRoom });
+    this._emitter.emit(InternalEventNames.RoomMonitor, { room: room as MatrixRoom });
   }
 
   private _roomTimelineMonitor(
@@ -120,7 +120,7 @@ export class MatrixEventDispatcher
     removed: boolean
   ) {
     if (room) {
-      this._emmiter.emit(InternalEventNames.RoomTimelineMonitor, {
+      this._emitter.emit(InternalEventNames.RoomTimelineMonitor, {
         event,
         room: room as MatrixRoom,
         toStartOfTimeline: toStartOfTimeline || false,
@@ -130,7 +130,7 @@ export class MatrixEventDispatcher
   }
 
   private _roomMemberMembershipMonitor(event: MatrixEvent, member: RoomMember) {
-    this._emmiter.emit(InternalEventNames.RoomMemberMembershipMonitor, { event, member });
+    this._emitter.emit(InternalEventNames.RoomMemberMembershipMonitor, { event, member });
   }
 
   attach(handler: IMatrixEventHandler) {
