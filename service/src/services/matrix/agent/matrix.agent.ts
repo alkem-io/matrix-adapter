@@ -105,6 +105,8 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
       lazyLoadMembers: true,
     };
 
+    /// START THE SYNC, FULLY BLOCKING UNTIL THE SYNC IS COMPLETE
+
     await this.matrixClient.startClient(startClientOptions);
     await startComplete;
 
