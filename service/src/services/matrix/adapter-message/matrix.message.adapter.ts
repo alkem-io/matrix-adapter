@@ -119,7 +119,7 @@ export class MatrixMessageAdapter {
     if (event.type === EventType.Reaction && !content['m.relates_to']) {
       this.logger.verbose?.(
         `[Timeline] Ignoring reaction event with no relates_to property: ${event.type} - id: ${event.event_id}`,
-        LogContext.COMMUNICATION
+        LogContext.COMMUNICATION,
       );
       return true;
     }
