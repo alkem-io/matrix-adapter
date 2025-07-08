@@ -24,7 +24,7 @@ export class MatrixAdminController {
     private matrixAdminService: MatrixAdminService
   ) {}
 
-  @MessagePattern('updateRoomStateForAdminRooms', Transport.RMQ)
+  @MessagePattern(MatrixAdminEventType.UPDATE_ROOM_STATE_FOR_ADMIN_ROOMS, Transport.RMQ)
   async matrixAdminRoomsReset(
     @Payload() data: MatrixAdminEventUpdateRoomStateForAdminRoomsInput,
     @Ctx() context: RmqContext
@@ -54,7 +54,7 @@ export class MatrixAdminController {
     }
   }
 
-  @MessagePattern('logRoomState', Transport.RMQ)
+  @MessagePattern(MatrixAdminEventType.LOG_ROOM_STATE, Transport.RMQ)
   async matrixAdminRoomState(
     @Payload() data: MatrixAdminEventLogRoomStateInput,
     @Ctx() context: RmqContext

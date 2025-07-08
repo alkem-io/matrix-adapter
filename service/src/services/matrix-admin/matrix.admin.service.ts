@@ -33,7 +33,7 @@ export class MatrixAdminService {
     const roomState = await matrixClient.roomState(roomID);
     // Find the user's power level event (usually type "m.room.power_levels")
     const powerLevelsEvent = roomState.find(
-      event => event.type === 'm.room.power_levels'
+      event => event.type === EventType.RoomPowerLevels
     );
     if (!powerLevelsEvent) {
       throw new MatrixEntityNotFoundException(

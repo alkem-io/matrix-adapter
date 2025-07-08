@@ -110,7 +110,7 @@ export class MatrixMessageAdapter {
 
     if (event.type === EventType.RoomMessage && !content.body) {
       this.logger.verbose?.(
-        `[Timeline] Ignoring mesage event with no content body: ${event.type} - id: ${event.event_id}`,
+        `[Timeline] Ignoring message event with no content body: ${event.type} - id: ${event.event_id}`,
         LogContext.COMMUNICATION
       );
       return true;
@@ -118,7 +118,7 @@ export class MatrixMessageAdapter {
 
     if (event.type === EventType.Reaction && !content['m.relates_to']) {
       this.logger.verbose?.(
-        `[Timeline] Ignoring reaction event with no realates_to property: ${event.type} - id: ${event.event_id}`,
+        `[Timeline] Ignoring reaction event with no relates_to property: ${event.type} - id: ${event.event_id}`,
         LogContext.COMMUNICATION
       );
       return true;

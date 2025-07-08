@@ -14,6 +14,13 @@ import {
 import { first, fromEvent, Observable, Observer, Subscription } from 'rxjs';
 import { MatrixRoom } from '../adapter-room/matrix.room';
 import { MatrixEventHandler } from '../types/matrix.event.handler.type';
+
+export enum InternalEventNames {
+  SyncMonitor = 'syncMonitor',
+  RoomMonitor = 'roomMonitor',
+  RoomTimelineMonitor = 'roomTimelineMonitor',
+  RoomMemberMembershipMonitor = 'roomMemberMembershipMonitor',
+}
 export interface IMatrixEventDispatcher {
   syncMonitor?: Observable<{ syncState: string; oldSyncState: string }>;
   roomMonitor?: Observable<{ room: MatrixRoom }>;
@@ -63,20 +70,20 @@ export class MatrixEventDispatcher
   private init() {
     this.initMonitor<{ syncState: string; oldSyncState: string }>(
       ClientEvent.Sync,
-      'syncMonitor',
+      InternalEventNames.SyncMonitor,
       this._syncMonitor
     );
-    this.initMonitor<{ room: MatrixRoom }>(ClientEvent.Room, 'roomMonitor', this._roomMonitor);
+    this.initMonitor<{ room: MatrixRoom }>(ClientEvent.Room, InternalEventNames.RoomMonitor, this._roomMonitor);
 
     this.initMonitor<RoomTimelineEvent>(
       RoomEvent.Timeline,
-      'roomTimelineMonitor',
+      InternalEventNames.RoomTimelineMonitor,
       this._roomTimelineMonitor
     );
 
     this.initMonitor<{ event: MatrixEvent; member: RoomMember }>(
       RoomMemberEvent.Membership,
-      'roomMemberMembershipMonitor',
+      InternalEventNames.RoomMemberMembershipMonitor,
       this._roomMemberMembershipMonitor
     );
   }
@@ -96,14 +103,14 @@ export class MatrixEventDispatcher
   }
 
   private _syncMonitor(syncState: SyncState, oldSyncState: SyncState | null) {
-    this._emmiter.emit('syncMonitor', {
+    this._emmiter.emit(InternalEventNames.SyncMonitor, {
       syncState: syncState.toString(),
       oldSyncState: oldSyncState?.toString() || ''
     });
   }
 
   private _roomMonitor(room: Room) {
-    this._emmiter.emit('roomMonitor', { room: room as MatrixRoom });
+    this._emmiter.emit(InternalEventNames.RoomMonitor, { room: room as MatrixRoom });
   }
 
   private _roomTimelineMonitor(
@@ -113,7 +120,7 @@ export class MatrixEventDispatcher
     removed: boolean
   ) {
     if (room) {
-      this._emmiter.emit('roomTimelineMonitor', {
+      this._emmiter.emit(InternalEventNames.RoomTimelineMonitor, {
         event,
         room: room as MatrixRoom,
         toStartOfTimeline: toStartOfTimeline || false,
@@ -123,7 +130,7 @@ export class MatrixEventDispatcher
   }
 
   private _roomMemberMembershipMonitor(event: MatrixEvent, member: RoomMember) {
-    this._emmiter.emit('roomMemberMembershipMonitor', { event, member });
+    this._emmiter.emit(InternalEventNames.RoomMemberMembershipMonitor, { event, member });
   }
 
   attach(handler: IMatrixEventHandler) {

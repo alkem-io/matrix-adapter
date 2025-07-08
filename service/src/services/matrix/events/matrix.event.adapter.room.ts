@@ -9,7 +9,7 @@ import { MatrixRoomInvitationReceived } from '@src/services/communication-adapte
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
 import { MatrixRoom } from '../adapter-room/matrix.room';
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
-import { MatrixClient, MatrixEvent, RoomMember } from 'matrix-js-sdk';
+import { MatrixClient, MatrixEvent, RoomMember, KnownMembership } from 'matrix-js-sdk';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 
 const noop = function () {
@@ -22,7 +22,7 @@ export const roomMembershipLeaveGuardFactory = (
 ) => {
   return ({ event, member }: { event: MatrixEvent; member: RoomMember }) => {
     const content = event.getContent();
-    if (content.membership === 'leave' && member.userId === targetUserID) {
+    if (content.membership === KnownMembership.Leave && member.userId === targetUserID) {
       const roomId = event.getRoomId();
 
       return roomId === targetRoomID;
@@ -64,7 +64,7 @@ export const autoAcceptRoomGuardFactory = (
 ) => {
   return ({ event, member }: { event: MatrixEvent; member: RoomMember }) => {
     const content = event.getContent();
-    if (content.membership === 'invite' && member.userId === targetUserID) {
+    if (content.membership === KnownMembership.Invite && member.userId === targetUserID) {
       const roomId = event.getRoomId();
 
       return roomId === targetRoomID;
@@ -89,7 +89,7 @@ export class AutoAcceptSpecificRoomMembershipMonitorFactory {
       next: async ({ event, member }) => {
         const content = event.getContent();
         if (
-          content.membership === 'invite' &&
+          content.membership === KnownMembership.Invite &&
           member.userId === client.credentials.userId
         ) {
           const roomId = event.getRoomId();
