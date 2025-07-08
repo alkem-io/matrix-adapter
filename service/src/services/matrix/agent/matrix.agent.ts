@@ -127,7 +127,7 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     roomId: string,
     onRoomJoined: () => void,
     onComplete?: () => void,
-    onError?: (message: string) => void
+    onError?: (err: Error) => void
   ) {
     return AutoAcceptSpecificRoomMembershipMonitorFactory.create(
       this.matrixClient,
@@ -143,7 +143,7 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
   resolveAutoForgetRoomMembershipMonitor(
     onRoomJoined: () => void,
     onComplete?: () => void,
-    onError?: (message: string) => void
+    onError?: (err: Error) => void
   ) {
     return ForgetRoomMembershipMonitorFactory.create(
       this.matrixClient,
@@ -159,7 +159,7 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     userId: string,
     onRoomJoined: () => void,
     onComplete?: () => void,
-    onError?: (message: string) => void
+    onError?: (err: Error) => void
   ) {
     return {
       observer: this.resolveAutoAcceptRoomMembershipMonitor(
@@ -177,7 +177,7 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     userId: string,
     onRoomLeft: () => void,
     onComplete?: () => void,
-    onError?: (message: string) => void
+    onError?: (err: Error) => void
   ) {
     return {
       observer: this.resolveAutoForgetRoomMembershipMonitor(

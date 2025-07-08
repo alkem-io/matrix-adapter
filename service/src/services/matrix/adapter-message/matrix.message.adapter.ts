@@ -19,7 +19,7 @@ export class MatrixMessageAdapter {
   convertFromMatrixMessage(message: MatrixRoomResponseMessage): IMessage {
     const { event, sender, threadRootId } = message;
 
-    // need to use getContent - should be able to resolve the edited value if any
+    // need to use getContent - should be able to resolve the edited value if present
     const content = message.getContent();
 
     // these are used to detect whether a message is a replacement one
@@ -47,7 +47,7 @@ export class MatrixMessageAdapter {
   convertFromMatrixReaction(reaction: MatrixRoomResponseMessage): IReaction {
     const { event, sender } = reaction;
 
-    // need to use getContent - should be able to resolve the edited value if any
+    // need to use getContent - should be able to resolve the edited value if present
     const content = reaction.getContent();
 
     // these are used to detect whether a message is a replacement one

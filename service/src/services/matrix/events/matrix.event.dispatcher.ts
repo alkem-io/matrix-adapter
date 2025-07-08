@@ -7,6 +7,7 @@ import {
   MatrixEvent,
   RoomEvent,
   RoomMemberEvent,
+  RoomMember,
 } from 'matrix-js-sdk';
 import { first, fromEvent, Observable, Observer, Subscription } from 'rxjs';
 import { MatrixRoom } from '../adapter-room/matrix.room';
@@ -15,7 +16,7 @@ export interface IMatrixEventDispatcher {
   syncMonitor?: Observable<{ syncState: string; oldSyncState: string }>;
   roomMonitor?: Observable<{ room: MatrixRoom }>;
   roomTimelineMonitor?: Observable<RoomTimelineEvent>;
-  roomMemberMembershipMonitor?: Observable<{ event: any; member: any }>;
+  roomMemberMembershipMonitor?: Observable<{ event: MatrixEvent; member: RoomMember }>;
 }
 
 export interface IMatrixEventHandler {
@@ -23,14 +24,14 @@ export interface IMatrixEventHandler {
   syncMonitor?: Observer<{ syncState: string; oldSyncState: string }>;
   roomMonitor?: Observer<{ room: MatrixRoom }>;
   roomTimelineMonitor?: Observer<RoomTimelineEvent>;
-  roomMemberMembershipMonitor?: Observer<{ event: any; member: any }>;
+  roomMemberMembershipMonitor?: Observer<{ event: MatrixEvent; member: RoomMember }>;
 }
 
 export interface IConditionalMatrixEventHandler {
   id: string;
   roomMemberMembershipMonitor?: {
-    observer?: Observer<{ event: any; member: any }>;
-    condition: (value: { event: any; member: any }) => boolean;
+    observer?: Observer<{ event: MatrixEvent; member: RoomMember }>;
+    condition: (value: { event: MatrixEvent; member: RoomMember }) => boolean;
   };
 }
 
@@ -51,7 +52,7 @@ export class MatrixEventDispatcher
   syncMonitor!: Observable<{ syncState: string; oldSyncState: string }>;
   roomMonitor!: Observable<{ room: MatrixRoom }>;
   roomTimelineMonitor!: Observable<RoomTimelineEvent>;
-  roomMemberMembershipMonitor!: Observable<{ event: any; member: any }>;
+  roomMemberMembershipMonitor!: Observable<{ event: MatrixEvent; member: RoomMember }>;
 
   constructor(private _client: MatrixClient) {
     this.init();
@@ -63,7 +64,7 @@ export class MatrixEventDispatcher
       'syncMonitor',
       this._syncMonitor
     );
-    this.initMonitor<any>(ClientEvent.Room, 'roomMonitor', this._roomMonitor);
+    this.initMonitor<{ room: MatrixRoom }>(ClientEvent.Room, 'roomMonitor', this._roomMonitor);
 
     this.initMonitor<RoomTimelineEvent>(
       RoomEvent.Timeline,
@@ -71,7 +72,7 @@ export class MatrixEventDispatcher
       this._roomTimelineMonitor
     );
 
-    this.initMonitor<{ event: any; member: any }>(
+    this.initMonitor<{ event: MatrixEvent; member: RoomMember }>(
       RoomMemberEvent.Membership,
       'roomMemberMembershipMonitor',
       this._roomMemberMembershipMonitor
@@ -94,8 +95,8 @@ export class MatrixEventDispatcher
     this._emmiter.emit('syncMonitor', { syncState, oldSyncState });
   }
 
-  private _roomMonitor(event: MatrixEvent) {
-    this._emmiter.emit('roomMonitor', { event });
+  private _roomMonitor(room: MatrixRoom) {
+    this._emmiter.emit('roomMonitor', { room });
   }
 
   private _roomTimelineMonitor(
@@ -112,7 +113,7 @@ export class MatrixEventDispatcher
     });
   }
 
-  private _roomMemberMembershipMonitor(event: any, member: any) {
+  private _roomMemberMembershipMonitor(event: MatrixEvent, member: RoomMember) {
     this._emmiter.emit('roomMemberMembershipMonitor', { event, member });
   }
 

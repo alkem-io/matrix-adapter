@@ -9,7 +9,7 @@ import { MatrixRoomInvitationReceived } from '@src/services/communication-adapte
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
 import { MatrixRoom } from '../adapter-room/matrix.room';
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
-import { MatrixClient } from 'matrix-js-sdk';
+import { MatrixClient, MatrixEvent, RoomMember } from 'matrix-js-sdk';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 
 const noop = function () {
@@ -20,7 +20,7 @@ export const roomMembershipLeaveGuardFactory = (
   targetUserID: string,
   targetRoomID: string
 ) => {
-  return ({ event, member }: any) => {
+  return ({ event, member }: { event: MatrixEvent; member: RoomMember }) => {
     const content = event.getContent();
     if (content.membership === 'leave' && member.userId === targetUserID) {
       const roomId = event.getRoomId();
@@ -37,7 +37,7 @@ export class ForgetRoomMembershipMonitorFactory {
     logger: LoggerService,
     onRoomLeft: () => void,
     onComplete = noop,
-    error: (err: any) => void = noop
+    error: (err: Error) => void = noop
   ): IMatrixEventHandler['roomMemberMembershipMonitor'] {
     return {
       complete: onComplete,
@@ -45,12 +45,14 @@ export class ForgetRoomMembershipMonitorFactory {
       next: async ({ event, member }) => {
         const content = event.getContent();
         const roomId = event.getRoomId();
-        await client.forget(roomId);
-        logger.verbose?.(
-          `[Membership] Room [${roomId}] left - user (${member.userId}), membership status ${content.membership}`,
-          LogContext.COMMUNICATION
-        );
-        onRoomLeft();
+        if (roomId) {
+          await client.forget(roomId);
+          logger.verbose?.(
+            `[Membership] Room [${roomId}] left - user (${member.userId}), membership status ${content.membership}`,
+            LogContext.COMMUNICATION
+          );
+          onRoomLeft();
+        }
       },
     };
   }
@@ -60,7 +62,7 @@ export const autoAcceptRoomGuardFactory = (
   targetUserID: string,
   targetRoomID: string
 ) => {
-  return ({ event, member }: any) => {
+  return ({ event, member }: { event: MatrixEvent; member: RoomMember }) => {
     const content = event.getContent();
     if (content.membership === 'invite' && member.userId === targetUserID) {
       const roomId = event.getRoomId();
@@ -79,7 +81,7 @@ export class AutoAcceptSpecificRoomMembershipMonitorFactory {
     targetRoomId: string,
     onRoomJoined: () => void,
     onComplete = noop,
-    error: (err: any) => void = noop
+    error: (err: Error) => void = noop
   ): IMatrixEventHandler['roomMemberMembershipMonitor'] {
     return {
       complete: onComplete,
@@ -91,6 +93,13 @@ export class AutoAcceptSpecificRoomMembershipMonitorFactory {
           member.userId === client.credentials.userId
         ) {
           const roomId = event.getRoomId();
+          if (!roomId) {
+            logger.error?.(
+              `[Membership] Unable to accept invitation for user (${member.userId}) to room: ${roomId}`,
+              LogContext.COMMUNICATION
+            );
+            return;
+          }
 
           if (roomId !== targetRoomId) {
             logger.verbose?.(
@@ -100,6 +109,13 @@ export class AutoAcceptSpecificRoomMembershipMonitorFactory {
           }
 
           const senderId = event.getSender();
+          if (!senderId) {
+            logger.error?.(
+              `[Membership] Unable to accept invitation for sender (${senderId}) to room: ${roomId}`,
+              LogContext.COMMUNICATION
+            );
+            return;
+          }
 
           logger.verbose?.(
             `[Membership] accepting invitation for user (${member.userId}) to room: ${roomId}`,
