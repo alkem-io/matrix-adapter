@@ -2,6 +2,7 @@ import { LogContext } from '@common/enums/logging.context';
 import { LoggerService } from '@nestjs/common';
 import {
   IMatrixEventHandler,
+  InternalEventNames,
   RoomTimelineEvent,
 } from '@services/matrix/events/matrix.event.dispatcher';
 import { CommunicationEventMessageReceived } from '@src/services/communication-adapter/dto/communication.dto.event.message.received';
@@ -38,7 +39,7 @@ export class ForgetRoomMembershipMonitorFactory {
     onRoomLeft: () => void,
     onComplete = noop,
     error: (err: Error) => void = noop
-  ): IMatrixEventHandler['roomMemberMembershipMonitor'] {
+  ): IMatrixEventHandler[InternalEventNames.RoomMemberMembershipMonitor] {
     return {
       complete: onComplete,
       error: error,
@@ -82,7 +83,7 @@ export class AutoAcceptSpecificRoomMembershipMonitorFactory {
     onRoomJoined: () => void,
     onComplete = noop,
     error: (err: Error) => void = noop
-  ): IMatrixEventHandler['roomMemberMembershipMonitor'] {
+  ): IMatrixEventHandler[InternalEventNames.RoomMemberMembershipMonitor] {
     return {
       complete: onComplete,
       error: error,
@@ -142,7 +143,7 @@ export class RoomTimelineMonitorFactory {
     messageAdapter: MatrixMessageAdapter,
     logger: LoggerService,
     onMessageReceived: (event: CommunicationEventMessageReceived) => void
-  ): IMatrixEventHandler['roomTimelineMonitor'] {
+  ): IMatrixEventHandler[InternalEventNames.RoomTimelineMonitor] {
     return {
       complete: noop,
       error: noop,
@@ -195,7 +196,7 @@ export class RoomTimelineMonitorFactory {
 export class RoomMonitorFactory {
   static create(
     onMessageReceived: (event: MatrixRoomInvitationReceived) => void
-  ): IMatrixEventHandler['roomMonitor'] {
+  ): IMatrixEventHandler[InternalEventNames.RoomMonitor] {
     return {
       complete: noop,
       error: noop,
