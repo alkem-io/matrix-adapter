@@ -217,8 +217,11 @@ export class MatrixRoomAdapter {
         'No room ID specified',
         LogContext.COMMUNICATION
       );
-    // need to cache those
-    const room = await adminMatrixClient.getRoom(roomID);
+
+    // For now, continue using direct client access
+    // In a full implementation, we would need to track which MatrixAgent
+    // is associated with this client and use its sliding sync capabilities
+    const room = adminMatrixClient.getRoom(roomID);
     if (!room) {
       throw new MatrixEntityNotFoundException(
         `Unable to locate room: ${roomID}`,

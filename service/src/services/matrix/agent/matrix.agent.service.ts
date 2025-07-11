@@ -45,6 +45,7 @@ export class MatrixAgentService {
     operator: IOperationalMatrixUser
   ): Promise<MatrixAgent> {
     const matrixClient = await this.createMatrixClient(operator);
+
     return new MatrixAgent(
       matrixClient,
       this.matrixRoomAdapter,
@@ -95,11 +96,12 @@ export class MatrixAgentService {
     // Direct rooms
     const dmRoomMap =
       this.matrixRoomAdapter.getDirectMessageRoomsMap(matrixClient);
+
+    // UPDATED TO USE ASYNC ROOM ACCESS
     for (const matrixUsername of Object.keys(dmRoomMap)) {
-      const room = await this.getRoom(
-        matrixAgent,
-        dmRoomMap[matrixUsername][0]
-      );
+      const roomId = dmRoomMap[matrixUsername][0];
+      const room = await this.getRoom(matrixAgent, roomId); // NOW ASYNC
+
       room.receiverCommunicationsID =
         this.matrixUserAdapter.convertMatrixUsernameToMatrixID(matrixUsername);
       room.isDirect = true;
@@ -112,20 +114,9 @@ export class MatrixAgentService {
     matrixAgent: IMatrixAgent,
     roomId: string
   ): Promise<MatrixRoom> {
-    let matrixRoom = matrixAgent.matrixClient.getRoom(roomId);
+    // SLIDING SYNC APPROACH
+    const matrixRoom = await (matrixAgent as MatrixAgent).getRoomAsync(roomId);
 
-    // TODO: temporary work around to allow room membership to complete
-    const maxRetries = 10;
-    let reTries = 0;
-    while (!matrixRoom && reTries < maxRetries) {
-      await sleep(100);
-      matrixRoom = matrixAgent.matrixClient.getRoom(roomId);
-      reTries++;
-      this.logger.verbose?.(
-        `Retrying to get room ${roomId}`,
-        LogContext.COMMUNICATION
-      );
-    }
     if (!matrixRoom) {
       throw new MatrixEntityNotFoundException(
         `[User: ${matrixAgent.matrixClient.getUserId()}] Unable to access Room (${roomId}). Room either does not exist or user does not have access.`,

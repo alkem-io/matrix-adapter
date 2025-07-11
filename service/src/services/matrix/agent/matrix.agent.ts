@@ -18,9 +18,10 @@ import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter'
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
 import { IMatrixAgent } from './matrix.agent.interface';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
-import { MatrixClient, IStartClientOpts, SyncState } from 'matrix-js-sdk';
+import { MatrixClient, IStartClientOpts, SyncState, Room } from 'matrix-js-sdk';
 import { ConfigService } from '@nestjs/config';
 import { ConfigurationTypes } from '@src/common/enums/configuration.type';
+import { SlidingWindowManager, RoomAccessLayer } from '../sliding-sync';
 
 export type MatrixAgentStartOptions = {
   registerTimelineMonitor?: boolean;
@@ -34,6 +35,10 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
   roomAdapter: MatrixRoomAdapter;
   messageAdapter: MatrixMessageAdapter;
   configService: ConfigService;
+
+  // SLIDING SYNC COMPONENTS
+  private slidingWindowManager?: SlidingWindowManager;
+  private roomAccessLayer?: RoomAccessLayer;
 
   constructor(
     matrixClient: MatrixClient,
@@ -70,46 +75,9 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
       registerTimelineMonitor: false,
     }
   ) {
-    const startComplete = new Promise<void>((resolve, reject) => {
-      const subscription = this.eventDispatcher.syncMonitor.subscribe(
-        ({ oldSyncState, syncState }) => {
-          if (syncState === SyncState.Syncing && oldSyncState !== SyncState.Syncing) {
-            subscription.unsubscribe();
-            resolve();
-          } else if (syncState === SyncState.Error) {
-            reject();
-          }
-        }
-      );
-    });
+    await this.startWithSlidingSync();
 
-    const pollTimeout = Number(
-      this.configService.get(ConfigurationTypes.MATRIX)?.client
-        .startupPollTimeout
-    );
-
-    const initialSyncLimit = Number(
-      this.configService.get(ConfigurationTypes.MATRIX)?.client
-        .startupInitialSyncLimit
-    );
-
-    this.logger.verbose?.(
-      `starting up with pollTimeout: ${pollTimeout} and initialSyncLimit: ${initialSyncLimit}`,
-      LogContext.MATRIX
-    );
-
-    const startClientOptions: IStartClientOpts = {
-      disablePresence: true,
-      initialSyncLimit: initialSyncLimit,
-      pollTimeout: pollTimeout,
-      lazyLoadMembers: true,
-    };
-
-    /// START THE SYNC, FULLY BLOCKING UNTIL THE SYNC IS COMPLETE
-
-    await this.matrixClient.startClient(startClientOptions);
-    await startComplete;
-
+    // Common event handler setup
     const eventHandler: IMatrixEventHandler = {
       id: 'root',
     };
@@ -215,8 +183,53 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     });
   }
 
+  private async startWithSlidingSync(): Promise<void> {
+    const config = {
+      windowSize: 50,
+      sortOrder: 'activity' as const,
+      includeEmptyRooms: false,
+      ranges: [[0, 49]] as [number, number][]
+    };
+
+    this.slidingWindowManager = new SlidingWindowManager(this.matrixClient, config, this.logger);
+    this.roomAccessLayer = new RoomAccessLayer(this.slidingWindowManager, this.matrixClient);
+
+    this.logger.verbose?.(
+      'Initializing Sliding Sync with Matrix Client',
+      LogContext.MATRIX
+    );
+
+    await this.slidingWindowManager.initialize();
+
+    this.logger.verbose?.(
+      'Sliding Sync initialized successfully',
+      LogContext.MATRIX
+    );
+  }
+
+  // METHOD FOR ASYNC ROOM ACCESS
+  async getRoomAsync(roomId: string): Promise<Room | null> {
+    if (this.roomAccessLayer) {
+      return await this.roomAccessLayer.getRoomAsync(roomId);
+    } else {
+      throw new Error('Room access layer not initialized. Sliding sync must be enabled.');
+    }
+  }
+
+  // HELPER METHOD FOR SAFE ROOM OPERATIONS
+  async withRoom<T>(roomId: string, callback: (room: Room) => T | Promise<T>): Promise<T | null> {
+    const room = await this.getRoomAsync(roomId);
+    if (!room) return null;
+    return await callback(room);
+  }
+
   dispose() {
     this.matrixClient.stopClient();
     this.eventDispatcher.dispose.bind(this.eventDispatcher)();
+
+    // Clean up sliding sync resources
+    if (this.slidingWindowManager) {
+      this.slidingWindowManager.dispose();
+    }
   }
 }

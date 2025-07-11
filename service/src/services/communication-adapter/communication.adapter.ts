@@ -571,27 +571,50 @@ export class CommunicationAdapter {
   async getAllRooms(): Promise<RoomResult[]> {
     const elevatedAgent =
       await this.communicationAdminUserService.getMatrixManagementAgentElevated();
+
     this.logger.verbose?.(
       `[Admin] Obtaining all rooms on Matrix instance using ${elevatedAgent.matrixClient.getUserId()}`,
       LogContext.COMMUNICATION
     );
-    const rooms = await elevatedAgent.matrixClient.getRooms();
+
     const roomResults: RoomResult[] = [];
-    for (const room of rooms) {
-      // Only count rooms with at least one member that is not the elevated agent
-      const memberIDs = await this.matrixRoomAdapter.getMatrixRoomMembers(
-        elevatedAgent.matrixClient,
-        room.roomId
+
+    // USING SLIDING SYNC PAGINATED ROOM ACCESS
+    if ((elevatedAgent as any).roomAccessLayer) {
+      const totalRooms = await (elevatedAgent as any).roomAccessLayer.getTotalRoomCount();
+      const pageSize = 50;
+
+      this.logger.verbose?.(
+        `[Admin] Using sliding sync to get ${totalRooms} rooms in pages of ${pageSize}`,
+        LogContext.COMMUNICATION
       );
-      if (memberIDs.length === 0) continue;
-      if (memberIDs.length === 1) {
-        if (memberIDs[0] === elevatedAgent.matrixClient.getUserId()) continue;
+
+      for (let offset = 0; offset < totalRooms; offset += pageSize) {
+        const rooms = await (elevatedAgent as any).roomAccessLayer.getRoomList(offset, pageSize);
+
+        for (const room of rooms) {
+          const memberIDs = await this.matrixRoomAdapter.getMatrixRoomMembers(
+            elevatedAgent.matrixClient,
+            room.roomId
+          );
+
+          if (memberIDs.length === 0) continue;
+          if (memberIDs.length === 1) {
+            if (memberIDs[0] === elevatedAgent.matrixClient.getUserId()) continue;
+          }
+
+          const roomResult = new RoomResult();
+          roomResult.id = room.roomId;
+          roomResult.displayName = room.name;
+          roomResult.members = memberIDs;
+          roomResults.push(roomResult);
+        }
       }
-      const roomResult = new RoomResult();
-      roomResult.id = room.roomId;
-      roomResult.displayName = room.name;
-      roomResult.members = memberIDs;
-      roomResults.push(roomResult);
+    } else {
+      this.logger.warn?.(
+        '[Admin] Room access layer not available, cannot retrieve rooms',
+        LogContext.COMMUNICATION
+      );
     }
 
     return roomResults;
