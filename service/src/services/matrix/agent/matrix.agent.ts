@@ -21,7 +21,7 @@ import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { MatrixClient, IStartClientOpts, SyncState, Room } from 'matrix-js-sdk';
 import { ConfigService } from '@nestjs/config';
 import { ConfigurationTypes } from '@src/common/enums/configuration.type';
-import { SlidingWindowManager, RoomAccessLayer } from '../sliding-sync';
+import { SlidingWindowManager } from '../sliding-sync';
 
 export type MatrixAgentStartOptions = {
   registerTimelineMonitor?: boolean;
@@ -38,7 +38,6 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
 
   // SLIDING SYNC COMPONENTS
   private slidingWindowManager?: SlidingWindowManager;
-  private roomAccessLayer?: RoomAccessLayer;
 
   constructor(
     matrixClient: MatrixClient,
@@ -192,7 +191,6 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     };
 
     this.slidingWindowManager = new SlidingWindowManager(this.matrixClient, config, this.logger);
-    this.roomAccessLayer = new RoomAccessLayer(this.slidingWindowManager, this.matrixClient);
 
     this.logger.verbose?.(
       'Initializing Sliding Sync with Matrix Client',
@@ -209,10 +207,10 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
 
   // METHOD FOR ASYNC ROOM ACCESS
   async getRoomAsync(roomId: string): Promise<Room | null> {
-    if (this.roomAccessLayer) {
-      return await this.roomAccessLayer.getRoomAsync(roomId);
+    if (this.slidingWindowManager) {
+      return await this.slidingWindowManager.getRoomAsync(roomId);
     } else {
-      throw new Error('Room access layer not initialized. Sliding sync must be enabled.');
+      throw new Error('Sliding window manager not initialized. Sliding sync must be enabled.');
     }
   }
 

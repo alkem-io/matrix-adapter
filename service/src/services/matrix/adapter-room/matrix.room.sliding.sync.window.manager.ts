@@ -2,6 +2,7 @@ import { MatrixClient, Room } from 'matrix-js-sdk';
 import { Injectable } from '@nestjs/common';
 import { LogContext } from '@common/enums/logging.context';
 import pkg from '@nestjs/common';
+import { SlidingSync } from 'matrix-js-sdk/lib/sliding-sync';
 
 export interface SlidingWindowConfig {
   windowSize: number;
@@ -34,32 +35,25 @@ export class SlidingWindowManager {
     try {
       // Note: This is a simplified implementation
       // The actual SlidingSync API may differ based on matrix-js-sdk version
-      const slidingSyncOptions = {
-        client: this.client,
-        ranges: this.config.ranges,
-        sort: [this.config.sortOrder],
-        // Add other sliding sync configurations as needed
-      };
-
-      // For now, we'll use a placeholder implementation
-      // In a real implementation, this would initialize the actual SlidingSync
       this.logger.verbose?.(
         `Initializing Sliding Sync with window size: ${this.config.windowSize}`,
         LogContext.MATRIX
       );
 
-      // Placeholder: In actual implementation, initialize SlidingSync here
-      // this.slidingSync = new SlidingSync(slidingSyncOptions);
-
-      // Set up event listeners
-      // this.slidingSync.on('response', this.onSlidingSyncResponse.bind(this));
-
-      // await this.slidingSync.start();
+      // Placeholder: Real implementation would initialize SlidingSync here
+      // For now, we'll simulate sliding sync behavior using traditional client methods
+      // this.slidingSync = new SlidingSync(
+      //   proxyBaseUrl,
+      //   lists,
+      //   roomSubscriptionInfo,
+      //   this.client,
+      //   timeoutMS
+      // );
 
       this.isInitialized = true;
 
       this.logger.verbose?.(
-        'Sliding Sync initialized successfully',
+        'Sliding Sync initialized successfully (placeholder implementation)',
         LogContext.MATRIX
       );
     } catch (error) {
@@ -121,10 +115,7 @@ export class SlidingWindowManager {
     // Update activeRooms map
     // Manage cache
     // Emit events for UI updates
-    this.logger.verbose?.(
-      'Received sliding sync response',
-      LogContext.MATRIX
-    );
+    this.logger.verbose?.('Received sliding sync response', LogContext.MATRIX);
   }
 
   async getRoomAsync(roomId: string): Promise<Room | null> {

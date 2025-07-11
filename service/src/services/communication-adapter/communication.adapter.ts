@@ -580,8 +580,8 @@ export class CommunicationAdapter {
     const roomResults: RoomResult[] = [];
 
     // USING SLIDING SYNC PAGINATED ROOM ACCESS
-    if ((elevatedAgent as any).roomAccessLayer) {
-      const totalRooms = await (elevatedAgent as any).roomAccessLayer.getTotalRoomCount();
+    if ((elevatedAgent as any).slidingWindowManager) {
+      const totalRooms = await (elevatedAgent as any).slidingWindowManager.getTotalRoomCount();
       const pageSize = 50;
 
       this.logger.verbose?.(
@@ -590,7 +590,7 @@ export class CommunicationAdapter {
       );
 
       for (let offset = 0; offset < totalRooms; offset += pageSize) {
-        const rooms = await (elevatedAgent as any).roomAccessLayer.getRoomList(offset, pageSize);
+        const rooms = await (elevatedAgent as any).slidingWindowManager.getRoomList(offset, pageSize);
 
         for (const room of rooms) {
           const memberIDs = await this.matrixRoomAdapter.getMatrixRoomMembers(
@@ -612,7 +612,7 @@ export class CommunicationAdapter {
       }
     } else {
       this.logger.warn?.(
-        '[Admin] Room access layer not available, cannot retrieve rooms',
+        '[Admin] Sliding window manager not available, cannot retrieve rooms',
         LogContext.COMMUNICATION
       );
     }

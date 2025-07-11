@@ -1,2 +1,1 @@
-export { SlidingWindowManager, SlidingWindowConfig } from './sliding.window.manager';
-export { RoomAccessLayer, IRoomAccessLayer, RoomSummary } from './room.access.layer';
+export { SlidingWindowManager, SlidingWindowConfig } from '../adapter-room/matrix.room.sliding.sync.window.manager';

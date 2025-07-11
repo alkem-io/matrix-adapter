@@ -5,12 +5,11 @@ This directory contains the sliding sync implementation for the Matrix adapter, 
 ## Files
 
 - `sliding.window.manager.ts` - Manages the sliding sync window and room caching
-- `room.access.layer.ts` - Provides abstraction layer for room access with sliding sync support
 - `index.ts` - Exports for the sliding sync module
 
 ## Usage
 
-The sliding sync functionality is now the **only supported sync method**. The MatrixAgent will always use sliding sync for improved performance.
+The sliding sync functionality is now the **only supported sync method**. The MatrixAgent will always use sliding sync for improved performance. All room access is handled directly through the SlidingWindowManager without any abstraction layers.
 
 ### Configuration
 
@@ -33,7 +32,8 @@ This implementation provides:
 2. ✅ Async room access patterns
 3. ✅ Room caching and window management
 4. ✅ Simplified architecture (no full sync fallback)
-5. ⚠️ Placeholder sliding sync API calls (awaiting matrix-js-sdk support)
+5. ✅ Direct room access via SlidingWindowManager (no abstraction layers)
+6. ⚠️ Placeholder sliding sync API calls (awaiting matrix-js-sdk support)
 
 ## Architecture Changes
 

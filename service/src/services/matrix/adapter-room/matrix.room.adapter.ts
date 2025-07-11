@@ -30,6 +30,8 @@ import {
 import { MatrixAgent } from '../agent/matrix.agent';
 import { IRoomOpts } from './matrix.room.dto.options';
 
+
+// Note: before
 @Injectable()
 export class MatrixRoomAdapter {
   constructor(
