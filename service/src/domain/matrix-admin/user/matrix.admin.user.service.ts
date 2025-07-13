@@ -10,7 +10,7 @@ import { MatrixUserRegistrationException } from '@common/exceptions/matrix.regis
 import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint';
 import { URL } from 'url';
 import { LogContext } from '@src/common/enums/logging.context';
-import pkg  from '@nestjs/common';
+import pkg from '@nestjs/common';
 import { MatrixUserAdapter } from '@src/domain/matrix/adapter-user/matrix.user.adapter';
 import { AlkemioMatrixLogger } from '@src/core/logger/matrix.logger';
 import { IOperationalMatrixUser } from '@src/domain/matrix/adapter-user/matrix.user.interface';
@@ -74,6 +74,16 @@ export class MatrixAdminUserService {
 
     const version = response.data['server_version'];
     return JSON.stringify(version);
+  }
+
+  public async acquireMatrixUser(matrixUserID: string) {
+    const isRegistered = await this.isRegistered(matrixUserID);
+
+    if (isRegistered) {
+      return await this.login(matrixUserID);
+    }
+
+    return await this.register(matrixUserID);
   }
 
   async register(

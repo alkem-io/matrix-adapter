@@ -23,7 +23,7 @@ export class MatrixAgentPool
   constructor(
     private agentFactoryService: MatrixAgentFactoryService,
     private configService: ConfigService,
-    private matrixUserManagementService: MatrixAdminUserService,
+    private adminUserService: MatrixAdminUserService,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: pkg.LoggerService
   ) {
@@ -104,7 +104,7 @@ export class MatrixAgentPool
         this.release(oldestAgentKey);
       }
 
-      const operatingUser = await this.acquireMatrixUser(matrixUserID);
+      const operatingUser = await this.adminUserService.acquireMatrixUser(matrixUserID);
       const client =
         await this.agentFactoryService.createMatrixAgent(operatingUser);
 
@@ -121,17 +121,6 @@ export class MatrixAgentPool
     }
 
     return this._cache[matrixUserID].agent;
-  }
-
-  private async acquireMatrixUser(matrixUserID: string) {
-    const isRegistered =
-      await this.matrixUserManagementService.isRegistered(matrixUserID);
-
-    if (isRegistered) {
-      return await this.matrixUserManagementService.login(matrixUserID);
-    }
-
-    return await this.matrixUserManagementService.register(matrixUserID);
   }
 
   release(matrixUserID?: string): void {

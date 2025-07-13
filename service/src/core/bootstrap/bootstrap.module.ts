@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { BootstrapService } from './bootstrap.service';
-import { CommunicationAdapterModule } from '@src/services/communication-adapter/communication-adapter.module';
+import { MatrixAdminUserElevatedModule } from '@src/domain/matrix-admin/user-elevated/matrix.admin.user.elevated.module';
+import { MatrixAdminUserModule } from '@src/domain/matrix-admin/user/matrix.admin.user.module';
 
 @Module({
-  imports: [CommunicationAdapterModule],
+  imports: [MatrixAdminUserElevatedModule, MatrixAdminUserModule],
   providers: [BootstrapService],
   exports: [BootstrapService],
 })
