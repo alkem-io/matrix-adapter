@@ -23,7 +23,7 @@ import { IReaction } from '@alkemio/matrix-adapter-lib';
 import { sleep } from 'matrix-js-sdk/lib/utils.js';
 import { MatrixAdminUserElevatedService } from '../../domain/matrix-admin/user-elevated/matrix.admin.user.elevated.service';
 import { MatrixAdminUserService } from '../../domain/matrix-admin/user/matrix.admin.user.service';
-import pkg  from '@nestjs/common';
+import pkg from '@nestjs/common';
 import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
 const { Inject, Injectable } = pkg;
 
@@ -50,10 +50,7 @@ export class CommunicationAdapter {
       roomID
     );
 
-    const matrixRoom = await this.matrixRoomAdapter.getRoom(
-      matrixAgentElevated,
-      roomID
-    );
+    const matrixRoom = await matrixAgentElevated.getRoomOrFail(roomID);
     const result =
       await this.matrixRoomAdapter.convertMatrixRoomToCommunityRoom(
         matrixAgentElevated.matrixClient,
@@ -354,10 +351,7 @@ export class CommunicationAdapter {
       matrixElevatedAgent.matrixClient,
       roomID
     );
-    const matrixRoom = await this.matrixRoomAdapter.getRoom(
-      matrixElevatedAgent,
-      roomID
-    );
+    const matrixRoom = await matrixElevatedAgent.getRoomOrFail(roomID);
 
     const messages =
       await this.matrixRoomAdapter.getMatrixRoomTimelineAsMessages(
@@ -379,10 +373,7 @@ export class CommunicationAdapter {
     // only the admin agent has knowledge of all rooms and synchronizes the state
     const matrixElevatedAgent =
       await this.userElevatedManagementService.getMatrixAgentElevated();
-    const matrixRoom = await this.matrixRoomAdapter.getRoom(
-      matrixElevatedAgent,
-      roomID
-    );
+    const matrixRoom = await matrixElevatedAgent.getRoomOrFail(roomID);
 
     const reactions =
       await this.matrixRoomAdapter.getMatrixRoomTimelineReactions(
@@ -534,7 +525,7 @@ export class CommunicationAdapter {
           ) as any,
       });
       await this.matrixRoomAdapter.removeUserFromRoom(
-        matrixAgentElevated.matrixClient,
+        matrixAgentElevated,
         roomID,
         userAgent.matrixClient
       );
@@ -555,7 +546,9 @@ export class CommunicationAdapter {
 
     // USING SLIDING SYNC PAGINATED ROOM ACCESS
     if ((elevatedAgent as any).slidingWindowManager) {
-      const totalRooms = await (elevatedAgent as any).slidingWindowManager.getTotalRoomCount();
+      const totalRooms = await (
+        elevatedAgent as any
+      ).slidingWindowManager.getTotalRoomCount();
       const pageSize = 50;
 
       this.logger.verbose?.(
@@ -564,17 +557,20 @@ export class CommunicationAdapter {
       );
 
       for (let offset = 0; offset < totalRooms; offset += pageSize) {
-        const rooms = await (elevatedAgent as any).slidingWindowManager.getRoomList(offset, pageSize);
+        const rooms = await (
+          elevatedAgent as any
+        ).slidingWindowManager.getRoomList(offset, pageSize);
 
         for (const room of rooms) {
           const memberIDs = await this.matrixRoomAdapter.getMatrixRoomMembers(
-            elevatedAgent.matrixClient,
+            elevatedAgent,
             room.roomId
           );
 
           if (memberIDs.length === 0) continue;
           if (memberIDs.length === 1) {
-            if (memberIDs[0] === elevatedAgent.matrixClient.getUserId()) continue;
+            if (memberIDs[0] === elevatedAgent.matrixClient.getUserId())
+              continue;
           }
 
           const roomResult = new RoomResult();
@@ -609,7 +605,7 @@ export class CommunicationAdapter {
 
       const sourceMatrixUserIDs =
         await this.matrixRoomAdapter.getMatrixRoomMembers(
-          elevatedAgent.matrixClient,
+          elevatedAgent,
           sourceRoomID
         );
 
@@ -647,7 +643,7 @@ export class CommunicationAdapter {
         });
 
         await this.matrixRoomAdapter.inviteUserToRoom(
-          elevatedAgent.matrixClient,
+          elevatedAgent,
           targetRoomID,
           userAgent.matrixClient
         );
@@ -745,7 +741,7 @@ export class CommunicationAdapter {
       });
 
       await this.matrixRoomAdapter.inviteUserToRoom(
-        elevatedAgent.matrixClient,
+        elevatedAgent,
         roomID,
         userAgent.matrixClient
       );
@@ -791,8 +787,7 @@ export class CommunicationAdapter {
         `[Membership] Removing matrix room: ${matrixRoomID}`,
         LogContext.COMMUNICATION
       );
-      const room = await this.matrixRoomAdapter.getMatrixRoom(
-        elevatedAgent.matrixClient,
+      const room = await elevatedAgent.getRoomOrFail(
         matrixRoomID
       );
       const members = room.getMembers();
@@ -801,7 +796,7 @@ export class CommunicationAdapter {
         if (member.userId === elevatedAgent.matrixClient.getUserId()) continue;
         const userAgent = await this.getUserAgent(member.userId);
         await this.matrixRoomAdapter.removeUserFromRoom(
-          elevatedAgent.matrixClient,
+          elevatedAgent,
           matrixRoomID,
           userAgent.matrixClient
         );
@@ -830,7 +825,7 @@ export class CommunicationAdapter {
         LogContext.COMMUNICATION
       );
       userIDs = await this.matrixRoomAdapter.getMatrixRoomMembers(
-        elevatedAgent.matrixClient,
+        elevatedAgent,
         matrixRoomID
       );
     } catch (error) {
@@ -845,12 +840,9 @@ export class CommunicationAdapter {
 
   async getRoomStateJoinRule(
     roomID: string,
-    matrixAgent: MatrixAgent
+    agent: MatrixAgent
   ): Promise<string> {
-    return await this.matrixRoomAdapter.getJoinRule(
-      matrixAgent.matrixClient,
-      roomID
-    );
+    return await this.matrixRoomAdapter.getJoinRule(agent, roomID);
   }
 
   async getRoomStateHistoryVisibility(
@@ -858,7 +850,7 @@ export class CommunicationAdapter {
     matrixAgent: MatrixAgent
   ): Promise<HistoryVisibility> {
     return await this.matrixRoomAdapter.getHistoryVisibility(
-      matrixAgent.matrixClient,
+      matrixAgent,
       roomID
     );
   }
@@ -888,10 +880,7 @@ export class CommunicationAdapter {
             : HistoryVisibility.Joined
         );
 
-        const oldRoom = await this.matrixRoomAdapter.getMatrixRoom(
-          elevatedAgent.matrixClient,
-          roomID
-        );
+        const oldRoom = await elevatedAgent.getRoomOrFail(roomID);
         const rule = oldRoom.getGuestAccess();
         this.logger.verbose?.(
           `Room ${roomID} guest access is now: ${rule}`,
@@ -907,10 +896,7 @@ export class CommunicationAdapter {
           roomData.allowJoining ? JoinRule.Public : JoinRule.Invite
         );
 
-        const oldRoom = await this.matrixRoomAdapter.getMatrixRoom(
-          elevatedAgent.matrixClient,
-          roomID
-        );
+        const oldRoom = await elevatedAgent.getRoomOrFail(roomID);
         const rule = oldRoom.getJoinRule();
         this.logger.verbose?.(
           `Room ${roomID} join rule is now: ${rule}`,
