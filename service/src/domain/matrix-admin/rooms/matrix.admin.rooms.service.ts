@@ -12,7 +12,7 @@ import { MatrixAgentFactoryService } from '../../matrix/agent-factory/matrix.age
 import { MatrixUserAdapter } from '../../matrix/adapter-user/matrix.user.adapter';
 import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.rooms.dto.event.log.room.state';
 import { MatrixAdminUserElevatedService } from '../user-elevated/matrix.admin.user.elevated.service';
-import { MatrixUserManagementService } from '../user/matrix.admin.user.service';
+import { MatrixAdminUserService } from '../user/matrix.admin.user.service';
 
 @Injectable()
 export class MatrixAdminRoomsService {
@@ -20,7 +20,7 @@ export class MatrixAdminRoomsService {
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: pkg.LoggerService,
     private communicationAdapter: CommunicationAdapter,
-    private matrixUserManagementService: MatrixUserManagementService,
+    private matrixUserManagementService: MatrixAdminUserService,
     private matrixAgentService: MatrixAgentFactoryService,
     private matrixUserAdapter: MatrixUserAdapter,
     private communicationAdminUserService: MatrixAdminUserElevatedService

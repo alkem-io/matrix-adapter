@@ -5,13 +5,13 @@ import { MatrixAgentModule } from '../../matrix/agent-factory/matrix.agent.facto
 import { MatrixUserAdapterModule } from '../../matrix/adapter-user/matrix.user.adapter.module';
 import { MatrixAdminRoomsController } from './matrix.admin.rooms.controller';
 import { MatrixAdminUserElevatedModule } from '../user-elevated/matrix.admin.user.elevated.module';
-import { MatrixUserManagementModule } from '../user/matrix.admin.user.module';
+import { MatrixAdminUserModule } from '../user/matrix.admin.user.module';
 
 @Module({
   imports: [
     CommunicationAdapterModule,
     MatrixAgentModule,
-    MatrixUserManagementModule,
+    MatrixAdminUserModule,
     MatrixUserAdapterModule,
     MatrixAdminUserElevatedModule,
   ],

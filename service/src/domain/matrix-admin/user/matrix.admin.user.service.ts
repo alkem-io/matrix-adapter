@@ -17,7 +17,7 @@ import { IOperationalMatrixUser } from '@src/domain/matrix/adapter-user/matrix.u
 const { Inject, Injectable } = pkg;
 
 @Injectable()
-export class MatrixUserManagementService {
+export class MatrixAdminUserService {
   _matrixClient: MatrixClient;
   idBaseUrl: string;
   baseUrl: string;

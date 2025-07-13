@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { NotSupportedException } from '@src/common/exceptions/not.supported.exception';
 import { LogContext } from '@src/common/enums/logging.context';
-import { MatrixUserManagementService } from '@src/domain/matrix-admin/user/matrix.admin.user.service';
+import { MatrixAdminUserService } from '@src/domain/matrix-admin/user/matrix.admin.user.service';
 
 @Injectable()
 export class MatrixAgentPool
@@ -23,7 +23,7 @@ export class MatrixAgentPool
   constructor(
     private matrixAgentService: MatrixAgentFactoryService,
     private configService: ConfigService,
-    private matrixUserManagementService: MatrixUserManagementService,
+    private matrixUserManagementService: MatrixAdminUserService,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: pkg.LoggerService
   ) {

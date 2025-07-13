@@ -7,7 +7,7 @@ import { MatrixUserAdapter } from '@src/domain/matrix/adapter-user/matrix.user.a
 import { IOperationalMatrixUser } from '@src/domain/matrix/adapter-user/matrix.user.interface';
 import { MatrixAgent } from '@src/domain/agent/matrix.agent';
 import { MatrixAgentFactoryService } from '@src/domain/matrix/agent-factory/matrix.agent.factory.service';
-import { MatrixUserManagementService } from '../user/matrix.admin.user.service';
+import { MatrixAdminUserService } from '../user/matrix.admin.user.service';
 
 @Injectable()
 export class MatrixAdminUserElevatedService {
@@ -22,7 +22,7 @@ export class MatrixAdminUserElevatedService {
     private readonly logger: pkg.LoggerService,
     private matrixAgentService: MatrixAgentFactoryService,
     private configService: ConfigService,
-    private matrixUserManagementService: MatrixUserManagementService,
+    private matrixUserManagementService: MatrixAdminUserService,
     private matrixUserAdapter: MatrixUserAdapter
   ) {
     this.adminEmail = this.configService.get(

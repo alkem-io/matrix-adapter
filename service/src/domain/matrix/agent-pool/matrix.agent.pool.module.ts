@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { MatrixAgentPool } from '@src/domain/matrix/agent-pool/matrix.agent.pool';
 import { MatrixAgentModule } from '../agent-factory/matrix.agent.factory.module';
-import { MatrixUserManagementModule } from '@src/domain/matrix-admin/user/matrix.admin.user.module';
+import { MatrixAdminUserModule } from '@src/domain/matrix-admin/user/matrix.admin.user.module';
 
 @Module({
-  imports: [MatrixUserManagementModule, MatrixAgentModule],
+  imports: [MatrixAdminUserModule, MatrixAgentModule],
   providers: [MatrixAgentPool],
   exports: [MatrixAgentPool],
 })

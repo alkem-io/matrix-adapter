@@ -24,7 +24,7 @@ import { SendMessageToUserPayload } from '@alkemio/matrix-adapter-lib';
 import { IReaction } from '@alkemio/matrix-adapter-lib';
 import { sleep } from 'matrix-js-sdk/lib/utils.js';
 import { MatrixAdminUserElevatedService } from '../matrix-admin/user-elevated/matrix.admin.user.elevated.service';
-import { MatrixUserManagementService } from '../matrix-admin/user/matrix.admin.user.service';
+import { MatrixAdminUserService } from '../matrix-admin/user/matrix.admin.user.service';
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 
@@ -35,7 +35,7 @@ export class CommunicationAdapter {
     private readonly logger: pkg.LoggerService,
     private matrixAgentService: MatrixAgentFactoryService,
     private matrixAgentPool: MatrixAgentPool,
-    private matrixUserManagementService: MatrixUserManagementService,
+    private matrixUserManagementService: MatrixAdminUserService,
     private matrixUserAdapter: MatrixUserAdapter,
     private matrixRoomAdapter: MatrixRoomAdapter,
     private communicationAdminUserService: MatrixAdminUserElevatedService
