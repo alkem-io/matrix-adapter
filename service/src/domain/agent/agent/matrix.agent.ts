@@ -14,7 +14,6 @@ import {
   MatrixEventDispatcher,
   InternalEventNames,
 } from '@src/domain/agent/events/matrix.event.dispatcher';
-import { IMatrixAgent } from './matrix.agent.interface';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { MatrixClient, Room } from 'matrix-js-sdk';
 import { ConfigService } from '@nestjs/config';
@@ -26,7 +25,7 @@ import { MatrixRoom } from '@src/domain/room/matrix.room';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 
 // Wraps an instance of the client sdk
-export class MatrixAgent implements IMatrixAgent, Disposable {
+export class MatrixAgent implements Disposable {
   matrixClient: MatrixClient;
   eventDispatcher: MatrixEventDispatcher;
   roomAdapter: MatrixRoomAdapter;
@@ -98,7 +97,7 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     onError?: (err: Error) => void
   ) {
     return AutoAcceptSpecificRoomMembershipMonitorFactory.create(
-      this.matrixClient,
+      this,
       this.roomAdapter,
       this.logger,
       roomId,
@@ -114,7 +113,7 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
     onError?: (err: Error) => void
   ) {
     return ForgetRoomMembershipMonitorFactory.create(
-      this.matrixClient,
+      this,
       this.logger,
       onRoomJoined,
       onComplete,
@@ -159,7 +158,7 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
 
   resolveRoomTimelineEventHandler() {
     return RoomTimelineMonitorFactory.create(
-      this.matrixClient,
+      this,
       this.messageAdapter,
       this.logger,
       messageReceivedEvent => {
@@ -235,7 +234,7 @@ export class MatrixAgent implements IMatrixAgent, Disposable {
 
     if (!matrixRoom) {
       throw new MatrixEntityNotFoundException(
-        `[User: ${this.matrixClient.getUserId()}] Unable to access Room (${roomId}). Room either does not exist or user does not have access.`,
+        `[User: ${this.getUserId()}] Unable to access Room (${roomId}). Room either does not exist or user does not have access.`,
         LogContext.COMMUNICATION
       );
     }

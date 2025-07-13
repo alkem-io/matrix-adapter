@@ -12,6 +12,7 @@ import { MatrixRoom } from '../../room/matrix.room';
 import { MatrixRoomAdapter } from '../../adapter-room/matrix.room.adapter';
 import { MatrixClient, MatrixEvent, RoomMember, KnownMembership } from 'matrix-js-sdk';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
+import { MatrixAgent } from '../agent/matrix.agent';
 
 const noop = function () {
   // empty
@@ -34,7 +35,7 @@ export const roomMembershipLeaveGuardFactory = (
 };
 export class ForgetRoomMembershipMonitorFactory {
   static create(
-    client: MatrixClient,
+    agent: MatrixAgent,
     logger: LoggerService,
     onRoomLeft: () => void,
     onComplete = noop,
@@ -47,7 +48,7 @@ export class ForgetRoomMembershipMonitorFactory {
         const content = event.getContent();
         const roomId = event.getRoomId();
         if (roomId) {
-          await client.forget(roomId);
+          await agent.matrixClient.forget(roomId);
           logger.verbose?.(
             `[Membership] Room [${roomId}] left - user (${member.userId}), membership status ${content.membership}`,
             LogContext.COMMUNICATION
@@ -76,7 +77,7 @@ export const autoAcceptRoomGuardFactory = (
 };
 export class AutoAcceptSpecificRoomMembershipMonitorFactory {
   static create(
-    client: MatrixClient,
+    agent: MatrixAgent,
     roomAdapter: MatrixRoomAdapter,
     logger: LoggerService,
     targetRoomId: string,
@@ -91,7 +92,7 @@ export class AutoAcceptSpecificRoomMembershipMonitorFactory {
         const content = event.getContent();
         if (
           content.membership === KnownMembership.Invite &&
-          member.userId === client.credentials.userId
+          member.userId === agent.matrixClient.credentials.userId
         ) {
           const roomId = event.getRoomId();
           if (!roomId) {
@@ -122,9 +123,9 @@ export class AutoAcceptSpecificRoomMembershipMonitorFactory {
             `[Membership] accepting invitation for user (${member.userId}) to room: ${roomId}`,
             LogContext.COMMUNICATION
           );
-          await client.joinRoom(roomId);
+          await agent.matrixClient.joinRoom(roomId);
           if (content.is_direct) {
-            await roomAdapter.storeDirectMessageRoom(client, roomId, senderId);
+            await roomAdapter.storeDirectMessageRoom(agent, roomId, senderId);
           }
           logger.verbose?.(
             `[Membership] accepted invitation for user (${member.userId}) to room: ${roomId}`,
@@ -139,7 +140,7 @@ export class AutoAcceptSpecificRoomMembershipMonitorFactory {
 
 export class RoomTimelineMonitorFactory {
   static create(
-    matrixClient: MatrixClient,
+    agent: MatrixAgent,
     messageAdapter: MatrixMessageAdapter,
     logger: LoggerService,
     onMessageReceived: (event: CommunicationEventMessageReceived) => void
@@ -161,7 +162,7 @@ export class RoomTimelineMonitorFactory {
         // TODO Notifications - Allow the client to see the event and then mark it as read
         // With the current behavior the message will automatically be marked as read
         // to ensure that we are returning only the actual updates
-        await matrixClient.sendReadReceipt(event);
+        await agent.matrixClient.sendReadReceipt(event);
 
         if (!ignoreMessage) {
           const message = messageAdapter.convertFromMatrixMessage(event);
@@ -172,13 +173,7 @@ export class RoomTimelineMonitorFactory {
             LogContext.COMMUNICATION
           );
 
-          const userID = matrixClient.getUserId();
-          if (!userID) {
-            throw new MatrixEntityNotFoundException(
-              `Unable to locate userId for client: ${matrixClient}`,
-              LogContext.MATRIX
-            );
-          }
+          const userID = agent.getUserId();
 
           onMessageReceived({
             message,

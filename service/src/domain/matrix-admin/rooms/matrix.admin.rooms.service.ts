@@ -10,8 +10,9 @@ import { MatrixAdminUserElevatedService } from '../user-elevated/matrix.admin.us
 import { MatrixAdminUserService } from '../user/matrix.admin.user.service';
 import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.rooms.dto.event.update.room.state.for.admin.rooms';
 import { MatrixAgentFactoryService } from '@src/domain/agent/agent-factory/matrix.agent.factory.service';
-import pkg  from '@nestjs/common';
+import pkg from '@nestjs/common';
 import { IMatrixUser } from '@src/domain/user/matrix.user.interface';
+import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
 const { Inject, Injectable } = pkg;
 
 @Injectable()
@@ -27,10 +28,10 @@ export class MatrixAdminRoomsService {
   ) {}
 
   private async getPowerLevelsEventForRoom(
-    matrixClient: MatrixClient,
+    agent: MatrixAgent,
     roomID: string
   ): Promise<IStateEventWithRoomId> {
-    const roomState = await matrixClient.roomState(roomID);
+    const roomState = await agent.matrixClient.roomState(roomID);
     // Find the user's power level event (usually type "m.room.power_levels")
     const powerLevelsEvent = roomState.find(
       event => event.type === EventType.RoomPowerLevels
@@ -105,20 +106,18 @@ export class MatrixAdminRoomsService {
       LogContext.MATRIX_ADMIN
     );
     // See if matches current admin user, if not create a new agent
-    let agent =
+    let agentElevated =
       await this.adminUserElevatedService.getMatrixAgentElevated();
-    const elevatedAgentUser =
-      this.communicationAdapter.getUserIdFromMatrixClient(agent.matrixClient);
+    const elevatedAgentUserId = agentElevated.getUserId();
     const adminUser = await this.getGlobalAdminUser(
       updateRoomStateForAdminRooms.adminEmail,
       updateRoomStateForAdminRooms.adminPassword
     );
-    if (elevatedAgentUser !== adminUser.username) {
-      agent = await this.createMatrixClientForAdmin(adminUser);
+    if (elevatedAgentUserId !== adminUser.username) {
+      agentElevated = await this.createMatrixClientForAdmin(adminUser);
     }
-    const matrixClient = agent.matrixClient;
-    const adminUserID =
-      this.communicationAdapter.getUserIdFromMatrixClient(matrixClient);
+    const matrixClient = agentElevated.matrixClient;
+    const adminUserID = agentElevated.getUserId();
     const rooms = matrixClient.getRooms();
     let roomsUpdated = 0;
     try {
@@ -130,7 +129,7 @@ export class MatrixAdminRoomsService {
         const roomID = room.roomId;
 
         const powerLevelsEvent = await this.getPowerLevelsEventForRoom(
-          matrixClient,
+          agentElevated,
           roomID
         );
         const newPowerLevelDefaultUser =
@@ -201,15 +200,14 @@ export class MatrixAdminRoomsService {
     logRoomStateData: MatrixAdminEventLogRoomStateInput
   ) {
     // Note: has side effect of admin user becoming a member of the room if not already one
-    const matrixAgentElevated =
+    const agentElevated =
       await this.adminUserElevatedService.getMatrixAgentElevated();
-    const matrixClient = matrixAgentElevated.matrixClient;
-    await this.communicationAdapter.ensureMatrixClientIsMemberOfRoom(
-      matrixClient,
+    await this.communicationAdapter.ensureAgentIsMemberOfRoom(
+      agentElevated,
       logRoomStateData.roomID
     );
     const roomState = await this.getPowerLevelsEventForRoom(
-      matrixClient,
+      agentElevated,
       logRoomStateData.roomID
     );
     this.logger.verbose?.(

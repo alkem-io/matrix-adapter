@@ -37,7 +37,6 @@ import { MatrixRoomMessageReaction } from './dto/matrix.room.dto.message.reactio
 import { MatrixRoomMessageReply } from './dto/matrix.room.dto.message.reply';
 import { MatrixRoomMessageRequestDirect } from './dto/matrix.room.dto.message.request.direct';
 import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter';
-import { IMatrixAgent } from '@src/domain/agent/agent/matrix.agent.interface';
 import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
 
 // Note: before
@@ -50,22 +49,22 @@ export class MatrixRoomAdapter {
     private matrixUserAdapter: MatrixUserAdapter
   ) {}
 
-  async getJoinedRooms(matrixClient: MatrixClient): Promise<string[]> {
-    const response = (await matrixClient.getJoinedRooms()) as any as {
+  async getJoinedRooms(agent: MatrixAgent): Promise<string[]> {
+    const response = (await agent.matrixClient.getJoinedRooms()) as any as {
       joined_rooms: string[];
     };
     return response.joined_rooms;
   }
 
   async isUserMemberOfRoom(
-    matrixClient: MatrixClient,
+    agent: MatrixAgent,
     roomID: string
   ): Promise<boolean> {
-    const rooms = await this.getJoinedRooms(matrixClient);
+    const rooms = await this.getJoinedRooms(agent);
     const roomFound = rooms.find(r => r === roomID);
     if (roomFound) {
       this.logger.verbose?.(
-        `[Membership] user (${matrixClient.getUserId()}) is a member of: ${roomID}`,
+        `[Membership] user (${agent.getUserId()}) is a member of: ${roomID}`,
         LogContext.COMMUNICATION
       );
       return true;
@@ -73,38 +72,36 @@ export class MatrixRoomAdapter {
     return false;
   }
 
-  async logJoinedRooms(matrixClient: MatrixClient) {
-    const rooms = await this.getJoinedRooms(matrixClient);
+  async logJoinedRooms(agent: MatrixAgent) {
+    const rooms = await this.getJoinedRooms(agent);
     this.logger.verbose?.(
-      `[Membership] user (${matrixClient.getUserId()}) rooms: ${rooms}`,
+      `[Membership] user (${agent.getUserId()}) rooms: ${rooms}`,
       LogContext.COMMUNICATION
     );
   }
 
   async storeDirectMessageRoom(
-    matrixClient: MatrixClient,
+    agent: MatrixAgent,
     roomId: string,
     userId: string
   ) {
     // NOT OPTIMIZED - needs caching
-    const dmRooms = this.getDirectMessageRoomsMap(matrixClient);
+    const dmRooms = this.getDirectMessageRoomsMap(agent);
 
     dmRooms[userId] = [roomId];
-    await matrixClient.setAccountData(EventType.Direct, dmRooms);
+    await agent.matrixClient.setAccountData(EventType.Direct, dmRooms);
   }
 
-  async getDirectRooms(matrixAgent: IMatrixAgent): Promise<MatrixRoom[]> {
-    const matrixClient = matrixAgent.matrixClient;
+  async getDirectRooms(agent: MatrixAgent): Promise<MatrixRoom[]> {
     const rooms: MatrixRoom[] = [];
 
     // Direct rooms
-    const dmRoomMap =
-      this.getDirectMessageRoomsMap(matrixClient);
+    const dmRoomMap = this.getDirectMessageRoomsMap(agent);
 
     // UPDATED TO USE ASYNC ROOM ACCESS
     for (const matrixUsername of Object.keys(dmRoomMap)) {
       const roomId = dmRoomMap[matrixUsername][0];
-      const room = await matrixAgent.getRoomOrFail(roomId); // NOW ASYNC
+      const room = await agent.getRoomOrFail(roomId); // NOW ASYNC
 
       room.receiverCommunicationsID =
         this.matrixUserAdapter.convertMatrixUsernameToMatrixID(matrixUsername);
@@ -115,7 +112,7 @@ export class MatrixRoomAdapter {
   }
 
   async initiateMessagingToUser(
-    matrixAgent: IMatrixAgent,
+    matrixAgent: MatrixAgent,
     messageRequest: MatrixRoomMessageRequestDirect
   ): Promise<string> {
     const directRoom = await this.getDirectRoomForMatrixID(
@@ -126,7 +123,7 @@ export class MatrixRoomAdapter {
 
     // Room does not exist, create...
     const targetRoomId = await this.createRoom(
-      matrixAgent.matrixClient,
+      matrixAgent,
       {},
       {
         dmUserId: messageRequest.matrixID,
@@ -134,7 +131,7 @@ export class MatrixRoomAdapter {
     );
 
     await this.storeDirectMessageRoom(
-      matrixAgent.matrixClient,
+      matrixAgent,
       targetRoomId,
       messageRequest.matrixID
     );
@@ -153,10 +150,9 @@ export class MatrixRoomAdapter {
     matrixRoomId: string
   ): Promise<string | undefined> {
     // Need to implement caching for performance
-    const dmRoomByUserMatrixIDMap =
-      this.getDirectMessageRoomsMap(
-        matrixAgent.matrixClient
-      );
+    const dmRoomByUserMatrixIDMap = this.getDirectMessageRoomsMap(
+      matrixAgent
+    );
     const dmUserMatrixIDs = Object.keys(dmRoomByUserMatrixIDMap);
     const dmRoom = dmUserMatrixIDs.find(
       userID => dmRoomByUserMatrixIDMap[userID].indexOf(matrixRoomId) !== -1
@@ -165,15 +161,15 @@ export class MatrixRoomAdapter {
   }
 
   async getDirectRoomForMatrixID(
-    matrixAgent: IMatrixAgent,
+    matrixAgent: MatrixAgent,
     matrixUserId: string
   ): Promise<MatrixRoom | undefined> {
     const matrixUsername =
       this.matrixUserAdapter.convertMatrixIDToUsername(matrixUserId);
     // Need to implement caching for performance
-    const dmRoomIds = this.getDirectMessageRoomsMap(
-      matrixAgent.matrixClient
-    )[matrixUsername];
+    const dmRoomIds = this.getDirectMessageRoomsMap(matrixAgent)[
+      matrixUsername
+    ];
 
     if (!dmRoomIds || !Boolean(dmRoomIds[0])) {
       return undefined;
@@ -185,7 +181,7 @@ export class MatrixRoomAdapter {
   }
 
   async sendMessage(
-    matrixAgent: IMatrixAgent,
+    matrixAgent: MatrixAgent,
     roomId: string,
     messageRequest: MatrixRoomMessageRequest
   ): Promise<string> {
@@ -203,7 +199,7 @@ export class MatrixRoomAdapter {
   }
 
   async sendReplyToMessage(
-    matrixAgent: IMatrixAgent,
+    matrixAgent: MatrixAgent,
     roomId: string,
     messageRequest: MatrixRoomMessageReply
   ): Promise<string> {
@@ -231,7 +227,7 @@ export class MatrixRoomAdapter {
   }
 
   async addReactionOnMessage(
-    matrixAgent: IMatrixAgent,
+    matrixAgent: MatrixAgent,
     roomId: string,
     messageReaction: MatrixRoomMessageReaction
   ): Promise<string> {
@@ -253,7 +249,7 @@ export class MatrixRoomAdapter {
   }
 
   async removeReactionOnMessage(
-    matrixAgent: IMatrixAgent,
+    matrixAgent: MatrixAgent,
     roomId: string,
     reactionID: string
   ) {
@@ -262,7 +258,7 @@ export class MatrixRoomAdapter {
 
   // TODO - see if the js sdk supports message aggregation
   async editMessage(
-    matrixAgent: IMatrixAgent,
+    matrixAgent: MatrixAgent,
     roomId: string,
     messageId: string,
     messageRequest: MatrixRoomMessageRequest
@@ -288,7 +284,7 @@ export class MatrixRoomAdapter {
   }
 
   async deleteMessage(
-    matrixAgent: IMatrixAgent,
+    matrixAgent: MatrixAgent,
     roomId: string,
     messageId: string
   ) {
@@ -297,21 +293,15 @@ export class MatrixRoomAdapter {
 
   // there could be more than one dm room per user
   getDirectMessageRoomsMap(
-    matrixClient: MatrixClient
+    agent: MatrixAgent
   ): Record<string, string[]> {
-    const mDirectEvent = matrixClient.getAccountData(EventType.Direct);
+    const mDirectEvent = agent.matrixClient.getAccountData(EventType.Direct);
     // todo: tidy up this logic
     const eventContent = mDirectEvent
       ? mDirectEvent.getContent<IContent>()
       : {};
 
-    const userId = matrixClient.getUserId();
-    if (!userId) {
-      throw new MatrixEntityNotFoundException(
-        `Unable to locate userId for client: ${matrixClient}`,
-        LogContext.MATRIX
-      );
-    }
+    const userId = agent.getUserId();
 
     // there is a bug in the sdk
     const selfDMs = eventContent[userId];
@@ -324,7 +314,7 @@ export class MatrixRoomAdapter {
   }
 
   async createRoom(
-    matrixClient: MatrixClient,
+    agent: MatrixAgent,
     createRoomOptions: ICreateRoomOpts,
     alkemioOptions: IRoomOpts
   ): Promise<string> {
@@ -358,7 +348,7 @@ export class MatrixRoomAdapter {
       redact: 0,
     };
 
-    const roomResult = await matrixClient.createRoom(createRoomOptions);
+    const roomResult = await agent.matrixClient.createRoom(createRoomOptions);
     const roomID = roomResult.room_id;
     this.logger.verbose?.(
       `[MatrixRoom] Created new room with id: ${roomID}`,
@@ -366,7 +356,7 @@ export class MatrixRoomAdapter {
     );
 
     if (metadata) {
-      await matrixClient.setRoomAccountData(
+      await agent.matrixClient.setRoomAccountData(
         roomID,
         'alkemio.metadata',
         metadata
@@ -383,20 +373,19 @@ export class MatrixRoomAdapter {
         LogContext.COMMUNICATION
       );
 
-    const matrixClient = matrixAgent.matrixClient;
     try {
       const roomJoinOpts: IJoinRoomOpts = {};
-      await matrixClient.joinRoom(roomID, roomJoinOpts);
+      await matrixAgent.matrixClient.joinRoom(roomID, roomJoinOpts);
     } catch (ex: any) {
       this.logger.error?.(
-        `[Membership] Exception user joining a room (user: ${matrixClient.getUserId()}) room: ${roomID}) - ${ex.toString()}`,
+        `[Membership] Exception user joining a room (user: ${matrixAgent.getUserId()}) room: ${roomID}) - ${ex.toString()}`,
         LogContext.COMMUNICATION
       );
     }
   }
 
   async changeRoomStateJoinRule(
-    matrixClient: MatrixClient,
+    agent: MatrixAgent,
     roomID: string,
     state: JoinRule
   ): Promise<void> {
@@ -410,11 +399,15 @@ export class MatrixRoomAdapter {
     const content: RoomJoinRulesEventContent = {
       join_rule: state,
     };
-    await matrixClient.sendStateEvent(roomID, EventType.RoomJoinRules, content);
+    await agent.matrixClient.sendStateEvent(
+      roomID,
+      EventType.RoomJoinRules,
+      content
+    );
   }
 
   async changeRoomStateHistoryVisibility(
-    matrixClient: MatrixClient,
+    agent: MatrixAgent,
     roomID: string,
     state: HistoryVisibility
   ): Promise<void> {
@@ -428,7 +421,7 @@ export class MatrixRoomAdapter {
     const content: RoomHistoryVisibilityEventContent = {
       history_visibility: state,
     };
-    await matrixClient.sendStateEvent(
+    await agent.matrixClient.sendStateEvent(
       roomID,
       EventType.RoomHistoryVisibility,
       content
@@ -461,18 +454,18 @@ export class MatrixRoomAdapter {
     );
   }
   async inviteUserToRoom(
-    agent: MatrixAgent,
+    agentElevated: MatrixAgent,
     roomID: string,
-    matrixClient: MatrixClient
+    agentUser: MatrixAgent
   ) {
-    const room = await agent.getRoomOrFail(roomID);
+    const room = await agentElevated.getRoomOrFail(roomID);
 
     // not very well documented but we can validate whether the user has membership like this
     // seen in https://github.com/matrix-org/matrix-js-sdk/blob/3c36be9839091bf63a4850f4babed0c976d48c0e/src/models/room-member.ts#L29
-    const userId = matrixClient.getUserId();
+    const userId = agentUser.getUserId();
     if (!userId) {
       throw new MatrixEntityNotFoundException(
-        `Unable to locate userId for client: ${matrixClient}`,
+        `Unable to locate userId for client: ${agentUser}`,
         LogContext.MATRIX
       );
     }
@@ -480,11 +473,11 @@ export class MatrixRoomAdapter {
       return;
     }
     if (room.hasMembershipState(userId, KnownMembership.Invite)) {
-      await matrixClient.joinRoom(room.roomId);
+      await agentUser.matrixClient.joinRoom(room.roomId);
       return;
     }
 
-    await agent.matrixClient.invite(roomID, userId);
+    await agentElevated.matrixClient.invite(roomID, userId);
     this.logger.verbose?.(
       `invited user to room: ${userId} - ${roomID}`,
       LogContext.COMMUNICATION
@@ -492,14 +485,14 @@ export class MatrixRoomAdapter {
   }
 
   async removeUserFromRoom(
-    agent: MatrixAgent,
+    agentElevated: MatrixAgent,
     roomID: string,
-    matrixClient: MatrixClient
+    agentUser: MatrixAgent
   ) {
-    const matrixUserID = matrixClient.getUserId();
+    const matrixUserID = agentUser.getUserId();
     if (!matrixUserID) {
       throw new MatrixEntityNotFoundException(
-        `Unable to locate userId for client: ${matrixClient}`,
+        `Unable to locate userId for client: ${agentUser.matrixClient}`,
         LogContext.MATRIX
       );
     }
@@ -511,7 +504,7 @@ export class MatrixRoomAdapter {
 
       // force the user to leave
       // https://github.com/matrix-org/matrix-js-sdk/blob/b2d83c1f80b53ae3ca396ac102edf27bfbbd7015/src/client.ts#L4354
-      await agent.matrixClient.kick(roomID, matrixUserID);
+      await agentElevated.matrixClient.kick(roomID, matrixUserID);
     } catch (error) {
       this.logger.verbose?.(
         `Unable to remove user (${matrixUserID}) from rooms (${roomID}): ${error}`,
@@ -520,21 +513,21 @@ export class MatrixRoomAdapter {
     }
   }
 
-  async getAllRoomEvents(client: MatrixClient, matrixRoom: MatrixRoom) {
+  async getAllRoomEvents(agent: MatrixAgent, matrixRoom: MatrixRoom) {
     // do NOT use the deprecated room.timeline property
     const timeline = matrixRoom.getLiveTimeline();
     const loadedEvents = timeline.getEvents();
     const lastKnownEvent = loadedEvents[loadedEvents.length - 1];
     // got the idea from - components/structures/TimelinePanel.tsx in matrix-react-sdk
     const timelineWindow = new TimelineWindow(
-      client,
+      agent.matrixClient,
       timeline.getTimelineSet()
     );
 
     // need to set an anchor on the last known event and load from there
     if (lastKnownEvent) {
       await timelineWindow.load(lastKnownEvent.getId(), 1000);
-      // atempt to paginate while we have outstanding messages
+      // attempt to paginate while we have outstanding messages
       while (timelineWindow.canPaginate(Direction.Backward)) {
         // do the actual event loading in memory
         await timelineWindow.paginate(Direction.Backward, 1000);
@@ -557,14 +550,14 @@ export class MatrixRoomAdapter {
   }
 
   async convertMatrixRoomToDirectRoom(
-    matrixClient: MatrixClient,
+    agent: MatrixAgent,
     matrixRoom: MatrixRoom,
     receiverMatrixID: string
   ): Promise<RoomDirectResult> {
     const roomResult = new RoomDirectResult();
     roomResult.id = matrixRoom.roomId;
     roomResult.messages = await this.getMatrixRoomTimelineAsMessages(
-      matrixClient,
+      agent,
       matrixRoom
     );
     roomResult.receiverID = receiverMatrixID;
@@ -573,13 +566,13 @@ export class MatrixRoomAdapter {
   }
 
   async convertMatrixRoomToCommunityRoom(
-    matrixClient: MatrixClient,
+    agent: MatrixAgent,
     matrixRoom: MatrixRoom
   ): Promise<RoomResult> {
     const roomResult = new RoomResult();
     roomResult.id = matrixRoom.roomId;
     roomResult.messages = await this.getMatrixRoomTimelineAsMessages(
-      matrixClient,
+      agent,
       matrixRoom
     );
     roomResult.displayName = matrixRoom.name;
@@ -588,7 +581,7 @@ export class MatrixRoomAdapter {
   }
 
   async getMatrixRoomTimelineAsMessages(
-    matrixClient: MatrixClient,
+    agent: MatrixAgent,
     matrixRoom: MatrixRoom
   ): Promise<IMessage[]> {
     this.logger.verbose?.(
@@ -596,10 +589,7 @@ export class MatrixRoomAdapter {
       LogContext.COMMUNICATION
     );
 
-    const timelineEvents = await this.getAllRoomEvents(
-      matrixClient,
-      matrixRoom
-    );
+    const timelineEvents = await this.getAllRoomEvents(agent, matrixRoom);
     if (timelineEvents) {
       return await this.convertMatrixTimelineToMessages(timelineEvents);
     }
@@ -607,7 +597,7 @@ export class MatrixRoomAdapter {
   }
 
   async getMatrixRoomTimelineReactions(
-    matrixClient: MatrixClient,
+    agent: MatrixAgent,
     matrixRoom: MatrixRoom
   ): Promise<IReaction[]> {
     this.logger.verbose?.(
@@ -615,10 +605,7 @@ export class MatrixRoomAdapter {
       LogContext.COMMUNICATION
     );
 
-    const timelineEvents = await this.getAllRoomEvents(
-      matrixClient,
-      matrixRoom
-    );
+    const timelineEvents = await this.getAllRoomEvents(agent, matrixRoom);
     if (timelineEvents) {
       return await this.convertMatrixTimelineToReactions(timelineEvents);
     }
