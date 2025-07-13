@@ -18,14 +18,10 @@ import { IMatrixAgent } from './matrix.agent.interface';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { MatrixClient, Room } from 'matrix-js-sdk';
 import { ConfigService } from '@nestjs/config';
-import { SlidingWindowManager } from './matrix.room.sliding.sync.window.manager';
+import { SlidingWindowManager } from '../sliding-sync/matrix.room.sliding.sync.window.manager';
 import { MatrixRoomAdapter } from '@src/domain/adapter-room/matrix.room.adapter';
 import { MatrixMessageAdapter } from '@src/domain/adapter-message/matrix.message.adapter';
-
-export type MatrixAgentStartOptions = {
-  registerTimelineMonitor?: boolean;
-  registerRoomMonitor?: boolean;
-};
+import { MatrixAgentStartOptions } from './type/matrix.agent.start.options';
 
 // Wraps an instance of the client sdk
 export class MatrixAgent implements IMatrixAgent, Disposable {
