@@ -8,14 +8,14 @@ import {
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
 import { IOperationalMatrixUser } from '../adapter-user/matrix.user.interface';
-import { MatrixAgent } from './matrix.agent';
+import { MatrixAgent } from '../agent/matrix.agent';
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
 import { AlkemioMatrixLogger } from '../types/matrix.logger';
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 
 @Injectable()
-export class MatrixAgentService {
+export class MatrixAgentFactoryService {
   constructor(
     private configService: ConfigService,
     private matrixRoomAdapter: MatrixRoomAdapter,

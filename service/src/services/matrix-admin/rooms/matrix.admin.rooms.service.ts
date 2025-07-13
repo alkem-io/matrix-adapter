@@ -8,7 +8,7 @@ import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.ent
 import { EventType, IStateEventWithRoomId, MatrixClient } from 'matrix-js-sdk';
 import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput as MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.roomsdto.event.update.room.state.for.admin.rooms';
 import { IOperationalMatrixUser } from '../../matrix/adapter-user/matrix.user.interface';
-import { MatrixAgentService } from '../../matrix/agent/matrix.agent.service';
+import { MatrixAgentFactoryService } from '../../matrix/agent-factory/matrix.agent.factory.service';
 import { MatrixUserAdapter } from '../../matrix/adapter-user/matrix.user.adapter';
 import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.rooms.dto.event.log.room.state';
 import { MatrixAdminUserElevatedService } from '../user-elevated/matrix.admin.user.elevated.service';
@@ -21,7 +21,7 @@ export class MatrixAdminRoomsService {
     private readonly logger: pkg.LoggerService,
     private communicationAdapter: CommunicationAdapter,
     private matrixUserManagementService: MatrixUserManagementService,
-    private matrixAgentService: MatrixAgentService,
+    private matrixAgentService: MatrixAgentFactoryService,
     private matrixUserAdapter: MatrixUserAdapter,
     private communicationAdminUserService: MatrixAdminUserElevatedService
   ) {}

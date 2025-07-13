@@ -6,7 +6,7 @@ import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixRoomAdapter } from '@services/matrix/adapter-room/matrix.room.adapter';
 import { MatrixUserAdapter } from '@services/matrix/adapter-user/matrix.user.adapter';
 import { MatrixAgent } from '@services/matrix/agent/matrix.agent';
-import { MatrixAgentService } from '@services/matrix/agent/matrix.agent.service';
+import { MatrixAgentFactoryService } from '@src/services/matrix/agent-factory/matrix.agent.factory.service';
 import { CommunicationEditMessageInput } from './dto/communication.dto.message.edit';
 import {
   IMessage,
@@ -33,7 +33,7 @@ export class CommunicationAdapter {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: pkg.LoggerService,
-    private matrixAgentService: MatrixAgentService,
+    private matrixAgentService: MatrixAgentFactoryService,
     private matrixAgentPool: MatrixAgentPool,
     private matrixUserManagementService: MatrixUserManagementService,
     private matrixUserAdapter: MatrixUserAdapter,
