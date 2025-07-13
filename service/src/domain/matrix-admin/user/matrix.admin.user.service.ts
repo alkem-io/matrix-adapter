@@ -61,21 +61,6 @@ export class MatrixAdminUserService {
     this._matrixClient = createClient(createClientInput);
   }
 
-  public async getServerVersion(): Promise<string> {
-    const url = new URL(SynapseEndpoint.SERVER_VERSION, this.baseUrl);
-    const response = await this.httpService
-      .get<{ server_version: string }>(url.href)
-      .toPromise();
-    if (!response)
-      throw new MatrixUserRegistrationException(
-        'Invalid response!',
-        LogContext.COMMUNICATION
-      );
-
-    const version = response.data['server_version'];
-    return JSON.stringify(version);
-  }
-
   public async acquireMatrixUser(matrixUserID: string) {
     const isRegistered = await this.isRegistered(matrixUserID);
 

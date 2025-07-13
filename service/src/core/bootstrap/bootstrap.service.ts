@@ -4,16 +4,17 @@ import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { ConfigurationTypes, LogContext } from '../../common/enums/index.js';
 import { BootstrapException } from '../../common/exceptions/bootstrap.exception.js';
-import { CommunicationAdapter } from '../../services/communication-adapter/communication.adapter.js';
 import { MatrixAdminUserElevatedService } from '@src/domain/matrix-admin/user-elevated/matrix.admin.user.elevated.service.js';
-import { MatrixAdminUserService } from '@src/domain/matrix-admin/user/matrix.admin.user.service.js';
+import { MatrixUserRegistrationException } from '@src/common/exceptions/matrix.registration.exception.js';
+import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint.js';
+import { HttpService } from '@nestjs/axios';
 
 @Injectable()
 export class BootstrapService {
   constructor(
     private configService: ConfigService,
-    private userManagementService: MatrixAdminUserService,
     private userElevatedManagementService: MatrixAdminUserElevatedService,
+    private httpService: HttpService,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: pkg.LoggerService
   ) {}
@@ -42,7 +43,7 @@ export class BootstrapService {
 
   private async logServerVersion() {
     try {
-      const version = await this.userManagementService.getServerVersion();
+      const version = await this.getServerVersion();
       this.logger.verbose?.(
         `Synapse server version: ${version}`,
         LogContext.BOOTSTRAP
@@ -53,6 +54,23 @@ export class BootstrapService {
         LogContext.BOOTSTRAP
       );
     }
+  }
+
+  public async getServerVersion(): Promise<string> {
+    const baseUrl = this.configService.get(ConfigurationTypes.MATRIX)?.server
+      ?.url;
+    const url = new URL(SynapseEndpoint.SERVER_VERSION, baseUrl);
+    const response = await this.httpService
+      .get<{ server_version: string }>(url.href)
+      .toPromise();
+    if (!response)
+      throw new MatrixUserRegistrationException(
+        'Invalid response!',
+        LogContext.COMMUNICATION
+      );
+
+    const version = response.data['server_version'];
+    return JSON.stringify(version);
   }
 
   logConfiguration() {
