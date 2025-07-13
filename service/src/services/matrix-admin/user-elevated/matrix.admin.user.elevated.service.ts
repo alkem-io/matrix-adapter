@@ -7,10 +7,10 @@ import { MatrixUserAdapter } from '@services/matrix/adapter-user/matrix.user.ada
 import { IOperationalMatrixUser } from '@services/matrix/adapter-user/matrix.user.interface';
 import { MatrixAgent } from '@services/matrix/agent/matrix.agent';
 import { MatrixAgentService } from '@services/matrix/agent/matrix.agent.service';
-import { MatrixUserManagementService } from '@services/matrix/management/matrix.user.management.service';
+import { MatrixUserManagementService } from '../user/matrix.admin.user.service';
 
 @Injectable()
-export class CommunicationAdminUserService {
+export class MatrixAdminUserElevatedService {
   private adminUser!: IOperationalMatrixUser;
   private matrixElevatedAgent!: MatrixAgent; // elevated as created with an admin account
   private adminEmail!: string;
@@ -37,7 +37,7 @@ export class CommunicationAdminUserService {
     );
   }
 
-  private async getGlobalAdminUser() {
+  private async getElevatedUser() {
     if (this.adminUser) {
       return this.adminUser;
     }
@@ -62,12 +62,12 @@ export class CommunicationAdminUserService {
     return this.adminUser;
   }
 
-  public async getMatrixManagementAgentElevated() {
+  public async getMatrixAgentElevated() {
     if (this.matrixElevatedAgent) {
       return this.matrixElevatedAgent;
     }
 
-    const adminUser = await this.getGlobalAdminUser();
+    const adminUser = await this.getElevatedUser();
     this.matrixElevatedAgent =
       await this.matrixAgentService.createMatrixAgent(adminUser);
 

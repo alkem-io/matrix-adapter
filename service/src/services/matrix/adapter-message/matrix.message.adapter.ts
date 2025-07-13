@@ -3,7 +3,7 @@ import { LogContext } from '@common/enums/index';
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixRoomResponseMessage } from '../adapter-room/matrix.room.dto.response.message';
+import { MatrixRoomResponseMessage } from '../adapter-room/dto/matrix.room.dto.response.message';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/index';
 import { EventType } from 'matrix-js-sdk';
 

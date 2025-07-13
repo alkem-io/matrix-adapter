@@ -9,29 +9,29 @@ import {
   Transport,
 } from '@nestjs/microservices';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { LogContext } from '../../common/enums/index';
-import { MatrixAdminEventType } from './matrix.admin.event.type';
-import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
-import { MatrixAdminService } from './matrix.admin.service';
-import { MatrixAdminBaseEventResponsePayload } from './dto/matrix.admin.base.event.response.payload';
-import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.dto.event.log.room.state';
+import { LogContext } from '../../../common/enums/index';
+import { MatrixAdminRoomsEventType } from './matrix.admin.rooms.event.type';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.roomsdto.event.update.room.state.for.admin.rooms';
+import { MatrixAdminBaseEventResponsePayload } from './dto/matrix.admin.rooms.base.event.response.payload';
+import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.rooms.dto.event.log.room.state';
+import { MatrixAdminRoomsService } from './matrix.admin.rooms.service';
 
 @Controller()
-export class MatrixAdminController {
+export class MatrixAdminRoomsController {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: pkg.LoggerService,
-    private matrixAdminService: MatrixAdminService
+    private matrixAdminService: MatrixAdminRoomsService
   ) {}
 
-  @MessagePattern(MatrixAdminEventType.UPDATE_ROOM_STATE_FOR_ADMIN_ROOMS, Transport.RMQ)
+  @MessagePattern(MatrixAdminRoomsEventType.UPDATE_ROOM_STATE_FOR_ADMIN_ROOMS, Transport.RMQ)
   async matrixAdminRoomsReset(
     @Payload() data: MatrixAdminEventUpdateRoomStateForAdminRoomsInput,
     @Ctx() context: RmqContext
   ): Promise<MatrixAdminBaseEventResponsePayload> {
     this.logger.verbose?.(
       `${
-        MatrixAdminEventType.UPDATE_ROOM_STATE_FOR_ADMIN_ROOMS
+        MatrixAdminRoomsEventType.UPDATE_ROOM_STATE_FOR_ADMIN_ROOMS
       } - payload: ${JSON.stringify(data)}`,
       LogContext.MATRIX_ADMIN_EVENTS
     );
@@ -54,13 +54,13 @@ export class MatrixAdminController {
     }
   }
 
-  @MessagePattern(MatrixAdminEventType.LOG_ROOM_STATE, Transport.RMQ)
+  @MessagePattern(MatrixAdminRoomsEventType.LOG_ROOM_STATE, Transport.RMQ)
   async matrixAdminRoomState(
     @Payload() data: MatrixAdminEventLogRoomStateInput,
     @Ctx() context: RmqContext
   ): Promise<MatrixAdminBaseEventResponsePayload> {
     this.logger.verbose?.(
-      `${MatrixAdminEventType.LOG_ROOM_STATE} - payload: ${JSON.stringify(
+      `${MatrixAdminRoomsEventType.LOG_ROOM_STATE} - payload: ${JSON.stringify(
         data
       )}`,
       LogContext.MATRIX_ADMIN_EVENTS

@@ -2,7 +2,6 @@ import { ConfigurationTypes, LogContext } from '@common/enums/index';
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { IMatrixUser } from './matrix.user.interface';
-import { MatrixClient } from 'matrix-js-sdk';
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 
@@ -15,37 +14,6 @@ export class MatrixUserAdapter {
     private readonly logger: pkg.LoggerService,
     private configService: ConfigService
   ) {}
-
-  async getJoinedRooms(matrixClient: MatrixClient): Promise<string[]> {
-    const response = (await matrixClient.getJoinedRooms()) as any as {
-      joined_rooms: string[];
-    };
-    return response.joined_rooms;
-  }
-
-  async isUserMemberOfRoom(
-    matrixClient: MatrixClient,
-    roomID: string
-  ): Promise<boolean> {
-    const rooms = await this.getJoinedRooms(matrixClient);
-    const roomFound = rooms.find(r => r === roomID);
-    if (roomFound) {
-      this.logger.verbose?.(
-        `[Membership] user (${matrixClient.getUserId()}) is a member of: ${roomID}`,
-        LogContext.COMMUNICATION
-      );
-      return true;
-    }
-    return false;
-  }
-
-  async logJoinedRooms(matrixClient: MatrixClient) {
-    const rooms = await this.getJoinedRooms(matrixClient);
-    this.logger.verbose?.(
-      `[Membership] user (${matrixClient.getUserId()}) rooms: ${rooms}`,
-      LogContext.COMMUNICATION
-    );
-  }
 
   convertMatrixIDToMatrixUser(
     matrixUserID: string,

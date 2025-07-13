@@ -9,7 +9,7 @@ import configuration from './config/configuration';
 import { HttpExceptionsFilter } from './core/error-handling/http.exceptions.filter';
 import { BootstrapModule } from './core/bootstrap/bootstrap.module';
 import { CommunicationAdapterModule } from './services/communication-adapter/communication-adapter.module';
-import { MatrixAdminModule } from './services/matrix-admin/matrix.admin.module';
+import { MatrixAdminRoomsModule } from './services/matrix-admin/rooms/matrix.admin.rooms.module';
 
 @Module({
   imports: [
@@ -23,7 +23,7 @@ import { MatrixAdminModule } from './services/matrix-admin/matrix.admin.module';
     }),
     BootstrapModule,
     CommunicationAdapterModule,
-    MatrixAdminModule,
+    MatrixAdminRoomsModule,
     HealthModule,
   ],
   providers: [

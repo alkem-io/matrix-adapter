@@ -4,17 +4,18 @@ import { ConfigService } from '@nestjs/config';
 import { ICreateClientOpts, MatrixClient, createClient } from 'matrix-js-sdk';
 import { MatrixCryptographyService } from '@services/matrix/cryptography/matrix.cryptography.service';
 import { ConfigurationTypes } from '@common/enums/configuration.type';
-import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter';
-import { IOperationalMatrixUser } from '../adapter-user/matrix.user.interface';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixUserLoginException } from '@common/exceptions/matrix.login.exception';
 import { MatrixUserRegistrationException } from '@common/exceptions/matrix.registration.exception';
 import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint';
 import { URL } from 'url';
-import { AlkemioMatrixLogger } from '../types/matrix.logger';
 import { LogContext } from '@src/common/enums/logging.context';
 import pkg  from '@nestjs/common';
+import { MatrixUserAdapter } from '@src/services/matrix/adapter-user/matrix.user.adapter';
+import { AlkemioMatrixLogger } from '@src/services/matrix/types/matrix.logger';
+import { IOperationalMatrixUser } from '@src/services/matrix/adapter-user/matrix.user.interface';
 const { Inject, Injectable } = pkg;
+
 @Injectable()
 export class MatrixUserManagementService {
   _matrixClient: MatrixClient;

@@ -18,9 +18,8 @@ import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter'
 import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
 import { IMatrixAgent } from './matrix.agent.interface';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
-import { MatrixClient, IStartClientOpts, SyncState, Room } from 'matrix-js-sdk';
+import { MatrixClient, Room } from 'matrix-js-sdk';
 import { ConfigService } from '@nestjs/config';
-import { ConfigurationTypes } from '@src/common/enums/configuration.type';
 import { SlidingWindowManager } from '../sliding-sync';
 
 export type MatrixAgentStartOptions = {

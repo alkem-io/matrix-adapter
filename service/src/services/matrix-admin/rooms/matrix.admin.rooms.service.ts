@@ -1,21 +1,21 @@
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { CommunicationAdapter } from '../communication-adapter/communication.adapter';
+import { CommunicationAdapter } from '../../communication-adapter/communication.adapter';
 import { LogContext } from '@src/common/enums/logging.context';
 import { RoomPowerLevelsEventContent } from 'matrix-js-sdk/lib/types';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 import { EventType, IStateEventWithRoomId, MatrixClient } from 'matrix-js-sdk';
-import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput as MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.dto.event.update.room.state.for.admin.rooms';
-import { IOperationalMatrixUser } from '../matrix/adapter-user/matrix.user.interface';
-import { MatrixUserManagementService } from '../matrix/management/matrix.user.management.service';
-import { MatrixAgentService } from '../matrix/agent/matrix.agent.service';
-import { MatrixUserAdapter } from '../matrix/adapter-user/matrix.user.adapter';
-import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.dto.event.log.room.state';
-import { CommunicationAdminUserService } from '../communication-admin-user/communication.admin.user.service';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput as MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.roomsdto.event.update.room.state.for.admin.rooms';
+import { IOperationalMatrixUser } from '../../matrix/adapter-user/matrix.user.interface';
+import { MatrixAgentService } from '../../matrix/agent/matrix.agent.service';
+import { MatrixUserAdapter } from '../../matrix/adapter-user/matrix.user.adapter';
+import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.rooms.dto.event.log.room.state';
+import { MatrixAdminUserElevatedService } from '../user-elevated/matrix.admin.user.elevated.service';
+import { MatrixUserManagementService } from '../user/matrix.admin.user.service';
 
 @Injectable()
-export class MatrixAdminService {
+export class MatrixAdminRoomsService {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: pkg.LoggerService,
@@ -23,7 +23,7 @@ export class MatrixAdminService {
     private matrixUserManagementService: MatrixUserManagementService,
     private matrixAgentService: MatrixAgentService,
     private matrixUserAdapter: MatrixUserAdapter,
-    private communicationAdminUserService: CommunicationAdminUserService
+    private communicationAdminUserService: MatrixAdminUserElevatedService
   ) {}
 
   private async getPowerLevelsEventForRoom(
@@ -106,7 +106,7 @@ export class MatrixAdminService {
     );
     // See if matches current admin user, if not create a new agent
     let agent =
-      await this.communicationAdminUserService.getMatrixManagementAgentElevated();
+      await this.communicationAdminUserService.getMatrixAgentElevated();
     const elevatedAgentUser =
       this.communicationAdapter.getUserIdFromMatrixClient(agent.matrixClient);
     const adminUser = await this.getGlobalAdminUser(
@@ -202,7 +202,7 @@ export class MatrixAdminService {
   ) {
     // Note: has side effect of admin user becoming a member of the room if not already one
     const matrixAgentElevated =
-      await this.communicationAdminUserService.getMatrixManagementAgentElevated();
+      await this.communicationAdminUserService.getMatrixAgentElevated();
     const matrixClient = matrixAgentElevated.matrixClient;
     await this.communicationAdapter.ensureMatrixClientIsMemberOfRoom(
       matrixClient,

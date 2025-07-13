@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
-import { MatrixUserManagementModule } from '@services/matrix/management/matrix.user.management.module';
 import { MatrixAgentModule } from '@services/matrix/agent/matrix.agent.module';
 import { MatrixUserAdapterModule } from '@services/matrix/adapter-user/matrix.user.adapter.module';
-import { CommunicationAdminUserService } from './communication.admin.user.service';
+import { MatrixAdminUserElevatedService } from './matrix.admin.user.elevated.service';
+import { MatrixUserManagementModule } from '../user/matrix.admin.user.module';
 
 @Module({
   imports: [
@@ -10,7 +10,7 @@ import { CommunicationAdminUserService } from './communication.admin.user.servic
     MatrixUserAdapterModule,
     MatrixAgentModule,
   ],
-  providers: [CommunicationAdminUserService],
-  exports: [CommunicationAdminUserService],
+  providers: [MatrixAdminUserElevatedService],
+  exports: [MatrixAdminUserElevatedService],
 })
-export class CommunicationAdminUserModule {}
+export class MatrixAdminUserElevatedModule {}
