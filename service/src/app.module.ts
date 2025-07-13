@@ -8,7 +8,7 @@ import { WinstonConfigService } from './config/winston.config';
 import configuration from './config/configuration';
 import { HttpExceptionsFilter } from './core/error-handling/http.exceptions.filter';
 import { BootstrapModule } from './core/bootstrap/bootstrap.module';
-import { CommunicationAdapterModule } from './domain/communication-adapter/communication-adapter.module';
+import { CommunicationAdapterModule } from './services/communication-adapter/communication-adapter.module';
 import { MatrixAdminRoomsModule } from './domain/matrix-admin/rooms/matrix.admin.rooms.module';
 
 @Module({

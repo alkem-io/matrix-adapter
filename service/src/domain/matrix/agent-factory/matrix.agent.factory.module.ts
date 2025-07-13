@@ -15,4 +15,4 @@ import { MatrixAgentFactoryService } from './matrix.agent.factory.service';
   providers: [MatrixAgentFactoryService],
   exports: [MatrixAgentFactoryService],
 })
-export class MatrixAgentModule {}
+export class MatrixAgentFactoryModule {}

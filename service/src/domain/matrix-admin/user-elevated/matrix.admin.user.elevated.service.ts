@@ -20,7 +20,7 @@ export class MatrixAdminUserElevatedService {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: pkg.LoggerService,
-    private matrixAgentService: MatrixAgentFactoryService,
+    private agentFactoryService: MatrixAgentFactoryService,
     private configService: ConfigService,
     private matrixUserManagementService: MatrixAdminUserService,
     private matrixUserAdapter: MatrixUserAdapter
@@ -69,7 +69,7 @@ export class MatrixAdminUserElevatedService {
 
     const adminUser = await this.getElevatedUser();
     this.matrixElevatedAgent =
-      await this.matrixAgentService.createMatrixAgent(adminUser);
+      await this.agentFactoryService.createMatrixAgent(adminUser);
 
     await this.matrixElevatedAgent.start({
       registerTimelineMonitor: false,

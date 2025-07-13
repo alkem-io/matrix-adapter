@@ -5,8 +5,8 @@ import {
   InternalEventNames,
   RoomTimelineEvent,
 } from '@src/domain/events/matrix.event.dispatcher';
-import { CommunicationEventMessageReceived } from '@src/domain/communication-adapter/dto/communication.dto.event.message.received';
-import { MatrixRoomInvitationReceived } from '@src/domain/communication-adapter/dto/communication.dto.room.invitation.received';
+import { CommunicationEventMessageReceived } from '@src/services/communication-adapter/dto/communication.dto.event.message.received';
+import { MatrixRoomInvitationReceived } from '@src/services/communication-adapter/dto/communication.dto.room.invitation.received';
 import { MatrixMessageAdapter } from '../matrix/adapter-message/matrix.message.adapter';
 import { MatrixRoom } from '../matrix/adapter-room/type/matrix.room';
 import { MatrixRoomAdapter } from '../matrix/adapter-room/matrix.room.adapter';

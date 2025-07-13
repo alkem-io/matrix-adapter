@@ -1,18 +1,18 @@
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { CommunicationAdapter } from '../../communication-adapter/communication.adapter';
+import { CommunicationAdapter } from '../../../services/communication-adapter/communication.adapter';
 import { LogContext } from '@src/common/enums/logging.context';
 import { RoomPowerLevelsEventContent } from 'matrix-js-sdk/lib/types';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 import { EventType, IStateEventWithRoomId, MatrixClient } from 'matrix-js-sdk';
-import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput as MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.roomsdto.event.update.room.state.for.admin.rooms';
 import { IOperationalMatrixUser } from '../../matrix/adapter-user/matrix.user.interface';
 import { MatrixAgentFactoryService } from '../../matrix/agent-factory/matrix.agent.factory.service';
 import { MatrixUserAdapter } from '../../matrix/adapter-user/matrix.user.adapter';
 import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.rooms.dto.event.log.room.state';
 import { MatrixAdminUserElevatedService } from '../user-elevated/matrix.admin.user.elevated.service';
 import { MatrixAdminUserService } from '../user/matrix.admin.user.service';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.rooms.dto.event.update.room.state.for.admin.rooms';
 
 @Injectable()
 export class MatrixAdminRoomsService {
@@ -20,10 +20,10 @@ export class MatrixAdminRoomsService {
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: pkg.LoggerService,
     private communicationAdapter: CommunicationAdapter,
-    private matrixUserManagementService: MatrixAdminUserService,
-    private matrixAgentService: MatrixAgentFactoryService,
+    private agentFactoryService: MatrixAgentFactoryService,
     private matrixUserAdapter: MatrixUserAdapter,
-    private communicationAdminUserService: MatrixAdminUserElevatedService
+    private adminUserService: MatrixAdminUserService,
+    private adminUserElevatedService: MatrixAdminUserElevatedService
   ) {}
 
   private async getPowerLevelsEventForRoom(
@@ -60,7 +60,7 @@ export class MatrixAdminRoomsService {
 
   private async createMatrixClientForAdmin(adminUser: IOperationalMatrixUser) {
     const adminAgent =
-      await this.matrixAgentService.createMatrixAgent(adminUser);
+      await this.agentFactoryService.createMatrixAgent(adminUser);
 
     await adminAgent.start({
       registerTimelineMonitor: false,
@@ -76,7 +76,7 @@ export class MatrixAdminRoomsService {
   ): Promise<IOperationalMatrixUser> {
     const adminCommunicationsID =
       this.matrixUserAdapter.convertEmailToMatrixID(username);
-    const adminExists = await this.matrixUserManagementService.isRegistered(
+    const adminExists = await this.adminUserService.isRegistered(
       adminCommunicationsID
     );
     if (!adminExists) {
@@ -90,7 +90,7 @@ export class MatrixAdminRoomsService {
       `User is registered: ${username}, logging in...`,
       LogContext.MATRIX_ADMIN
     );
-    const adminUser = await this.matrixUserManagementService.login(
+    const adminUser = await this.adminUserService.login(
       adminCommunicationsID,
       password
     );
@@ -106,7 +106,7 @@ export class MatrixAdminRoomsService {
     );
     // See if matches current admin user, if not create a new agent
     let agent =
-      await this.communicationAdminUserService.getMatrixAgentElevated();
+      await this.adminUserElevatedService.getMatrixAgentElevated();
     const elevatedAgentUser =
       this.communicationAdapter.getUserIdFromMatrixClient(agent.matrixClient);
     const adminUser = await this.getGlobalAdminUser(
@@ -202,7 +202,7 @@ export class MatrixAdminRoomsService {
   ) {
     // Note: has side effect of admin user becoming a member of the room if not already one
     const matrixAgentElevated =
-      await this.communicationAdminUserService.getMatrixAgentElevated();
+      await this.adminUserElevatedService.getMatrixAgentElevated();
     const matrixClient = matrixAgentElevated.matrixClient;
     await this.communicationAdapter.ensureMatrixClientIsMemberOfRoom(
       matrixClient,

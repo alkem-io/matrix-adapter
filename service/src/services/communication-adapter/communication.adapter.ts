@@ -6,7 +6,6 @@ import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixRoomAdapter } from '@src/domain/matrix/adapter-room/matrix.room.adapter';
 import { MatrixUserAdapter } from '@src/domain/matrix/adapter-user/matrix.user.adapter';
 import { MatrixAgent } from '@src/domain/agent/matrix.agent';
-import { MatrixAgentFactoryService } from '@src/domain/matrix/agent-factory/matrix.agent.factory.service';
 import { CommunicationEditMessageInput } from './dto/communication.dto.message.edit';
 import {
   IMessage,
@@ -23,8 +22,8 @@ import { RoomDeleteMessagePayload } from '@alkemio/matrix-adapter-lib';
 import { SendMessageToUserPayload } from '@alkemio/matrix-adapter-lib';
 import { IReaction } from '@alkemio/matrix-adapter-lib';
 import { sleep } from 'matrix-js-sdk/lib/utils.js';
-import { MatrixAdminUserElevatedService } from '../matrix-admin/user-elevated/matrix.admin.user.elevated.service';
-import { MatrixAdminUserService } from '../matrix-admin/user/matrix.admin.user.service';
+import { MatrixAdminUserElevatedService } from '../../domain/matrix-admin/user-elevated/matrix.admin.user.elevated.service';
+import { MatrixAdminUserService } from '../../domain/matrix-admin/user/matrix.admin.user.service';
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 
@@ -33,7 +32,6 @@ export class CommunicationAdapter {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: pkg.LoggerService,
-    private matrixAgentService: MatrixAgentFactoryService,
     private matrixAgentPool: MatrixAgentPool,
     private matrixUserManagementService: MatrixAdminUserService,
     private matrixUserAdapter: MatrixUserAdapter,

@@ -21,7 +21,7 @@ export class MatrixAgentPool
   private _agentPoolSize: number;
 
   constructor(
-    private matrixAgentService: MatrixAgentFactoryService,
+    private agentFactoryService: MatrixAgentFactoryService,
     private configService: ConfigService,
     private matrixUserManagementService: MatrixAdminUserService,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
@@ -106,7 +106,7 @@ export class MatrixAgentPool
 
       const operatingUser = await this.acquireMatrixUser(matrixUserID);
       const client =
-        await this.matrixAgentService.createMatrixAgent(operatingUser);
+        await this.agentFactoryService.createMatrixAgent(operatingUser);
 
       if (autoStart) {
         await client.start();
