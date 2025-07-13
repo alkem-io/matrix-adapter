@@ -34,10 +34,10 @@ import {
 import { MatrixAgent } from '../agent/matrix.agent';
 import { IRoomOpts } from './dto/matrix.room.dto.options';
 import { IMatrixAgent } from '../agent/matrix.agent.interface';
-import { MatrixAgentMessageRequest } from '../agent/dto/matrix.agent.dto.message.request';
-import { MatrixAgentMessageReaction } from '../agent/dto/matrix.agent.dto.message.reaction';
-import { MatrixAgentMessageReply } from '../agent/dto/matrix.agent.dto.message.reply';
-import { MatrixAgentMessageRequestDirect } from '../agent/dto/matrix.agent.dto.message.request.direct';
+import { MatrixRoomMessageRequest } from './dto/matrix.room.dto.message.request';
+import { MatrixRoomMessageReaction } from './dto/matrix.room.dto.message.reaction';
+import { MatrixRoomMessageReply } from './dto/matrix.room.dto.message.reply';
+import { MatrixRoomMessageRequestDirect } from './dto/matrix.room.dto.message.request.direct';
 import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter';
 
 // Note: before
@@ -133,7 +133,7 @@ export class MatrixRoomAdapter {
 
   async initiateMessagingToUser(
     matrixAgent: IMatrixAgent,
-    messageRequest: MatrixAgentMessageRequestDirect
+    messageRequest: MatrixRoomMessageRequestDirect
   ): Promise<string> {
     const directRoom = await this.getDirectRoomForMatrixID(
       matrixAgent,
@@ -204,7 +204,7 @@ export class MatrixRoomAdapter {
   async sendMessage(
     matrixAgent: IMatrixAgent,
     roomId: string,
-    messageRequest: MatrixAgentMessageRequest
+    messageRequest: MatrixRoomMessageRequest
   ): Promise<string> {
     const content: RoomMessageEventContent = {
       body: messageRequest.text,
@@ -222,7 +222,7 @@ export class MatrixRoomAdapter {
   async sendReplyToMessage(
     matrixAgent: IMatrixAgent,
     roomId: string,
-    messageRequest: MatrixAgentMessageReply
+    messageRequest: MatrixRoomMessageReply
   ): Promise<string> {
     const content: RoomMessageEventContent = {
       msgtype: MsgType.Text,
@@ -250,7 +250,7 @@ export class MatrixRoomAdapter {
   async addReactionOnMessage(
     matrixAgent: IMatrixAgent,
     roomId: string,
-    messageReaction: MatrixAgentMessageReaction
+    messageReaction: MatrixRoomMessageReaction
   ): Promise<string> {
     const content: ReactionEventContent = {
       'm.relates_to': {
@@ -282,7 +282,7 @@ export class MatrixRoomAdapter {
     matrixAgent: IMatrixAgent,
     roomId: string,
     messageId: string,
-    messageRequest: MatrixAgentMessageRequest
+    messageRequest: MatrixRoomMessageRequest
   ) {
     this.logger.verbose?.(
       `Editing message: ${messageId} ${matrixAgent} ${roomId} ${messageRequest}`,
