@@ -13,12 +13,3 @@ export interface MatrixClientConfig {
   startupInitialSyncLimit: number;
   slidingSync: MatrixSlidingSyncConfig;
 }
-
-export interface MatrixServerConfig {
-  url: string;
-}
-
-export interface MatrixConfig {
-  server: MatrixServerConfig;
-  client: MatrixClientConfig;
-}

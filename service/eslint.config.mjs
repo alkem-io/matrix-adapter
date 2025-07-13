@@ -84,7 +84,7 @@ export default [
     rules: {
       ...typescript.configs.recommended.rules,
       ...typescript.configs['recommended-type-checked'].rules,
-      
+
       // Disable unsafe type checking rules for legacy code
       '@typescript-eslint/no-unsafe-call': 'off',
       '@typescript-eslint/no-explicit-any': 'off',

@@ -4,7 +4,6 @@ import { Disposable } from '@src/common/interfaces/disposable.interface';
 import {
   ClientEvent,
   EmittedEvents,
-  MatrixClient,
   MatrixEvent,
   Room,
   RoomEvent,
@@ -15,6 +14,7 @@ import {
 import { first, fromEvent, Observable, Subscription } from 'rxjs';
 
 import { MatrixRoom } from '../../room/matrix.room';
+import { MatrixAgent } from '../agent/matrix.agent';
 import { IConditionalMatrixEventHandler } from './matrix.event.conditional.handler.interface';
 import { IMatrixEventDispatcher } from './matrix.event.dispatcher.interface';
 import { IMatrixEventHandler } from './matrix.event.handler.interface';
@@ -26,6 +26,7 @@ export class MatrixEventDispatcher
   implements Disposable, IMatrixEventDispatcher
 {
   private _emitter = new EventEmitter();
+  private _agent: MatrixAgent;
   private _disposables: (() => void)[] = [];
   private _subscriptions: Record<string, Subscription[]> = {};
 
@@ -34,7 +35,8 @@ export class MatrixEventDispatcher
   roomTimelineMonitor!: Observable<RoomTimelineEvent>;
   roomMemberMembershipMonitor!: Observable<{ event: MatrixEvent; member: RoomMember }>;
 
-  constructor(private _client: MatrixClient) {
+  constructor(agent: MatrixAgent) {
+    this._agent = agent;
     this.init();
   }
 
@@ -65,12 +67,12 @@ export class MatrixEventDispatcher
     monitor: MatrixEventHandler
   ) {
     monitor = monitor.bind(this);
-    this._client.on(event, monitor);
+    this._agent.matrixClient.on(event, monitor);
 
     // Type assertion is necessary here due to dynamic property assignment
     // The handler key determines which specific Observable type this will be
     (this as any)[handler] = fromEvent<T>(this._emitter, handler);
-    this._disposables.push(() => this._client.off(event, monitor));
+    this._disposables.push(() => this._agent.matrixClient.off(event, monitor));
   }
 
   private _syncMonitor(syncState: SyncState, oldSyncState: SyncState | null) {

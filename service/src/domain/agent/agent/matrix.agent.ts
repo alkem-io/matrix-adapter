@@ -50,7 +50,7 @@ export class MatrixAgent implements Disposable {
     private logger: pkg.LoggerService
   ) {
     this.matrixClient = matrixClient;
-    this.eventDispatcher = new MatrixEventDispatcher(this.matrixClient);
+    this.eventDispatcher = new MatrixEventDispatcher(this);
     this.roomAdapter = roomAdapter;
     this.messageAdapter = messageAdapter;
     this.configService = configService;
