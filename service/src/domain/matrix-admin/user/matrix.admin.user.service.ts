@@ -11,9 +11,9 @@ import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint';
 import { URL } from 'url';
 import { LogContext } from '@src/common/enums/logging.context';
 import pkg from '@nestjs/common';
-import { MatrixUserAdapter } from '@src/domain/matrix/adapter-user/matrix.user.adapter';
+import { MatrixUserAdapter } from '@src/domain/adapter-user/matrix.user.adapter';
 import { AlkemioMatrixLogger } from '@src/core/logger/matrix.logger';
-import { IOperationalMatrixUser } from '@src/domain/matrix/adapter-user/matrix.user.interface';
+import { IOperationalMatrixUser } from '@src/domain/adapter-user/matrix.user.interface';
 const { Inject, Injectable } = pkg;
 
 @Injectable()

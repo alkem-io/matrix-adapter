@@ -31,14 +31,14 @@ import {
   RoomJoinRulesEventContent,
   RoomMessageEventContent,
 } from 'matrix-js-sdk/lib/types';
-import { MatrixAgent } from '../../agent/matrix.agent';
 import { IRoomOpts } from './type/matrix.room.options';
-import { IMatrixAgent } from '../../agent/matrix.agent.interface';
 import { MatrixRoomMessageRequest } from './dto/matrix.room.dto.message.request';
 import { MatrixRoomMessageReaction } from './dto/matrix.room.dto.message.reaction';
 import { MatrixRoomMessageReply } from './dto/matrix.room.dto.message.reply';
 import { MatrixRoomMessageRequestDirect } from './dto/matrix.room.dto.message.request.direct';
 import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter';
+import { IMatrixAgent } from '@src/domain/agent/agent/matrix.agent.interface';
+import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
 
 // Note: before
 @Injectable()

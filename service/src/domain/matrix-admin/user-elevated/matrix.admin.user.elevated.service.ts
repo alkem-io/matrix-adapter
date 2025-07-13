@@ -3,11 +3,11 @@ import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixUserAdapter } from '@src/domain/matrix/adapter-user/matrix.user.adapter';
-import { IOperationalMatrixUser } from '@src/domain/matrix/adapter-user/matrix.user.interface';
-import { MatrixAgent } from '@src/domain/agent/matrix.agent';
-import { MatrixAgentFactoryService } from '@src/domain/matrix/agent-factory/matrix.agent.factory.service';
+import { MatrixUserAdapter } from '@src/domain/adapter-user/matrix.user.adapter';
+import { IOperationalMatrixUser } from '@src/domain/adapter-user/matrix.user.interface';
 import { MatrixAdminUserService } from '../user/matrix.admin.user.service';
+import { MatrixAgentFactoryService } from '@src/domain/agent/agent-factory/matrix.agent.factory.service';
+import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
 
 @Injectable()
 export class MatrixAdminUserElevatedService {

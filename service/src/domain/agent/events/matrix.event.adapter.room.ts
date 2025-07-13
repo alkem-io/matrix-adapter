@@ -4,12 +4,12 @@ import {
   IMatrixEventHandler,
   InternalEventNames,
   RoomTimelineEvent,
-} from '@src/domain/events/matrix.event.dispatcher';
+} from '@src/domain/agent/events/matrix.event.dispatcher';
 import { CommunicationEventMessageReceived } from '@src/services/communication-adapter/dto/communication.dto.event.message.received';
 import { MatrixRoomInvitationReceived } from '@src/services/communication-adapter/dto/communication.dto.room.invitation.received';
-import { MatrixMessageAdapter } from '../matrix/adapter-message/matrix.message.adapter';
-import { MatrixRoom } from '../matrix/adapter-room/type/matrix.room';
-import { MatrixRoomAdapter } from '../matrix/adapter-room/matrix.room.adapter';
+import { MatrixMessageAdapter } from '../../adapter-message/matrix.message.adapter';
+import { MatrixRoom } from '../../adapter-room/type/matrix.room';
+import { MatrixRoomAdapter } from '../../adapter-room/matrix.room.adapter';
 import { MatrixClient, MatrixEvent, RoomMember, KnownMembership } from 'matrix-js-sdk';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 

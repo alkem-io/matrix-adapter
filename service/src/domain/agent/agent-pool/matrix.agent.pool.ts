@@ -4,13 +4,13 @@ import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 import { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixAgent } from '../../agent/matrix.agent';
 import { MatrixAgentFactoryService } from '../agent-factory/matrix.agent.factory.service';
 import { ConfigService } from '@nestjs/config';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { NotSupportedException } from '@src/common/exceptions/not.supported.exception';
 import { LogContext } from '@src/common/enums/logging.context';
 import { MatrixAdminUserService } from '@src/domain/matrix-admin/user/matrix.admin.user.service';
+import { MatrixAgent } from '../agent/matrix.agent';
 
 @Injectable()
 export class MatrixAgentPool

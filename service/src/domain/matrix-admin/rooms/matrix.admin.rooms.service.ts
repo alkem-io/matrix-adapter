@@ -1,18 +1,18 @@
-import pkg  from '@nestjs/common';
-const { Inject, Injectable } = pkg;
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { CommunicationAdapter } from '../../../services/communication-adapter/communication.adapter';
 import { LogContext } from '@src/common/enums/logging.context';
 import { RoomPowerLevelsEventContent } from 'matrix-js-sdk/lib/types';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 import { EventType, IStateEventWithRoomId, MatrixClient } from 'matrix-js-sdk';
-import { IOperationalMatrixUser } from '../../matrix/adapter-user/matrix.user.interface';
-import { MatrixAgentFactoryService } from '../../matrix/agent-factory/matrix.agent.factory.service';
-import { MatrixUserAdapter } from '../../matrix/adapter-user/matrix.user.adapter';
+import { IOperationalMatrixUser } from '../../adapter-user/matrix.user.interface';
+import { MatrixUserAdapter } from '../../adapter-user/matrix.user.adapter';
 import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.rooms.dto.event.log.room.state';
 import { MatrixAdminUserElevatedService } from '../user-elevated/matrix.admin.user.elevated.service';
 import { MatrixAdminUserService } from '../user/matrix.admin.user.service';
 import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.rooms.dto.event.update.room.state.for.admin.rooms';
+import { MatrixAgentFactoryService } from '@src/domain/agent/agent-factory/matrix.agent.factory.service';
+import pkg  from '@nestjs/common';
+const { Inject, Injectable } = pkg;
 
 @Injectable()
 export class MatrixAdminRoomsService {

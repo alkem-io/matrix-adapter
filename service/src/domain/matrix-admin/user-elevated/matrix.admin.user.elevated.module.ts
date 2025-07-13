@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
-import { MatrixAgentFactoryModule } from '@src/domain/matrix/agent-factory/matrix.agent.factory.module';
-import { MatrixUserAdapterModule } from '@src/domain/matrix/adapter-user/matrix.user.adapter.module';
+import { MatrixUserAdapterModule } from '@src/domain/adapter-user/matrix.user.adapter.module';
 import { MatrixAdminUserElevatedService } from './matrix.admin.user.elevated.service';
 import { MatrixAdminUserModule } from '../user/matrix.admin.user.module';
+import { MatrixAgentFactoryModule } from '@src/domain/agent/agent-factory/matrix.agent.factory.module';
 
 @Module({
   imports: [

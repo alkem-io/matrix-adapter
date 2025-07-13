@@ -6,12 +6,12 @@ import {
   ICreateClientOpts,
 } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixRoomAdapter } from '../adapter-room/matrix.room.adapter';
-import { IOperationalMatrixUser } from '../adapter-user/matrix.user.interface';
-import { MatrixAgent } from '../../agent/matrix.agent';
-import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
-import { AlkemioMatrixLogger } from '../../../core/logger/matrix.logger';
 import pkg  from '@nestjs/common';
+import { MatrixRoomAdapter } from '../../adapter-room/matrix.room.adapter';
+import { MatrixMessageAdapter } from '../../adapter-message/matrix.message.adapter';
+import { IOperationalMatrixUser } from '../../adapter-user/matrix.user.interface';
+import { AlkemioMatrixLogger } from '@src/core/logger/matrix.logger';
+import { MatrixAgent } from '../agent/matrix.agent';
 const { Inject, Injectable } = pkg;
 
 @Injectable()

@@ -1,11 +1,10 @@
 import { LogContext } from '@common/enums/index';
 import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception';
-import { MatrixAgentPool } from '@src/domain/matrix/agent-pool/matrix.agent.pool';
+import { MatrixAgentPool } from '@src/domain/agent/agent-pool/matrix.agent.pool';
 import { HistoryVisibility, JoinRule, MatrixClient } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixRoomAdapter } from '@src/domain/matrix/adapter-room/matrix.room.adapter';
-import { MatrixUserAdapter } from '@src/domain/matrix/adapter-user/matrix.user.adapter';
-import { MatrixAgent } from '@src/domain/agent/matrix.agent';
+import { MatrixRoomAdapter } from '@src/domain/adapter-room/matrix.room.adapter';
+import { MatrixUserAdapter } from '@src/domain/adapter-user/matrix.user.adapter';
 import { CommunicationEditMessageInput } from './dto/communication.dto.message.edit';
 import {
   IMessage,
@@ -25,6 +24,7 @@ import { sleep } from 'matrix-js-sdk/lib/utils.js';
 import { MatrixAdminUserElevatedService } from '../../domain/matrix-admin/user-elevated/matrix.admin.user.elevated.service';
 import { MatrixAdminUserService } from '../../domain/matrix-admin/user/matrix.admin.user.service';
 import pkg  from '@nestjs/common';
+import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
 const { Inject, Injectable } = pkg;
 
 @Injectable()

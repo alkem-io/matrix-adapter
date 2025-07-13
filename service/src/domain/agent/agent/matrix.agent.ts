@@ -7,20 +7,20 @@ import {
   roomMembershipLeaveGuardFactory,
   RoomMonitorFactory,
   RoomTimelineMonitorFactory,
-} from '@src/domain/events/matrix.event.adapter.room';
+} from '@src/domain/agent/events/matrix.event.adapter.room';
 import {
   IConditionalMatrixEventHandler,
   IMatrixEventHandler,
   MatrixEventDispatcher,
   InternalEventNames,
-} from '@src/domain/events/matrix.event.dispatcher';
-import { MatrixMessageAdapter } from '../matrix/adapter-message/matrix.message.adapter';
-import { MatrixRoomAdapter } from '../matrix/adapter-room/matrix.room.adapter';
+} from '@src/domain/agent/events/matrix.event.dispatcher';
 import { IMatrixAgent } from './matrix.agent.interface';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { MatrixClient, Room } from 'matrix-js-sdk';
 import { ConfigService } from '@nestjs/config';
 import { SlidingWindowManager } from './matrix.room.sliding.sync.window.manager';
+import { MatrixRoomAdapter } from '@src/domain/adapter-room/matrix.room.adapter';
+import { MatrixMessageAdapter } from '@src/domain/adapter-message/matrix.message.adapter';
 
 export type MatrixAgentStartOptions = {
   registerTimelineMonitor?: boolean;
