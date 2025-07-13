@@ -7,15 +7,25 @@ import {
   MatrixEvent,
   RoomEvent,
   RoomMemberEvent,
+  RoomMember,
+  SyncState,
+  Room,
 } from 'matrix-js-sdk';
 import { first, fromEvent, Observable, Observer, Subscription } from 'rxjs';
 import { MatrixRoom } from '../adapter-room/matrix.room';
 import { MatrixEventHandler } from '../types/matrix.event.handler.type';
+
+export enum InternalEventNames {
+  SyncMonitor = 'syncMonitor',
+  RoomMonitor = 'roomMonitor',
+  RoomTimelineMonitor = 'roomTimelineMonitor',
+  RoomMemberMembershipMonitor = 'roomMemberMembershipMonitor',
+}
 export interface IMatrixEventDispatcher {
   syncMonitor?: Observable<{ syncState: string; oldSyncState: string }>;
   roomMonitor?: Observable<{ room: MatrixRoom }>;
   roomTimelineMonitor?: Observable<RoomTimelineEvent>;
-  roomMemberMembershipMonitor?: Observable<{ event: any; member: any }>;
+  roomMemberMembershipMonitor?: Observable<{ event: MatrixEvent; member: RoomMember }>;
 }
 
 export interface IMatrixEventHandler {
@@ -23,14 +33,14 @@ export interface IMatrixEventHandler {
   syncMonitor?: Observer<{ syncState: string; oldSyncState: string }>;
   roomMonitor?: Observer<{ room: MatrixRoom }>;
   roomTimelineMonitor?: Observer<RoomTimelineEvent>;
-  roomMemberMembershipMonitor?: Observer<{ event: any; member: any }>;
+  roomMemberMembershipMonitor?: Observer<{ event: MatrixEvent; member: RoomMember }>;
 }
 
 export interface IConditionalMatrixEventHandler {
   id: string;
   roomMemberMembershipMonitor?: {
-    observer?: Observer<{ event: any; member: any }>;
-    condition: (value: { event: any; member: any }) => boolean;
+    observer?: Observer<{ event: MatrixEvent; member: RoomMember }>;
+    condition: (value: { event: MatrixEvent; member: RoomMember }) => boolean;
   };
 }
 
@@ -44,14 +54,14 @@ export type RoomTimelineEvent = {
 export class MatrixEventDispatcher
   implements Disposable, IMatrixEventDispatcher
 {
-  private _emmiter = new EventEmitter();
+  private _emitter = new EventEmitter();
   private _disposables: (() => void)[] = [];
   private _subscriptions: Record<string, Subscription[]> = {};
 
   syncMonitor!: Observable<{ syncState: string; oldSyncState: string }>;
   roomMonitor!: Observable<{ room: MatrixRoom }>;
   roomTimelineMonitor!: Observable<RoomTimelineEvent>;
-  roomMemberMembershipMonitor!: Observable<{ event: any; member: any }>;
+  roomMemberMembershipMonitor!: Observable<{ event: MatrixEvent; member: RoomMember }>;
 
   constructor(private _client: MatrixClient) {
     this.init();
@@ -60,20 +70,20 @@ export class MatrixEventDispatcher
   private init() {
     this.initMonitor<{ syncState: string; oldSyncState: string }>(
       ClientEvent.Sync,
-      'syncMonitor',
+      InternalEventNames.SyncMonitor,
       this._syncMonitor
     );
-    this.initMonitor<any>(ClientEvent.Room, 'roomMonitor', this._roomMonitor);
+    this.initMonitor<{ room: MatrixRoom }>(ClientEvent.Room, InternalEventNames.RoomMonitor, this._roomMonitor);
 
     this.initMonitor<RoomTimelineEvent>(
       RoomEvent.Timeline,
-      'roomTimelineMonitor',
+      InternalEventNames.RoomTimelineMonitor,
       this._roomTimelineMonitor
     );
 
-    this.initMonitor<{ event: any; member: any }>(
+    this.initMonitor<{ event: MatrixEvent; member: RoomMember }>(
       RoomMemberEvent.Membership,
-      'roomMemberMembershipMonitor',
+      InternalEventNames.RoomMemberMembershipMonitor,
       this._roomMemberMembershipMonitor
     );
   }
@@ -86,34 +96,41 @@ export class MatrixEventDispatcher
     monitor = monitor.bind(this);
     this._client.on(event, monitor);
 
-    this[handler] = fromEvent<T>(this._emmiter, handler) as any;
+    // Type assertion is necessary here due to dynamic property assignment
+    // The handler key determines which specific Observable type this will be
+    (this as any)[handler] = fromEvent<T>(this._emitter, handler);
     this._disposables.push(() => this._client.off(event, monitor));
   }
 
-  private _syncMonitor(syncState: string, oldSyncState: string) {
-    this._emmiter.emit('syncMonitor', { syncState, oldSyncState });
+  private _syncMonitor(syncState: SyncState, oldSyncState: SyncState | null) {
+    this._emitter.emit(InternalEventNames.SyncMonitor, {
+      syncState: syncState.toString(),
+      oldSyncState: oldSyncState?.toString() || ''
+    });
   }
 
-  private _roomMonitor(event: MatrixEvent) {
-    this._emmiter.emit('roomMonitor', { event });
+  private _roomMonitor(room: Room) {
+    this._emitter.emit(InternalEventNames.RoomMonitor, { room: room as MatrixRoom });
   }
 
   private _roomTimelineMonitor(
     event: MatrixEvent,
-    room: MatrixRoom,
-    toStartOfTimeline: boolean,
+    room: Room | undefined,
+    toStartOfTimeline: boolean | undefined,
     removed: boolean
   ) {
-    this._emmiter.emit('roomTimelineMonitor', {
-      event,
-      room,
-      toStartOfTimeline,
-      removed,
-    });
+    if (room) {
+      this._emitter.emit(InternalEventNames.RoomTimelineMonitor, {
+        event,
+        room: room as MatrixRoom,
+        toStartOfTimeline: toStartOfTimeline || false,
+        removed,
+      });
+    }
   }
 
-  private _roomMemberMembershipMonitor(event: any, member: any) {
-    this._emmiter.emit('roomMemberMembershipMonitor', { event, member });
+  private _roomMemberMembershipMonitor(event: MatrixEvent, member: RoomMember) {
+    this._emitter.emit(InternalEventNames.RoomMemberMembershipMonitor, { event, member });
   }
 
   attach(handler: IMatrixEventHandler) {

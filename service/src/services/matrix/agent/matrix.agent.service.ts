@@ -176,7 +176,7 @@ export class MatrixAgentService {
   ): Promise<string | undefined> {
     // Need to implement caching for performance
     const dmRoomByUserMatrixIDMap =
-      await this.matrixRoomAdapter.getDirectMessageRoomsMap(
+      this.matrixRoomAdapter.getDirectMessageRoomsMap(
         matrixAgent.matrixClient
       );
     const dmUserMatrixIDs = Object.keys(dmRoomByUserMatrixIDMap);

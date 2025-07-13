@@ -1,7 +1,7 @@
 import { AxiosError } from 'axios';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { MatrixClient, createClient } from 'matrix-js-sdk';
+import { ICreateClientOpts, MatrixClient, createClient } from 'matrix-js-sdk';
 import { MatrixCryptographyService } from '@services/matrix/cryptography/matrix.cryptography.service';
 import { ConfigurationTypes } from '@common/enums/configuration.type';
 import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter';
@@ -51,7 +51,7 @@ export class MatrixUserManagementService {
     );
     const alkemioMatrixLogger = new AlkemioMatrixLogger(this.logger);
 
-    const createClientInput: any = {
+    const createClientInput: ICreateClientOpts = {
       baseUrl: this.baseUrl,
       idBaseUrl: this.idBaseUrl,
       timelineSupport: timelineSupport,

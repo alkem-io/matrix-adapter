@@ -19,7 +19,7 @@ export class MatrixMessageAdapter {
   convertFromMatrixMessage(message: MatrixRoomResponseMessage): IMessage {
     const { event, sender, threadRootId } = message;
 
-    // need to use getContent - should be able to resolve the edited value if any
+    // need to use getContent - should be able to resolve the edited value if present
     const content = message.getContent();
 
     // these are used to detect whether a message is a replacement one
@@ -47,7 +47,7 @@ export class MatrixMessageAdapter {
   convertFromMatrixReaction(reaction: MatrixRoomResponseMessage): IReaction {
     const { event, sender } = reaction;
 
-    // need to use getContent - should be able to resolve the edited value if any
+    // need to use getContent - should be able to resolve the edited value if present
     const content = reaction.getContent();
 
     // these are used to detect whether a message is a replacement one
@@ -110,7 +110,7 @@ export class MatrixMessageAdapter {
 
     if (event.type === EventType.RoomMessage && !content.body) {
       this.logger.verbose?.(
-        `[Timeline] Ignoring mesage event with no content body: ${event.type} - id: ${event.event_id}`,
+        `[Timeline] Ignoring message event with no content body: ${event.type} - id: ${event.event_id}`,
         LogContext.COMMUNICATION
       );
       return true;
@@ -118,8 +118,8 @@ export class MatrixMessageAdapter {
 
     if (event.type === EventType.Reaction && !content['m.relates_to']) {
       this.logger.verbose?.(
-        `[Timeline] Ignoring reaction event with no realates_to property: ${event.type} - id: ${event.event_id}`,
-        LogContext.COMMUNICATION
+        `[Timeline] Ignoring reaction event with no relates_to property: ${event.type} - id: ${event.event_id}`,
+        LogContext.COMMUNICATION,
       );
       return true;
     }

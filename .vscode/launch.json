@@ -8,7 +8,7 @@
       "type": "node",
       "request": "launch",
       "name": "Debug Alkemio Notifications",
-      "args": ["${workspaceFolder}/service/src/main.ts"],
+      "args": ["${workspaceFolder}/service/dist/main.js"],
       "runtimeArgs": [
         "--nolazy",
         "-r",

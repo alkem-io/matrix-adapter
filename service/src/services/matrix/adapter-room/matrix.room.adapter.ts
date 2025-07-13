@@ -12,6 +12,7 @@ import {
   ICreateRoomOpts,
   IJoinRoomOpts,
   JoinRule,
+  KnownMembership,
   MatrixClient,
   MatrixEvent,
   Preset,
@@ -99,7 +100,7 @@ export class MatrixRoomAdapter {
       createRoomOptions.is_direct = true;
     }
 
-    // Set the pwer levels for the room. Example content of this event below.
+    // Set the power levels for the room. Example content of this event below.
     // [m.room.power_levels] - [$ltIxj3IMlH1Plkm-1dOmahrrO3brsPNAvLiUM43liWI] - content: {
     //   "users":{"@matrixadmin4=alkem.io:alkemio.matrix.host":100},"users_default":0,"events":
     //   {"m.room.name":50,"m.room.power_levels":100,"m.room.history_visibility":100,"m.room.canonical_alias":50,
@@ -250,10 +251,10 @@ export class MatrixRoomAdapter {
         LogContext.MATRIX
       );
     }
-    if (room.hasMembershipState(userId, 'join')) {
+    if (room.hasMembershipState(userId, KnownMembership.Join)) {
       return;
     }
-    if (room.hasMembershipState(userId, 'invite')) {
+    if (room.hasMembershipState(userId, KnownMembership.Invite)) {
       await matrixClient.joinRoom(room.roomId);
       return;
     }
@@ -472,7 +473,7 @@ export class MatrixRoomAdapter {
       // skip the elevated admin
       if (roomMember.userId === adminMatrixClient.getUserId()) continue;
 
-      if (roomMember.membership === 'join') {
+      if (roomMember.membership === KnownMembership.Join) {
         usersIDs.push(roomMember.userId);
       }
     }
