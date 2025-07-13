@@ -12,7 +12,7 @@ import {
   Room,
 } from 'matrix-js-sdk';
 import { first, fromEvent, Observable, Observer, Subscription } from 'rxjs';
-import { MatrixRoom } from '../../adapter-room/type/matrix.room';
+import { MatrixRoom } from '../../room/matrix.room';
 import { MatrixEventHandler } from './types/matrix.event.handler.type';
 
 export enum InternalEventNames {

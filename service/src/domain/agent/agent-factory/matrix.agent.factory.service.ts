@@ -9,9 +9,9 @@ import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import pkg  from '@nestjs/common';
 import { MatrixRoomAdapter } from '../../adapter-room/matrix.room.adapter';
 import { MatrixMessageAdapter } from '../../adapter-message/matrix.message.adapter';
-import { IOperationalMatrixUser } from '../../adapter-user/matrix.user.interface';
 import { AlkemioMatrixLogger } from '@src/core/logger/matrix.logger';
 import { MatrixAgent } from '../agent/matrix.agent';
+import { IMatrixUser } from '@src/domain/user/matrix.user.interface';
 const { Inject, Injectable } = pkg;
 
 @Injectable()
@@ -25,7 +25,7 @@ export class MatrixAgentFactoryService {
   ) {}
 
   async createMatrixAgent(
-    operator: IOperationalMatrixUser
+    operator: IMatrixUser
   ): Promise<MatrixAgent> {
     const matrixClient = await this.createMatrixClient(operator);
 
@@ -39,7 +39,7 @@ export class MatrixAgentFactoryService {
   }
 
   private async createMatrixClient(
-    operator: IOperationalMatrixUser
+    operator: IMatrixUser
   ): Promise<MatrixClient> {
     const idBaseUrl = this.configService.get(ConfigurationTypes.MATRIX)?.server
       ?.url;

@@ -23,7 +23,7 @@ import {
 } from 'matrix-js-sdk';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
-import { MatrixRoom } from './type/matrix.room';
+import { MatrixRoom } from '../room/matrix.room';
 import { MatrixRoomResponseMessage } from './dto/matrix.room.dto.response.message';
 import {
   ReactionEventContent,
@@ -31,7 +31,7 @@ import {
   RoomJoinRulesEventContent,
   RoomMessageEventContent,
 } from 'matrix-js-sdk/lib/types';
-import { IRoomOpts } from './type/matrix.room.options';
+import { IRoomOpts } from '../room/matrix.room.options';
 import { MatrixRoomMessageRequest } from './dto/matrix.room.dto.message.request';
 import { MatrixRoomMessageReaction } from './dto/matrix.room.dto.message.reaction';
 import { MatrixRoomMessageReply } from './dto/matrix.room.dto.message.reply';

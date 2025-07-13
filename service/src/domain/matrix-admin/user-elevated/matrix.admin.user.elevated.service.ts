@@ -4,14 +4,14 @@ const { Inject, Injectable } = pkg;
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixUserAdapter } from '@src/domain/adapter-user/matrix.user.adapter';
-import { IOperationalMatrixUser } from '@src/domain/adapter-user/matrix.user.interface';
 import { MatrixAdminUserService } from '../user/matrix.admin.user.service';
 import { MatrixAgentFactoryService } from '@src/domain/agent/agent-factory/matrix.agent.factory.service';
 import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
+import { IMatrixUser } from '@src/domain/user/matrix.user.interface';
 
 @Injectable()
 export class MatrixAdminUserElevatedService {
-  private adminUser!: IOperationalMatrixUser;
+  private adminUser!: IMatrixUser;
   private matrixElevatedAgent!: MatrixAgent; // elevated as created with an admin account
   private adminEmail!: string;
   public adminCommunicationsID!: string;
@@ -79,7 +79,7 @@ export class MatrixAdminUserElevatedService {
     return this.matrixElevatedAgent;
   }
 
-  private async registerNewAdminUser(): Promise<IOperationalMatrixUser> {
+  private async registerNewAdminUser(): Promise<IMatrixUser> {
     return await this.matrixUserManagementService.register(
       this.adminCommunicationsID,
       this.adminPassword,

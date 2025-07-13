@@ -2,7 +2,7 @@ import { ConfigurationTypes } from '@common/enums/configuration.type';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
-import { IMatrixUser } from '../../domain/adapter-user/matrix.user.interface';
+import { IMatrixUser } from '../../domain/user/matrix.user.interface';
 @Injectable()
 export class MatrixCryptographyService {
   constructor(private configService: ConfigService) {}

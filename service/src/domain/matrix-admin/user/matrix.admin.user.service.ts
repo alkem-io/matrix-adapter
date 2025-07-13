@@ -10,10 +10,10 @@ import { MatrixUserRegistrationException } from '@common/exceptions/matrix.regis
 import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint';
 import { URL } from 'url';
 import { LogContext } from '@src/common/enums/logging.context';
-import pkg from '@nestjs/common';
 import { MatrixUserAdapter } from '@src/domain/adapter-user/matrix.user.adapter';
 import { AlkemioMatrixLogger } from '@src/core/logger/matrix.logger';
-import { IOperationalMatrixUser } from '@src/domain/adapter-user/matrix.user.interface';
+import pkg from '@nestjs/common';
+import { IMatrixUser } from '@src/domain/user/matrix.user.interface';
 const { Inject, Injectable } = pkg;
 
 @Injectable()
@@ -75,7 +75,7 @@ export class MatrixAdminUserService {
     matrixUserID: string,
     password?: string,
     isAdmin = false
-  ): Promise<IOperationalMatrixUser> {
+  ): Promise<IMatrixUser> {
     const url = new URL(SynapseEndpoint.REGISTRATION, this.baseUrl);
     const user = this.matrixUserAdapter.convertMatrixIDToMatrixUser(
       matrixUserID,
@@ -155,7 +155,7 @@ export class MatrixAdminUserService {
   async login(
     matrixUserID: string,
     password?: string
-  ): Promise<IOperationalMatrixUser> {
+  ): Promise<IMatrixUser> {
     const matrixUser = this.matrixUserAdapter.convertMatrixIDToMatrixUser(
       matrixUserID,
       password

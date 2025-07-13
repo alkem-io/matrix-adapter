@@ -1,7 +1,7 @@
 import { ConfigurationTypes, LogContext } from '@common/enums/index';
 import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { IMatrixUser } from './matrix.user.interface';
+import { IMatrixUser } from '../user/matrix.user.interface';
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 
@@ -23,6 +23,7 @@ export class MatrixUserAdapter {
       name: this.convertMatrixIDToUsername(matrixUserID),
       username: matrixUserID,
       password: password,
+      accessToken: '', // Placeholder, will be set after login
     };
   }
 
