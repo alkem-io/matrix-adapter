@@ -8,7 +8,6 @@ import {
   Direction,
   EventType,
   HistoryVisibility,
-  IContent,
   ICreateRoomOpts,
   IJoinRoomOpts,
   JoinRule,
@@ -80,28 +79,17 @@ export class MatrixRoomAdapter {
     );
   }
 
-  async storeDirectMessageRoom(
-    agent: MatrixAgent,
-    roomId: string,
-    userId: string
-  ) {
-    // NOT OPTIMIZED - needs caching
-    const dmRooms = this.getDirectMessageRoomsMap(agent);
 
-    dmRooms[userId] = [roomId];
-    await agent.matrixClient.setAccountData(EventType.Direct, dmRooms);
-  }
-
-  async getDirectRooms(agent: MatrixAgent): Promise<MatrixRoom[]> {
+  getDirectRooms(agent: MatrixAgent): MatrixRoom[] {
     const rooms: MatrixRoom[] = [];
 
     // Direct rooms
-    const dmRoomMap = this.getDirectMessageRoomsMap(agent);
+    const dmRoomMap = agent.getDirectMessageRoomsMap();
 
     // UPDATED TO USE ASYNC ROOM ACCESS
     for (const matrixUsername of Object.keys(dmRoomMap)) {
       const roomId = dmRoomMap[matrixUsername][0];
-      const room = await agent.getRoomOrFail(roomId); // NOW ASYNC
+      const room = agent.getRoomOrFail(roomId); // NOW ASYNC
 
       room.receiverCommunicationsID =
         this.matrixUserAdapter.convertMatrixUsernameToMatrixID(matrixUsername);
@@ -112,26 +100,26 @@ export class MatrixRoomAdapter {
   }
 
   async initiateMessagingToUser(
-    matrixAgent: MatrixAgent,
+    agent: MatrixAgent,
     messageRequest: MatrixRoomMessageRequestDirect
   ): Promise<string> {
-    const directRoom = await this.getDirectRoomForMatrixID(
-      matrixAgent,
+    const directRoom = this.getDirectRoomForMatrixID(
+      agent,
       messageRequest.matrixID
     );
     if (directRoom) return directRoom.roomId;
 
     // Room does not exist, create...
     const targetRoomId = await this.createRoom(
-      matrixAgent,
+      agent,
       {},
       {
         dmUserId: messageRequest.matrixID,
       }
     );
 
-    await this.storeDirectMessageRoom(
-      matrixAgent,
+    await agent.storeDirectMessageRoom(
+      agent,
       targetRoomId,
       messageRequest.matrixID
     );
@@ -146,12 +134,11 @@ export class MatrixRoomAdapter {
     we aim to always resolve the
   */
   getDirectUserMatrixIDForRoomID(
-    matrixAgent: MatrixAgent,
+    agent: MatrixAgent,
     matrixRoomId: string
   ): string | undefined {
     // Need to implement caching for performance
-    const dmRoomByUserMatrixIDMap = this.getDirectMessageRoomsMap(
-      matrixAgent
+    const dmRoomByUserMatrixIDMap = agent.getDirectMessageRoomsMap(
     );
     const dmUserMatrixIDs = Object.keys(dmRoomByUserMatrixIDMap);
     const dmRoom = dmUserMatrixIDs.find(
@@ -160,14 +147,14 @@ export class MatrixRoomAdapter {
     return dmRoom;
   }
 
-  async getDirectRoomForMatrixID(
-    matrixAgent: MatrixAgent,
+   getDirectRoomForMatrixID(
+    agent: MatrixAgent,
     matrixUserId: string
-  ): Promise<MatrixRoom | undefined> {
+  ): MatrixRoom | undefined {
     const matrixUsername =
       this.matrixUserAdapter.convertMatrixIDToUsername(matrixUserId);
     // Need to implement caching for performance
-    const dmRoomIds = this.getDirectMessageRoomsMap(matrixAgent)[
+    const dmRoomIds = agent.getDirectMessageRoomsMap()[
       matrixUsername
     ];
 
@@ -177,7 +164,7 @@ export class MatrixRoomAdapter {
 
     // Have a result
     const targetRoomId = dmRoomIds[0];
-    return await matrixAgent.getRoomOrFail(targetRoomId);
+    return agent.getRoomOrFail(targetRoomId);
   }
 
   async sendMessage(
@@ -290,28 +277,6 @@ export class MatrixRoomAdapter {
     messageId: string
   ) {
     await matrixAgent.matrixClient.redactEvent(roomId, messageId);
-  }
-
-  // there could be more than one dm room per user
-  getDirectMessageRoomsMap(
-    agent: MatrixAgent
-  ): Record<string, string[]> {
-    const mDirectEvent = agent.matrixClient.getAccountData(EventType.Direct);
-    // todo: tidy up this logic
-    const eventContent = mDirectEvent
-      ? mDirectEvent.getContent<IContent>()
-      : {};
-
-    const userId = agent.getUserId();
-
-    // there is a bug in the sdk
-    const selfDMs = eventContent[userId];
-    if (selfDMs && selfDMs.length) {
-      // it seems that two users can have multiple DM rooms between them and only one needs to be active
-      // they have fixed the issue inside the react-sdk instead of the js-sdk...
-    }
-
-    return eventContent;
   }
 
   async createRoom(
@@ -429,37 +394,38 @@ export class MatrixRoomAdapter {
     );
   }
 
-  public async getJoinRule(
+  public  getJoinRule(
     agent: MatrixAgent,
     roomID: string
-  ): Promise<string> {
-    const room = await agent.getRoomOrFail(roomID);
+  ): string {
+    const room = agent.getRoomOrFail(roomID);
     const roomState = room.currentState;
     return roomState.getJoinRule();
   }
 
-  public async getHistoryVisibility(
+  public getHistoryVisibility(
     agent: MatrixAgent,
     roomID: string
-  ): Promise<HistoryVisibility> {
-    const room = await agent.getRoomOrFail(roomID);
+  ): HistoryVisibility {
+    const room = agent.getRoomOrFail(roomID);
     const roomState = room.currentState;
     return roomState.getHistoryVisibility();
   }
 
-  async logRoomMembership(agent: MatrixAgent, roomID: string) {
-    const members = await this.getMatrixRoomMembers(agent, roomID);
+  public logRoomMembership(agent: MatrixAgent, roomID: string) {
+    const members = this.getMatrixRoomMembers(agent, roomID);
     this.logger.verbose?.(
       `[Membership] Members for room (${roomID}): ${members}`,
       LogContext.COMMUNICATION
     );
   }
+
   async inviteUserToRoom(
     agentElevated: MatrixAgent,
     roomID: string,
     agentUser: MatrixAgent
   ) {
-    const room = await agentElevated.getRoomOrFail(roomID);
+    const room = agentElevated.getRoomOrFail(roomID);
 
     // not very well documented but we can validate whether the user has membership like this
     // seen in https://github.com/matrix-org/matrix-js-sdk/blob/3c36be9839091bf63a4850f4babed0c976d48c0e/src/models/room-member.ts#L29
@@ -660,15 +626,15 @@ export class MatrixRoomAdapter {
     return reactions;
   }
 
-  async getMatrixRoomMembers(
+  getMatrixRoomMembers(
     agent: MatrixAgent,
     matrixRoomID: string
-  ): Promise<string[]> {
+  ): string[] {
     this.logger.verbose?.(
       `[MatrixRoom] Obtaining members on room: ${matrixRoomID}`,
       LogContext.COMMUNICATION
     );
-    const room = await agent.getRoomOrFail(matrixRoomID);
+    const room = agent.getRoomOrFail(matrixRoomID);
     const roomMembers = room.getMembers();
     const usersIDs: string[] = [];
     for (const roomMember of roomMembers) {

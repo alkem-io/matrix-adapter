@@ -4,8 +4,6 @@ import { CommunicationEventMessageReceived } from '@src/services/communication-a
 import { MatrixRoomInvitationReceived } from '@src/services/communication-adapter/dto/communication.dto.room.invitation.received';
 import { KnownMembership,MatrixEvent, RoomMember } from 'matrix-js-sdk';
 
-import { MatrixMessageAdapter } from '../../adapter-message/matrix.message.adapter';
-import { MatrixRoomAdapter } from '../../adapter-room/matrix.room.adapter';
 import { MatrixRoom } from '../../room/matrix.room';
 import { MatrixAgent } from '../agent/matrix.agent';
 import { IMatrixEventHandler } from './matrix.event.handler.interface';
@@ -76,7 +74,6 @@ export const autoAcceptRoomGuardFactory = (
 export class AutoAcceptSpecificRoomMembershipMonitorFactory {
   static create(
     agent: MatrixAgent,
-    roomAdapter: MatrixRoomAdapter,
     logger: LoggerService,
     targetRoomId: string,
     onRoomJoined: () => void,
@@ -123,7 +120,7 @@ export class AutoAcceptSpecificRoomMembershipMonitorFactory {
           );
           await agent.matrixClient.joinRoom(roomId);
           if (content.is_direct) {
-            await roomAdapter.storeDirectMessageRoom(agent, roomId, senderId);
+            await agent.storeDirectMessageRoom(agent, roomId, senderId);
           }
           logger.verbose?.(
             `[Membership] accepted invitation for user (${member.userId}) to room: ${roomId}`,
@@ -139,7 +136,6 @@ export class AutoAcceptSpecificRoomMembershipMonitorFactory {
 export class RoomTimelineMonitorFactory {
   static create(
     agent: MatrixAgent,
-    messageAdapter: MatrixMessageAdapter,
     logger: LoggerService,
     onMessageReceived: (event: CommunicationEventMessageReceived) => void
   ): IMatrixEventHandler[MatrixEventsInternalNames.RoomTimelineMonitor] {
@@ -155,7 +151,7 @@ export class RoomTimelineMonitorFactory {
           }`,
           LogContext.COMMUNICATION
         );
-        const ignoreMessage = messageAdapter.isEventToIgnore(event);
+        const ignoreMessage = agent.isEventToIgnore(event);
 
         // TODO Notifications - Allow the client to see the event and then mark it as read
         // With the current behavior the message will automatically be marked as read
@@ -163,7 +159,7 @@ export class RoomTimelineMonitorFactory {
         await agent.matrixClient.sendReadReceipt(event);
 
         if (!ignoreMessage) {
-          const message = messageAdapter.convertFromMatrixMessage(event);
+          const message = agent.convertFromMatrixMessage(event);
           logger.verbose?.(
             `Triggering messageReceived event for msg body: ${
               event.getContent().body

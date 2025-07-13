@@ -1,3 +1,4 @@
+import { IMessage } from '@alkemio/matrix-adapter-lib';
 import { LogContext } from '@common/enums/logging.context';
 import pkg from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -5,7 +6,7 @@ import { ConfigurationTypes } from '@src/common/enums/configuration.type';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { MatrixMessageAdapter } from '@src/domain/adapter-message/matrix.message.adapter';
-import { MatrixRoomAdapter } from '@src/domain/adapter-room/matrix.room.adapter';
+import { MatrixRoomResponseMessage } from '@src/domain/adapter-room/dto/matrix.room.dto.response.message';
 import {
   autoAcceptRoomGuardFactory,
   AutoAcceptSpecificRoomMembershipMonitorFactory,
@@ -14,11 +15,11 @@ import {
   RoomMonitorFactory,
   RoomTimelineMonitorFactory,
 } from '@src/domain/agent/events/matrix.event.adapter.room';
-import {
-  MatrixEventDispatcher,
-} from '@src/domain/agent/events/matrix.event.dispatcher';
+import { MatrixEventDispatcher } from '@src/domain/agent/events/matrix.event.dispatcher';
 import { MatrixRoom } from '@src/domain/room/matrix.room';
 import {
+  EventType,
+  IContent,
   ISendEventResponse,
   IStartClientOpts,
   MatrixClient,
@@ -35,7 +36,6 @@ import { MatrixAgentStartOptions } from './type/matrix.agent.start.options';
 export class MatrixAgent implements Disposable {
   matrixClient: MatrixClient;
   eventDispatcher: MatrixEventDispatcher;
-  roomAdapter: MatrixRoomAdapter;
   messageAdapter: MatrixMessageAdapter;
   configService: ConfigService;
 
@@ -44,16 +44,14 @@ export class MatrixAgent implements Disposable {
 
   constructor(
     matrixClient: MatrixClient,
-    roomAdapter: MatrixRoomAdapter,
-    messageAdapter: MatrixMessageAdapter,
     configService: ConfigService,
+    messageAdapter: MatrixMessageAdapter,
     private logger: pkg.LoggerService
   ) {
     this.matrixClient = matrixClient;
     this.eventDispatcher = new MatrixEventDispatcher(this);
-    this.roomAdapter = roomAdapter;
-    this.messageAdapter = messageAdapter;
     this.configService = configService;
+    this.messageAdapter = messageAdapter;
   }
 
   attach(handler: IMatrixEventHandler) {
@@ -169,7 +167,6 @@ export class MatrixAgent implements Disposable {
   ) {
     return AutoAcceptSpecificRoomMembershipMonitorFactory.create(
       this,
-      this.roomAdapter,
       this.logger,
       roomId,
       onRoomJoined,
@@ -230,7 +227,6 @@ export class MatrixAgent implements Disposable {
   resolveRoomTimelineEventHandler() {
     return RoomTimelineMonitorFactory.create(
       this,
-      this.messageAdapter,
       this.logger,
       messageReceivedEvent => {
         this.logger.verbose?.(
@@ -288,6 +284,14 @@ export class MatrixAgent implements Disposable {
   //   }
   // }
 
+  isEventToIgnore(message: MatrixRoomResponseMessage): boolean {
+    return this.messageAdapter.isEventToIgnore(message);
+  }
+
+  convertFromMatrixMessage(message: MatrixRoomResponseMessage): IMessage {
+    return this.messageAdapter.convertFromMatrixMessage(message);
+  }
+
   public getUserId(): string {
     const userID = this.matrixClient.getUserId();
     if (!userID) {
@@ -304,14 +308,42 @@ export class MatrixAgent implements Disposable {
     type: keyof TimelineEvents,
     content: RoomMessageEventContent
   ): Promise<ISendEventResponse> {
-    return await this.matrixClient.sendEvent(
-      roomId,
-      type,
-      content
-    );
+    return await this.matrixClient.sendEvent(roomId, type, content);
   }
 
-  public  getRoomOrFail(roomId: string): MatrixRoom {
+  // there could be more than one dm room per user
+  getDirectMessageRoomsMap(): Record<string, string[]> {
+    const mDirectEvent = this.matrixClient.getAccountData(EventType.Direct);
+    // todo: tidy up this logic
+    const eventContent = mDirectEvent
+      ? mDirectEvent.getContent<IContent>()
+      : {};
+
+    const userId = this.getUserId();
+
+    // there is a bug in the sdk
+    const selfDMs = eventContent[userId];
+    if (selfDMs && selfDMs.length) {
+      // it seems that two users can have multiple DM rooms between them and only one needs to be active
+      // they have fixed the issue inside the react-sdk instead of the js-sdk...
+    }
+
+    return eventContent;
+  }
+
+  async storeDirectMessageRoom(
+    agent: MatrixAgent,
+    roomId: string,
+    userId: string
+  ) {
+    // NOT OPTIMIZED - needs caching
+    const dmRooms = this.getDirectMessageRoomsMap();
+
+    dmRooms[userId] = [roomId];
+    await agent.matrixClient.setAccountData(EventType.Direct, dmRooms);
+  }
+
+  public getRoomOrFail(roomId: string): MatrixRoom {
     // SLIDING SYNC APPROACH
     // const matrixRoom = await this.getRoomAsync(roomId);
     const matrixRoom = this.matrixClient.getRoom(roomId);

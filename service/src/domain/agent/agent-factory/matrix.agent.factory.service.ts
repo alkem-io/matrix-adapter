@@ -11,7 +11,6 @@ import {
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 
 import { MatrixMessageAdapter } from '../../adapter-message/matrix.message.adapter';
-import { MatrixRoomAdapter } from '../../adapter-room/matrix.room.adapter';
 import { MatrixAgent } from '../agent/matrix.agent';
 const { Inject, Injectable } = pkg;
 
@@ -19,7 +18,6 @@ const { Inject, Injectable } = pkg;
 export class MatrixAgentFactoryService {
   constructor(
     private configService: ConfigService,
-    private matrixRoomAdapter: MatrixRoomAdapter,
     private matrixMessageAdapter: MatrixMessageAdapter,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: pkg.LoggerService
@@ -32,9 +30,8 @@ export class MatrixAgentFactoryService {
 
     return new MatrixAgent(
       matrixClient,
-      this.matrixRoomAdapter,
-      this.matrixMessageAdapter,
       this.configService,
+      this.matrixMessageAdapter,
       this.logger
     );
   }
