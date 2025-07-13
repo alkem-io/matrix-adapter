@@ -116,9 +116,8 @@ export class MatrixAdminRoomsService {
     if (elevatedAgentUserId !== adminUser.username) {
       agentElevated = await this.createMatrixClientForAdmin(adminUser);
     }
-    const matrixClient = agentElevated.matrixClient;
     const adminUserID = agentElevated.getUserId();
-    const rooms = matrixClient.getRooms();
+    const rooms = agentElevated.matrixClient.getRooms();
     let roomsUpdated = 0;
     try {
       for (const room of rooms) {
@@ -150,7 +149,7 @@ export class MatrixAdminRoomsService {
             redact: newPowerLevelRedact,
           };
 
-          await matrixClient.sendStateEvent(
+          await agentElevated.matrixClient.sendStateEvent(
             roomID,
             EventType.RoomPowerLevels,
             updatedPowerLevelsInput

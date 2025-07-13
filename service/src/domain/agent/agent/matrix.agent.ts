@@ -9,13 +9,16 @@ import {
   RoomTimelineMonitorFactory,
 } from '@src/domain/agent/events/matrix.event.adapter.room';
 import {
-  IConditionalMatrixEventHandler,
-  IMatrixEventHandler,
   MatrixEventDispatcher,
-  InternalEventNames,
 } from '@src/domain/agent/events/matrix.event.dispatcher';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
-import { MatrixClient, Room } from 'matrix-js-sdk';
+import {
+  EventType,
+  ISendEventResponse,
+  MatrixClient,
+  Room,
+  TimelineEvents,
+} from 'matrix-js-sdk';
 import { ConfigService } from '@nestjs/config';
 import { SlidingWindowManager } from '../sliding-sync/matrix.room.sliding.sync.window.manager';
 import { MatrixRoomAdapter } from '@src/domain/adapter-room/matrix.room.adapter';
@@ -23,6 +26,10 @@ import { MatrixMessageAdapter } from '@src/domain/adapter-message/matrix.message
 import { MatrixAgentStartOptions } from './type/matrix.agent.start.options';
 import { MatrixRoom } from '@src/domain/room/matrix.room';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
+import { RoomMessageEventContent } from 'matrix-js-sdk/lib/types';
+import { IMatrixEventHandler } from '../events/matrix.event.handler.interface';
+import { IConditionalMatrixEventHandler } from '../events/matrix.event.conditional.handler.interface';
+import { MatrixEventsInternalNames } from '../events/types/matrix.event.internal.names';
 
 // Wraps an instance of the client sdk
 export class MatrixAgent implements Disposable {
@@ -78,12 +85,12 @@ export class MatrixAgent implements Disposable {
     };
 
     if (registerTimelineMonitor) {
-      eventHandler[InternalEventNames.RoomTimelineMonitor] =
+      eventHandler[MatrixEventsInternalNames.RoomTimelineMonitor] =
         this.resolveRoomTimelineEventHandler();
     }
 
     if (registerRoomMonitor) {
-      eventHandler[InternalEventNames.RoomMonitor] =
+      eventHandler[MatrixEventsInternalNames.RoomMonitor] =
         this.resolveRoomEventHandler();
     }
 
@@ -226,6 +233,18 @@ export class MatrixAgent implements Disposable {
       );
     }
     return userID;
+  }
+
+  public async sendEvent(
+    roomId: string,
+    type: keyof TimelineEvents,
+    content: RoomMessageEventContent
+  ): Promise<ISendEventResponse> {
+    return await this.matrixClient.sendEvent(
+      roomId,
+      type,
+      content
+    );
   }
 
   public async getRoomOrFail(roomId: string): Promise<MatrixRoom> {

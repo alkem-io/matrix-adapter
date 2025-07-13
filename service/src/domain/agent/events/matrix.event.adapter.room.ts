@@ -1,18 +1,15 @@
 import { LogContext } from '@common/enums/logging.context';
 import { LoggerService } from '@nestjs/common';
-import {
-  IMatrixEventHandler,
-  InternalEventNames,
-  RoomTimelineEvent,
-} from '@src/domain/agent/events/matrix.event.dispatcher';
 import { CommunicationEventMessageReceived } from '@src/services/communication-adapter/dto/communication.dto.event.message.received';
 import { MatrixRoomInvitationReceived } from '@src/services/communication-adapter/dto/communication.dto.room.invitation.received';
 import { MatrixMessageAdapter } from '../../adapter-message/matrix.message.adapter';
 import { MatrixRoom } from '../../room/matrix.room';
 import { MatrixRoomAdapter } from '../../adapter-room/matrix.room.adapter';
-import { MatrixClient, MatrixEvent, RoomMember, KnownMembership } from 'matrix-js-sdk';
-import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
+import { MatrixEvent, RoomMember, KnownMembership } from 'matrix-js-sdk';
 import { MatrixAgent } from '../agent/matrix.agent';
+import { MatrixEventsInternalNames } from './types/matrix.event.internal.names';
+import { IMatrixEventHandler } from './matrix.event.handler.interface';
+import { RoomTimelineEvent } from './types/room.timeline.event';
 
 const noop = function () {
   // empty
@@ -40,7 +37,7 @@ export class ForgetRoomMembershipMonitorFactory {
     onRoomLeft: () => void,
     onComplete = noop,
     error: (err: Error) => void = noop
-  ): IMatrixEventHandler[InternalEventNames.RoomMemberMembershipMonitor] {
+  ): IMatrixEventHandler[MatrixEventsInternalNames.RoomMemberMembershipMonitor] {
     return {
       complete: onComplete,
       error: error,
@@ -84,7 +81,7 @@ export class AutoAcceptSpecificRoomMembershipMonitorFactory {
     onRoomJoined: () => void,
     onComplete = noop,
     error: (err: Error) => void = noop
-  ): IMatrixEventHandler[InternalEventNames.RoomMemberMembershipMonitor] {
+  ): IMatrixEventHandler[MatrixEventsInternalNames.RoomMemberMembershipMonitor] {
     return {
       complete: onComplete,
       error: error,
@@ -144,7 +141,7 @@ export class RoomTimelineMonitorFactory {
     messageAdapter: MatrixMessageAdapter,
     logger: LoggerService,
     onMessageReceived: (event: CommunicationEventMessageReceived) => void
-  ): IMatrixEventHandler[InternalEventNames.RoomTimelineMonitor] {
+  ): IMatrixEventHandler[MatrixEventsInternalNames.RoomTimelineMonitor] {
     return {
       complete: noop,
       error: noop,
@@ -191,7 +188,7 @@ export class RoomTimelineMonitorFactory {
 export class RoomMonitorFactory {
   static create(
     onMessageReceived: (event: MatrixRoomInvitationReceived) => void
-  ): IMatrixEventHandler[InternalEventNames.RoomMonitor] {
+  ): IMatrixEventHandler[MatrixEventsInternalNames.RoomMonitor] {
     return {
       complete: noop,
       error: noop,

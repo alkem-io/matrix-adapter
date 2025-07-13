@@ -189,7 +189,7 @@ export class MatrixRoomAdapter {
       body: messageRequest.text,
       msgtype: MsgType.Text,
     };
-    const response = await matrixAgent.matrixClient.sendEvent(
+    const response = await matrixAgent.sendEvent(
       roomId,
       EventType.RoomMessage,
       content
@@ -217,7 +217,7 @@ export class MatrixRoomAdapter {
       },
     };
 
-    const response = await matrixAgent.matrixClient.sendEvent(
+    const response = await matrixAgent.sendEvent(
       roomId,
       EventType.RoomMessage,
       content
@@ -227,7 +227,7 @@ export class MatrixRoomAdapter {
   }
 
   async addReactionOnMessage(
-    matrixAgent: MatrixAgent,
+    agent: MatrixAgent,
     roomId: string,
     messageReaction: MatrixRoomMessageReaction
   ): Promise<string> {
@@ -236,10 +236,11 @@ export class MatrixRoomAdapter {
         rel_type: RelationType.Annotation,
         event_id: messageReaction.messageID,
         key: messageReaction.emoji,
+
       },
     };
 
-    const response = await matrixAgent.matrixClient.sendEvent(
+    const response = await agent.matrixClient.sendEvent(
       roomId,
       EventType.Reaction,
       content
@@ -463,12 +464,7 @@ export class MatrixRoomAdapter {
     // not very well documented but we can validate whether the user has membership like this
     // seen in https://github.com/matrix-org/matrix-js-sdk/blob/3c36be9839091bf63a4850f4babed0c976d48c0e/src/models/room-member.ts#L29
     const userId = agentUser.getUserId();
-    if (!userId) {
-      throw new MatrixEntityNotFoundException(
-        `Unable to locate userId for client: ${agentUser}`,
-        LogContext.MATRIX
-      );
-    }
+
     if (room.hasMembershipState(userId, KnownMembership.Join)) {
       return;
     }
@@ -490,12 +486,6 @@ export class MatrixRoomAdapter {
     agentUser: MatrixAgent
   ) {
     const matrixUserID = agentUser.getUserId();
-    if (!matrixUserID) {
-      throw new MatrixEntityNotFoundException(
-        `Unable to locate userId for client: ${agentUser.matrixClient}`,
-        LogContext.MATRIX
-      );
-    }
     try {
       this.logger.verbose?.(
         `[Membership] User (${matrixUserID}) being removed from room: ${roomID}`,
