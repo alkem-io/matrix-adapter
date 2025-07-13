@@ -1,5 +1,5 @@
-import { Observer } from 'rxjs';
 import { MatrixEvent, RoomMember } from 'matrix-js-sdk';
+import { Observer } from 'rxjs';
 
 export interface IConditionalMatrixEventHandler {
   id: string;

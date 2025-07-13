@@ -1,4 +1,4 @@
-import { LogContext, AlkemioErrorStatus } from '../enums/index';
+import { AlkemioErrorStatus,LogContext } from '../enums/index';
 import { BaseException } from './base.exception';
 
 export class NotSupportedException extends BaseException {

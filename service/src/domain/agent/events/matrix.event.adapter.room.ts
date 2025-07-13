@@ -2,13 +2,14 @@ import { LogContext } from '@common/enums/logging.context';
 import { LoggerService } from '@nestjs/common';
 import { CommunicationEventMessageReceived } from '@src/services/communication-adapter/dto/communication.dto.event.message.received';
 import { MatrixRoomInvitationReceived } from '@src/services/communication-adapter/dto/communication.dto.room.invitation.received';
+import { KnownMembership,MatrixEvent, RoomMember } from 'matrix-js-sdk';
+
 import { MatrixMessageAdapter } from '../../adapter-message/matrix.message.adapter';
-import { MatrixRoom } from '../../room/matrix.room';
 import { MatrixRoomAdapter } from '../../adapter-room/matrix.room.adapter';
-import { MatrixEvent, RoomMember, KnownMembership } from 'matrix-js-sdk';
+import { MatrixRoom } from '../../room/matrix.room';
 import { MatrixAgent } from '../agent/matrix.agent';
-import { MatrixEventsInternalNames } from './types/matrix.event.internal.names';
 import { IMatrixEventHandler } from './matrix.event.handler.interface';
+import { MatrixEventsInternalNames } from './types/matrix.event.internal.names';
 import { RoomTimelineEvent } from './types/room.timeline.event';
 
 const noop = function () {
@@ -192,6 +193,7 @@ export class RoomMonitorFactory {
     return {
       complete: noop,
       error: noop,
+      // eslint-disable-next-line @typescript-eslint/require-await
       next: async ({ room }: { room: MatrixRoom }) => {
         onMessageReceived({
           roomId: room?.roomId,

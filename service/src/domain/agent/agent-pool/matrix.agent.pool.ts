@@ -3,14 +3,15 @@ import { MatrixAgentPoolException } from '@common/exceptions/matrix.agent.pool.e
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 import { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixAgentFactoryService } from '../agent-factory/matrix.agent.factory.service';
 import { ConfigService } from '@nestjs/config';
-import { Disposable } from '@src/common/interfaces/disposable.interface';
-import { NotSupportedException } from '@src/common/exceptions/not.supported.exception';
 import { LogContext } from '@src/common/enums/logging.context';
+import { NotSupportedException } from '@src/common/exceptions/not.supported.exception';
+import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { MatrixAdminUserService } from '@src/domain/matrix-admin/user/matrix.admin.user.service';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+
 import { MatrixAgent } from '../agent/matrix.agent';
+import { MatrixAgentFactoryService } from '../agent-factory/matrix.agent.factory.service';
 
 @Injectable()
 export class MatrixAgentPool
@@ -106,7 +107,7 @@ export class MatrixAgentPool
 
       const operatingUser = await this.adminUserService.acquireMatrixUser(matrixUserID);
       const client =
-        await this.agentFactoryService.createMatrixAgent(operatingUser);
+        this.agentFactoryService.createMatrixAgent(operatingUser);
 
       if (autoStart) {
         await client.start();

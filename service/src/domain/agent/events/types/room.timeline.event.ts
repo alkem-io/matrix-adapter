@@ -1,4 +1,5 @@
 import { MatrixEvent } from 'matrix-js-sdk';
+
 import { MatrixRoom } from '../../../room/matrix.room';
 
 export type RoomTimelineEvent = {

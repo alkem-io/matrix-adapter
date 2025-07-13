@@ -1,10 +1,12 @@
+import './config/aliases';
+
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+
 import { AppModule } from './app.module';
 import { ConfigurationTypes } from './common/enums/index';
-import './config/aliases';
 import { BootstrapService } from './core/bootstrap/bootstrap.service';
 
 const bootstrap = async () => {
@@ -40,4 +42,4 @@ const bootstrap = async () => {
   await app.startAllMicroservices();
 };
 
-bootstrap();
+await bootstrap();

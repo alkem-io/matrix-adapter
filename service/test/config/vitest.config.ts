@@ -1,8 +1,6 @@
 import swc from "unplugin-swc";
-import { defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
-
-import { createVitestTestConfig } from "./create-vitest-test-config";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [tsconfigPaths(), swc.vite()],

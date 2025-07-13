@@ -1,5 +1,10 @@
 import { LogContext } from '@common/enums/logging.context';
 import pkg from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
+import { Disposable } from '@src/common/interfaces/disposable.interface';
+import { MatrixMessageAdapter } from '@src/domain/adapter-message/matrix.message.adapter';
+import { MatrixRoomAdapter } from '@src/domain/adapter-room/matrix.room.adapter';
 import {
   autoAcceptRoomGuardFactory,
   AutoAcceptSpecificRoomMembershipMonitorFactory,
@@ -11,25 +16,20 @@ import {
 import {
   MatrixEventDispatcher,
 } from '@src/domain/agent/events/matrix.event.dispatcher';
-import { Disposable } from '@src/common/interfaces/disposable.interface';
+import { MatrixRoom } from '@src/domain/room/matrix.room';
 import {
-  EventType,
   ISendEventResponse,
   MatrixClient,
   Room,
   TimelineEvents,
 } from 'matrix-js-sdk';
-import { ConfigService } from '@nestjs/config';
-import { SlidingWindowManager } from '../sliding-sync/matrix.room.sliding.sync.window.manager';
-import { MatrixRoomAdapter } from '@src/domain/adapter-room/matrix.room.adapter';
-import { MatrixMessageAdapter } from '@src/domain/adapter-message/matrix.message.adapter';
-import { MatrixAgentStartOptions } from './type/matrix.agent.start.options';
-import { MatrixRoom } from '@src/domain/room/matrix.room';
-import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 import { RoomMessageEventContent } from 'matrix-js-sdk/lib/types';
-import { IMatrixEventHandler } from '../events/matrix.event.handler.interface';
+
 import { IConditionalMatrixEventHandler } from '../events/matrix.event.conditional.handler.interface';
+import { IMatrixEventHandler } from '../events/matrix.event.handler.interface';
 import { MatrixEventsInternalNames } from '../events/types/matrix.event.internal.names';
+import { SlidingWindowManager } from '../sliding-sync/matrix.room.sliding.sync.window.manager';
+import { MatrixAgentStartOptions } from './type/matrix.agent.start.options';
 
 // Wraps an instance of the client sdk
 export class MatrixAgent implements Disposable {

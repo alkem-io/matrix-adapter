@@ -2,12 +2,13 @@ import { ConfigurationTypes, LogContext } from '@common/enums/index';
 import pkg  from '@nestjs/common';
 const { Inject, Injectable } = pkg;
 import { ConfigService } from '@nestjs/config';
-import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixUserAdapter } from '@src/domain/adapter-user/matrix.user.adapter';
-import { MatrixAdminUserService } from '../user/matrix.admin.user.service';
-import { MatrixAgentFactoryService } from '@src/domain/agent/agent-factory/matrix.agent.factory.service';
 import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
+import { MatrixAgentFactoryService } from '@src/domain/agent/agent-factory/matrix.agent.factory.service';
 import { IMatrixUser } from '@src/domain/user/matrix.user.interface';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+
+import { MatrixAdminUserService } from '../user/matrix.admin.user.service';
 
 @Injectable()
 export class MatrixAdminUserElevatedService {
@@ -69,7 +70,7 @@ export class MatrixAdminUserElevatedService {
 
     const adminUser = await this.getElevatedUser();
     this.matrixElevatedAgent =
-      await this.agentFactoryService.createMatrixAgent(adminUser);
+      this.agentFactoryService.createMatrixAgent(adminUser);
 
     await this.matrixElevatedAgent.start({
       registerTimelineMonitor: false,

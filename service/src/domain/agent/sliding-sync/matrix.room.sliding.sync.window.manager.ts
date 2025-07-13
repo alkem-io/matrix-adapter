@@ -1,7 +1,9 @@
-import { MatrixClient, Room } from 'matrix-js-sdk';
-import { Injectable } from '@nestjs/common';
+/* eslint-disable @typescript-eslint/require-await */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { LogContext } from '@common/enums/logging.context';
+import { Injectable } from '@nestjs/common';
 import pkg from '@nestjs/common';
+import { MatrixClient, Room } from 'matrix-js-sdk';
 import { SlidingSync } from 'matrix-js-sdk/lib/sliding-sync';
 
 export interface SlidingWindowConfig {
@@ -126,13 +128,13 @@ export class SlidingWindowManager {
     return this.activeRooms.has(roomId);
   }
 
-  async getTotalRoomCount(): Promise<number> {
+  getTotalRoomCount(): number {
     // Get total room count from sliding sync
     // For now, fallback to client.getRooms().length
     return this.client.getRooms().length;
   }
 
-  async getRoomList(offset: number, limit: number): Promise<Room[]> {
+  getRoomList(offset: number, limit: number): Room[] {
     // Implementation for paginated room access
     // For now, fallback to slicing the full room list
     const allRooms = this.client.getRooms();

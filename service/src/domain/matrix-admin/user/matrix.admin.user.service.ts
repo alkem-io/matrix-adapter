@@ -1,19 +1,20 @@
-import { AxiosError } from 'axios';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
-import { ICreateClientOpts, MatrixClient, createClient } from 'matrix-js-sdk';
-import { MatrixCryptographyService } from '@src/services/cryptography/matrix.cryptography.service';
+import { URL } from 'url';
+
 import { ConfigurationTypes } from '@common/enums/configuration.type';
-import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { MatrixUserLoginException } from '@common/exceptions/matrix.login.exception';
 import { MatrixUserRegistrationException } from '@common/exceptions/matrix.registration.exception';
-import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint';
-import { URL } from 'url';
-import { LogContext } from '@src/common/enums/logging.context';
-import { MatrixUserAdapter } from '@src/domain/adapter-user/matrix.user.adapter';
-import { AlkemioMatrixLogger } from '@src/core/logger/matrix.logger';
+import { HttpService } from '@nestjs/axios';
 import pkg from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { LogContext } from '@src/common/enums/logging.context';
+import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint';
+import { AlkemioMatrixLogger } from '@src/core/logger/matrix.logger';
+import { MatrixUserAdapter } from '@src/domain/adapter-user/matrix.user.adapter';
 import { IMatrixUser } from '@src/domain/user/matrix.user.interface';
+import { MatrixCryptographyService } from '@src/services/cryptography/matrix.cryptography.service';
+import { AxiosError } from 'axios';
+import { createClient,ICreateClientOpts, MatrixClient } from 'matrix-js-sdk';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 const { Inject, Injectable } = pkg;
 
 @Injectable()

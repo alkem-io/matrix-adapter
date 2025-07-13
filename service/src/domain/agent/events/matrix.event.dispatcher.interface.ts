@@ -1,5 +1,6 @@
-import { Observable } from 'rxjs';
 import { MatrixEvent, RoomMember } from 'matrix-js-sdk';
+import { Observable } from 'rxjs';
+
 import { MatrixRoom } from '../../room/matrix.room';
 import { RoomTimelineEvent } from './types/room.timeline.event';
 

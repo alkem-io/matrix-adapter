@@ -1,23 +1,25 @@
-import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { EventEmitter } from 'events';
+
+import { Disposable } from '@src/common/interfaces/disposable.interface';
 import {
   ClientEvent,
   EmittedEvents,
   MatrixClient,
   MatrixEvent,
-  RoomEvent,
-  RoomMemberEvent,
-  RoomMember,
-  SyncState,
   Room,
+  RoomEvent,
+  RoomMember,
+  RoomMemberEvent,
+  SyncState,
 } from 'matrix-js-sdk';
-import { first, fromEvent, Observable, Observer, Subscription } from 'rxjs';
+import { first, fromEvent, Observable, Subscription } from 'rxjs';
+
 import { MatrixRoom } from '../../room/matrix.room';
+import { IConditionalMatrixEventHandler } from './matrix.event.conditional.handler.interface';
+import { IMatrixEventDispatcher } from './matrix.event.dispatcher.interface';
+import { IMatrixEventHandler } from './matrix.event.handler.interface';
 import { MatrixEventHandler } from './types/matrix.event.handler.type';
 import { MatrixEventsInternalNames } from './types/matrix.event.internal.names';
-import { IMatrixEventDispatcher } from './matrix.event.dispatcher.interface';
-import { IConditionalMatrixEventHandler } from './matrix.event.conditional.handler.interface';
-import { IMatrixEventHandler } from './matrix.event.handler.interface';
 import { RoomTimelineEvent } from './types/room.timeline.event';
 
 export class MatrixEventDispatcher

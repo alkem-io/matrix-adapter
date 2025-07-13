@@ -1,18 +1,19 @@
-import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { CommunicationAdapter } from '../../../services/communication-adapter/communication.adapter';
-import { LogContext } from '@src/common/enums/logging.context';
-import { RoomPowerLevelsEventContent } from 'matrix-js-sdk/lib/types';
-import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
-import { EventType, IStateEventWithRoomId, MatrixClient } from 'matrix-js-sdk';
-import { MatrixUserAdapter } from '../../adapter-user/matrix.user.adapter';
-import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.rooms.dto.event.log.room.state';
-import { MatrixAdminUserElevatedService } from '../user-elevated/matrix.admin.user.elevated.service';
-import { MatrixAdminUserService } from '../user/matrix.admin.user.service';
-import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.rooms.dto.event.update.room.state.for.admin.rooms';
-import { MatrixAgentFactoryService } from '@src/domain/agent/agent-factory/matrix.agent.factory.service';
 import pkg from '@nestjs/common';
-import { IMatrixUser } from '@src/domain/user/matrix.user.interface';
+import { LogContext } from '@src/common/enums/logging.context';
+import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
+import { MatrixAgentFactoryService } from '@src/domain/agent/agent-factory/matrix.agent.factory.service';
+import { IMatrixUser } from '@src/domain/user/matrix.user.interface';
+import { EventType, IStateEventWithRoomId } from 'matrix-js-sdk';
+import { RoomPowerLevelsEventContent } from 'matrix-js-sdk/lib/types';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+
+import { CommunicationAdapter } from '../../../services/communication-adapter/communication.adapter';
+import { MatrixUserAdapter } from '../../adapter-user/matrix.user.adapter';
+import { MatrixAdminUserService } from '../user/matrix.admin.user.service';
+import { MatrixAdminUserElevatedService } from '../user-elevated/matrix.admin.user.elevated.service';
+import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.rooms.dto.event.log.room.state';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.rooms.dto.event.update.room.state.for.admin.rooms';
 const { Inject, Injectable } = pkg;
 
 @Injectable()
@@ -61,7 +62,7 @@ export class MatrixAdminRoomsService {
 
   private async createMatrixClientForAdmin(adminUser: IMatrixUser) {
     const adminAgent =
-      await this.agentFactoryService.createMatrixAgent(adminUser);
+      this.agentFactoryService.createMatrixAgent(adminUser);
 
     await adminAgent.start({
       registerTimelineMonitor: false,

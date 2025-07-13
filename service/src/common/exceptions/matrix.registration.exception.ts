@@ -1,5 +1,6 @@
-import { LogContext } from '@common/enums/index';
 import { AlkemioErrorStatus } from '@common/enums/alkemio.error.status';
+import { LogContext } from '@common/enums/index';
+
 import { BaseException } from './base.exception';
 
 export class MatrixUserRegistrationException extends BaseException {

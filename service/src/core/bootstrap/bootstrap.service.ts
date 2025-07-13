@@ -1,13 +1,14 @@
 import pkg from '@nestjs/common';
 const { Inject, Injectable } = pkg;
+import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
+import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint.js';
+import { MatrixUserRegistrationException } from '@src/common/exceptions/matrix.registration.exception.js';
+import { MatrixAdminUserElevatedService } from '@src/domain/matrix-admin/user-elevated/matrix.admin.user.elevated.service.js';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+
 import { ConfigurationTypes, LogContext } from '../../common/enums/index.js';
 import { BootstrapException } from '../../common/exceptions/bootstrap.exception.js';
-import { MatrixAdminUserElevatedService } from '@src/domain/matrix-admin/user-elevated/matrix.admin.user.elevated.service.js';
-import { MatrixUserRegistrationException } from '@src/common/exceptions/matrix.registration.exception.js';
-import { SynapseEndpoint } from '@src/common/enums/synapse.endpoint.js';
-import { HttpService } from '@nestjs/axios';
 
 @Injectable()
 export class BootstrapService {

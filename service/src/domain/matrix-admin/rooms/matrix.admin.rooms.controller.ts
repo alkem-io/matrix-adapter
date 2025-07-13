@@ -9,11 +9,12 @@ import {
   Transport,
 } from '@nestjs/microservices';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+
 import { LogContext } from '../../../common/enums/index';
-import { MatrixAdminRoomsEventType } from './matrix.admin.rooms.event.type';
-import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.rooms.dto.event.update.room.state.for.admin.rooms';
 import { MatrixAdminBaseEventResponsePayload } from './dto/matrix.admin.rooms.base.event.response.payload';
 import { MatrixAdminEventLogRoomStateInput } from './dto/matrix.admin.rooms.dto.event.log.room.state';
+import { MatrixAdminEventUpdateRoomStateForAdminRoomsInput } from './dto/matrix.admin.rooms.dto.event.update.room.state.for.admin.rooms';
+import { MatrixAdminRoomsEventType } from './matrix.admin.rooms.event.type';
 import { MatrixAdminRoomsService } from './matrix.admin.rooms.service';
 
 @Controller()

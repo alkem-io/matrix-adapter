@@ -1,30 +1,31 @@
-import { LogContext } from '@common/enums/index';
-import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception';
-import { MatrixAgentPool } from '@src/domain/agent/agent-pool/matrix.agent.pool';
-import { HistoryVisibility, JoinRule, MatrixClient } from 'matrix-js-sdk';
-import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixRoomAdapter } from '@src/domain/adapter-room/matrix.room.adapter';
-import { MatrixUserAdapter } from '@src/domain/adapter-user/matrix.user.adapter';
-import { CommunicationEditMessageInput } from './dto/communication.dto.message.edit';
 import {
   IMessage,
+  RoomAddMessageReactionPayload,
+  RoomDetailsResponsePayload,
+  RoomRemoveMessageReactionPayload,
   RoomSendMessagePayload,
   RoomSendMessageReplyPayload,
-  RoomAddMessageReactionPayload,
-  RoomRemoveMessageReactionPayload,
   UpdateRoomStatePayload,
-  RoomDetailsResponsePayload,
 } from '@alkemio/matrix-adapter-lib';
 import { RoomResult } from '@alkemio/matrix-adapter-lib';
 import { RoomDirectResult } from '@alkemio/matrix-adapter-lib';
 import { RoomDeleteMessagePayload } from '@alkemio/matrix-adapter-lib';
 import { SendMessageToUserPayload } from '@alkemio/matrix-adapter-lib';
 import { IReaction } from '@alkemio/matrix-adapter-lib';
-import { sleep } from 'matrix-js-sdk/lib/utils.js';
-import { MatrixAdminUserElevatedService } from '../../domain/matrix-admin/user-elevated/matrix.admin.user.elevated.service';
-import { MatrixAdminUserService } from '../../domain/matrix-admin/user/matrix.admin.user.service';
+import { LogContext } from '@common/enums/index';
+import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception';
 import pkg from '@nestjs/common';
+import { MatrixRoomAdapter } from '@src/domain/adapter-room/matrix.room.adapter';
+import { MatrixUserAdapter } from '@src/domain/adapter-user/matrix.user.adapter';
 import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
+import { MatrixAgentPool } from '@src/domain/agent/agent-pool/matrix.agent.pool';
+import { HistoryVisibility, JoinRule } from 'matrix-js-sdk';
+import { sleep } from 'matrix-js-sdk/lib/utils.js';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+
+import { MatrixAdminUserService } from '../../domain/matrix-admin/user/matrix.admin.user.service';
+import { MatrixAdminUserElevatedService } from '../../domain/matrix-admin/user-elevated/matrix.admin.user.elevated.service';
+import { CommunicationEditMessageInput } from './dto/communication.dto.message.edit';
 const { Inject, Injectable } = pkg;
 
 @Injectable()
@@ -264,7 +265,7 @@ export class CommunicationAdapter {
       editMessageData.senderCommunicationsID
     );
 
-    await this.matrixRoomAdapter.editMessage(
+    this.matrixRoomAdapter.editMessage(
       matrixAgent,
       editMessageData.roomID,
       editMessageData.messageId,
@@ -449,7 +450,7 @@ export class CommunicationAdapter {
     return true;
   }
 
-  async getCommunityRooms(matrixUserID: string): Promise<RoomResult[]> {
+  public getCommunityRooms(matrixUserID: string): RoomResult[] {
     const rooms: RoomResult[] = [];
 
     this.logger.verbose?.(
@@ -622,12 +623,6 @@ export class CommunicationAdapter {
         const userAgent = await this.getUserAgent(matrixUserID);
 
         const userID = userAgent.getUserId();
-        if (!userID) {
-          throw new MatrixEntityNotFoundException(
-            `Unable to retrieve user on agent: ${userAgent}`,
-            LogContext.MATRIX
-          );
-        }
         userAgent.attachOnceConditional({
           id: targetRoomID,
           roomMemberMembershipMonitor:

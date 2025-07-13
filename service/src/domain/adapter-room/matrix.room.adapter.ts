@@ -1,9 +1,9 @@
 import { RoomDirectResult } from '@alkemio/matrix-adapter-lib';
-import { RoomResult, IMessage, IReaction } from '@alkemio/matrix-adapter-lib';
+import { IMessage, IReaction,RoomResult } from '@alkemio/matrix-adapter-lib';
 import { LogContext } from '@common/enums/index';
 import { MatrixEntityNotFoundException } from '@common/exceptions/matrix.entity.not.found.exception';
 import pkg from '@nestjs/common';
-const { Inject, Injectable } = pkg;
+import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
 import {
   Direction,
   EventType,
@@ -13,7 +13,6 @@ import {
   IJoinRoomOpts,
   JoinRule,
   KnownMembership,
-  MatrixClient,
   MatrixEvent,
   MsgType,
   Preset,
@@ -21,23 +20,24 @@ import {
   TimelineWindow,
   Visibility,
 } from 'matrix-js-sdk';
-import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
-import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
-import { MatrixRoom } from '../room/matrix.room';
-import { MatrixRoomResponseMessage } from './dto/matrix.room.dto.response.message';
 import {
   ReactionEventContent,
   RoomHistoryVisibilityEventContent,
   RoomJoinRulesEventContent,
   RoomMessageEventContent,
 } from 'matrix-js-sdk/lib/types';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+
+import { MatrixMessageAdapter } from '../adapter-message/matrix.message.adapter';
+import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter';
+import { MatrixRoom } from '../room/matrix.room';
 import { IRoomOpts } from '../room/matrix.room.options';
-import { MatrixRoomMessageRequest } from './dto/matrix.room.dto.message.request';
 import { MatrixRoomMessageReaction } from './dto/matrix.room.dto.message.reaction';
 import { MatrixRoomMessageReply } from './dto/matrix.room.dto.message.reply';
+import { MatrixRoomMessageRequest } from './dto/matrix.room.dto.message.request';
 import { MatrixRoomMessageRequestDirect } from './dto/matrix.room.dto.message.request.direct';
-import { MatrixUserAdapter } from '../adapter-user/matrix.user.adapter';
-import { MatrixAgent } from '@src/domain/agent/agent/matrix.agent';
+import { MatrixRoomResponseMessage } from './dto/matrix.room.dto.response.message';
+const { Inject, Injectable } = pkg;
 
 // Note: before
 @Injectable()
@@ -145,10 +145,10 @@ export class MatrixRoomAdapter {
     where two or more DM rooms are created between the two users
     we aim to always resolve the
   */
-  async getDirectUserMatrixIDForRoomID(
+  getDirectUserMatrixIDForRoomID(
     matrixAgent: MatrixAgent,
     matrixRoomId: string
-  ): Promise<string | undefined> {
+  ): string | undefined {
     // Need to implement caching for performance
     const dmRoomByUserMatrixIDMap = this.getDirectMessageRoomsMap(
       matrixAgent
@@ -171,7 +171,7 @@ export class MatrixRoomAdapter {
       matrixUsername
     ];
 
-    if (!dmRoomIds || !Boolean(dmRoomIds[0])) {
+    if (!dmRoomIds || !dmRoomIds[0]) {
       return undefined;
     }
 
@@ -258,7 +258,7 @@ export class MatrixRoomAdapter {
   }
 
   // TODO - see if the js sdk supports message aggregation
-  async editMessage(
+  editMessage(
     matrixAgent: MatrixAgent,
     roomId: string,
     messageId: string,
@@ -581,7 +581,7 @@ export class MatrixRoomAdapter {
 
     const timelineEvents = await this.getAllRoomEvents(agent, matrixRoom);
     if (timelineEvents) {
-      return await this.convertMatrixTimelineToMessages(timelineEvents);
+      return this.convertMatrixTimelineToMessages(timelineEvents);
     }
     return [];
   }
@@ -597,14 +597,14 @@ export class MatrixRoomAdapter {
 
     const timelineEvents = await this.getAllRoomEvents(agent, matrixRoom);
     if (timelineEvents) {
-      return await this.convertMatrixTimelineToReactions(timelineEvents);
+      return this.convertMatrixTimelineToReactions(timelineEvents);
     }
     return [];
   }
 
-  async convertMatrixTimelineToMessages(
+  convertMatrixTimelineToMessages(
     timeline: MatrixRoomResponseMessage[]
-  ): Promise<IMessage[]> {
+  ): IMessage[] {
     const messages: IMessage[] = [];
     const reactionsMap = new Map<string, IReaction[]>();
 
@@ -638,9 +638,9 @@ export class MatrixRoomAdapter {
     return messages;
   }
 
-  async convertMatrixTimelineToReactions(
+  convertMatrixTimelineToReactions(
     timeline: MatrixEvent[]
-  ): Promise<IReaction[]> {
+  ): IReaction[] {
     const reactions: IReaction[] = [];
 
     for (const timelineEvent of timeline) {
