@@ -1,15 +1,6 @@
-export interface MatrixSlidingSyncConfig {
-  enabled: boolean;
+export interface SlidingSyncConfig {
   windowSize: number;
   sortOrder: 'activity' | 'alphabetical' | 'unread';
   includeEmptyRooms: boolean;
   ranges: [number, number][];
-  fallbackToFullSync: boolean;
-}
-
-export interface MatrixClientConfig {
-  timelineSupport: boolean;
-  startupPollTimeout: number;
-  startupInitialSyncLimit: number;
-  slidingSync: MatrixSlidingSyncConfig;
 }

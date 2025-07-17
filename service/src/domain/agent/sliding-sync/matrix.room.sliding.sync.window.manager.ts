@@ -4,20 +4,15 @@ import { LogContext } from '@common/enums/logging.context';
 import { Injectable } from '@nestjs/common';
 import pkg from '@nestjs/common';
 import { MatrixClient, Room } from 'matrix-js-sdk';
-import { SlidingSync } from 'matrix-js-sdk/lib/sliding-sync';
 
-export interface SlidingWindowConfig {
-  windowSize: number;
-  sortOrder: 'activity' | 'alphabetical' | 'unread';
-  includeEmptyRooms: boolean;
-  ranges: [number, number][];
-}
+import { SlidingSyncConfig } from './matrix.sliding.sync.config';
+
 
 @Injectable()
 export class SlidingWindowManager {
   private client: MatrixClient;
   private slidingSync?: any; // SlidingSync type will be available when SDK supports it
-  private config: SlidingWindowConfig;
+  private config: SlidingSyncConfig;
   private activeRooms: Map<string, Room> = new Map();
   private roomCache: Map<string, Room> = new Map();
   private isInitialized = false;
@@ -25,7 +20,7 @@ export class SlidingWindowManager {
 
   constructor(
     client: MatrixClient,
-    config: SlidingWindowConfig,
+    config: SlidingSyncConfig,
     logger: pkg.LoggerService
   ) {
     this.client = client;

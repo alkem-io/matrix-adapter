@@ -2,7 +2,6 @@ import { IMessage } from '@alkemio/matrix-adapter-lib';
 import { LogContext } from '@common/enums/logging.context';
 import pkg from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ConfigurationTypes } from '@src/common/enums/configuration.type';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { MatrixMessageAdapter } from '@src/domain/adapter-message/matrix.message.adapter';
@@ -21,7 +20,6 @@ import {
   EventType,
   IContent,
   ISendEventResponse,
-  IStartClientOpts,
   MatrixClient,
   TimelineEvents,
 } from 'matrix-js-sdk';
@@ -29,7 +27,9 @@ import { RoomMessageEventContent } from 'matrix-js-sdk/lib/types';
 
 import { IConditionalMatrixEventHandler } from '../events/matrix.event.conditional.handler.interface';
 import { IMatrixEventHandler } from '../events/matrix.event.handler.interface';
+import { MatrixEventsInternalNames } from '../events/types/matrix.event.internal.names';
 import { SlidingWindowManager } from '../sliding-sync/matrix.room.sliding.sync.window.manager';
+import { SlidingSyncConfig } from '../sliding-sync/matrix.sliding.sync.config';
 import { MatrixAgentStartOptions } from './type/matrix.agent.start.options';
 
 // Wraps an instance of the client sdk
@@ -66,6 +66,7 @@ export class MatrixAgent implements Disposable {
     this.eventDispatcher.detach(id);
   }
 
+  // Using sliding sync for better performance
   async start(
     {
       registerRoomMonitor = true,
@@ -75,89 +76,73 @@ export class MatrixAgent implements Disposable {
       registerTimelineMonitor: false,
     }
   ) {
-    const startComplete = new Promise<void>((resolve, reject) => {
-      const subscription = this.eventDispatcher.syncMonitor.subscribe(
-        ({ oldSyncState, syncState }) => {
-          if (syncState === 'SYNCING' && oldSyncState !== 'SYNCING') {
-            subscription.unsubscribe();
-            resolve();
-          } else if (syncState === 'ERROR') {
-            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
-            reject();
-          }
-        }
-      );
-    });
+    await this.startWithSlidingSync();
 
-    const pollTimeout = Number(
-      this.configService.get(ConfigurationTypes.MATRIX)?.client
-        .startupPollTimeout
-    );
-
-    const initialSyncLimit = Number(
-      this.configService.get(ConfigurationTypes.MATRIX)?.client
-        .startupInitialSyncLimit
-    );
-
-    this.logger.verbose?.(
-      `starting up with pollTimeout: ${pollTimeout} and initialSyncLimit: ${initialSyncLimit}`,
-      LogContext.MATRIX
-    );
-
-    const startClientOptions: IStartClientOpts = {
-      disablePresence: true,
-      initialSyncLimit: initialSyncLimit,
-      pollTimeout: pollTimeout,
-      lazyLoadMembers: true,
-    };
-
-    await this.matrixClient.startClient(startClientOptions);
-    await startComplete;
-
+    // Common event handler setup
     const eventHandler: IMatrixEventHandler = {
       id: 'root',
     };
 
     if (registerTimelineMonitor) {
-      eventHandler['roomTimelineMonitor'] =
+      eventHandler[MatrixEventsInternalNames.RoomTimelineMonitor] =
         this.resolveRoomTimelineEventHandler();
     }
 
     if (registerRoomMonitor) {
-      eventHandler['roomMonitor'] = this.resolveRoomEventHandler();
+      eventHandler[MatrixEventsInternalNames.RoomMonitor] =
+        this.resolveRoomEventHandler();
     }
 
     this.attach(eventHandler);
   }
 
-  // async startAsync(
-  //   {
-  //     registerRoomMonitor = true,
-  //     registerTimelineMonitor = false,
-  //   }: MatrixAgentStartOptions = {
-  //     registerRoomMonitor: true,
-  //     registerTimelineMonitor: false,
-  //   }
-  // ) {
-  //   await this.startWithSlidingSync();
+  private getSlidingSyncConfiguration(): SlidingSyncConfig {
 
-  //   // Common event handler setup
-  //   const eventHandler: IMatrixEventHandler = {
-  //     id: 'root',
-  //   };
+      //   const pollTimeout = Number(
+  //     this.configService.get(ConfigurationTypes.MATRIX)?.client
+  //       .startupPollTimeout
+  //   );
 
-  //   if (registerTimelineMonitor) {
-  //     eventHandler[MatrixEventsInternalNames.RoomTimelineMonitor] =
-  //       this.resolveRoomTimelineEventHandler();
-  //   }
+  //   const initialSyncLimit = Number(
+  //     this.configService.get(ConfigurationTypes.MATRIX)?.client
+  //       .startupInitialSyncLimit
+  //   );
 
-  //   if (registerRoomMonitor) {
-  //     eventHandler[MatrixEventsInternalNames.RoomMonitor] =
-  //       this.resolveRoomEventHandler();
-  //   }
+  //   this.logger.verbose?.(
+  //     `starting up with pollTimeout: ${pollTimeout} and initialSyncLimit: ${initialSyncLimit}`,
+  //     LogContext.MATRIX
+  //   );
 
-  //   this.attach(eventHandler);
-  // }
+  const config = {
+      windowSize: 50000,
+      sortOrder: 'activity' as const,
+      includeEmptyRooms: false,
+      ranges: [[0, 49]] as [number, number][],
+    };
+    return config;
+  }
+
+  private async startWithSlidingSync(): Promise<void> {
+    const config = this.getSlidingSyncConfiguration();
+
+    this.slidingWindowManager = new SlidingWindowManager(
+      this.matrixClient,
+      config,
+      this.logger
+    );
+
+    this.logger.verbose?.(
+      'Initializing Sliding Sync with Matrix Client',
+      LogContext.MATRIX
+    );
+
+    await this.slidingWindowManager.initialize();
+
+    this.logger.verbose?.(
+      'Sliding Sync initialized successfully',
+      LogContext.MATRIX
+    );
+  }
 
   resolveAutoAcceptRoomMembershipMonitor(
     roomId: string,
@@ -246,44 +231,6 @@ export class MatrixAgent implements Disposable {
     });
   }
 
-  // private async startWithSlidingSync(): Promise<void> {
-  //   const config = {
-  //     windowSize: 50000,
-  //     sortOrder: 'activity' as const,
-  //     includeEmptyRooms: false,
-  //     ranges: [[0, 49]] as [number, number][],
-  //   };
-
-  //   this.slidingWindowManager = new SlidingWindowManager(
-  //     this.matrixClient,
-  //     config,
-  //     this.logger
-  //   );
-
-  //   this.logger.verbose?.(
-  //     'Initializing Sliding Sync with Matrix Client',
-  //     LogContext.MATRIX
-  //   );
-
-  //   await this.slidingWindowManager.initialize();
-
-  //   this.logger.verbose?.(
-  //     'Sliding Sync initialized successfully',
-  //     LogContext.MATRIX
-  //   );
-  // }
-
-  // METHOD FOR ASYNC ROOM ACCESS
-  // async getRoomAsync(roomId: string): Promise<Room | null> {
-  //   if (this.slidingWindowManager) {
-  //     return await this.slidingWindowManager.getRoomAsync(roomId);
-  //   } else {
-  //     throw new Error(
-  //       'Sliding window manager not initialized. Sliding sync must be enabled.'
-  //     );
-  //   }
-  // }
-
   isEventToIgnore(message: MatrixRoomResponseMessage): boolean {
     return this.messageAdapter.isEventToIgnore(message);
   }
@@ -343,10 +290,17 @@ export class MatrixAgent implements Disposable {
     await agent.matrixClient.setAccountData(EventType.Direct, dmRooms);
   }
 
-  public getRoomOrFail(roomId: string): MatrixRoom {
-    // SLIDING SYNC APPROACH
-    // const matrixRoom = await this.getRoomAsync(roomId);
-    const matrixRoom = this.matrixClient.getRoom(roomId);
+  private getSlidingSyncManager(): SlidingWindowManager {
+    if (!this.slidingWindowManager) {
+      throw new Error(
+        'SlidingWindowManager is not initialized. Please call start() first.'
+      );
+    }
+    return this.slidingWindowManager;
+  }
+
+  public async getRoomOrFail(roomId: string): Promise<MatrixRoom> {
+    const matrixRoom = await this.getSlidingSyncManager().getRoomAsync(roomId);
 
     if (!matrixRoom) {
       throw new MatrixEntityNotFoundException(
