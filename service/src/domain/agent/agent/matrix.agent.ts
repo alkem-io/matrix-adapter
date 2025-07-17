@@ -2,6 +2,7 @@ import { IMessage } from '@alkemio/matrix-adapter-lib';
 import { LogContext } from '@common/enums/logging.context';
 import pkg from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ConfigurationTypes } from '@src/common/enums/configuration.type';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
 import { Disposable } from '@src/common/interfaces/disposable.interface';
 import { MatrixMessageAdapter } from '@src/domain/adapter-message/matrix.message.adapter';
@@ -97,27 +98,24 @@ export class MatrixAgent implements Disposable {
   }
 
   private getSlidingSyncConfiguration(): SlidingSyncConfig {
+    const matrixConfig = this.configService.get(ConfigurationTypes.MATRIX);
+    const slidingSyncConfig = matrixConfig?.client?.slidingSync;
 
-      //   const pollTimeout = Number(
-  //     this.configService.get(ConfigurationTypes.MATRIX)?.client
-  //       .startupPollTimeout
-  //   );
+    const windowSize = Number(slidingSyncConfig?.windowSize) || 50;
+    const sortOrder = slidingSyncConfig?.sortOrder || 'activity';
+    const includeEmptyRooms = slidingSyncConfig?.includeEmptyRooms ?? false;
+    const ranges = slidingSyncConfig?.ranges || [[0, 49]];
 
-  //   const initialSyncLimit = Number(
-  //     this.configService.get(ConfigurationTypes.MATRIX)?.client
-  //       .startupInitialSyncLimit
-  //   );
+    this.logger.verbose?.(
+      `Sliding sync config - windowSize: ${windowSize}, sortOrder: ${sortOrder}, includeEmptyRooms: ${includeEmptyRooms}, ranges: ${JSON.stringify(ranges)}`,
+      LogContext.MATRIX
+    );
 
-  //   this.logger.verbose?.(
-  //     `starting up with pollTimeout: ${pollTimeout} and initialSyncLimit: ${initialSyncLimit}`,
-  //     LogContext.MATRIX
-  //   );
-
-  const config = {
-      windowSize: 50000,
-      sortOrder: 'activity' as const,
-      includeEmptyRooms: false,
-      ranges: [[0, 49]] as [number, number][],
+    const config = {
+      windowSize,
+      sortOrder: sortOrder as 'activity' | 'alphabetical' | 'unread',
+      includeEmptyRooms,
+      ranges: ranges as [number, number][],
     };
     return config;
   }
