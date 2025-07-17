@@ -67,13 +67,6 @@ export class MatrixAgent implements Disposable {
     this.eventDispatcher.detach(id);
   }
 
-  private getSlidingSync(): SlidingSync {
-    if (!this.slidingSync) {
-      throw new Error('SlidingSync is not initialized');
-    }
-    return this.slidingSync;
-  }
-
   private getSlidingSyncSdk(): SlidingSyncSdk {
     if (!this.slidingSyncSdk) {
       throw new Error('SlidingSync is not initialized');
@@ -82,7 +75,7 @@ export class MatrixAgent implements Disposable {
   }
 
   // Using sliding sync for better performance
-  async start(
+  start(
     {
       registerRoomMonitor = true,
       registerTimelineMonitor = false,
@@ -91,7 +84,7 @@ export class MatrixAgent implements Disposable {
       registerTimelineMonitor: false,
     }
   ) {
-    await this.startWithSlidingSync();
+    this.startWithSlidingSync();
 
     // Common event handler setup
     const eventHandler: IMatrixEventHandler = {
@@ -118,23 +111,40 @@ export class MatrixAgent implements Disposable {
     const windowSize = Number(slidingSyncConfig?.windowSize) || 50;
     const sortOrder = slidingSyncConfig?.sortOrder || 'activity';
     const includeEmptyRooms = slidingSyncConfig?.includeEmptyRooms ?? false;
-    const ranges = slidingSyncConfig?.ranges || [[0, 49]];
+
+    // Parse ranges properly - it might come as a string from config
+    let ranges: [number, number][] = [[0, 49]]; // Default
+    if (slidingSyncConfig?.ranges) {
+      try {
+        if (typeof slidingSyncConfig.ranges === 'string') {
+          ranges = JSON.parse(slidingSyncConfig.ranges);
+        } else if (Array.isArray(slidingSyncConfig.ranges)) {
+          ranges = slidingSyncConfig.ranges;
+        }
+      } catch (error) {
+        this.logger.warn?.(
+          `Failed to parse ranges from config, using default: ${error}`,
+          LogContext.SLIDING_SYNC
+        );
+        ranges = [[0, 49]];
+      }
+    }
 
     this.logger.verbose?.(
       `Sliding sync config - windowSize: ${windowSize}, sortOrder: ${sortOrder}, includeEmptyRooms: ${includeEmptyRooms}, ranges: ${JSON.stringify(ranges)}`,
-      LogContext.MATRIX
+      LogContext.SLIDING_SYNC
     );
 
     const config = {
       windowSize,
       sortOrder: sortOrder as 'activity' | 'alphabetical' | 'unread',
       includeEmptyRooms,
-      ranges: ranges as [number, number][],
+      ranges,
     };
     return config;
   }
 
-  private async startWithSlidingSync(): Promise<void> {
+  private startWithSlidingSync(): void {
     const config = this.getSlidingSyncConfiguration();
 
     const lists = new Map<string, any>([
@@ -149,7 +159,9 @@ export class MatrixAgent implements Disposable {
             ['m.room.member', '$ME'], // Only our own membership
             ['m.room.encryption', ''],
           ],
-          timeline_limit: 5,
+          timeline_limit: 10,
+          sort: ['by_recency'],
+          filters: { is_dm: false },
         },
       ],
     ]);
@@ -175,11 +187,17 @@ export class MatrixAgent implements Disposable {
       {}
     );
 
-    await this.slidingSync.start();
+    // Start sliding sync in the background without blocking
+    this.slidingSync.start().catch((error) => {
+      this.logger.error?.(
+        `Sliding sync failed: ${error}`,
+        LogContext.SLIDING_SYNC
+      );
+    });
 
     this.logger.verbose?.(
-      'Initializing Sliding Sync with Matrix Client',
-      LogContext.MATRIX
+      'Sliding Sync started in background',
+      LogContext.SLIDING_SYNC
     );
   }
 
@@ -190,6 +208,7 @@ export class MatrixAgent implements Disposable {
     }
 
     // Try to load it using sliding sync
+    this.logger.verbose?.(`Peeking room ${roomId}`, LogContext.SLIDING_SYNC);
     await this.getSlidingSyncSdk().peek(roomId);
     matrixRoom = this.matrixClient.getRoom(roomId);
     if (!matrixRoom) {
