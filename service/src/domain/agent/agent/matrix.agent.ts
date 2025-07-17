@@ -24,13 +24,14 @@ import {
   MatrixClient,
   TimelineEvents,
 } from 'matrix-js-sdk';
+import { SlidingSync } from 'matrix-js-sdk/lib/sliding-sync.js';
+import { SlidingSyncSdk } from 'matrix-js-sdk/lib/sliding-sync-sdk.js';
 import { RoomMessageEventContent } from 'matrix-js-sdk/lib/types';
 
 import { IConditionalMatrixEventHandler } from '../events/matrix.event.conditional.handler.interface';
 import { IMatrixEventHandler } from '../events/matrix.event.handler.interface';
 import { MatrixEventsInternalNames } from '../events/types/matrix.event.internal.names';
-import { SlidingWindowManager } from '../sliding-sync/matrix.room.sliding.sync.window.manager';
-import { SlidingSyncConfig } from '../sliding-sync/matrix.sliding.sync.config';
+import { SlidingSyncConfig } from './matrix.sliding.sync.config';
 import { MatrixAgentStartOptions } from './type/matrix.agent.start.options';
 
 // Wraps an instance of the client sdk
@@ -39,9 +40,8 @@ export class MatrixAgent implements Disposable {
   eventDispatcher: MatrixEventDispatcher;
   messageAdapter: MatrixMessageAdapter;
   configService: ConfigService;
-
-  // SLIDING SYNC COMPONENTS
-  private slidingWindowManager?: SlidingWindowManager;
+  slidingSync?: SlidingSync;
+  slidingSyncSdk?: SlidingSyncSdk;
 
   constructor(
     matrixClient: MatrixClient,
@@ -65,6 +65,20 @@ export class MatrixAgent implements Disposable {
 
   detach(id: string) {
     this.eventDispatcher.detach(id);
+  }
+
+  private getSlidingSync(): SlidingSync {
+    if (!this.slidingSync) {
+      throw new Error('SlidingSync is not initialized');
+    }
+    return this.slidingSync;
+  }
+
+  private getSlidingSyncSdk(): SlidingSyncSdk {
+    if (!this.slidingSyncSdk) {
+      throw new Error('SlidingSync is not initialized');
+    }
+    return this.slidingSyncSdk;
   }
 
   // Using sliding sync for better performance
@@ -123,23 +137,68 @@ export class MatrixAgent implements Disposable {
   private async startWithSlidingSync(): Promise<void> {
     const config = this.getSlidingSyncConfiguration();
 
-    this.slidingWindowManager = new SlidingWindowManager(
+    const lists = new Map<string, any>([
+      [
+        'allRooms',
+        {
+          ranges: config.ranges,
+          required_state: [
+            ['m.room.create', ''],
+            ['m.room.name', ''],
+            ['m.room.topic', ''],
+            ['m.room.member', '$ME'], // Only our own membership
+            ['m.room.encryption', ''],
+          ],
+          timeline_limit: 5,
+        },
+      ],
+    ]);
+
+    const roomSubscriptionInfo = {
+      timeline_limit: 10,
+      required_state: [
+        ['*', '*'], // All state events for subscribed rooms
+      ],
+    };
+
+    this.slidingSync = new SlidingSync(
+      this.matrixClient.getHomeserverUrl(),
+      lists,
+      roomSubscriptionInfo,
       this.matrixClient,
-      config,
-      this.logger
+      30000
     );
+    this.slidingSyncSdk = new SlidingSyncSdk(
+      this.slidingSync,
+      this.matrixClient,
+      {},
+      {}
+    );
+
+    await this.slidingSync.start();
 
     this.logger.verbose?.(
       'Initializing Sliding Sync with Matrix Client',
       LogContext.MATRIX
     );
+  }
 
-    await this.slidingWindowManager.initialize();
+  public async getRoomOrFail(roomId: string): Promise<MatrixRoom> {
+    let matrixRoom = this.matrixClient.getRoom(roomId);
+    if (matrixRoom) {
+      return matrixRoom;
+    }
 
-    this.logger.verbose?.(
-      'Sliding Sync initialized successfully',
-      LogContext.MATRIX
-    );
+    // Try to load it using sliding sync
+    await this.getSlidingSyncSdk().peek(roomId);
+    matrixRoom = this.matrixClient.getRoom(roomId);
+    if (!matrixRoom) {
+      throw new MatrixEntityNotFoundException(
+        `Room not found: ${roomId}`,
+        LogContext.MATRIX
+      );
+    }
+    return matrixRoom;
   }
 
   resolveAutoAcceptRoomMembershipMonitor(
@@ -288,45 +347,8 @@ export class MatrixAgent implements Disposable {
     await agent.matrixClient.setAccountData(EventType.Direct, dmRooms);
   }
 
-  private getSlidingSyncManager(): SlidingWindowManager {
-    if (!this.slidingWindowManager) {
-      throw new Error(
-        'SlidingWindowManager is not initialized. Please call start() first.'
-      );
-    }
-    return this.slidingWindowManager;
-  }
-
-  public async getRoomOrFail(roomId: string): Promise<MatrixRoom> {
-    const matrixRoom = await this.getSlidingSyncManager().getRoomAsync(roomId);
-
-    if (!matrixRoom) {
-      throw new MatrixEntityNotFoundException(
-        `[User: ${this.getUserId()}] Unable to access Room (${roomId}). Room either does not exist or user does not have access.`,
-        LogContext.COMMUNICATION
-      );
-    }
-
-    return matrixRoom;
-  }
-
-  // // HELPER METHOD FOR SAFE ROOM OPERATIONS
-  // async withRoom<T>(
-  //   roomId: string,
-  //   callback: (room: Room) => T | Promise<T>
-  // ): Promise<T | null> {
-  //   const room = await this.getRoomAsync(roomId);
-  //   if (!room) return null;
-  //   return await callback(room);
-  // }
-
   dispose() {
     this.matrixClient.stopClient();
     this.eventDispatcher.dispose.bind(this.eventDispatcher)();
-
-    // Clean up sliding sync resources
-    if (this.slidingWindowManager) {
-      this.slidingWindowManager.dispose();
-    }
   }
 }
