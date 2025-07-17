@@ -1,5 +1,6 @@
 import pkg from '@nestjs/common';
 const { Inject, Controller } = pkg;
+import alkemioMatrixAdapterLib from '@alkemio/matrix-adapter-lib';
 import {
   Ctx,
   MessagePattern,
@@ -8,9 +9,9 @@ import {
   RpcException,
 } from '@nestjs/microservices';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+
 import { LogContext } from './common/enums/logging.context';
 import { CommunicationAdapter } from './services/communication-adapter/communication.adapter';
-import alkemioMatrixAdapterLib from '@alkemio/matrix-adapter-lib';
 
 @Controller()
 export class AppController {
@@ -392,10 +393,10 @@ export class AppController {
   @MessagePattern({
     cmd: alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS_USER,
   })
-  async roomsUser(
+  roomsUser(
     @Payload() data: alkemioMatrixAdapterLib.RoomsUserPayload,
     @Ctx() context: RmqContext
-  ): Promise<alkemioMatrixAdapterLib.RoomsUserResponsePayload> {
+  ): alkemioMatrixAdapterLib.RoomsUserResponsePayload {
     this.logger.verbose?.(
       `${alkemioMatrixAdapterLib.MatrixAdapterEventType.ROOMS_USER} - payload: ${JSON.stringify(data)}`,
       LogContext.EVENTS
@@ -404,7 +405,7 @@ export class AppController {
     const originalMsg = context.getMessage();
 
     try {
-      const rooms = await this.communicationAdapter.getCommunityRooms(
+      const rooms = this.communicationAdapter.getCommunityRooms(
         data.userID
       );
       channel.ack(originalMsg);

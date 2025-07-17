@@ -1,7 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { MockWinstonProvider } from '@test/mocks';
-import { defaultMockerFactory } from '@test/utils';
 import { MockConfigServiceProvider } from '@test/mocks';
+import { defaultMockerFactory } from '@test/utils';
+
 import { BootstrapService } from './bootstrap.service';
 
 describe('BootstrapService', () => {

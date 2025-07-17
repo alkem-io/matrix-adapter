@@ -1,4 +1,4 @@
-import { LogContext, AlkemioErrorStatus } from '@common/enums/index';
+import { AlkemioErrorStatus,LogContext } from '@common/enums/index';
 
 export class BaseException extends Error {
   private readonly context: LogContext;
