@@ -26,6 +26,7 @@ import {
 } from 'matrix-js-sdk';
 import { SlidingSync } from 'matrix-js-sdk/lib/sliding-sync.js';
 import { SlidingSyncSdk } from 'matrix-js-sdk/lib/sliding-sync-sdk.js';
+import { SyncApi } from 'matrix-js-sdk/lib/sync.js';
 import { RoomMessageEventContent } from 'matrix-js-sdk/lib/types';
 
 import { IConditionalMatrixEventHandler } from '../events/matrix.event.conditional.handler.interface';
@@ -42,6 +43,7 @@ export class MatrixAgent implements Disposable {
   configService: ConfigService;
   slidingSync?: SlidingSync;
   slidingSyncSdk?: SlidingSyncSdk;
+  syncApi?: SyncApi;
 
   constructor(
     matrixClient: MatrixClient,
@@ -186,14 +188,15 @@ export class MatrixAgent implements Disposable {
       {},
       {}
     );
+    this.syncApi = new SyncApi(this.matrixClient, {}, {});
 
     // Start sliding sync in the background without blocking
-    this.slidingSync.start().catch((error) => {
-      this.logger.error?.(
-        `Sliding sync failed: ${error}`,
-        LogContext.SLIDING_SYNC
-      );
-    });
+    // this.slidingSyncSdk.sync().catch(error => {
+    //   this.logger.error?.(
+    //     `Sliding sync failed: ${error}`,
+    //     LogContext.SLIDING_SYNC
+    //   );
+    // });
 
     this.logger.verbose?.(
       'Sliding Sync started in background',
@@ -202,15 +205,23 @@ export class MatrixAgent implements Disposable {
   }
 
   public async getRoomOrFail(roomId: string): Promise<MatrixRoom> {
-    let matrixRoom = this.matrixClient.getRoom(roomId);
-    if (matrixRoom) {
-      return matrixRoom;
+    const roomInitialSync = await this.matrixClient.roomInitialSync(roomId, 10);
+    if (!roomInitialSync) {
+      throw new MatrixEntityNotFoundException(
+        `Room not found: ${roomId}`,
+        LogContext.MATRIX
+      );
     }
-
-    // Try to load it using sliding sync
-    this.logger.verbose?.(`Peeking room ${roomId}`, LogContext.SLIDING_SYNC);
-    await this.getSlidingSyncSdk().peek(roomId);
-    matrixRoom = this.matrixClient.getRoom(roomId);
+    if (this.syncApi) {
+      const roomSyncd = await this.syncApi.peek(roomId);
+      if (!roomSyncd) {
+        throw new MatrixEntityNotFoundException(
+          `Room not found in sliding sync: ${roomId}`,
+          LogContext.SLIDING_SYNC
+        );
+      }
+    }
+    const matrixRoom = this.matrixClient.getRoom(roomId);
     if (!matrixRoom) {
       throw new MatrixEntityNotFoundException(
         `Room not found: ${roomId}`,
@@ -218,6 +229,37 @@ export class MatrixAgent implements Disposable {
       );
     }
     return matrixRoom;
+    // const roomsOrig = this.matrixClient.getRooms();
+    // for (const room of roomsOrig) {
+    //   this.logger.verbose?.(
+    //     `[Orig] Sliding sync room: ${room.roomId}`,
+    //     LogContext.SLIDING_SYNC
+    //   );
+    // }
+    // let matrixRoom = this.matrixClient.getRoom(roomId);
+    // if (matrixRoom) {
+    //   return matrixRoom;
+    // }
+
+    // // Try to load it using sliding sync
+    // this.logger.verbose?.(`Peeking room ${roomId}`, LogContext.SLIDING_SYNC);
+    // const room2 = await this.getSlidingSyncSdk().peek(roomId);
+    // const roomSync = await this.matrixClient.roomInitialSync(roomId, 10);
+    // const rooms = this.matrixClient.getRooms();
+    // for (const room of rooms) {
+    //   this.logger.verbose?.(
+    //     `Sliding sync room: ${room.roomId}`,
+    //     LogContext.SLIDING_SYNC
+    //   );
+    // }
+    // matrixRoom = this.matrixClient.getRoom(roomId);
+    // if (!matrixRoom) {
+    //   throw new MatrixEntityNotFoundException(
+    //     `Room not found: ${roomId}`,
+    //     LogContext.MATRIX
+    //   );
+    // }
+    // return matrixRoom;
   }
 
   resolveAutoAcceptRoomMembershipMonitor(
