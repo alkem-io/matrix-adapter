@@ -99,10 +99,9 @@ matrix:
       # Whether to include empty rooms in the sync
       includeEmptyRooms: ${MATRIX_SLIDING_SYNC_INCLUDE_EMPTY}:false
       # Room ranges to sync [start, end] indices
-      ranges: ${MATRIX_SLIDING_SYNC_RANGES}:[[0,1]]
+      ranges: ${MATRIX_SLIDING_SYNC_RANGES}:[[0,99]]
 
   admin:
     # The admin account that is created / used to administer the regular users on the Synapse server
     username: ${SYNAPSE_ADMIN_USERNAME}:matrixadmin3@alkem.io
     password: ${SYNAPSE_ADMIN_PASSWORD}:change_me_now
-
