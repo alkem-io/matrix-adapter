@@ -10,6 +10,7 @@ ARG ENV_ARG=production
 # Install app dependencies
 # where available (npm@5+)
 COPY ./service/package.json ./
+COPY ./service/pnpm-lock.yaml ./
 
 RUN npm install -g pnpm
 RUN pnpm install
