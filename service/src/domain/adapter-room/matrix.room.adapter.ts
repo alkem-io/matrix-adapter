@@ -80,7 +80,7 @@ export class MatrixRoomAdapter {
   }
 
 
-  getDirectRooms(agent: MatrixAgent): MatrixRoom[] {
+  public async getDirectRooms(agent: MatrixAgent): Promise<MatrixRoom[]> {
     const rooms: MatrixRoom[] = [];
 
     // Direct rooms
@@ -89,7 +89,7 @@ export class MatrixRoomAdapter {
     // UPDATED TO USE ASYNC ROOM ACCESS
     for (const matrixUsername of Object.keys(dmRoomMap)) {
       const roomId = dmRoomMap[matrixUsername][0];
-      const room = agent.getRoomOrFail(roomId); // NOW ASYNC
+      const room = await agent.getRoomOrFail(roomId); // NOW ASYNC
 
       room.receiverCommunicationsID =
         this.matrixUserAdapter.convertMatrixUsernameToMatrixID(matrixUsername);
@@ -103,7 +103,7 @@ export class MatrixRoomAdapter {
     agent: MatrixAgent,
     messageRequest: MatrixRoomMessageRequestDirect
   ): Promise<string> {
-    const directRoom = this.getDirectRoomForMatrixID(
+    const directRoom = await this.getDirectRoomForMatrixID(
       agent,
       messageRequest.matrixID
     );
@@ -147,10 +147,10 @@ export class MatrixRoomAdapter {
     return dmRoom;
   }
 
-   getDirectRoomForMatrixID(
+  public async getDirectRoomForMatrixID(
     agent: MatrixAgent,
     matrixUserId: string
-  ): MatrixRoom | undefined {
+  ): Promise<MatrixRoom | undefined> {
     const matrixUsername =
       this.matrixUserAdapter.convertMatrixIDToUsername(matrixUserId);
     // Need to implement caching for performance
@@ -394,20 +394,20 @@ export class MatrixRoomAdapter {
     );
   }
 
-  public  getJoinRule(
+  public async getJoinRule(
     agent: MatrixAgent,
     roomID: string
-  ): string {
-    const room = agent.getRoomOrFail(roomID);
+  ): Promise<string> {
+    const room = await agent.getRoomOrFail(roomID);
     const roomState = room.currentState;
     return roomState.getJoinRule();
   }
 
-  public getHistoryVisibility(
+  public async getHistoryVisibility(
     agent: MatrixAgent,
     roomID: string
-  ): HistoryVisibility {
-    const room = agent.getRoomOrFail(roomID);
+  ): Promise<HistoryVisibility> {
+    const room = await agent.getRoomOrFail(roomID);
     const roomState = room.currentState;
     return roomState.getHistoryVisibility();
   }
@@ -425,7 +425,7 @@ export class MatrixRoomAdapter {
     roomID: string,
     agentUser: MatrixAgent
   ) {
-    const room = agentElevated.getRoomOrFail(roomID);
+    const room = await agentElevated.getRoomOrFail(roomID);
 
     // not very well documented but we can validate whether the user has membership like this
     // seen in https://github.com/matrix-org/matrix-js-sdk/blob/3c36be9839091bf63a4850f4babed0c976d48c0e/src/models/room-member.ts#L29
@@ -626,15 +626,15 @@ export class MatrixRoomAdapter {
     return reactions;
   }
 
-  getMatrixRoomMembers(
+  public async getMatrixRoomMembers(
     agent: MatrixAgent,
     matrixRoomID: string
-  ): string[] {
+  ): Promise<string[]> {
     this.logger.verbose?.(
       `[MatrixRoom] Obtaining members on room: ${matrixRoomID}`,
       LogContext.COMMUNICATION
     );
-    const room = agent.getRoomOrFail(matrixRoomID);
+    const room = await agent.getRoomOrFail(matrixRoomID);
     const roomMembers = room.getMembers();
     const usersIDs: string[] = [];
     for (const roomMember of roomMembers) {
