@@ -1,12 +1,11 @@
-import { pathToFileURL } from 'url';
 import { createRequire } from 'module';
+import { pathToFileURL } from 'url';
 
 // Register all path aliases from package.json
 const require = createRequire(import.meta.url);
 const { imports } = require('./package.json');
 
-for (const [alias, path] of Object.entries(imports)) {
-  const normalizedAlias = alias.replace('*', '');
+for (const [path] of Object.entries(imports)) {
   const normalizedPath = path.replace('*', '');
 
   // Register the alias

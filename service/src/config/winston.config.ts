@@ -1,10 +1,10 @@
-import { Injectable } from '@nestjs/common';
-import * as winston from 'winston';
-import { utilities as nestWinstonModuleUtilities } from 'nest-winston';
-import { ConfigService } from '@nestjs/config';
-import * as WinstonElasticsearch from 'winston-elasticsearch';
 import { ConfigurationTypes } from '@common/enums/configuration.type';
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as logform from 'logform';
+import { utilities as nestWinstonModuleUtilities } from 'nest-winston';
+import * as winston from 'winston';
+import * as WinstonElasticsearch from 'winston-elasticsearch';
 
 const LOG_LABEL = 'matrix-adapter';
 
@@ -23,7 +23,7 @@ const consoleLoggingProdFormat: logform.Format[] = [
 export class WinstonConfigService {
   constructor(private configService: ConfigService) {}
 
-  async createWinstonModuleOptions() {
+  createWinstonModuleOptions() {
     const consoleEnabled: boolean = this.configService.get(
       ConfigurationTypes.MONITORING
     )?.logging?.console_logging_enabled;

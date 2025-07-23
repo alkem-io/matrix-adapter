@@ -1,20 +1,19 @@
 import { Module } from '@nestjs/common';
-import { MatrixAgentPoolModule } from '@services/matrix/agent-pool/matrix.agent.pool.module';
-import { MatrixUserManagementModule } from '@services/matrix/management/matrix.user.management.module';
-import { MatrixRoomAdapterModule } from '@services/matrix/adapter-room/matrix.room.adapter.module';
-import { MatrixAgentModule } from '@services/matrix/agent/matrix.agent.module';
-import { MatrixUserAdapterModule } from '@services/matrix/adapter-user/matrix.user.adapter.module';
+import { MatrixRoomAdapterModule } from '@src/domain/adapter-room/matrix.room.adapter.module';
+import { MatrixUserAdapterModule } from '@src/domain/adapter-user/matrix.user.adapter.module';
+import { MatrixAgentPoolModule } from '@src/domain/agent/agent-pool/matrix.agent.pool.module';
+
+import { MatrixAdminUserModule } from '../../domain/matrix-admin/user/matrix.admin.user.module';
+import { MatrixAdminUserElevatedModule } from '../../domain/matrix-admin/user-elevated/matrix.admin.user.elevated.module';
 import { CommunicationAdapter } from './communication.adapter';
-import { CommunicationAdminUserModule } from '../communication-admin-user/communication.admin.user.module';
 
 @Module({
   imports: [
-    MatrixUserManagementModule,
+    MatrixAdminUserModule,
     MatrixUserAdapterModule,
     MatrixRoomAdapterModule,
-    MatrixAgentModule,
     MatrixAgentPoolModule,
-    CommunicationAdminUserModule,
+    MatrixAdminUserElevatedModule,
   ],
   providers: [CommunicationAdapter],
   exports: [CommunicationAdapter],

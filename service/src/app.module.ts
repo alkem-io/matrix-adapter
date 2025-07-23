@@ -2,14 +2,15 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER } from '@nestjs/core';
 import { WinstonModule } from 'nest-winston';
-import { HealthModule } from './services/health/health.module';
+
 import { AppController } from './app.controller';
-import { WinstonConfigService } from './config/winston.config';
 import configuration from './config/configuration';
-import { HttpExceptionsFilter } from './core/error-handling/http.exceptions.filter';
+import { WinstonConfigService } from './config/winston.config';
 import { BootstrapModule } from './core/bootstrap/bootstrap.module';
+import { HttpExceptionsFilter } from './core/error-handling/http.exceptions.filter';
+import { MatrixAdminRoomsModule } from './domain/matrix-admin/rooms/matrix.admin.rooms.module';
 import { CommunicationAdapterModule } from './services/communication-adapter/communication-adapter.module';
-import { MatrixAdminModule } from './services/matrix-admin/matrix.admin.module';
+import { HealthModule } from './services/health/health.module';
 
 @Module({
   imports: [
@@ -23,7 +24,7 @@ import { MatrixAdminModule } from './services/matrix-admin/matrix.admin.module';
     }),
     BootstrapModule,
     CommunicationAdapterModule,
-    MatrixAdminModule,
+    MatrixAdminRoomsModule,
     HealthModule,
   ],
   providers: [
