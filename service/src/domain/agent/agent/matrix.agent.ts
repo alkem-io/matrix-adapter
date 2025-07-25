@@ -62,7 +62,6 @@ export class MatrixAgent implements Disposable {
     this.eventDispatcher = new MatrixEventDispatcher(this);
     this.configService = configService;
     this.messageAdapter = messageAdapter;
-    this.logger = logger;
 
     // Read circuit breaker configuration from ConfigService
     const circuitBreakerConfig: CircuitBreakerConfig = {

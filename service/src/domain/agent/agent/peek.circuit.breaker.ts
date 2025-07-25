@@ -83,7 +83,7 @@ export class PeekCircuitBreaker {
         );
         this.state = "CLOSED";
         this.failureCount = 0;
-        this.resetTimeout = 1000;
+        this.resetTimeout = this.config.initialTimeout; // Reset timeout on success
       } else {
         this.logger.verbose?.(
           `Circuit breaker request successful for room ${roomId} (took ${duration}ms)`,
