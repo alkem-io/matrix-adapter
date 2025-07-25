@@ -1,6 +1,6 @@
 import { IMessage } from '@alkemio/matrix-adapter-lib';
 import { LogContext } from '@common/enums/logging.context';
-import pkg from '@nestjs/common';
+import pkg, { Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ConfigurationTypes } from '@src/common/enums/configuration.type';
 import { MatrixEntityNotFoundException } from '@src/common/exceptions/matrix.entity.not.found.exception';
@@ -28,61 +28,16 @@ import { SlidingSync } from 'matrix-js-sdk/lib/sliding-sync.js';
 import { SlidingSyncSdk } from 'matrix-js-sdk/lib/sliding-sync-sdk.js';
 import { SyncApi } from 'matrix-js-sdk/lib/sync.js';
 import { RoomMessageEventContent } from 'matrix-js-sdk/lib/types';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 
 import { IConditionalMatrixEventHandler } from '../events/matrix.event.conditional.handler.interface';
 import { IMatrixEventHandler } from '../events/matrix.event.handler.interface';
 import { MatrixEventsInternalNames } from '../events/types/matrix.event.internal.names';
 import { SlidingSyncConfig } from './matrix.sliding.sync.config';
+import { CircuitBreakerConfig,PeekCircuitBreaker } from './peek.circuit.breaker';
 import { MatrixAgentStartOptions } from './type/matrix.agent.start.options';
 
-type CircuitBreakerState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
-class PeekCircuitBreaker {
-  private state: CircuitBreakerState = "CLOSED";
-  private failureCount = 0;
-  private lastFailureTime = 0;
-  private readonly failureThreshold = 5;
-  private resetTimeout = 250; // Start with 250 milliseconds
-  private readonly maxResetTimeout = 30000; // Max 30 seconds
-
-  public async attemptPeek<T>(fn: () => Promise<T>, roomId: string): Promise<T> {
-    if (this.state === "OPEN") {
-      const timeSinceFailure = Date.now() - this.lastFailureTime;
-      if (timeSinceFailure < this.resetTimeout) {
-        throw new Error(
-          `Circuit breaker is open for room ${roomId}. Retry after ${this.resetTimeout - timeSinceFailure}ms`
-        );
-      } else {
-        // Transition to HALF_OPEN and allow a single test request
-        this.state = "HALF_OPEN";
-      }
-    }
-
-    try {
-      const result = await fn();
-      // Reset on success
-      this.state = "CLOSED";
-      this.failureCount = 0;
-      this.resetTimeout = 250; // Reset to initial timeout
-      return result;
-    } catch (error) {
-      this.failureCount++;
-      this.lastFailureTime = Date.now();
-
-      // Apply exponential backoff
-      this.resetTimeout = Math.min(
-        this.maxResetTimeout,
-        this.resetTimeout * 2
-      );
-
-      if (this.failureCount >= this.failureThreshold) {
-        this.state = "OPEN";
-      }
-
-      throw error;
-    }
-  }
-}
 
 // Wraps an instance of the client sdk
 export class MatrixAgent implements Disposable {
@@ -94,18 +49,37 @@ export class MatrixAgent implements Disposable {
   slidingSyncSdk?: SlidingSyncSdk;
   syncApi?: SyncApi;
   // Initialize the circuit breaker
-  private peekCircuitBreaker = new PeekCircuitBreaker();
+  private peekCircuitBreaker: PeekCircuitBreaker;
 
   constructor(
     matrixClient: MatrixClient,
     configService: ConfigService,
     messageAdapter: MatrixMessageAdapter,
-    private logger: pkg.LoggerService
+    @Inject(WINSTON_MODULE_NEST_PROVIDER)
+    private readonly logger: pkg.LoggerService,
   ) {
     this.matrixClient = matrixClient;
     this.eventDispatcher = new MatrixEventDispatcher(this);
     this.configService = configService;
     this.messageAdapter = messageAdapter;
+    this.logger = logger;
+
+    // Read circuit breaker configuration from ConfigService
+    const circuitBreakerConfig: CircuitBreakerConfig = {
+      failureThreshold: configService.get<number>('matrix.client.slidingSync.circuitBreaker.failureThreshold', 5),
+      initialTimeout: configService.get<number>('matrix.client.slidingSync.circuitBreaker.initialTimeout', 1000),
+      maxTimeout: configService.get<number>('matrix.client.slidingSync.circuitBreaker.maxTimeout', 30000),
+      maxRetries: configService.get<number>('matrix.client.slidingSync.circuitBreaker.maxRetries', 5)
+    };
+
+    // Debug log the configuration
+    this.logger.verbose?.(
+      `Circuit breaker config loaded: ${JSON.stringify(circuitBreakerConfig)}`,
+      LogContext.COMMUNICATION
+    );
+
+    // Initialize circuit breaker with logger and configuration
+    this.peekCircuitBreaker = new PeekCircuitBreaker(this.logger, circuitBreakerConfig);
   }
 
   attach(handler: IMatrixEventHandler) {
@@ -249,30 +223,34 @@ export class MatrixAgent implements Disposable {
     );
   }
 
-  public async getRoomOrFail(roomId: string, maxRetries = 5): Promise<MatrixRoom> {
-    // First, check if the room is already in the cache
-    let matrixRoom = this.matrixClient.getRoom(roomId);
-    if (matrixRoom) {
-      return matrixRoom;
-    }
+  public async getRoomOrFail(roomId: string, maxRetries?: number): Promise<MatrixRoom> {
+    // Use configured max retries if not provided
+    const retryLimit = maxRetries ?? this.peekCircuitBreaker.getMaxRetries();
 
-    // If not, attempt to peek with retry logic
+    // First check cache
+    let matrixRoom = this.matrixClient.getRoom(roomId);
+    if (matrixRoom) return matrixRoom;
+
     if (this.syncApi) {
       let lastError: unknown;
 
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      for (let attempt = 1; attempt <= retryLimit; attempt++) {
         try {
           matrixRoom = await this.peekCircuitBreaker.attemptPeek(
             () => this.syncApi!.peek(roomId),
-            roomId
+            roomId,
+            attempt,
+            retryLimit
           );
-          break; // Success - exit retry loop
+          break;
         } catch (error) {
           lastError = error;
-          if (attempt < maxRetries) {
-            // Wait with exponential backoff
-            const delay = Math.min(1000 * Math.pow(2, attempt), 5000); // Max 5s delay
-            this.logger.debug?.(`Peek attempt ${attempt} failed for room ${roomId}. Retrying in ${delay}ms...`);
+          if (attempt < retryLimit) {
+            const delay = Math.min(500 * Math.pow(2, attempt), 5000);
+            this.logger.verbose?.(
+              `Peek attempt ${attempt}/${retryLimit} failed for room ${roomId}. ` +
+              `Retrying in ${delay}ms...`
+            );
             await new Promise(resolve => setTimeout(resolve, delay));
           }
         }
@@ -280,13 +258,14 @@ export class MatrixAgent implements Disposable {
 
       if (!matrixRoom) {
         throw new MatrixEntityNotFoundException(
-          `Failed to peek room ${roomId} after ${maxRetries} attempts. Last error: ${lastError}`,
+          `Failed to peek room ${roomId} after ${retryLimit} attempts. ` +
+          `Last error: ${lastError}`,
           LogContext.MATRIX
         );
       }
     }
 
-    // Verify the room was loaded after peeking
+    // Verify room was loaded
     matrixRoom = this.matrixClient.getRoom(roomId);
     if (!matrixRoom) {
       throw new MatrixEntityNotFoundException(
@@ -297,6 +276,7 @@ export class MatrixAgent implements Disposable {
 
     return matrixRoom;
   }
+
 
 
   resolveAutoAcceptRoomMembershipMonitor(
@@ -443,6 +423,20 @@ export class MatrixAgent implements Disposable {
 
     dmRooms[userId] = [roomId];
     await agent.matrixClient.setAccountData(EventType.Direct, dmRooms);
+  }
+
+  /**
+   * Get circuit breaker status for monitoring/debugging
+   */
+  public getCircuitBreakerStatus() {
+    return this.peekCircuitBreaker.getStatus();
+  }
+
+  /**
+   * Log circuit breaker status for debugging
+   */
+  public logCircuitBreakerStatus(roomId?: string) {
+    this.peekCircuitBreaker.logStatus(roomId);
   }
 
   dispose() {
