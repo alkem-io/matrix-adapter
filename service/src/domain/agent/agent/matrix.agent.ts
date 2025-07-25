@@ -35,6 +35,55 @@ import { MatrixEventsInternalNames } from '../events/types/matrix.event.internal
 import { SlidingSyncConfig } from './matrix.sliding.sync.config';
 import { MatrixAgentStartOptions } from './type/matrix.agent.start.options';
 
+type CircuitBreakerState = "CLOSED" | "OPEN" | "HALF_OPEN";
+
+class PeekCircuitBreaker {
+  private state: CircuitBreakerState = "CLOSED";
+  private failureCount = 0;
+  private lastFailureTime = 0;
+  private readonly failureThreshold = 5;
+  private resetTimeout = 250; // Start with 250 milliseconds
+  private readonly maxResetTimeout = 30000; // Max 30 seconds
+
+  public async attemptPeek<T>(fn: () => Promise<T>, roomId: string): Promise<T> {
+    if (this.state === "OPEN") {
+      const timeSinceFailure = Date.now() - this.lastFailureTime;
+      if (timeSinceFailure < this.resetTimeout) {
+        throw new Error(
+          `Circuit breaker is open for room ${roomId}. Retry after ${this.resetTimeout - timeSinceFailure}ms`
+        );
+      } else {
+        // Transition to HALF_OPEN and allow a single test request
+        this.state = "HALF_OPEN";
+      }
+    }
+
+    try {
+      const result = await fn();
+      // Reset on success
+      this.state = "CLOSED";
+      this.failureCount = 0;
+      this.resetTimeout = 250; // Reset to initial timeout
+      return result;
+    } catch (error) {
+      this.failureCount++;
+      this.lastFailureTime = Date.now();
+
+      // Apply exponential backoff
+      this.resetTimeout = Math.min(
+        this.maxResetTimeout,
+        this.resetTimeout * 2
+      );
+
+      if (this.failureCount >= this.failureThreshold) {
+        this.state = "OPEN";
+      }
+
+      throw error;
+    }
+  }
+}
+
 // Wraps an instance of the client sdk
 export class MatrixAgent implements Disposable {
   matrixClient: MatrixClient;
@@ -44,6 +93,8 @@ export class MatrixAgent implements Disposable {
   slidingSync?: SlidingSync;
   slidingSyncSdk?: SlidingSyncSdk;
   syncApi?: SyncApi;
+  // Initialize the circuit breaker
+  private peekCircuitBreaker = new PeekCircuitBreaker();
 
   constructor(
     matrixClient: MatrixClient,
@@ -198,24 +249,55 @@ export class MatrixAgent implements Disposable {
     );
   }
 
-  public async getRoomOrFail(roomId: string): Promise<MatrixRoom> {
-    // check if the room exists in the matrix client
+  public async getRoomOrFail(roomId: string, maxRetries = 5): Promise<MatrixRoom> {
+    // First, check if the room is already in the cache
     let matrixRoom = this.matrixClient.getRoom(roomId);
-    // if not and we have the syncAPI properly initialized, try to peek it
-    if (!matrixRoom && this.syncApi) {
-      matrixRoom = await this.syncApi.peek(roomId);
-      //NOTE - important to stop peeking after the room is found; peeking queues an updates poll
-      //which results in a race condition when multiple rooms are being fetched in short time
-      this.syncApi.stopPeeking();
+    if (matrixRoom) {
+      return matrixRoom;
     }
+
+    // If not, attempt to peek with retry logic
+    if (this.syncApi) {
+      let lastError: unknown;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          matrixRoom = await this.peekCircuitBreaker.attemptPeek(
+            () => this.syncApi!.peek(roomId),
+            roomId
+          );
+          break; // Success - exit retry loop
+        } catch (error) {
+          lastError = error;
+          if (attempt < maxRetries) {
+            // Wait with exponential backoff
+            const delay = Math.min(1000 * Math.pow(2, attempt), 5000); // Max 5s delay
+            this.logger.debug?.(`Peek attempt ${attempt} failed for room ${roomId}. Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
+      }
+
+      if (!matrixRoom) {
+        throw new MatrixEntityNotFoundException(
+          `Failed to peek room ${roomId} after ${maxRetries} attempts. Last error: ${lastError}`,
+          LogContext.MATRIX
+        );
+      }
+    }
+
+    // Verify the room was loaded after peeking
+    matrixRoom = this.matrixClient.getRoom(roomId);
     if (!matrixRoom) {
       throw new MatrixEntityNotFoundException(
-        `Room not found: ${roomId}`,
+        `Room not found after peeking: ${roomId}`,
         LogContext.MATRIX
       );
     }
+
     return matrixRoom;
   }
+
 
   resolveAutoAcceptRoomMembershipMonitor(
     roomId: string,
