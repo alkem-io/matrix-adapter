@@ -101,7 +101,20 @@ matrix:
       # Room ranges to sync [start, end] indices
       ranges: ${MATRIX_SLIDING_SYNC_RANGES}:[[0,99]]
 
+      # Circuit breaker configuration for peek operations
+      circuitBreaker:
+        # Maximum number of failures before opening the circuit
+        failureThreshold: ${MATRIX_CIRCUIT_BREAKER_FAILURE_THRESHOLD}:5
+        # Initial timeout in milliseconds when circuit is open
+        initialTimeout: ${MATRIX_CIRCUIT_BREAKER_INITIAL_TIMEOUT}:1000
+        # Maximum timeout in milliseconds for exponential backoff
+        maxTimeout: ${MATRIX_CIRCUIT_BREAKER_MAX_TIMEOUT}:30000
+        # Maximum number of retry attempts for peek operations
+        maxRetries: ${MATRIX_CIRCUIT_BREAKER_MAX_RETRIES}:5
+
   admin:
     # The admin account that is created / used to administer the regular users on the Synapse server
     username: ${SYNAPSE_ADMIN_USERNAME}:matrixadmin3@alkem.io
     password: ${SYNAPSE_ADMIN_PASSWORD}:change_me_now
+
+
