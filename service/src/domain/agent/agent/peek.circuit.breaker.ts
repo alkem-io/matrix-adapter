@@ -34,16 +34,30 @@ export class PeekCircuitBreaker {
     );
   }
 
-  // Helper to detect errors that should not be retried (e.g., Matrix 403 not in room + previews disabled)
+  // Helper to detect errors that should not be retried (Matrix-403 forbidden peeks)
   private isNonRetryable(error: unknown): boolean {
     const err: any = error as any;
-    const message: string = typeof err?.message === 'string' ? err.message : '';
-    const status = err?.httpStatus ?? err?.statusCode ?? err?.status;
-    const is403 = status === 403 || (typeof message === 'string' && message.includes('[403]'));
-    const notInRoom = typeof message === 'string' && /not in room/i.test(message);
-    const previewsDisabled = typeof message === 'string' && /previews? are disabled/i.test(message);
-    // Be conservative: require 403 AND both hints in the message to mark as non-retryable
-    return Boolean(is403 && notInRoom && previewsDisabled);
+    // Normalize status (number or numeric string)
+    const raw = err?.httpStatus ?? err?.statusCode ?? err?.status;
+    const status = typeof raw === 'string' ? Number(raw) : raw;
+    // Matrix errcode from body or top-level error
+    const body = err?.body ?? err?.data;
+    const errcode: string | undefined =
+      (typeof body?.errcode === 'string' && body.errcode) ||
+      (typeof err?.errcode === 'string' && err.errcode);
+    // Primary human message fallback
+    const message: string =
+      (typeof err?.message === 'string' && err.message) ||
+      (typeof body?.error === 'string' && body.error) ||
+      '';
+    const is403 = status === 403;
+    const forbiddenErrcode =
+      errcode === 'M_FORBIDDEN' || errcode === 'M_GUEST_ACCESS_FORBIDDEN';
+    const notJoined = /not in room|not joined/i.test(message);
+    const accessDisabled =
+      /previews?\s+are\s+disabled|guest access is disabled|world readable is disabled/i.test(message);
+    // Conservative: require HTTP 403 and either an explicit errcode or both textual hints
+    return Boolean(is403 && (forbiddenErrcode || (notJoined && accessDisabled)));
   }
 
   public async attemptPeek<T>(
