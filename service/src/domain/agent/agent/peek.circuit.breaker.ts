@@ -136,6 +136,7 @@ export class PeekCircuitBreaker {
         this.logger.error?.(
           `Circuit breaker OPENING for room ${roomId} due to non-retryable error (403 not in room / previews disabled). ` +
           `Previous state: ${previousState}. Timeout ${oldTimeout}ms → ${this.resetTimeout}ms. Next retry allowed in ${this.resetTimeout}ms (${Math.round(this.resetTimeout / 1000)}s)`,
+          error instanceof Error ? error.stack : undefined,
           LogContext.COMMUNICATION
         );
         throw error;
@@ -148,6 +149,7 @@ export class PeekCircuitBreaker {
         this.logger.error?.(
           `Circuit breaker RE-OPENING from HALF_OPEN for room ${roomId} after failed test request. ` +
           `Previous state: ${previousState}. Next retry allowed in ${this.resetTimeout}ms (${Math.round(this.resetTimeout / 1000)}s)`,
+          error instanceof Error ? error.stack : undefined,
           LogContext.COMMUNICATION
         );
         throw error;
@@ -176,6 +178,7 @@ export class PeekCircuitBreaker {
         this.logger.error?.(
           `Circuit breaker OPENING for room ${roomId} - Failure threshold reached (${this.failureCount}/${this.failureThreshold}). ` +
           `Previous state: ${previousState}. Next retry allowed in ${this.resetTimeout}ms (${Math.round(this.resetTimeout / 1000)}s)`,
+          error instanceof Error ? error.stack : undefined,
           LogContext.COMMUNICATION
         );
       }
