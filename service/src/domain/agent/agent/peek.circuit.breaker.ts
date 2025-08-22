@@ -34,6 +34,32 @@ export class PeekCircuitBreaker {
     );
   }
 
+  // Helper to detect errors that should not be retried (Matrix-403 forbidden peeks)
+  private isNonRetryable(error: unknown): boolean {
+    const err: any = error as any;
+    // Normalize status (number or numeric string)
+    const raw = err?.httpStatus ?? err?.statusCode ?? err?.status;
+    const status = typeof raw === 'string' ? Number(raw) : raw;
+    // Matrix errcode from body or top-level error
+    const body = err?.body ?? err?.data;
+    const errcode: string | undefined =
+      (typeof body?.errcode === 'string' && body.errcode) ||
+      (typeof err?.errcode === 'string' && err.errcode);
+    // Primary human message fallback
+    const message: string =
+      (typeof err?.message === 'string' && err.message) ||
+      (typeof body?.error === 'string' && body.error) ||
+      '';
+    const is403 = status === 403;
+    const forbiddenErrcode =
+      errcode === 'M_FORBIDDEN' || errcode === 'M_GUEST_ACCESS_FORBIDDEN';
+    const notJoined = /not in room|not joined/i.test(message);
+    const accessDisabled =
+      /previews?\s+are\s+disabled|guest access is disabled|world readable is disabled/i.test(message);
+    // Conservative: require HTTP 403 and either an explicit errcode or both textual hints
+    return Boolean(is403 && (forbiddenErrcode || (notJoined && accessDisabled)));
+  }
+
   public async attemptPeek<T>(
     fn: () => Promise<T>,
     roomId: string,
@@ -47,27 +73,24 @@ export class PeekCircuitBreaker {
       LogContext.COMMUNICATION
     );
 
-    // Only check circuit state if we're not on the first attempt
-    if (attempt > 1) {
-      if (this.state === "OPEN") {
-        const timeSinceFailure = Date.now() - this.lastFailureTime;
-        if (timeSinceFailure < this.resetTimeout) {
-          const remainingTime = this.resetTimeout - timeSinceFailure;
-          this.logger.warn?.(
-            `Circuit breaker is OPEN for room ${roomId}. Blocking request. Retry after ${remainingTime}ms (${Math.round(remainingTime / 1000)}s)`,
-            LogContext.COMMUNICATION
-          );
-          throw new Error(
-            `Circuit breaker is open for room ${roomId}. ` +
-            `Retry after ${remainingTime}ms`
-          );
-        } else {
-          this.logger.verbose?.(
-            `Circuit breaker transitioning from OPEN to HALF_OPEN for room ${roomId} - Allowing test request`,
-            LogContext.COMMUNICATION
-          );
-          this.state = "HALF_OPEN";
-        }
+    // Always enforce circuit state before executing the function
+    if (this.state === "OPEN") {
+      const timeSinceFailure = Date.now() - this.lastFailureTime;
+      if (timeSinceFailure < this.resetTimeout) {
+        const remainingTime = this.resetTimeout - timeSinceFailure;
+        this.logger.warn?.(
+          `Circuit breaker is OPEN for room ${roomId}. Blocking request. Retry after ${remainingTime}ms (${Math.round(remainingTime / 1000)}s)`,
+          LogContext.COMMUNICATION
+        );
+        throw new Error(
+          `Circuit breaker is open for room ${roomId}. Retry after ${remainingTime}ms`
+        );
+      } else {
+        this.logger.verbose?.(
+          `Circuit breaker transitioning from OPEN to HALF_OPEN for room ${roomId} - Allowing test request`,
+          LogContext.COMMUNICATION
+        );
+        this.state = "HALF_OPEN";
       }
     }
 
@@ -102,6 +125,36 @@ export class PeekCircuitBreaker {
         LogContext.COMMUNICATION
       );
 
+      // Non-retryable error handling: immediately open the circuit and use max reset timeout
+      if (this.isNonRetryable(error)) {
+        const previousState = this.state;
+        this.state = "OPEN";
+        // Cap the counter to the threshold to avoid unbounded logs like 571/5
+        this.failureCount = Math.max(this.failureCount, this.failureThreshold);
+        const oldTimeout = this.resetTimeout;
+        this.resetTimeout = this.maxResetTimeout;
+        this.logger.error?.(
+          `Circuit breaker OPENING for room ${roomId} due to non-retryable error (403 not in room / previews disabled). ` +
+          `Previous state: ${previousState}. Timeout ${oldTimeout}ms → ${this.resetTimeout}ms. Next retry allowed in ${this.resetTimeout}ms (${Math.round(this.resetTimeout / 1000)}s)`,
+          error instanceof Error ? error.stack : undefined,
+          LogContext.COMMUNICATION
+        );
+        throw error;
+      }
+
+      // If the test request in HALF_OPEN fails, immediately re-open
+      if (this.state === "HALF_OPEN") {
+        const previousState = this.state;
+        this.state = "OPEN";
+        this.logger.error?.(
+          `Circuit breaker RE-OPENING from HALF_OPEN for room ${roomId} after failed test request. ` +
+          `Previous state: ${previousState}. Next retry allowed in ${this.resetTimeout}ms (${Math.round(this.resetTimeout / 1000)}s)`,
+          error instanceof Error ? error.stack : undefined,
+          LogContext.COMMUNICATION
+        );
+        throw error;
+      }
+
       // Only apply backoff if we're not on the last attempt
       if (attempt < maxAttempts) {
         const oldTimeout = this.resetTimeout;
@@ -118,13 +171,14 @@ export class PeekCircuitBreaker {
         }
       }
 
-      // Only open circuit if we've exhausted all attempts
-      if (attempt >= maxAttempts && this.failureCount >= this.failureThreshold) {
+      // Open the circuit as soon as the failure threshold is reached, independent of attempts
+      if (this.failureCount >= this.failureThreshold) {
         const previousState = this.state;
         this.state = "OPEN";
         this.logger.error?.(
           `Circuit breaker OPENING for room ${roomId} - Failure threshold reached (${this.failureCount}/${this.failureThreshold}). ` +
           `Previous state: ${previousState}. Next retry allowed in ${this.resetTimeout}ms (${Math.round(this.resetTimeout / 1000)}s)`,
+          error instanceof Error ? error.stack : undefined,
           LogContext.COMMUNICATION
         );
       }
