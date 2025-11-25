@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  adapter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080" # AppService Transaction API
+      - "8081:8081" # Health Check
+    environment:
+      - ENVIRONMENT=development
+      - LOGGING_LEVEL_CONSOLE=debug
+      - SYNAPSE_SERVER_URL=http://synapse:8008
+      - SYNAPSE_HOMESERVER_NAME=alkemio.matrix.host
+      - MATRIX_AS_TOKEN=your_as_token
+      - MATRIX_HS_TOKEN=your_hs_token
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      - rabbitmq
+      # - synapse
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+  # synapse:
+  #   image: matrixdotorg/synapse:latest
+  #   ports:
+  #     - "8008:8008"
+  #   environment:
+  #     - SYNAPSE_SERVER_NAME=example.com
+  #     - SYNAPSE_REPORT_STATS=no
+  #   volumes:
+  #     - ./synapse-data:/data

@@ -1,0 +1,62 @@
+name: Build & Deploy Matrix Adapter to Sandbox on Hetzner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to registry
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Build & push image
+        run: |
+          IMAGE="${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go"
+          docker build -f Dockerfile . -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest
+          docker push ${IMAGE}:${{ github.sha }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.27.6'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_SECRET_HETZNER_SANDBOX }}" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Create image pull secret
+        run: |
+          kubectl create secret docker-registry matrix-adapter-go-registry \
+            --docker-server=${{ secrets.REGISTRY_LOGIN_SERVER }} \
+            --docker-username=${{ secrets.REGISTRY_USERNAME }} \
+            --docker-password=${{ secrets.REGISTRY_PASSWORD }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy manifests
+        uses: azure/k8s-deploy@v5
+        with:
+          manifests: |
+            deployments/kubernetes/configmap.yaml
+            deployments/kubernetes/deployment.yaml
+            deployments/kubernetes/service.yaml
+          images: |
+            ${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go:${{ github.sha }}
+          imagepullsecrets: |
+            matrix-adapter-go-registry

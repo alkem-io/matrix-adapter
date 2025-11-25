@@ -1,0 +1,25 @@
+export enum MatrixAdapterEventType {
+
+  ACTOR_ADD_TO_ROOMS = 'actor.addToRooms',
+  ACTOR_REGISTER = 'actor.register',
+  ACTOR_REMOVE_FROM_ROOMS = 'actor.removeFromRooms',
+  ACTOR_ROOMS = 'actor.rooms',
+  ACTOR_ROOMS_DIRECT = 'actor.rooms.direct',
+  ACTOR_START_DIRECT_MESSAGING = 'actor.startDirectMessaging',
+  ACTOR_STOP_DIRECT_MESSAGING = 'actor.stopDirectMessaging',
+  ADMIN_ALL_ROOMS = 'admin.allRooms',
+  ADMIN_REPLICATE_ROOM_MEMBERSHIP = 'admin.replicateRoomMembership',
+  MESSAGE_RECEIVED = 'message.received',
+  ROOM_CREATE = 'room.create',
+  ROOM_DELETE = 'room.delete',
+  ROOM_DETAILS = 'room.details',
+  ROOM_MEMBERS = 'room.members',
+  ROOM_MESSAGE_ADD_REACTION = 'room.message.addReaction',
+  ROOM_MESSAGE_DELETE = 'room.message.delete',
+  ROOM_MESSAGE_DETAILS = 'room.message.details',
+  ROOM_MESSAGE_REMOVE_REACTION = 'room.message.removeReaction',
+  ROOM_MESSAGE_SEND = 'room.message.send',
+  ROOM_MESSAGE_SEND_REPLY = 'room.message.sendReply',
+  ROOM_UPDATE_STATE = 'room.updateState',
+
+}

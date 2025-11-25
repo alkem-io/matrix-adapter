@@ -1,0 +1,13 @@
+id: alkemio-matrix-adapter
+url: http://host.docker.internal:8081
+as_token: secret_as_token
+hs_token: secret_hs_token
+sender_localpart: alkemio-bot
+namespaces:
+  users:
+    - exclusive: true
+      regex: "@alkemio_.*"
+  aliases:
+    - exclusive: true
+      regex: "#alkemio_.*"
+  rooms: []

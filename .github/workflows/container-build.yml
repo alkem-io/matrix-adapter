@@ -1,0 +1,30 @@
+name: Container Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to registry
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Build container image
+        run: |
+          IMAGE="${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go"
+          docker build -f Dockerfile . -t ${IMAGE}:${{ github.sha }}
+
+      - name: Push container image
+        run: |
+          IMAGE="${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go"
+          docker push ${IMAGE}:${{ github.sha }}
+          docker tag ${IMAGE}:${{ github.sha }} ${IMAGE}:latest
+          docker push ${IMAGE}:latest

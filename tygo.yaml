@@ -1,0 +1,7 @@
+packages:
+  - path: "github.com/alkemio/matrix-adapter-go/pkg/dto"
+    output_path: "lib/src/dto/generated.ts"
+    fallback_type: "any"
+    type_mappings:
+      "github.com/google/uuid.UUID": "string"
+      "time.Time": "string"

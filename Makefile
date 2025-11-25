@@ -1,0 +1,120 @@
+# Variables
+BINARY_NAME=adapter
+ENTRYPOINT=cmd/adapter/main.go
+BUILD_DIR=bin
+
+# Go commands
+GO=go
+GOTEST=$(GO) test
+GOBUILD=$(GO) build
+GOCLEAN=$(GO) clean
+GOVET=$(GO) vet
+GOFMT=$(GO) fmt
+
+# Default target
+.PHONY: all
+all: deps fmt lint test build
+
+# Build the application
+.PHONY: build
+build:
+	@echo "Building $(BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) -o $(BUILD_DIR)/$(BINARY_NAME) $(ENTRYPOINT)
+
+# Run the application
+.PHONY: run
+run:
+	@echo "Running $(BINARY_NAME)..."
+	$(GO) run $(ENTRYPOINT)
+
+# Run tests
+.PHONY: test
+test:
+	@echo "Running tests..."
+	$(GOTEST) -v ./...
+
+# Run tests with coverage
+.PHONY: test-coverage
+test-coverage:
+	@echo "Running tests with coverage..."
+	$(GOTEST) -v -coverprofile=coverage.out ./...
+	$(GO) tool cover -html=coverage.out -o coverage.html
+
+# Lint the code
+.PHONY: lint
+lint:
+	@echo "Linting..."
+	$(GOVET) ./...
+	# Check if golangci-lint is installed
+	@if command -v golangci-lint >/dev/null; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not found, skipping advanced linting"; \
+	fi
+
+# Format the code
+.PHONY: fmt
+fmt:
+	@echo "Formatting..."
+	$(GOFMT) ./...
+
+# Generate all artifacts
+.PHONY: generate
+generate: generate-go generate-events
+
+# Generate Go code (DTOs, mocks)
+.PHONY: generate-go
+generate-go:
+	@echo "Generating Go code..."
+	$(GO) generate ./...
+
+# Generate events TS file
+.PHONY: generate-events
+generate-events:
+	@echo "Generating events TS file..."
+	$(GO) run cmd/gen-events/main.go lib/src/matrix.adapter.event.type.ts
+
+# Serve documentation
+.PHONY: doc
+doc:
+	@echo "Starting documentation server..."
+	$(GO) doc -http
+
+# Clean build artifacts
+.PHONY: clean
+clean:
+	@echo "Cleaning..."
+	$(GOCLEAN)
+	rm -rf $(BUILD_DIR)
+	rm -f coverage.out coverage.html
+
+# Install dependencies
+.PHONY: deps
+deps:
+	@echo "Installing dependencies..."
+	$(GO) mod download
+	$(GO) mod tidy
+
+# Docker build
+.PHONY: docker-build
+docker-build:
+	@echo "Building Docker image..."
+	docker build -t alkemio/matrix-adapter-go .
+
+# Help
+.PHONY: help
+help:
+	@echo "Available targets:"
+	@echo "  all            - Run deps, fmt, lint, test, and build"
+	@echo "  build          - Build the application binary"
+	@echo "  run            - Run the application locally"
+	@echo "  test           - Run unit tests"
+	@echo "  test-coverage  - Run tests with coverage report"
+	@echo "  lint           - Run linters (go vet, golangci-lint)"
+	@echo "  fmt            - Format code"
+	@echo "  generate       - Run go generate"
+	@echo "  doc            - Serve documentation (using go doc -http)"
+	@echo "  clean          - Remove build artifacts"
+	@echo "  deps           - Download and tidy dependencies"
+	@echo "  docker-build   - Build Docker image"
