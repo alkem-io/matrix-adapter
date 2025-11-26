@@ -6,10 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alkemio/matrix-adapter-go/internal/core/domain"
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
+
+	"github.com/alkemio/matrix-adapter-go/internal/core/domain"
 )
 
 // OnMessage registers a handler for incoming Matrix messages.
@@ -49,14 +50,16 @@ func (m *MautrixAdapter) processEvent(evt *event.Event, handler func(msg domain.
 		// Try to get room name from state
 		var roomName string
 
-		if err := handler(domain.Message{
-			ID:        e.ID.String(),
-			RoomID:    e.RoomID.String(),
-			RoomName:  roomName,
-			SenderID:  s,
-			Content:   c,
-			Timestamp: time.UnixMilli(e.Timestamp),
-		}); err != nil {
+		if err := handler(
+			domain.Message{
+				ID:        e.ID.String(),
+				RoomID:    e.RoomID.String(),
+				RoomName:  roomName,
+				SenderID:  s,
+				Content:   c,
+				Timestamp: time.UnixMilli(e.Timestamp),
+			},
+		); err != nil {
 			m.logger.Error("Error handling message", "error", err)
 		}
 	}(evt, content, senderUUID)
@@ -66,7 +69,7 @@ func (m *MautrixAdapter) parseActorID(mxid id.UserID) (uuid.UUID, error) {
 	s := string(mxid)
 	// Format: @uuid:domain
 	parts := strings.Split(s, ":")
-	if len(parts) < 2 {
+	if len(parts) != 2 {
 		return uuid.Nil, fmt.Errorf("invalid format")
 	}
 	localpart := strings.TrimPrefix(parts[0], "@")
