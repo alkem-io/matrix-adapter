@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/alkemio/matrix-adapter-go/internal/config"
 	"github.com/alkemio/matrix-adapter-go/internal/core/domain"
 	"github.com/alkemio/matrix-adapter-go/internal/core/ports"
 	"github.com/alkemio/matrix-adapter-go/pkg/dto"
-	"github.com/google/uuid"
 )
 
 // EventService handles incoming Matrix events and publishes them to the queue.
@@ -55,21 +56,13 @@ func (s *EventService) HandleMessage(msg domain.Message) error {
 	return nil
 }
 
-// ParseActorIDFromMatrixID extracts the UUID from a Matrix ID like @namespace_uuid:domain
+// ParseActorIDFromMatrixID extracts the UUID from a Matrix ID like @uuid:domain
 func (s *EventService) ParseActorIDFromMatrixID(matrixID string) (uuid.UUID, error) {
 	// Remove @ and :domain
 	parts := strings.Split(matrixID, ":")
-	if len(parts) < 2 {
+	if len(parts) != 2 {
 		return uuid.Nil, fmt.Errorf("invalid matrix ID format")
 	}
 	localpart := strings.TrimPrefix(parts[0], "@")
-
-	// Remove namespace prefix
-	prefix := fmt.Sprintf("%s_", s.cfg.Matrix.Namespace)
-	if !strings.HasPrefix(localpart, prefix) {
-		return uuid.Nil, fmt.Errorf("matrix ID does not match namespace")
-	}
-
-	uuidStr := strings.TrimPrefix(localpart, prefix)
-	return uuid.Parse(uuidStr)
+	return uuid.Parse(localpart)
 }
