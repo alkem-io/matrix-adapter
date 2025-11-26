@@ -8,8 +8,8 @@ import (
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill-amqp/v2/pkg/amqp"
 	"github.com/ThreeDotsLabs/watermill/message"
-	"github.com/alkemio/matrix-adapter-go/internal/config"
-	"github.com/alkemio/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/config"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 )
 
 // WatermillAdapter implements the QueuePort interface using the Watermill library and RabbitMQ.

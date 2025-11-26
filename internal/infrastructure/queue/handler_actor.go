@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/alkemio/matrix-adapter-go/internal/core/domain"
-	"github.com/alkemio/matrix-adapter-go/internal/core/service"
-	"github.com/alkemio/matrix-adapter-go/pkg/dto"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
+	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 	"github.com/google/uuid"
 )
 
@@ -134,7 +134,9 @@ func (h *ActorHandler) HandleStartDirectMessaging(payload []byte) (interface{}, 
 		return nil, err
 	}
 
-	roomID, err := h.service.CreateDirectRoom(context.Background(), domain.Actor{ID: initiatorID}, domain.Actor{ID: receiverID})
+	roomID, err := h.service.CreateDirectRoom(
+		context.Background(), domain.Actor{ID: initiatorID}, domain.Actor{ID: receiverID},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +163,9 @@ func (h *ActorHandler) HandleStopDirectMessaging(payload []byte) (interface{}, e
 		return nil, err
 	}
 
-	err = h.service.StopDirectMessaging(context.Background(), domain.Actor{ID: initiatorID}, domain.Actor{ID: receiverID})
+	err = h.service.StopDirectMessaging(
+		context.Background(), domain.Actor{ID: initiatorID}, domain.Actor{ID: receiverID},
+	)
 	if err != nil {
 		return nil, err
 	}

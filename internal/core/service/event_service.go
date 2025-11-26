@@ -6,10 +6,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alkemio/matrix-adapter-go/internal/config"
-	"github.com/alkemio/matrix-adapter-go/internal/core/domain"
-	"github.com/alkemio/matrix-adapter-go/internal/core/ports"
-	"github.com/alkemio/matrix-adapter-go/pkg/dto"
+	"github.com/alkem-io/matrix-adapter-go/internal/config"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
 
 // EventService handles incoming Matrix events and publishes them to the queue.

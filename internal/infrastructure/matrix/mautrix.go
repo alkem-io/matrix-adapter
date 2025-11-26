@@ -6,9 +6,9 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/alkemio/matrix-adapter-go/internal/config"
-	"github.com/alkemio/matrix-adapter-go/internal/core/domain"
-	"github.com/alkemio/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/config"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/event"
@@ -121,7 +121,9 @@ func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id
 }
 
 // CreateRoom creates a new room on the homeserver.
-func (m *MautrixAdapter) CreateRoom(ctx context.Context, actorID domain.Actor, name string, metadata map[string]string) (id.RoomID, error) {
+func (m *MautrixAdapter) CreateRoom(
+	ctx context.Context, actorID domain.Actor, name string, metadata map[string]string,
+) (id.RoomID, error) {
 	// Get intent for the actor
 	userID, err := m.EnsureUser(ctx, actorID)
 	if err != nil {
@@ -151,7 +153,9 @@ func (m *MautrixAdapter) CreateRoom(ctx context.Context, actorID domain.Actor, n
 }
 
 // InviteUser invites a user to a room.
-func (m *MautrixAdapter) InviteUser(ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID domain.Actor) error {
+func (m *MautrixAdapter) InviteUser(
+	ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID domain.Actor,
+) error {
 	inviterUserID, err := m.EnsureUser(ctx, inviterID)
 	if err != nil {
 		return err
@@ -162,9 +166,11 @@ func (m *MautrixAdapter) InviteUser(ctx context.Context, roomID id.RoomID, invit
 	}
 
 	intent := m.as.Intent(inviterUserID)
-	_, err = intent.InviteUser(ctx, roomID, &mautrix.ReqInviteUser{
-		UserID: inviteeUserID,
-	})
+	_, err = intent.InviteUser(
+		ctx, roomID, &mautrix.ReqInviteUser{
+			UserID: inviteeUserID,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("failed to invite user: %w", err)
 	}
@@ -172,16 +178,20 @@ func (m *MautrixAdapter) InviteUser(ctx context.Context, roomID id.RoomID, invit
 }
 
 // InviteUserByID invites a user (by Matrix ID) to a room.
-func (m *MautrixAdapter) InviteUserByID(ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID id.UserID) error {
+func (m *MautrixAdapter) InviteUserByID(
+	ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID id.UserID,
+) error {
 	inviterUserID, err := m.EnsureUser(ctx, inviterID)
 	if err != nil {
 		return err
 	}
 
 	intent := m.as.Intent(inviterUserID)
-	_, err = intent.InviteUser(ctx, roomID, &mautrix.ReqInviteUser{
-		UserID: inviteeID,
-	})
+	_, err = intent.InviteUser(
+		ctx, roomID, &mautrix.ReqInviteUser{
+			UserID: inviteeID,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("failed to invite user: %w", err)
 	}
@@ -204,7 +214,9 @@ func (m *MautrixAdapter) JoinRoom(ctx context.Context, roomID id.RoomID, actorID
 }
 
 // SendMessage sends a message to a room.
-func (m *MautrixAdapter) SendMessage(ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string) (id.EventID, error) {
+func (m *MautrixAdapter) SendMessage(
+	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string,
+) (id.EventID, error) {
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
 		return "", err
@@ -303,7 +315,9 @@ func (m *MautrixAdapter) GetRoomMembers(ctx context.Context, roomID id.RoomID) (
 }
 
 // UpdateRoomState updates the state of a room.
-func (m *MautrixAdapter) UpdateRoomState(ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, alias string) error {
+func (m *MautrixAdapter) UpdateRoomState(
+	ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, alias string,
+) error {
 	userID, err := m.EnsureUser(ctx, actorID)
 	if err != nil {
 		return err
@@ -332,7 +346,9 @@ func (m *MautrixAdapter) UpdateRoomState(ctx context.Context, roomID id.RoomID, 
 }
 
 // SendReply sends a reply to a message.
-func (m *MautrixAdapter) SendReply(ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID) (id.EventID, error) {
+func (m *MautrixAdapter) SendReply(
+	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
+) (id.EventID, error) {
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
 		return "", err
@@ -357,7 +373,9 @@ func (m *MautrixAdapter) SendReply(ctx context.Context, roomID id.RoomID, sender
 }
 
 // RedactEvent redacts an event.
-func (m *MautrixAdapter) RedactEvent(ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string) error {
+func (m *MautrixAdapter) RedactEvent(
+	ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string,
+) error {
 	userID, err := m.EnsureUser(ctx, actorID)
 	if err != nil {
 		return err
@@ -376,7 +394,9 @@ func (m *MautrixAdapter) RedactEvent(ctx context.Context, roomID id.RoomID, acto
 }
 
 // SendReaction sends a reaction to an event.
-func (m *MautrixAdapter) SendReaction(ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, emoji string) (id.EventID, error) {
+func (m *MautrixAdapter) SendReaction(
+	ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, emoji string,
+) (id.EventID, error) {
 	userID, err := m.EnsureUser(ctx, actorID)
 	if err != nil {
 		return "", err
@@ -418,7 +438,9 @@ func (m *MautrixAdapter) ForgetRoom(ctx context.Context, roomID id.RoomID, actor
 }
 
 // GetMessage retrieves a specific message event.
-func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, eventID id.EventID) (*domain.Message, error) {
+func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, eventID id.EventID) (
+	*domain.Message, error,
+) {
 	intent := m.as.BotIntent()
 	evt, err := intent.GetEvent(ctx, roomID, eventID)
 	if err != nil {
@@ -445,7 +467,9 @@ type RespRelations struct {
 }
 
 // GetReactionEventID finds the event ID of a reaction.
-func (m *MautrixAdapter) GetReactionEventID(ctx context.Context, roomID id.RoomID, eventID id.EventID, emoji string, senderID domain.Actor) (id.EventID, error) {
+func (m *MautrixAdapter) GetReactionEventID(
+	ctx context.Context, roomID id.RoomID, eventID id.EventID, emoji string, senderID domain.Actor,
+) (id.EventID, error) {
 	intent := m.as.BotIntent()
 
 	// Manually build request for relations
@@ -456,7 +480,10 @@ func (m *MautrixAdapter) GetReactionEventID(ctx context.Context, roomID id.RoomI
 	if hsURL[len(hsURL)-1] == '/' {
 		hsURL = hsURL[:len(hsURL)-1]
 	}
-	u := fmt.Sprintf("%s/_matrix/client/v1/rooms/%s/relations/%s/%s/%s", hsURL, roomID, eventID, event.RelAnnotation, event.EventReaction)
+	u := fmt.Sprintf(
+		"%s/_matrix/client/v1/rooms/%s/relations/%s/%s/%s", hsURL, roomID, eventID, event.RelAnnotation,
+		event.EventReaction,
+	)
 
 	var resp RespRelations
 	_, err := intent.MakeRequest(ctx, "GET", u, nil, &resp)
@@ -482,7 +509,9 @@ func (m *MautrixAdapter) GetReactionEventID(ctx context.Context, roomID id.RoomI
 }
 
 // CreateDirectRoom creates a direct message room.
-func (m *MautrixAdapter) CreateDirectRoom(ctx context.Context, initiator domain.Actor, receiver domain.Actor) (id.RoomID, error) {
+func (m *MautrixAdapter) CreateDirectRoom(
+	ctx context.Context, initiator domain.Actor, receiver domain.Actor,
+) (id.RoomID, error) {
 	initiatorID, err := m.EnsureUser(ctx, initiator)
 	if err != nil {
 		return "", err
@@ -493,12 +522,14 @@ func (m *MautrixAdapter) CreateDirectRoom(ctx context.Context, initiator domain.
 	}
 
 	intent := m.as.Intent(initiatorID)
-	resp, err := intent.CreateRoom(ctx, &mautrix.ReqCreateRoom{
-		Preset:   "trusted_private_chat",
-		IsDirect: true,
-		Invite:   []id.UserID{receiverID},
-		Topic:    "Direct Message",
-	})
+	resp, err := intent.CreateRoom(
+		ctx, &mautrix.ReqCreateRoom{
+			Preset:   "trusted_private_chat",
+			IsDirect: true,
+			Invite:   []id.UserID{receiverID},
+			Topic:    "Direct Message",
+		},
+	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create DM room: %w", err)
 	}

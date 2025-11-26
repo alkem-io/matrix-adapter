@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/alkemio/matrix-adapter-go/internal/core/domain"
-	"github.com/alkemio/matrix-adapter-go/internal/core/service"
-	"github.com/alkemio/matrix-adapter-go/pkg/dto"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
+	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
 )
@@ -32,12 +32,14 @@ func (h *AdminHandler) HandleGetAllRooms(_ []byte) (interface{}, error) {
 
 	roomResponses := make([]dto.RoomDetailsResponse, 0, len(rooms))
 	for _, r := range rooms {
-		roomResponses = append(roomResponses, dto.RoomDetailsResponse{
-			RoomID: r.ID.String(),
-			Name:   r.Name,
-			Topic:  r.Topic,
-			Alias:  r.Alias,
-		})
+		roomResponses = append(
+			roomResponses, dto.RoomDetailsResponse{
+				RoomID: r.ID.String(),
+				Name:   r.Name,
+				Topic:  r.Topic,
+				Alias:  r.Alias,
+			},
+		)
 	}
 
 	return dto.AdminAllRoomsResponse{
@@ -57,7 +59,9 @@ func (h *AdminHandler) HandleReplicateRoomMembership(payload []byte) (interface{
 		return nil, err
 	}
 
-	added, failed, err := h.service.ReplicateRoomMembership(context.Background(), id.RoomID(req.SourceRoomID), id.RoomID(req.TargetRoomID), domain.Actor{ID: prioritizerID})
+	added, failed, err := h.service.ReplicateRoomMembership(
+		context.Background(), id.RoomID(req.SourceRoomID), id.RoomID(req.TargetRoomID), domain.Actor{ID: prioritizerID},
+	)
 	if err != nil {
 		return nil, err
 	}

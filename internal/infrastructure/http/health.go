@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/alkemio/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 )
 
 // HealthServer provides liveness and readiness probes.
@@ -19,16 +19,20 @@ type HealthServer struct {
 func NewHealthServer(port string, logger ports.Logger) *HealthServer {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/health/live", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
-	})
+	mux.HandleFunc(
+		"/health/live", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("OK"))
+		},
+	)
 
-	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, _ *http.Request) {
-		// Note: In a real implementation, check dependencies (Matrix, RabbitMQ) here
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
-	})
+	mux.HandleFunc(
+		"/health/ready", func(w http.ResponseWriter, _ *http.Request) {
+			// Note: In a real implementation, check dependencies (Matrix, RabbitMQ) here
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("OK"))
+		},
+	)
 
 	return &HealthServer{
 		server: &http.Server{

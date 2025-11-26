@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/alkemio/matrix-adapter-go/internal/app"
-	"github.com/alkemio/matrix-adapter-go/internal/config"
+	"github.com/alkem-io/matrix-adapter-go/internal/app"
+	"github.com/alkem-io/matrix-adapter-go/internal/config"
 )
 
 func main() {

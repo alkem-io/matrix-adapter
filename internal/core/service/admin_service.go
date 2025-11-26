@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/alkemio/matrix-adapter-go/internal/core/domain"
-	"github.com/alkemio/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"maunium.net/go/mautrix/id"
 )
 
@@ -44,7 +44,9 @@ func (s *AdminService) GetAllRooms(ctx context.Context) ([]domain.Room, error) {
 }
 
 // ReplicateRoomMembership copies membership from source room to target room.
-func (s *AdminService) ReplicateRoomMembership(ctx context.Context, sourceRoomID, targetRoomID id.RoomID, prioritizer domain.Actor) ([]string, []string, error) {
+func (s *AdminService) ReplicateRoomMembership(
+	ctx context.Context, sourceRoomID, targetRoomID id.RoomID, prioritizer domain.Actor,
+) ([]string, []string, error) {
 	members, err := s.matrix.GetRoomMembers(ctx, sourceRoomID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get source room members: %w", err)
