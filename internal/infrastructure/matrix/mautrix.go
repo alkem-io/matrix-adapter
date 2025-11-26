@@ -43,7 +43,7 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		Namespaces: appservice.Namespaces{
 			UserIDs: []appservice.Namespace{
 				{
-					Exclusive: true,
+					Exclusive: false,
 					Regex:     "@[0-9a-fA-F-]{36}:.*",
 				},
 			},

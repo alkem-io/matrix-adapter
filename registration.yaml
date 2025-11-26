@@ -5,7 +5,7 @@ hs_token: secret_hs_token
 sender_localpart: alkemio-bot
 namespaces:
   users:
-    - exclusive: true
+    - exclusive: false
       regex: "@[0-9a-fA-F-]{36}:.*"
   aliases:
     - exclusive: true
