@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/alkemio/matrix-adapter-go/internal/core/domain"
-	"github.com/alkemio/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"maunium.net/go/mautrix/id"
 )
 
@@ -77,7 +77,9 @@ func (s *ActorService) GetRooms(ctx context.Context, actorID domain.Actor) ([]st
 }
 
 // CreateDirectRoom creates a direct message room between two actors.
-func (s *ActorService) CreateDirectRoom(ctx context.Context, initiator domain.Actor, receiver domain.Actor) (id.RoomID, error) {
+func (s *ActorService) CreateDirectRoom(ctx context.Context, initiator domain.Actor, receiver domain.Actor) (
+	id.RoomID, error,
+) {
 	s.logger.Info("Creating DM room", "initiator", initiator.ID, "receiver", receiver.ID)
 	return s.matrix.CreateDirectRoom(ctx, initiator, receiver)
 }

@@ -2,7 +2,7 @@
 package logger
 
 import (
-	"github.com/alkemio/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

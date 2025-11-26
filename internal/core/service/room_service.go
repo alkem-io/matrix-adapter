@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/alkemio/matrix-adapter-go/internal/core/domain"
-	"github.com/alkemio/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"maunium.net/go/mautrix/id"
 )
 
@@ -24,7 +24,9 @@ func NewRoomService(matrix ports.MatrixPort, logger ports.Logger) *RoomService {
 }
 
 // CreateRoom creates a new Matrix room on behalf of an actor.
-func (s *RoomService) CreateRoom(ctx context.Context, actorID domain.Actor, name string, metadata map[string]string) (id.RoomID, error) {
+func (s *RoomService) CreateRoom(
+	ctx context.Context, actorID domain.Actor, name string, metadata map[string]string,
+) (id.RoomID, error) {
 	s.logger.Info("Creating room", "actor_id", actorID.ID, "name", name)
 
 	roomID, err := s.matrix.CreateRoom(ctx, actorID, name, metadata)
@@ -59,27 +61,37 @@ func (s *RoomService) GetRoomMembers(ctx context.Context, roomID id.RoomID) ([]i
 }
 
 // UpdateRoomState updates the state of a room (name, topic, alias).
-func (s *RoomService) UpdateRoomState(ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, alias string) error {
+func (s *RoomService) UpdateRoomState(
+	ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, alias string,
+) error {
 	return s.matrix.UpdateRoomState(ctx, roomID, actorID, name, topic, alias)
 }
 
 // SendMessage sends a text message to a room.
-func (s *RoomService) SendMessage(ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string) (id.EventID, error) {
+func (s *RoomService) SendMessage(
+	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string,
+) (id.EventID, error) {
 	return s.matrix.SendMessage(ctx, roomID, senderID, content)
 }
 
 // SendReply sends a reply to a specific event in a room.
-func (s *RoomService) SendReply(ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID) (id.EventID, error) {
+func (s *RoomService) SendReply(
+	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
+) (id.EventID, error) {
 	return s.matrix.SendReply(ctx, roomID, senderID, content, threadID)
 }
 
 // RedactEvent redacts (deletes) an event from a room.
-func (s *RoomService) RedactEvent(ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string) error {
+func (s *RoomService) RedactEvent(
+	ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string,
+) error {
 	return s.matrix.RedactEvent(ctx, roomID, actorID, eventID, reason)
 }
 
 // SendReaction sends a reaction (emoji) to an event.
-func (s *RoomService) SendReaction(ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, emoji string) (id.EventID, error) {
+func (s *RoomService) SendReaction(
+	ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, emoji string,
+) (id.EventID, error) {
 	return s.matrix.SendReaction(ctx, roomID, actorID, eventID, emoji)
 }
 
@@ -95,6 +107,8 @@ func (s *RoomService) GetMessage(ctx context.Context, roomID id.RoomID, eventID 
 }
 
 // GetReactionEventID finds the event ID of a reaction.
-func (s *RoomService) GetReactionEventID(ctx context.Context, roomID id.RoomID, eventID id.EventID, emoji string, senderID domain.Actor) (id.EventID, error) {
+func (s *RoomService) GetReactionEventID(
+	ctx context.Context, roomID id.RoomID, eventID id.EventID, emoji string, senderID domain.Actor,
+) (id.EventID, error) {
 	return s.matrix.GetReactionEventID(ctx, roomID, eventID, emoji, senderID)
 }

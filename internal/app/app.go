@@ -5,13 +5,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/alkemio/matrix-adapter-go/internal/config"
-	"github.com/alkemio/matrix-adapter-go/internal/core/ports"
-	"github.com/alkemio/matrix-adapter-go/internal/core/service"
-	httpinfra "github.com/alkemio/matrix-adapter-go/internal/infrastructure/http"
-	"github.com/alkemio/matrix-adapter-go/internal/infrastructure/logger"
-	"github.com/alkemio/matrix-adapter-go/internal/infrastructure/matrix"
-	"github.com/alkemio/matrix-adapter-go/internal/infrastructure/queue"
+	"github.com/alkem-io/matrix-adapter-go/internal/config"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
+	httpinfra "github.com/alkem-io/matrix-adapter-go/internal/infrastructure/http"
+	"github.com/alkem-io/matrix-adapter-go/internal/infrastructure/logger"
+	"github.com/alkem-io/matrix-adapter-go/internal/infrastructure/matrix"
+	"github.com/alkem-io/matrix-adapter-go/internal/infrastructure/queue"
 )
 
 // App represents the Matrix Adapter application and holds references to all its components.

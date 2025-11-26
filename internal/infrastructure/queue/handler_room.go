@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/alkemio/matrix-adapter-go/internal/core/domain"
-	"github.com/alkemio/matrix-adapter-go/internal/core/service"
-	"github.com/alkemio/matrix-adapter-go/pkg/dto"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
+	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
 )
@@ -126,7 +126,9 @@ func (h *RoomHandler) HandleUpdateState(payload []byte) (interface{}, error) {
 		return nil, err
 	}
 
-	err = h.service.UpdateRoomState(context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: actorID}, req.Name, req.Topic, req.Alias)
+	err = h.service.UpdateRoomState(
+		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: actorID}, req.Name, req.Topic, req.Alias,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +148,9 @@ func (h *RoomHandler) HandleSendMessage(payload []byte) (interface{}, error) {
 		return nil, err
 	}
 
-	eventID, err := h.service.SendMessage(context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, req.Message)
+	eventID, err := h.service.SendMessage(
+		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, req.Message,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +170,9 @@ func (h *RoomHandler) HandleSendReply(payload []byte) (interface{}, error) {
 		return nil, err
 	}
 
-	eventID, err := h.service.SendReply(context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, req.Message, id.EventID(req.ThreadID))
+	eventID, err := h.service.SendReply(
+		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, req.Message, id.EventID(req.ThreadID),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +192,9 @@ func (h *RoomHandler) HandleDeleteMessage(payload []byte) (interface{}, error) {
 		return nil, err
 	}
 
-	err = h.service.RedactEvent(context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, id.EventID(req.EventID), req.Reason)
+	err = h.service.RedactEvent(
+		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, id.EventID(req.EventID), req.Reason,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +214,9 @@ func (h *RoomHandler) HandleAddReaction(payload []byte) (interface{}, error) {
 		return nil, err
 	}
 
-	eventID, err := h.service.SendReaction(context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, id.EventID(req.MessageID), req.Emoji)
+	eventID, err := h.service.SendReaction(
+		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, id.EventID(req.MessageID), req.Emoji,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -269,13 +279,17 @@ func (h *RoomHandler) HandleRemoveReaction(payload []byte) (interface{}, error) 
 	}
 
 	// Find the reaction event ID
-	reactionEventID, err := h.service.GetReactionEventID(context.Background(), id.RoomID(req.RoomID), id.EventID(req.MessageID), req.Emoji, domain.Actor{ID: senderID})
+	reactionEventID, err := h.service.GetReactionEventID(
+		context.Background(), id.RoomID(req.RoomID), id.EventID(req.MessageID), req.Emoji, domain.Actor{ID: senderID},
+	)
 	if err != nil {
 		return nil, err
 	}
 
 	// Redact the reaction
-	err = h.service.RedactEvent(context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, reactionEventID, "Reaction removed")
+	err = h.service.RedactEvent(
+		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, reactionEventID, "Reaction removed",
+	)
 	if err != nil {
 		return nil, err
 	}
