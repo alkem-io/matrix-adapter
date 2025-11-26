@@ -55,7 +55,7 @@ func (s *EventService) HandleMessage(msg domain.Message) error {
 	return nil
 }
 
-// ParseActorIDFromMatrixID extracts the UUID from a Matrix ID like @namespace_uuid:domain
+// ParseActorIDFromMatrixID extracts the UUID from a Matrix ID like @uuid:domain
 func (s *EventService) ParseActorIDFromMatrixID(matrixID string) (uuid.UUID, error) {
 	// Remove @ and :domain
 	parts := strings.Split(matrixID, ":")
@@ -63,13 +63,5 @@ func (s *EventService) ParseActorIDFromMatrixID(matrixID string) (uuid.UUID, err
 		return uuid.Nil, fmt.Errorf("invalid matrix ID format")
 	}
 	localpart := strings.TrimPrefix(parts[0], "@")
-
-	// Remove namespace prefix
-	prefix := fmt.Sprintf("%s_", s.cfg.Matrix.Namespace)
-	if !strings.HasPrefix(localpart, prefix) {
-		return uuid.Nil, fmt.Errorf("matrix ID does not match namespace")
-	}
-
-	uuidStr := strings.TrimPrefix(localpart, prefix)
-	return uuid.Parse(uuidStr)
+	return uuid.Parse(localpart)
 }

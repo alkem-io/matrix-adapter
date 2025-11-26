@@ -64,18 +64,11 @@ func (m *MautrixAdapter) processEvent(evt *event.Event, handler func(msg domain.
 
 func (m *MautrixAdapter) parseActorID(mxid id.UserID) (uuid.UUID, error) {
 	s := string(mxid)
-	// Format: @namespace_uuid:domain
+	// Format: @uuid:domain
 	parts := strings.Split(s, ":")
 	if len(parts) < 2 {
 		return uuid.Nil, fmt.Errorf("invalid format")
 	}
 	localpart := strings.TrimPrefix(parts[0], "@")
-	prefix := fmt.Sprintf("%s_", m.cfg.Matrix.Namespace)
-
-	if !strings.HasPrefix(localpart, prefix) {
-		return uuid.Nil, fmt.Errorf("namespace mismatch")
-	}
-
-	uuidStr := strings.TrimPrefix(localpart, prefix)
-	return uuid.Parse(uuidStr)
+	return uuid.Parse(localpart)
 }

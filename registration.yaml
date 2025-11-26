@@ -6,7 +6,7 @@ sender_localpart: alkemio-bot
 namespaces:
   users:
     - exclusive: true
-      regex: "@alkemio_.*"
+      regex: "@[0-9a-fA-F-]{36}:.*"
   aliases:
     - exclusive: true
       regex: "#alkemio_.*"

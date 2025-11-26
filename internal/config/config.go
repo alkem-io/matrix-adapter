@@ -21,7 +21,6 @@ type Config struct {
 		AppServiceToken string `yaml:"as_token"`
 		HomeserverToken string `yaml:"hs_token"`
 		SenderLocalpart string `yaml:"sender_localpart"`
-		Namespace       string `yaml:"namespace"` // e.g. "alkemio"
 		BotActorID      string `yaml:"bot_actor_id"`
 	} `yaml:"matrix"`
 
@@ -38,7 +37,6 @@ func Load() (*Config, error) {
 	cfg.App.Environment = "development"
 	cfg.App.LogLevel = "info"
 	cfg.Matrix.SenderLocalpart = "matrix-adapter"
-	cfg.Matrix.Namespace = "alkemio"
 	cfg.Matrix.BotActorID = "00000000-0000-0000-0000-000000000000"
 
 	// Load from file if exists

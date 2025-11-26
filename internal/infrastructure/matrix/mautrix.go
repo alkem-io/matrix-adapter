@@ -44,7 +44,7 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 			UserIDs: []appservice.Namespace{
 				{
 					Exclusive: true,
-					Regex:     fmt.Sprintf("@%s_.*", cfg.Matrix.Namespace),
+					Regex:     "@[0-9a-fA-F-]{36}:.*",
 				},
 			},
 		},
@@ -95,9 +95,9 @@ func (m *MautrixAdapter) Disconnect() error {
 // EnsureUser provisions a user on the homeserver if it doesn't exist
 func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id.UserID, error) {
 	// Construct Matrix ID from Actor ID (UUID)
-	// Format: @namespace_uuid:domain
+	// Format: @uuid:domain
 	// Note: We need to ensure the localpart is valid. UUIDs are safe.
-	localpart := fmt.Sprintf("%s_%s", m.cfg.Matrix.Namespace, actor.ID.String())
+	localpart := actor.ID.String()
 	userID := id.NewUserID(localpart, m.as.HomeserverDomain)
 
 	// Check if user exists (intent)
