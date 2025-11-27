@@ -9,7 +9,7 @@
   "types": "dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alkem-io/matrix-adapter.git"
+    "url": "git+https://github.com/alkem-io/matrix-adapter-go.git"
   },
   "scripts": {
     "prebuild": "rimraf dist",
@@ -56,7 +56,7 @@
   "packageManager": "pnpm@9.14.2",
   "publishConfig": {
     "access": "public",
-    "registry": "https://registry.npmjs.org/"
+    "registry": "https://npm.pkg.github.com/"
   },
   "files": [
     "dist",

@@ -1,0 +1,88 @@
+name: Publish Shared Library
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'lib/**'
+      - 'pkg/dto/**'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@alkemio'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Generate Library
+        run: make generate
+
+      - name: Install Dependencies
+        working-directory: lib
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: lib
+        run: pnpm build
+
+      - name: Set Version (Tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: lib
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Setting version to $VERSION"
+          npm version $VERSION --no-git-tag-version
+
+      - name: Set Version (PR)
+        if: github.event_name == 'pull_request'
+        working-directory: lib
+        run: |
+          PR_NUMBER=${{ github.event.number }}
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          VERSION="0.0.0-pr-${PR_NUMBER}-${SHORT_SHA}"
+          echo "Setting version to $VERSION"
+          npm version $VERSION --no-git-tag-version
+
+      - name: Set Version (Manual)
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: lib
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          VERSION="0.0.0-manual-${SHORT_SHA}"
+          echo "Setting version to $VERSION"
+          npm version $VERSION --no-git-tag-version
+
+      - name: Publish
+        working-directory: lib
+        run: |
+          TAG="canary"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="latest"
+          fi
+          pnpm publish --no-git-checks --tag $TAG
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
