@@ -1,7 +1,7 @@
 # Plan: CI/CD for Shared Library Publishing
 
 ## Goal
-Implement a GitHub Actions workflow to automatically publish the `@alkemio/matrix-adapter-go-lib` package to GitHub Packages on tags and relevant PRs.
+Implement a GitHub Actions workflow to automatically publish the `@alkem-io/matrix-adapter-go-lib` package to GitHub Packages on tags and relevant PRs.
 
 ## Phases
 

@@ -57,7 +57,7 @@ Tests exist to defend adapter contract invariants and observable behaviors that 
 
 ### 7. Go Service as Source of Truth
 
-The `pkg/dto` package in the Go service defines the canonical command payloads, event types, and DTO structures. The shared TypeScript library (`@alkemio/matrix-adapter-go-lib`) MUST be generated from these Go definitions (e.g., using `cmd/gen-events` or `tygo`). Manual edits to the TypeScript definitions are forbidden.
+The `pkg/dto` package in the Go service defines the canonical command payloads, event types, and DTO structures. The shared TypeScript library (`@alkem-io/matrix-adapter-go-lib`) MUST be generated from these Go definitions (e.g., using `cmd/gen-events` or `tygo`). Manual edits to the TypeScript definitions are forbidden.
 
 **Rationale**: Centralizing the source of truth in the Go service ensures that the implementation and the contract remain in sync. Automated generation prevents drift between the producer (Go) and consumer (Node.js/TypeScript).
 
