@@ -7,8 +7,8 @@ type ActorRegisterPayload struct {
 	DisplayName string `json:"displayName"`
 }
 
-// ActorRegisterResponse represents the response after registering an actor.
-type ActorRegisterResponse struct {
-	Success  bool   `json:"success"`
+// ActorRegisterResponsePayload represents the response after registering an actor.
+type ActorRegisterResponsePayload struct {
+	BaseResponse
 	MatrixID string `json:"matrixId"`
 }

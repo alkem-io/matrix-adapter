@@ -6,9 +6,9 @@ type RoomDeletePayload struct {
 	RoomID string `json:"roomID"`
 }
 
-// RoomDeleteResponse represents the response for room deletion.
-type RoomDeleteResponse struct {
-	Success bool `json:"success"`
+// RoomDeleteResponsePayload represents the response for room deletion.
+type RoomDeleteResponsePayload struct {
+	BaseResponse
 }
 
 // RoomDetailsPayload represents the payload to get room details.
@@ -20,6 +20,7 @@ type RoomDetailsPayload struct {
 
 // RoomDetailsResponse represents the room details.
 type RoomDetailsResponse struct {
+	BaseResponse
 	RoomID      string            `json:"roomID"`
 	Name        string            `json:"name"`
 	Topic       string            `json:"topic"`
@@ -37,6 +38,7 @@ type RoomMembersPayload struct {
 
 // RoomMembersResponse represents the list of room members.
 type RoomMembersResponse struct {
+	BaseResponse
 	RoomID  string   `json:"roomID"`
 	UserIDs []string `json:"userIDs"` // Matrix User IDs
 }
@@ -52,5 +54,5 @@ type RoomUpdateStatePayload struct {
 
 // RoomUpdateStateResponse represents the response for state update.
 type RoomUpdateStateResponse struct {
-	Success bool `json:"success"`
+	BaseResponse
 }

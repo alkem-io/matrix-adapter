@@ -7,8 +7,10 @@ type ActorStartDirectMessagingPayload struct {
 	InitiatingActorID string `json:"initiatingActorID"`
 }
 
-// ActorStartDirectMessagingResponse represents the response for starting a DM.
-type ActorStartDirectMessagingResponse struct {
+// ActorStartDirectMessagingResponsePayload represents the response for starting a DM.
+type ActorStartDirectMessagingResponsePayload struct {
+	BaseResponse
+	// RoomID is the ID of the DM room.
 	RoomID string `json:"roomID"`
 	// IsNew indicates if the room was just created or already existed.
 	IsNew bool `json:"isNew"`
@@ -21,9 +23,9 @@ type ActorStopDirectMessagingPayload struct {
 	InitiatingActorID string `json:"initiatingActorID"`
 }
 
-// ActorStopDirectMessagingResponse represents the response for stopping a DM.
-type ActorStopDirectMessagingResponse struct {
-	Success bool `json:"success"`
+// ActorStopDirectMessagingResponsePayload represents the response for stopping a DM.
+type ActorStopDirectMessagingResponsePayload struct {
+	BaseResponse
 }
 
 // ActorRoomsDirectPayload represents the request to list DM rooms for an actor.
@@ -34,6 +36,7 @@ type ActorRoomsDirectPayload struct {
 
 // ActorRoomsDirectResponse represents the list of DM rooms.
 type ActorRoomsDirectResponse struct {
+	BaseResponse
 	// Map of OtherActorID -> RoomID
 	DirectRooms map[string]string `json:"directRooms"`
 }

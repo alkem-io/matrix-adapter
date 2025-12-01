@@ -3,12 +3,14 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+
+	"github.com/google/uuid"
+	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
-	"github.com/google/uuid"
-	"maunium.net/go/mautrix/id"
 )
 
 // AdminHandler handles queue messages related to admin operations.
@@ -27,23 +29,25 @@ func NewAdminHandler(service *service.AdminService) *AdminHandler {
 func (h *AdminHandler) HandleGetAllRooms(_ []byte) (interface{}, error) {
 	rooms, err := h.service.GetAllRooms(context.Background())
 	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
 	roomResponses := make([]dto.RoomDetailsResponse, 0, len(rooms))
 	for _, r := range rooms {
 		roomResponses = append(
 			roomResponses, dto.RoomDetailsResponse{
-				RoomID: r.ID.String(),
-				Name:   r.Name,
-				Topic:  r.Topic,
-				Alias:  r.Alias,
+				BaseResponse: dto.NewSuccessResponse(),
+				RoomID:       r.ID.String(),
+				Name:         r.Name,
+				Topic:        r.Topic,
+				Alias:        r.Alias,
 			},
 		)
 	}
 
 	return dto.AdminAllRoomsResponse{
-		Rooms: roomResponses,
+		BaseResponse: dto.NewSuccessResponse(),
+		Rooms:        roomResponses,
 	}, nil
 }
 
@@ -51,24 +55,24 @@ func (h *AdminHandler) HandleGetAllRooms(_ []byte) (interface{}, error) {
 func (h *AdminHandler) HandleReplicateRoomMembership(payload []byte) (interface{}, error) {
 	var req dto.AdminReplicateRoomMembershipPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
+		return NewInvalidPayloadError(err), nil
 	}
 
 	prioritizerID, err := uuid.Parse(req.ActorToPrioritize)
 	if err != nil {
-		return nil, err
+		return NewValidationError(fmt.Sprintf("invalid actorToPrioritize ID: %s", err.Error())), nil
 	}
 
 	added, failed, err := h.service.ReplicateRoomMembership(
 		context.Background(), id.RoomID(req.SourceRoomID), id.RoomID(req.TargetRoomID), domain.Actor{ID: prioritizerID},
 	)
 	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
-	return dto.AdminReplicateRoomMembershipResponse{
-		Success:     true,
-		AddedUsers:  added,
-		FailedUsers: failed,
+	return dto.AdminReplicateRoomMembershipResponsePayload{
+		BaseResponse: dto.NewSuccessResponse(),
+		AddedUsers:   added,
+		FailedUsers:  failed,
 	}, nil
 }

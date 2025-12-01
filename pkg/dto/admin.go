@@ -7,6 +7,7 @@ type AdminAllRoomsPayload struct {
 
 // AdminAllRoomsResponse represents the list of all rooms.
 type AdminAllRoomsResponse struct {
+	BaseResponse
 	Rooms []RoomDetailsResponse `json:"rooms"`
 }
 
@@ -18,9 +19,9 @@ type AdminReplicateRoomMembershipPayload struct {
 	ActorToPrioritize string `json:"actorToPrioritize"`
 }
 
-// AdminReplicateRoomMembershipResponse represents the response for replication.
-type AdminReplicateRoomMembershipResponse struct {
-	Success     bool     `json:"success"`
+// AdminReplicateRoomMembershipResponsePayload represents the response for replication.
+type AdminReplicateRoomMembershipResponsePayload struct {
+	BaseResponse
 	AddedUsers  []string `json:"addedUsers"`
 	FailedUsers []string `json:"failedUsers"`
 }

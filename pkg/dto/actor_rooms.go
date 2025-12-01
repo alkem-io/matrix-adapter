@@ -7,9 +7,9 @@ type ActorAddToRoomsPayload struct {
 	ActorID string   `json:"actorID"`
 }
 
-// ActorAddToRoomsResponse represents the response for adding an actor to rooms.
-type ActorAddToRoomsResponse struct {
-	Success      bool     `json:"success"`
+// ActorAddToRoomsResponsePayload represents the response for adding an actor to rooms.
+type ActorAddToRoomsResponsePayload struct {
+	BaseResponse
 	FailedRooms  []string `json:"failedRooms,omitempty"`
 	CreatedRooms []string `json:"createdRooms,omitempty"` // If rooms were created on the fly? Unlikely, but keeping generic.
 }
@@ -21,9 +21,9 @@ type ActorRemoveFromRoomsPayload struct {
 	ActorID string   `json:"actorID"`
 }
 
-// ActorRemoveFromRoomsResponse represents the response for removing an actor from rooms.
-type ActorRemoveFromRoomsResponse struct {
-	Success     bool     `json:"success"`
+// ActorRemoveFromRoomsResponsePayload represents the response for removing an actor from rooms.
+type ActorRemoveFromRoomsResponsePayload struct {
+	BaseResponse
 	FailedRooms []string `json:"failedRooms,omitempty"`
 }
 
@@ -33,7 +33,8 @@ type ActorRoomsPayload struct {
 	ActorID string `json:"actorID"`
 }
 
-// ActorRoomsResponse represents the list of rooms an actor is in.
-type ActorRoomsResponse struct {
+// ActorRoomsResponsePayload represents the list of rooms an actor is in.
+type ActorRoomsResponsePayload struct {
+	BaseResponse
 	RoomIDs []string `json:"roomIDs"`
 }

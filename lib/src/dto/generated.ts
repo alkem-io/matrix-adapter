@@ -12,10 +12,10 @@ export interface ActorRegisterPayload {
   displayName: string;
 }
 /**
- * ActorRegisterResponse represents the response after registering an actor.
+ * ActorRegisterResponsePayload represents the response after registering an actor.
  */
-export interface ActorRegisterResponse {
-  success: boolean;
+export interface ActorRegisterResponsePayload {
+  BaseResponse: BaseResponse;
   matrixId: string;
 }
 
@@ -31,9 +31,13 @@ export interface ActorStartDirectMessagingPayload {
   initiatingActorID: string;
 }
 /**
- * ActorStartDirectMessagingResponse represents the response for starting a DM.
+ * ActorStartDirectMessagingResponsePayload represents the response for starting a DM.
  */
-export interface ActorStartDirectMessagingResponse {
+export interface ActorStartDirectMessagingResponsePayload {
+  BaseResponse: BaseResponse;
+  /**
+   * RoomID is the ID of the DM room.
+   */
   roomID: string;
   /**
    * IsNew indicates if the room was just created or already existed.
@@ -49,10 +53,10 @@ export interface ActorStopDirectMessagingPayload {
   initiatingActorID: string;
 }
 /**
- * ActorStopDirectMessagingResponse represents the response for stopping a DM.
+ * ActorStopDirectMessagingResponsePayload represents the response for stopping a DM.
  */
-export interface ActorStopDirectMessagingResponse {
-  success: boolean;
+export interface ActorStopDirectMessagingResponsePayload {
+  BaseResponse: BaseResponse;
 }
 /**
  * ActorRoomsDirectPayload represents the request to list DM rooms for an actor.
@@ -65,6 +69,7 @@ export interface ActorRoomsDirectPayload {
  * ActorRoomsDirectResponse represents the list of DM rooms.
  */
 export interface ActorRoomsDirectResponse {
+  BaseResponse: BaseResponse;
   /**
    * Map of OtherActorID -> RoomID
    */
@@ -83,10 +88,10 @@ export interface ActorAddToRoomsPayload {
   actorID: string;
 }
 /**
- * ActorAddToRoomsResponse represents the response for adding an actor to rooms.
+ * ActorAddToRoomsResponsePayload represents the response for adding an actor to rooms.
  */
-export interface ActorAddToRoomsResponse {
-  success: boolean;
+export interface ActorAddToRoomsResponsePayload {
+  BaseResponse: BaseResponse;
   failedRooms?: string[];
   createdRooms?: string[]; // If rooms were created on the fly? Unlikely, but keeping generic.
 }
@@ -99,10 +104,10 @@ export interface ActorRemoveFromRoomsPayload {
   actorID: string;
 }
 /**
- * ActorRemoveFromRoomsResponse represents the response for removing an actor from rooms.
+ * ActorRemoveFromRoomsResponsePayload represents the response for removing an actor from rooms.
  */
-export interface ActorRemoveFromRoomsResponse {
-  success: boolean;
+export interface ActorRemoveFromRoomsResponsePayload {
+  BaseResponse: BaseResponse;
   failedRooms?: string[];
 }
 /**
@@ -113,9 +118,10 @@ export interface ActorRoomsPayload {
   actorID: string;
 }
 /**
- * ActorRoomsResponse represents the list of rooms an actor is in.
+ * ActorRoomsResponsePayload represents the list of rooms an actor is in.
  */
-export interface ActorRoomsResponse {
+export interface ActorRoomsResponsePayload {
+  BaseResponse: BaseResponse;
   roomIDs: string[];
 }
 
@@ -132,6 +138,7 @@ export interface AdminAllRoomsPayload {
  * AdminAllRoomsResponse represents the list of all rooms.
  */
 export interface AdminAllRoomsResponse {
+  BaseResponse: BaseResponse;
   rooms: RoomDetailsResponse[];
 }
 /**
@@ -144,10 +151,10 @@ export interface AdminReplicateRoomMembershipPayload {
   actorToPrioritize: string;
 }
 /**
- * AdminReplicateRoomMembershipResponse represents the response for replication.
+ * AdminReplicateRoomMembershipResponsePayload represents the response for replication.
  */
-export interface AdminReplicateRoomMembershipResponse {
-  success: boolean;
+export interface AdminReplicateRoomMembershipResponsePayload {
+  BaseResponse: BaseResponse;
   addedUsers: string[];
   failedUsers: string[];
 }
@@ -163,6 +170,54 @@ export interface BaseMatrixAdapterEventPayload {
    * The Actor ID (UUID) of the user who triggered the event.
    */
   triggeredBy: string;
+}
+
+//////////
+// source: error.go
+
+/**
+ * ErrorCode represents categorized error types for programmatic handling.
+ */
+export type ErrorCode = string;
+/**
+ * ErrorCodeInvalidPayload indicates JSON parsing or schema validation failed.
+ */
+export const ErrorCodeInvalidPayload: ErrorCode = "INVALID_PAYLOAD";
+/**
+ * ErrorCodeValidationError indicates business validation failed (e.g., invalid UUID format).
+ */
+export const ErrorCodeValidationError: ErrorCode = "VALIDATION_ERROR";
+/**
+ * ErrorCodeNotFound indicates the referenced entity does not exist.
+ */
+export const ErrorCodeNotFound: ErrorCode = "NOT_FOUND";
+/**
+ * ErrorCodePermissionDenied indicates the operation is not permitted.
+ */
+export const ErrorCodePermissionDenied: ErrorCode = "PERMISSION_DENIED";
+/**
+ * ErrorCodeMatrixError indicates a Matrix SDK/homeserver error.
+ */
+export const ErrorCodeMatrixError: ErrorCode = "MATRIX_ERROR";
+/**
+ * ErrorCodeInternalError indicates an unexpected system error.
+ */
+export const ErrorCodeInternalError: ErrorCode = "INTERNAL_ERROR";
+/**
+ * ErrorResponse contains structured error information.
+ */
+export interface ErrorResponse {
+  code: ErrorCode;
+  message: string;
+}
+/**
+ * BaseResponse is the standard response structure for all command responses.
+ * Operations that return only status use this directly.
+ * Operations with additional data embed this struct.
+ */
+export interface BaseResponse {
+  success: boolean;
+  error?: ErrorResponse;
 }
 
 //////////
@@ -212,10 +267,10 @@ export interface RoomCreatePayload {
   metadata?: { [key: string]: string};
 }
 /**
- * RoomCreateResponse represents the response for room creation.
+ * RoomCreateResponsePayload represents the response for room creation.
  */
-export interface RoomCreateResponse {
-  success: boolean;
+export interface RoomCreateResponsePayload {
+  BaseResponse: BaseResponse;
   roomId: string;
 }
 /**
@@ -226,6 +281,12 @@ export interface RoomInvitePayload {
   BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
   inviteeId: string;
   roomId: string;
+}
+/**
+ * RoomInviteResponsePayload represents the response for room invitation.
+ */
+export interface RoomInviteResponsePayload {
+  BaseResponse: BaseResponse;
 }
 
 //////////
@@ -239,10 +300,10 @@ export interface RoomDeletePayload {
   roomID: string;
 }
 /**
- * RoomDeleteResponse represents the response for room deletion.
+ * RoomDeleteResponsePayload represents the response for room deletion.
  */
-export interface RoomDeleteResponse {
-  success: boolean;
+export interface RoomDeleteResponsePayload {
+  BaseResponse: BaseResponse;
 }
 /**
  * RoomDetailsPayload represents the payload to get room details.
@@ -256,6 +317,7 @@ export interface RoomDetailsPayload {
  * RoomDetailsResponse represents the room details.
  */
 export interface RoomDetailsResponse {
+  BaseResponse: BaseResponse;
   roomID: string;
   name: string;
   topic: string;
@@ -275,6 +337,7 @@ export interface RoomMembersPayload {
  * RoomMembersResponse represents the list of room members.
  */
 export interface RoomMembersResponse {
+  BaseResponse: BaseResponse;
   roomID: string;
   userIDs: string[]; // Matrix User IDs
 }
@@ -292,7 +355,7 @@ export interface RoomUpdateStatePayload {
  * RoomUpdateStateResponse represents the response for state update.
  */
 export interface RoomUpdateStateResponse {
-  success: boolean;
+  BaseResponse: BaseResponse;
 }
 
 //////////
@@ -311,6 +374,7 @@ export interface RoomMessageSendPayload {
  * RoomMessageSendResponse represents the response for sending a message.
  */
 export interface RoomMessageSendResponse {
+  BaseResponse: BaseResponse;
   eventID: string;
 }
 /**
@@ -327,6 +391,7 @@ export interface RoomMessageSendReplyPayload {
  * RoomMessageSendReplyResponse represents the response for sending a reply.
  */
 export interface RoomMessageSendReplyResponse {
+  BaseResponse: BaseResponse;
   eventID: string;
 }
 /**
@@ -343,7 +408,7 @@ export interface RoomMessageDeletePayload {
  * RoomMessageDeleteResponse represents the response for message deletion.
  */
 export interface RoomMessageDeleteResponse {
-  success: boolean;
+  BaseResponse: BaseResponse;
 }
 /**
  * RoomMessageAddReactionPayload represents the payload to add a reaction.
@@ -359,6 +424,7 @@ export interface RoomMessageAddReactionPayload {
  * RoomMessageAddReactionResponse represents the response for adding a reaction.
  */
 export interface RoomMessageAddReactionResponse {
+  BaseResponse: BaseResponse;
   eventID: string;
 }
 /**
@@ -375,5 +441,20 @@ export interface RoomMessageRemoveReactionPayload {
  * RoomMessageRemoveReactionResponse represents the response for removing a reaction.
  */
 export interface RoomMessageRemoveReactionResponse {
-  success: boolean;
+  BaseResponse: BaseResponse;
+}
+/**
+ * RoomMessageDetailsPayload represents the payload to get message details.
+ */
+export interface RoomMessageDetailsPayload {
+  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
+  roomID: string;
+  eventID: string;
+}
+/**
+ * RoomMessageDetailsResponse represents the message details.
+ */
+export interface RoomMessageDetailsResponse {
+  BaseResponse: BaseResponse;
+  Message: Message;
 }

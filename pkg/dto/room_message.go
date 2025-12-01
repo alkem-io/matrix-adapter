@@ -10,6 +10,7 @@ type RoomMessageSendPayload struct {
 
 // RoomMessageSendResponse represents the response for sending a message.
 type RoomMessageSendResponse struct {
+	BaseResponse
 	EventID string `json:"eventID"`
 }
 
@@ -24,6 +25,7 @@ type RoomMessageSendReplyPayload struct {
 
 // RoomMessageSendReplyResponse represents the response for sending a reply.
 type RoomMessageSendReplyResponse struct {
+	BaseResponse
 	EventID string `json:"eventID"`
 }
 
@@ -38,7 +40,7 @@ type RoomMessageDeletePayload struct {
 
 // RoomMessageDeleteResponse represents the response for message deletion.
 type RoomMessageDeleteResponse struct {
-	Success bool `json:"success"`
+	BaseResponse
 }
 
 // RoomMessageAddReactionPayload represents the payload to add a reaction.
@@ -52,6 +54,7 @@ type RoomMessageAddReactionPayload struct {
 
 // RoomMessageAddReactionResponse represents the response for adding a reaction.
 type RoomMessageAddReactionResponse struct {
+	BaseResponse
 	EventID string `json:"eventID"`
 }
 
@@ -66,7 +69,7 @@ type RoomMessageRemoveReactionPayload struct {
 
 // RoomMessageRemoveReactionResponse represents the response for removing a reaction.
 type RoomMessageRemoveReactionResponse struct {
-	Success bool `json:"success"`
+	BaseResponse
 }
 
 // RoomMessageDetailsPayload represents the payload to get message details.
@@ -78,5 +81,6 @@ type RoomMessageDetailsPayload struct {
 
 // RoomMessageDetailsResponse represents the message details.
 type RoomMessageDetailsResponse struct {
+	BaseResponse
 	Message
 }

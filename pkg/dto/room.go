@@ -7,10 +7,10 @@ type RoomCreatePayload struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-// RoomCreateResponse represents the response for room creation.
-type RoomCreateResponse struct {
-	Success bool   `json:"success"`
-	RoomID  string `json:"roomId"`
+// RoomCreateResponsePayload represents the response for room creation.
+type RoomCreateResponsePayload struct {
+	BaseResponse
+	RoomID string `json:"roomId"`
 }
 
 // RoomInvitePayload is deprecated in favor of ActorAddToRoomsPayload.
@@ -19,4 +19,9 @@ type RoomInvitePayload struct {
 	BaseMatrixAdapterEventPayload
 	InviteeID string `json:"inviteeId"`
 	RoomID    string `json:"roomId"`
+}
+
+// RoomInviteResponsePayload represents the response for room invitation.
+type RoomInviteResponsePayload struct {
+	BaseResponse
 }
