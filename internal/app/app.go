@@ -23,9 +23,8 @@ type App struct {
 	healthServer  *httpinfra.HealthServer
 
 	// Handlers
-	actorHandler *queue.ActorHandler
 	roomHandler  *queue.RoomHandler
-	adminHandler *queue.AdminHandler
+	actorHandler *queue.ActorHandler
 }
 
 // NewApp initializes a new instance of the App with the given configuration.
@@ -50,15 +49,13 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}
 
 	// 3. Initialize Services
-	actorService := service.NewActorService(matrixAdapter, log)
 	roomService := service.NewRoomService(matrixAdapter, log)
-	adminService := service.NewAdminService(matrixAdapter, log)
+	actorService := service.NewActorService(matrixAdapter, log)
 	eventService := service.NewEventService(queueAdapter, log, cfg)
 
 	// 4. Initialize Handlers
+	roomHandler := queue.NewRoomHandler(roomService, matrixAdapter)
 	actorHandler := queue.NewActorHandler(actorService)
-	roomHandler := queue.NewRoomHandler(roomService)
-	adminHandler := queue.NewAdminHandler(adminService)
 
 	// 5. Wire up Event Listeners (Matrix -> Queue)
 	// This can be done here as it just registers a callback, doesn't start IO usually.
@@ -70,9 +67,8 @@ func NewApp(cfg *config.Config) (*App, error) {
 		matrixAdapter: matrixAdapter,
 		queueAdapter:  queueAdapter,
 		healthServer:  httpinfra.NewHealthServer("8081", log),
-		actorHandler:  actorHandler,
 		roomHandler:   roomHandler,
-		adminHandler:  adminHandler,
+		actorHandler:  actorHandler,
 	}, nil
 }
 
@@ -89,7 +85,7 @@ func (a *App) Start(ctx context.Context) error {
 	}
 
 	// Wire up Queue Subscribers
-	queue.RegisterRoutes(a.queueAdapter, a.actorHandler, a.roomHandler, a.adminHandler, a.logger)
+	queue.RegisterRoutes(a.queueAdapter, a.roomHandler, a.actorHandler, a.logger)
 
 	// Start Health Server
 	a.healthServer.Start()

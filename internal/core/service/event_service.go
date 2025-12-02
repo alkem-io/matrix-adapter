@@ -1,3 +1,4 @@
+// Package service provides domain services for the Matrix Adapter.
 package service
 
 import (

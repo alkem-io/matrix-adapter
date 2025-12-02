@@ -9,6 +9,7 @@ import (
 	"github.com/alkem-io/matrix-adapter-go/internal/config"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/google/uuid"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/event"
@@ -557,4 +558,192 @@ func (m *MautrixAdapter) GetDirectRooms(ctx context.Context, actorID domain.Acto
 		}
 	}
 	return result, nil
+}
+
+// HomeserverDomain returns the homeserver domain for room alias construction.
+func (m *MautrixAdapter) HomeserverDomain() string {
+	return m.as.HomeserverDomain
+}
+
+// SetUserProfile updates the user's display name and avatar.
+func (m *MautrixAdapter) SetUserProfile(ctx context.Context, actor domain.Actor) error {
+	userID, err := m.EnsureUser(ctx, actor)
+	if err != nil {
+		return err
+	}
+	intent := m.as.Intent(userID)
+
+	if actor.DisplayName != "" {
+		if err := intent.SetDisplayName(ctx, actor.DisplayName); err != nil {
+			m.logger.Warn("Failed to set display name", "user_id", userID, "error", err)
+		}
+	}
+
+	if actor.AvatarURL != "" {
+		// AvatarURL should be a mxc:// URL
+		if err := intent.SetAvatarURL(ctx, id.ContentURI{}); err != nil {
+			m.logger.Warn("Failed to set avatar URL", "user_id", userID, "error", err)
+		}
+	}
+
+	return nil
+}
+
+// ResolveAlias resolves a room alias to a room ID.
+func (m *MautrixAdapter) ResolveAlias(ctx context.Context, alias string) (id.RoomID, error) {
+	intent := m.as.BotIntent()
+	resp, err := intent.ResolveAlias(ctx, id.RoomAlias(alias))
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve alias %s: %w", alias, err)
+	}
+	return resp.RoomID, nil
+}
+
+// DeleteAlias removes a room alias.
+func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
+	intent := m.as.BotIntent()
+	_, err := intent.DeleteAlias(ctx, id.RoomAlias(alias))
+	if err != nil {
+		return fmt.Errorf("failed to delete alias %s: %w", alias, err)
+	}
+	return nil
+}
+
+// KickUser kicks a user from a room.
+func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
+	intent := m.as.BotIntent()
+	_, err := intent.KickUser(ctx, roomID, &mautrix.ReqKickUser{
+		UserID: userID,
+		Reason: reason,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to kick user %s from room %s: %w", userID, roomID, err)
+	}
+	return nil
+}
+
+// GetRoomMessages retrieves all messages from a room.
+func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) ([]domain.Message, error) {
+	intent := m.as.BotIntent()
+
+	// Get messages using the messages endpoint
+	resp, err := intent.Messages(ctx, roomID, "", "", mautrix.DirectionBackward, nil, 1000)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get room messages: %w", err)
+	}
+
+	messages := make([]domain.Message, 0, len(resp.Chunk))
+	for _, evt := range resp.Chunk {
+		if evt.Type != event.EventMessage {
+			continue
+		}
+
+		content, ok := evt.Content.Parsed.(*event.MessageEventContent)
+		if !ok {
+			continue
+		}
+
+		msg := domain.Message{
+			ID:             evt.ID.String(),
+			RoomID:         roomID.String(),
+			Content:        content.Body,
+			SenderMatrixID: evt.Sender.String(),
+			Timestamp:      time.UnixMilli(evt.Timestamp),
+		}
+
+		// Check for thread/reply
+		if content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
+			msg.ThreadID = content.RelatesTo.InReplyTo.EventID.String()
+		}
+
+		messages = append(messages, msg)
+	}
+
+	// Log warning if message count exceeds 1000 for future pagination tracking
+	if len(messages) >= 1000 {
+		m.logger.Warn("Room has 1000+ messages, pagination may be needed in future", "room_id", roomID, "count", len(messages))
+	}
+
+	return messages, nil
+}
+
+// GetReaction retrieves details of a specific reaction.
+func (m *MautrixAdapter) GetReaction(ctx context.Context, roomID id.RoomID, reactionID id.EventID) (*domain.Reaction, error) {
+	intent := m.as.BotIntent()
+
+	evt, err := intent.GetEvent(ctx, roomID, reactionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get reaction event: %w", err)
+	}
+
+	if evt.Type != event.EventReaction {
+		return nil, fmt.Errorf("event is not a reaction")
+	}
+
+	content, ok := evt.Content.Parsed.(*event.ReactionEventContent)
+	if !ok {
+		return nil, fmt.Errorf("failed to parse reaction content")
+	}
+
+	return &domain.Reaction{
+		ID:        evt.ID,
+		RoomID:    roomID,
+		MessageID: content.RelatesTo.EventID,
+		Emoji:     content.RelatesTo.Key,
+		Timestamp: time.UnixMilli(evt.Timestamp),
+	}, nil
+}
+
+// CreateRoomWithAlias creates a new room with a specific alias based on Alkemio room ID.
+func (m *MautrixAdapter) CreateRoomWithAlias(
+	ctx context.Context,
+	alkemioRoomID uuid.UUID,
+	roomType string,
+	name, topic string,
+	initialMembers []domain.Actor,
+) (id.RoomID, error) {
+	// Construct the room alias: #<UUID>:<homeserver>
+	aliasLocalpart := alkemioRoomID.String()
+
+	// Use bot intent for creating rooms
+	intent := m.as.BotIntent()
+
+	// Prepare initial invites
+	invites := make([]id.UserID, 0, len(initialMembers))
+	for _, member := range initialMembers {
+		userID, err := m.EnsureUser(ctx, member)
+		if err != nil {
+			return "", fmt.Errorf("failed to ensure member %s: %w", member.ID, err)
+		}
+		invites = append(invites, userID)
+	}
+
+	// Determine preset based on room type
+	preset := "public_chat"
+	isDirect := false
+	if roomType == "direct" {
+		preset = "trusted_private_chat"
+		isDirect = true
+	}
+
+	req := &mautrix.ReqCreateRoom{
+		Name:          name,
+		Topic:         topic,
+		Preset:        preset,
+		IsDirect:      isDirect,
+		RoomAliasName: aliasLocalpart,
+		Invite:        invites,
+	}
+
+	resp, err := intent.CreateRoom(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("failed to create room with alias: %w", err)
+	}
+
+	m.logger.Info("Room created with alias",
+		"room_id", resp.RoomID,
+		"alias", fmt.Sprintf("#%s:%s", aliasLocalpart, m.as.HomeserverDomain),
+		"alkemio_room_id", alkemioRoomID)
+
+	return resp.RoomID, nil
 }

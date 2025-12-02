@@ -1,14 +1,19 @@
 package dto
 
-// ActorRegisterPayload represents the payload for registering an actor.
-type ActorRegisterPayload struct {
-	BaseMatrixAdapterEventPayload
-	ActorID     string `json:"actorId"`
-	DisplayName string `json:"displayName"`
+// ============================================================================
+// Actor Commands (communication.actor.*)
+// ============================================================================
+
+// SyncActorRequest ensures an actor exists in Matrix and updates their profile.
+// This is an idempotent operation - calling with the same data has no effect.
+// Topic: communication.actor.sync
+type SyncActorRequest struct {
+	ActorID     AlkemioActorID `json:"actor_id"`
+	DisplayName string         `json:"display_name"`
+	AvatarURL   string         `json:"avatar_url,omitempty"`
 }
 
-// ActorRegisterResponsePayload represents the response after registering an actor.
-type ActorRegisterResponsePayload struct {
+// SyncActorResponse confirms the actor sync operation.
+type SyncActorResponse struct {
 	BaseResponse
-	MatrixID string `json:"matrixId"`
 }

@@ -5,33 +5,31 @@ import (
 )
 
 // RegisterRoutes registers all queue subscribers to their respective topics.
-func RegisterRoutes(q ports.QueuePort, actor *ActorHandler, room *RoomHandler, admin *AdminHandler, log ports.Logger) {
+func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, log ports.Logger) {
 	routes := map[string]func([]byte) (interface{}, error){
-		// Room Routes
-		"room.create":                 room.HandleCreate,
-		"room.delete":                 room.HandleDelete,
-		"room.details":                room.HandleGetDetails,
-		"room.members":                room.HandleGetMembers,
-		"room.updateState":            room.HandleUpdateState,
-		"room.message.send":           room.HandleSendMessage,
-		"room.message.details":        room.HandleMessageDetails,
-		"room.message.sendReply":      room.HandleSendReply,
-		"room.message.delete":         room.HandleDeleteMessage,
-		"room.message.addReaction":    room.HandleAddReaction,
-		"room.message.removeReaction": room.HandleRemoveReaction,
+		// Room Routes (communication.room.*)
+		"communication.room.create": room.HandleCreateRoom,
+		"communication.room.get":    room.HandleGetRoom,
+		"communication.room.update": room.HandleUpdateRoom,
+		"communication.room.delete": room.HandleDeleteRoom,
+		"communication.room.list":   room.HandleListRooms,
 
-		// Actor Routes
-		"actor.register":             actor.HandleRegister,
-		"actor.addToRooms":           actor.HandleAddToRooms,
-		"actor.removeFromRooms":      actor.HandleRemoveFromRooms,
-		"actor.rooms":                actor.HandleGetRooms,
-		"actor.rooms.direct":         actor.HandleGetDirectRooms,
-		"actor.startDirectMessaging": actor.HandleStartDirectMessaging,
-		"actor.stopDirectMessaging":  actor.HandleStopDirectMessaging,
+		// Message Routes (communication.message.*)
+		"communication.message.send":   room.HandleSendMessage,
+		"communication.message.get":    room.HandleGetMessage,
+		"communication.message.delete": room.HandleDeleteMessage,
 
-		// Admin Routes
-		"admin.allRooms":                admin.HandleGetAllRooms,
-		"admin.replicateRoomMembership": admin.HandleReplicateRoomMembership,
+		// Reaction Routes (communication.reaction.*)
+		"communication.reaction.add":    room.HandleAddReaction,
+		"communication.reaction.remove": room.HandleRemoveReaction,
+		"communication.reaction.get":    room.HandleGetReaction,
+
+		// Batch Member Routes (communication.room.member.batch.*)
+		"communication.room.member.batch.add":    room.HandleBatchAddMember,
+		"communication.room.member.batch.remove": room.HandleBatchRemoveMember,
+
+		// Actor Routes (communication.actor.*)
+		"communication.actor.sync": actor.HandleSyncActor,
 	}
 
 	for topic, handler := range routes {
