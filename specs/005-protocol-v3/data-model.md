@@ -51,9 +51,11 @@ Represents an entry in a Space's child hierarchy.
 ```go
 // pkg/dto/space.go
 type SpaceChildDto struct {
-    AlkemioRoomID    *AlkemioRoomID    `json:"alkemio_room_id,omitempty"`
-    AlkemioContextID *AlkemioContextID `json:"alkemio_context_id,omitempty"`
-    Order            string            `json:"order,omitempty"`
+    // ChildID is the AlkemioRoomID of a child room or AlkemioContextID of a subspace.
+    ChildID   string `json:"child_id"`
+    IsSpace   bool   `json:"is_space"`
+    Order     string `json:"order,omitempty"`
+    Suggested bool   `json:"suggested,omitempty"`
 }
 ```
 
@@ -201,11 +203,12 @@ type ListSpacesResponse struct {
 ```go
 // pkg/dto/hierarchy.go
 type SetParentRequest struct {
-    // One of ChildRoomID or ChildContextID must be set
-    ChildRoomID     *AlkemioRoomID    `json:"child_room_id,omitempty"`
-    ChildContextID  *AlkemioContextID `json:"child_context_id,omitempty"`
-    // The new parent. If nil, the existing parent is removed (orphaned).
-    ParentContextID *AlkemioContextID `json:"parent_context_id"`
+    // ChildID is the AlkemioRoomID (for rooms) or AlkemioContextID (for subspaces) to add as child.
+    ChildID         string           `json:"child_id"`
+    IsSpace         bool             `json:"is_space"`
+    ParentContextID AlkemioContextID `json:"parent_context_id"`
+    Order           string           `json:"order,omitempty"`
+    Suggested       bool             `json:"suggested,omitempty"`
 }
 
 type SetParentResponse struct {
@@ -344,8 +347,9 @@ type SpaceChild struct {
 | `AlkemioContextID` | Required, valid UUID (accepts any version per `uuid.Parse()`) |
 | `AlkemioRoomID` | Required, valid UUID (accepts any version per `uuid.Parse()`) |
 | `JoinRule` | Optional; if `restricted`, `parent_context_id` MUST be set |
-| `SetParentRequest` | Exactly one of `child_room_id` or `child_context_id` must be set |
-| `SetParentRequest.parent_context_id` | If provided and not nil, MUST resolve to a Space (type=m.space); return `INVALID_PARAM` if target is a regular room |
+| `SetParentRequest.child_id` | Required, valid UUID string |
+| `SetParentRequest.is_space` | Required boolean indicating if child is a Space or Room |
+| `SetParentRequest.parent_context_id` | Required, MUST resolve to a Space (type=m.space); return `INVALID_PARAM` if target is a regular room |
 | `AvatarURL` | Optional; accepts any string (no format validation at adapter boundary). Matrix homeserver validates `mxc://` URI on upload. Pass-through policy. |
 
 > **Note on UUID versions**: The adapter accepts any valid UUID format. "v4/v7" in spec indicates Alkemio's generation policy, not adapter validation.

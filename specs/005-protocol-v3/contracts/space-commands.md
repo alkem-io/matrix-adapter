@@ -147,23 +147,27 @@ Retrieves Space details including hierarchy.
 {
   "success": true,
   "alkemio_context_id": "550e8400-e29b-41d4-a716-446655440000",
-  "name": "My Space",
+  "display_name": "My Space",
   "topic": "A collaborative space",
   "avatar_url": "mxc://matrix.org/abc123",
+  "join_rule": "restricted",
   "member_actor_ids": [
     "770e8400-e29b-41d4-a716-446655440000",
     "880e8400-e29b-41d4-a716-446655440000"
   ],
   "children": [
     {
-      "alkemio_room_id": "990e8400-e29b-41d4-a716-446655440000",
+      "child_id": "990e8400-e29b-41d4-a716-446655440000",
+      "is_space": false,
       "order": "aaa"
     },
     {
-      "alkemio_context_id": "aa0e8400-e29b-41d4-a716-446655440000",
+      "child_id": "aa0e8400-e29b-41d4-a716-446655440000",
+      "is_space": true,
       "order": "bbb"
     }
-  ]
+  ],
+  "parent_context_id": "660e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -201,24 +205,20 @@ Sets or removes the parent of a Room or Space.
 **Request (Set parent for a Room)**:
 ```json
 {
-  "child_room_id": "550e8400-e29b-41d4-a716-446655440000",
+  "child_id": "550e8400-e29b-41d4-a716-446655440000",
+  "is_space": false,
   "parent_context_id": "660e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
-**Request (Set parent for a Space)**:
+**Request (Set parent for a Space/Subspace)**:
 ```json
 {
-  "child_context_id": "550e8400-e29b-41d4-a716-446655440000",
-  "parent_context_id": "660e8400-e29b-41d4-a716-446655440000"
-}
-```
-
-**Request (Remove parent - orphan)**:
-```json
-{
-  "child_room_id": "550e8400-e29b-41d4-a716-446655440000",
-  "parent_context_id": null
+  "child_id": "550e8400-e29b-41d4-a716-446655440000",
+  "is_space": true,
+  "parent_context_id": "660e8400-e29b-41d4-a716-446655440000",
+  "order": "aaa",
+  "suggested": false
 }
 ```
 
@@ -226,28 +226,6 @@ Sets or removes the parent of a Room or Space.
 ```json
 {
   "success": true
-}
-```
-
-**Response (Error - Both IDs provided)**:
-```json
-{
-  "success": false,
-  "error": {
-    "code": "INVALID_PARAM",
-    "message": "exactly one of child_room_id or child_context_id must be set"
-  }
-}
-```
-
-**Response (Error - Neither ID provided)**:
-```json
-{
-  "success": false,
-  "error": {
-    "code": "INVALID_PARAM",
-    "message": "exactly one of child_room_id or child_context_id must be set"
-  }
 }
 ```
 
@@ -268,11 +246,11 @@ Sets or removes the parent of a Room or Space.
   "success": false,
   "error": {
     "code": "MATRIX_ERROR",
-    "message": "circular hierarchy detected: Space A cannot be parent of Space B which is already an ancestor of A"
+    "message": "circular hierarchy detected"
   }
 }
 ```
-Note: Circular hierarchy detection is performed by the Matrix homeserver. The adapter returns `MATRIX_ERROR` with the homeserver's error message.
+Note: Circular hierarchy detection is performed by the Matrix homeserver.
 
 ---
 

@@ -113,8 +113,6 @@ As a platform administrator, I need room update operations to support avatar and
 - What happens when setting a parent to a non-Space room? → Return error `INVALID_PARAM` indicating parent must be a Space.
 - What happens when creating circular hierarchy (Space A → Space B → Space A)? → Matrix should prevent this; adapter returns `MATRIX_ERROR` if detected.
 - What happens when deleting a Space that has child rooms/spaces? → The children become orphaned; the delete succeeds.
-- What happens when both `child_room_id` and `child_context_id` are provided in SetParentRequest? → Return error `INVALID_PARAM`; only one must be set.
-- What happens when neither `child_room_id` nor `child_context_id` is provided? → Return error `INVALID_PARAM`.
 
 ## Requirements *(mandatory)*
 
