@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
@@ -11,26 +10,20 @@ import (
 	"maunium.net/go/mautrix/id"
 )
 
-// roomAliasFormat is the format string for Alkemio room aliases.
-const roomAliasFormat = "#%s:%s"
-
 // RoomService handles operations related to Matrix rooms.
 type RoomService struct {
-	matrix ports.MatrixPort
-	logger ports.Logger
+	matrix   ports.MatrixPort
+	logger   ports.Logger
+	idMapper *domain.IDMapper
 }
 
 // NewRoomService creates a new instance of RoomService.
 func NewRoomService(matrix ports.MatrixPort, logger ports.Logger) *RoomService {
 	return &RoomService{
-		matrix: matrix,
-		logger: logger,
+		matrix:   matrix,
+		logger:   logger,
+		idMapper: domain.NewIDMapper(matrix.HomeserverDomain()),
 	}
-}
-
-// buildRoomAlias constructs the room alias from an Alkemio room ID.
-func (s *RoomService) buildRoomAlias(alkemioRoomID uuid.UUID) string {
-	return fmt.Sprintf(roomAliasFormat, alkemioRoomID.String(), s.matrix.HomeserverDomain())
 }
 
 // ============================================================================
@@ -52,7 +45,7 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 		"name", name)
 
 	// Build alias for idempotency check
-	alias := s.buildRoomAlias(alkemioRoomID)
+	alias := s.idMapper.RoomAlias(alkemioRoomID)
 
 	// Check if room already exists (idempotency)
 	existingRoomID, err := s.matrix.ResolveAlias(ctx, alias)
@@ -65,8 +58,7 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	}
 
 	// If error is not "not found", return it
-	if !strings.Contains(strings.ToLower(err.Error()), "not found") &&
-		!strings.Contains(strings.ToLower(err.Error()), "m_not_found") {
+	if !domain.IsNotFoundError(err) {
 		return fmt.Errorf("failed to check room alias: %w", err)
 	}
 
@@ -88,10 +80,10 @@ func (s *RoomService) GetRoomWithMessages(
 	s.logger.Info("Getting room with messages", "alkemio_room_id", alkemioRoomID)
 
 	// Build alias and resolve to Matrix room ID
-	alias := s.buildRoomAlias(alkemioRoomID)
+	alias := s.idMapper.RoomAlias(alkemioRoomID)
 	roomID, err := s.matrix.ResolveAlias(ctx, alias)
 	if err != nil {
-		return nil, fmt.Errorf("room not found: %w", err)
+		return nil, domain.NewRoomNotFoundError(alkemioRoomID.String())
 	}
 
 	// Get room details
@@ -110,8 +102,7 @@ func (s *RoomService) GetRoomWithMessages(
 	room.MemberIDs = make([]uuid.UUID, 0, len(members))
 	for _, memberID := range members {
 		// Extract UUID from Matrix user ID (@uuid:domain)
-		localpart := strings.TrimPrefix(memberID.Localpart(), "@")
-		if actorUUID, parseErr := uuid.Parse(localpart); parseErr == nil {
+		if actorUUID := s.idMapper.AlkemioActorID(memberID); actorUUID != uuid.Nil {
 			room.MemberIDs = append(room.MemberIDs, actorUUID)
 		}
 	}
@@ -138,10 +129,10 @@ func (s *RoomService) UpdateRoomMetadata(
 	s.logger.Info("Updating room metadata", "alkemio_room_id", alkemioRoomID)
 
 	// Resolve alias to get Matrix room ID
-	alias := s.buildRoomAlias(alkemioRoomID)
+	alias := s.idMapper.RoomAlias(alkemioRoomID)
 	roomID, err := s.matrix.ResolveAlias(ctx, alias)
 	if err != nil {
-		return fmt.Errorf("room not found: %w", err)
+		return domain.NewRoomNotFoundError(alkemioRoomID.String())
 	}
 
 	// Use bot to update room state
@@ -173,11 +164,11 @@ func (s *RoomService) DeleteRoomFully(
 	s.logger.Info("Deleting room fully", "alkemio_room_id", alkemioRoomID, "reason", reason)
 
 	// Resolve alias to get Matrix room ID
-	alias := s.buildRoomAlias(alkemioRoomID)
+	alias := s.idMapper.RoomAlias(alkemioRoomID)
 	roomID, err := s.matrix.ResolveAlias(ctx, alias)
 	if err != nil {
 		// Room doesn't exist - idempotent success
-		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+		if domain.IsNotFoundError(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to resolve room alias: %w", err)
@@ -208,10 +199,9 @@ func (s *RoomService) DeleteRoomFully(
 // ListRooms returns a paginated list of Alkemio room IDs.
 func (s *RoomService) ListRooms(
 	ctx context.Context,
-	limit int,
 	cursor string,
 ) ([]uuid.UUID, string, error) {
-	s.logger.Info("Listing rooms", "limit", limit, "cursor", cursor)
+	s.logger.Info("Listing rooms", "cursor", cursor)
 
 	// Get all joined rooms
 	rooms, err := s.matrix.GetAllJoinedRooms(ctx)
@@ -222,18 +212,12 @@ func (s *RoomService) ListRooms(
 	// Extract Alkemio room IDs from room aliases
 	alkemioRoomIDs := s.extractAlkemioRoomIDs(ctx, rooms)
 
-	// Apply pagination limit
-	if limit > 0 && len(alkemioRoomIDs) > limit {
-		alkemioRoomIDs = alkemioRoomIDs[:limit]
-	}
-
 	return alkemioRoomIDs, "", nil
 }
 
 // extractAlkemioRoomIDs extracts Alkemio room UUIDs from Matrix rooms.
 func (s *RoomService) extractAlkemioRoomIDs(ctx context.Context, rooms []id.RoomID) []uuid.UUID {
 	alkemioRoomIDs := make([]uuid.UUID, 0, len(rooms))
-	homeserverDomain := s.matrix.HomeserverDomain()
 
 	for _, roomID := range rooms {
 		room, err := s.matrix.GetRoomDetails(ctx, roomID)
@@ -241,33 +225,13 @@ func (s *RoomService) extractAlkemioRoomIDs(ctx context.Context, rooms []id.Room
 			continue
 		}
 
-		alkemioID := s.parseAlkemioIDFromAlias(room.Alias, homeserverDomain)
+		alkemioID := s.idMapper.AlkemioRoomID(room.Alias)
 		if alkemioID != uuid.Nil {
 			alkemioRoomIDs = append(alkemioRoomIDs, alkemioID)
 		}
 	}
 
 	return alkemioRoomIDs
-}
-
-// parseAlkemioIDFromAlias extracts the Alkemio UUID from a room alias.
-func (s *RoomService) parseAlkemioIDFromAlias(alias, homeserverDomain string) uuid.UUID {
-	if alias == "" {
-		return uuid.Nil
-	}
-
-	// Alias format: #uuid:domain
-	alias = strings.TrimPrefix(alias, "#")
-	parts := strings.Split(alias, ":")
-	if len(parts) < 2 || parts[1] != homeserverDomain {
-		return uuid.Nil
-	}
-
-	alkemioID, err := uuid.Parse(parts[0])
-	if err != nil {
-		return uuid.Nil
-	}
-	return alkemioID
 }
 
 // ============================================================================

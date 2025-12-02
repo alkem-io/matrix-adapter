@@ -1,14 +1,8 @@
 package dto
 
 // ============================================================================
-// New Protocol DTOs (communication.room.member.batch.*)
+// Batch Room Membership DTOs (communication.room.member.batch.*)
 // ============================================================================
-
-// RoomOperationResult represents per-room operation outcome.
-type RoomOperationResult struct {
-	Success bool           `json:"success"`
-	Error   *ErrorResponse `json:"error,omitempty"`
-}
 
 // BatchAddMemberRequest adds a single actor to multiple rooms.
 // Topic: communication.room.member.batch.add
@@ -22,7 +16,7 @@ type BatchAddMemberResponse struct {
 	BaseResponse
 	// Results maps AlkemioRoomID (string) to operation result.
 	// Only populated if BaseResponse.Success is true (batch was processed).
-	Results map[string]RoomOperationResult `json:"results,omitempty"`
+	Results map[string]BaseResponse `json:"results,omitempty"`
 }
 
 // BatchRemoveMemberRequest removes a single actor from multiple rooms.
@@ -36,5 +30,5 @@ type BatchRemoveMemberRequest struct {
 // BatchRemoveMemberResponse returns per-room results.
 type BatchRemoveMemberResponse struct {
 	BaseResponse
-	Results map[string]RoomOperationResult `json:"results,omitempty"`
+	Results map[string]BaseResponse `json:"results,omitempty"`
 }

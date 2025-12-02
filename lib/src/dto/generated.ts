@@ -24,13 +24,6 @@ export interface SyncActorResponse {
 // source: batch.go
 
 /**
- * RoomOperationResult represents per-room operation outcome.
- */
-export interface RoomOperationResult {
-  success: boolean;
-  error?: ErrorResponse;
-}
-/**
  * BatchAddMemberRequest adds a single actor to multiple rooms.
  * Topic: communication.room.member.batch.add
  */
@@ -47,7 +40,7 @@ export interface BatchAddMemberResponse {
    * Results maps AlkemioRoomID (string) to operation result.
    * Only populated if BaseResponse.Success is true (batch was processed).
    */
-  results?: { [key: string]: RoomOperationResult};
+  results?: { [key: string]: BaseResponse};
 }
 /**
  * BatchRemoveMemberRequest removes a single actor from multiple rooms.
@@ -63,7 +56,7 @@ export interface BatchRemoveMemberRequest {
  */
 export interface BatchRemoveMemberResponse {
   BaseResponse: BaseResponse;
-  results?: { [key: string]: RoomOperationResult};
+  results?: { [key: string]: BaseResponse};
 }
 
 //////////
@@ -81,6 +74,10 @@ export const ErrCodeInvalidParam: ErrorCode = "INVALID_PARAM";
  * ErrCodeRoomNotFound indicates the referenced room does not exist.
  */
 export const ErrCodeRoomNotFound: ErrorCode = "ROOM_NOT_FOUND";
+/**
+ * ErrCodeSpaceNotFound indicates the referenced space does not exist.
+ */
+export const ErrCodeSpaceNotFound: ErrorCode = "SPACE_NOT_FOUND";
 /**
  * ErrCodeActorNotFound indicates the referenced actor does not exist.
  */
@@ -148,6 +145,30 @@ export interface Reaction {
   sender: string;
   timestamp: number /* int64 */;
   messageId: string;
+}
+
+//////////
+// source: hierarchy.go
+
+/**
+ * SetParentRequest establishes parent-child relationship for a room or subspace.
+ * Topic: communication.hierarchy.set_parent
+ */
+export interface SetParentRequest {
+  /**
+   * ChildID is the AlkemioRoomID (for rooms) or AlkemioContextID (for subspaces) to add as child.
+   */
+  child_id: string;
+  is_space: boolean;
+  parent_context_id: AlkemioContextID;
+  order?: string;
+  suggested?: boolean;
+}
+/**
+ * SetParentResponse confirms the hierarchy update.
+ */
+export interface SetParentResponse {
+  BaseResponse: BaseResponse;
 }
 
 //////////
@@ -287,6 +308,9 @@ export interface CreateRoomRequest {
   name?: string; // Ignored for 'direct'
   initial_members?: AlkemioActorID[];
   topic?: string;
+  avatar_url?: string;
+  parent_context_id?: AlkemioContextID;
+  join_rule?: JoinRule;
 }
 /**
  * CreateRoomResponse confirms room creation.
@@ -320,6 +344,8 @@ export interface UpdateRoomRequest {
   name?: string;
   topic?: string;
   is_public?: boolean;
+  avatar_url?: string;
+  join_rule?: JoinRule;
 }
 /**
  * UpdateRoomResponse confirms the update.
@@ -346,7 +372,6 @@ export interface DeleteRoomResponse {
  * Topic: communication.room.list
  */
 export interface ListRoomsRequest {
-  limit?: number /* int */;
   cursor?: string;
 }
 /**
@@ -356,6 +381,142 @@ export interface ListRoomsResponse {
   BaseResponse: BaseResponse;
   alkemio_room_ids: AlkemioRoomID[];
   next_cursor?: string;
+}
+
+//////////
+// source: space.go
+
+/**
+ * SpaceChildDto represents a child room or subspace within a space.
+ */
+export interface SpaceChildDto {
+  /**
+   * ChildID is the AlkemioRoomID of a child room or AlkemioContextID of a subspace.
+   */
+  child_id: string;
+  is_space: boolean;
+  order?: string;
+  suggested?: boolean;
+}
+/**
+ * CreateSpaceRequest creates a new Matrix Space for an Alkemio context.
+ * Topic: communication.space.create
+ */
+export interface CreateSpaceRequest {
+  alkemio_context_id: AlkemioContextID;
+  name: string;
+  topic?: string;
+  avatar_url?: string;
+  parent_context_id?: AlkemioContextID;
+  join_rule?: JoinRule;
+  initial_members?: AlkemioActorID[];
+}
+/**
+ * CreateSpaceResponse confirms space creation.
+ */
+export interface CreateSpaceResponse {
+  BaseResponse: BaseResponse;
+}
+/**
+ * GetSpaceRequest retrieves current state of a space.
+ * Topic: communication.space.get
+ */
+export interface GetSpaceRequest {
+  alkemio_context_id: AlkemioContextID;
+}
+/**
+ * GetSpaceResponse returns space details.
+ */
+export interface GetSpaceResponse {
+  BaseResponse: BaseResponse;
+  alkemio_context_id: AlkemioContextID;
+  display_name: string;
+  topic?: string;
+  avatar_url?: string;
+  join_rule: JoinRule;
+  member_actor_ids: AlkemioActorID[];
+  children: SpaceChildDto[];
+  parent_context_id?: AlkemioContextID;
+}
+/**
+ * UpdateSpaceRequest updates space metadata.
+ * Topic: communication.space.update
+ */
+export interface UpdateSpaceRequest {
+  alkemio_context_id: AlkemioContextID;
+  name?: string;
+  topic?: string;
+  avatar_url?: string;
+  join_rule?: JoinRule;
+}
+/**
+ * UpdateSpaceResponse confirms the update.
+ */
+export interface UpdateSpaceResponse {
+  BaseResponse: BaseResponse;
+}
+/**
+ * DeleteSpaceRequest archives/deletes a space.
+ * Topic: communication.space.delete
+ */
+export interface DeleteSpaceRequest {
+  alkemio_context_id: AlkemioContextID;
+  reason?: string;
+}
+/**
+ * DeleteSpaceResponse confirms deletion.
+ */
+export interface DeleteSpaceResponse {
+  BaseResponse: BaseResponse;
+}
+/**
+ * ListSpacesRequest retrieves all spaces (admin operation).
+ * Topic: communication.space.list
+ */
+export interface ListSpacesRequest {
+  cursor?: string;
+}
+/**
+ * ListSpacesResponse returns paginated space list.
+ */
+export interface ListSpacesResponse {
+  BaseResponse: BaseResponse;
+  alkemio_context_ids: AlkemioContextID[];
+  next_cursor?: string;
+}
+/**
+ * BatchAddSpaceMemberRequest adds an actor to multiple spaces.
+ * Topic: communication.space.member.batch.add
+ */
+export interface BatchAddSpaceMemberRequest {
+  actor_id: AlkemioActorID;
+  alkemio_context_ids: AlkemioContextID[];
+}
+/**
+ * BatchAddSpaceMemberResponse returns per-space results.
+ */
+export interface BatchAddSpaceMemberResponse {
+  BaseResponse: BaseResponse;
+  /**
+   * Results maps AlkemioContextID (string) to operation result.
+   */
+  results?: { [key: string]: BaseResponse};
+}
+/**
+ * BatchRemoveSpaceMemberRequest removes an actor from multiple spaces.
+ * Topic: communication.space.member.batch.remove
+ */
+export interface BatchRemoveSpaceMemberRequest {
+  actor_id: AlkemioActorID;
+  alkemio_context_ids: AlkemioContextID[];
+  reason?: string;
+}
+/**
+ * BatchRemoveSpaceMemberResponse returns per-space results.
+ */
+export interface BatchRemoveSpaceMemberResponse {
+  BaseResponse: BaseResponse;
+  results?: { [key: string]: BaseResponse};
 }
 
 //////////
@@ -385,6 +546,11 @@ export type MessageID = string;
  */
 export type ReactionID = string;
 /**
+ * AlkemioContextID is a UUID v4 or v7 identifying a context (Space/Subspace) in Alkemio.
+ * The adapter maps this to a Matrix Space room.
+ */
+export type AlkemioContextID = string;
+/**
  * RoomType defines the type of room to create.
  */
 export type RoomType = string;
@@ -396,3 +562,19 @@ export const RoomTypeCommunity: RoomType = "community";
  * RoomTypeDirect is a direct message room between exactly 2 actors.
  */
 export const RoomTypeDirect: RoomType = "direct";
+/**
+ * JoinRule defines access control for rooms and spaces.
+ */
+export type JoinRule = string;
+/**
+ * JoinRulePublic allows anyone to join.
+ */
+export const JoinRulePublic: JoinRule = "public";
+/**
+ * JoinRuleInvite requires an invitation to join.
+ */
+export const JoinRuleInvite: JoinRule = "invite";
+/**
+ * JoinRuleRestricted allows members of parent space to join (MSC3083).
+ */
+export const JoinRuleRestricted: JoinRule = "restricted";

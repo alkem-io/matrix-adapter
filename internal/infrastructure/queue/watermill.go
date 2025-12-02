@@ -82,7 +82,7 @@ func (w *WatermillAdapter) Publish(topic string, payload interface{}) error {
 }
 
 // Subscribe subscribes to the specified topic and handles incoming messages using the provided handler.
-func (w *WatermillAdapter) Subscribe(topic string, handler func(payload []byte) (interface{}, error)) error {
+func (w *WatermillAdapter) Subscribe(topic string, handler ports.MessageHandler) error {
 	messages, err := w.subscriber.Subscribe(context.Background(), topic)
 	if err != nil {
 		return err
@@ -97,8 +97,14 @@ func (w *WatermillAdapter) Subscribe(topic string, handler func(payload []byte) 
 	return nil
 }
 
-func (w *WatermillAdapter) processMessage(msg *message.Message, handler func(payload []byte) (interface{}, error)) {
-	resp, err := handler(msg.Payload)
+func (w *WatermillAdapter) processMessage(msg *message.Message, handler ports.MessageHandler) {
+	// Use the message context for proper cancellation and timeout support
+	ctx := msg.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	resp, err := handler(ctx, msg.Payload)
 	if err != nil {
 		// This should never happen - handlers return error responses, not errors
 		w.logger.Error("Unexpected handler error",

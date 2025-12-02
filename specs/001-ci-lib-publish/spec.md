@@ -1,5 +1,16 @@
 # Spec 001: CI/CD for Shared Library Publishing
 
+**Status**: ✅ Implemented | **Completed**: 2025-12-02  
+**Workflow**: `.github/workflows/publish-lib.yml`
+
+## Summary
+
+Automated CI/CD pipeline for the shared TypeScript library (`lib/`). Supports:
+
+1. **Tag Release**: `v*` tags → publishes with `latest` tag
+2. **PR Canary**: Changes to `lib/` or `pkg/dto/` → publishes `0.0.0-pr-{N}-{sha}` with `canary` tag
+3. **Manual Dispatch**: Workflow dispatch → publishes `0.0.0-manual-{sha}` with `canary` tag
+
 ## Problem
 The shared TypeScript library (`lib/`) is generated from Go DTOs and defines the contract between the Matrix Adapter and other services. Currently, there is no automated pipeline to publish this library. This leads to:
 - Manual effort to publish updates.

@@ -118,7 +118,7 @@ All external APIs (RabbitMQ commands and events) use Actor IDs.
 
 ## Protocol
 
-The Matrix Adapter implements a structured RabbitMQ protocol for communication with the Alkemio Server. See [MatrixAdapterProtocol.md](MatrixAdapterProtocol.md) for the full specification.
+The Matrix Adapter implements a structured RabbitMQ protocol for communication with the Alkemio Server. See [MatrixAdapterProtocol_V3.md](MatrixAdapterProtocol_V3.md) for the full specification.
 
 ### Supported Commands
 
@@ -129,21 +129,29 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 | | Update Room | `communication.room.update` |
 | | Delete Room | `communication.room.delete` |
 | | List Rooms | `communication.room.list` |
+| | Batch Add Member | `communication.room.member.batch.add` |
+| | Batch Remove Member | `communication.room.member.batch.remove` |
+| **Space** | Create Space | `communication.space.create` |
+| | Get Space | `communication.space.get` |
+| | Update Space | `communication.space.update` |
+| | Delete Space | `communication.space.delete` |
+| | List Spaces | `communication.space.list` |
+| | Batch Add Member | `communication.space.member.batch.add` |
+| | Batch Remove Member | `communication.space.member.batch.remove` |
+| **Hierarchy** | Set Parent | `communication.hierarchy.set_parent` |
 | **Message** | Send Message | `communication.message.send` |
 | | Get Message | `communication.message.get` |
 | | Delete Message | `communication.message.delete` |
 | **Reaction** | Add Reaction | `communication.reaction.add` |
 | | Remove Reaction | `communication.reaction.remove` |
 | | Get Reaction | `communication.reaction.get` |
-| **Membership** | Batch Add Member | `communication.room.member.batch.add` |
-| | Batch Remove Member | `communication.room.member.batch.remove` |
 | **Actor** | Sync Actor Profile | `communication.actor.sync` |
 
 ### Outgoing Events
 
 | Event | Topic | Description |
 |-------|-------|-------------|
-| Message Received | `message.received` | Emitted when a message is received in a room |
+| Message Received | `communication.message.received` | Emitted when a message is received in a room |
 
 ### Response Structure
 
@@ -173,8 +181,9 @@ Error responses include structured error information:
 
 | Code | Description |
 |------|-------------|
-| `INVALID_PARAM` | Request validation failed |
+| `INVALID_PARAM` | Request validation failed (invalid payload or parameters) |
 | `ROOM_NOT_FOUND` | Referenced room does not exist |
+| `SPACE_NOT_FOUND` | Referenced space does not exist |
 | `ACTOR_NOT_FOUND` | Referenced actor does not exist |
 | `MATRIX_ERROR` | Matrix SDK/homeserver error |
 | `INTERNAL_ERROR` | Unexpected system error |

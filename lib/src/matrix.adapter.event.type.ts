@@ -1,8 +1,10 @@
 export enum MatrixAdapterEventType {
 
   COMMUNICATION_ACTOR_SYNC = 'communication.actor.sync',
+  COMMUNICATION_HIERARCHY_SET_PARENT = 'communication.hierarchy.set_parent',
   COMMUNICATION_MESSAGE_DELETE = 'communication.message.delete',
   COMMUNICATION_MESSAGE_GET = 'communication.message.get',
+  COMMUNICATION_MESSAGE_RECEIVED = 'communication.message.received',
   COMMUNICATION_MESSAGE_SEND = 'communication.message.send',
   COMMUNICATION_REACTION_ADD = 'communication.reaction.add',
   COMMUNICATION_REACTION_GET = 'communication.reaction.get',
@@ -14,6 +16,12 @@ export enum MatrixAdapterEventType {
   COMMUNICATION_ROOM_MEMBER_BATCH_ADD = 'communication.room.member.batch.add',
   COMMUNICATION_ROOM_MEMBER_BATCH_REMOVE = 'communication.room.member.batch.remove',
   COMMUNICATION_ROOM_UPDATE = 'communication.room.update',
-  MESSAGE_RECEIVED = 'message.received',
+  COMMUNICATION_SPACE_CREATE = 'communication.space.create',
+  COMMUNICATION_SPACE_DELETE = 'communication.space.delete',
+  COMMUNICATION_SPACE_GET = 'communication.space.get',
+  COMMUNICATION_SPACE_LIST = 'communication.space.list',
+  COMMUNICATION_SPACE_MEMBER_BATCH_ADD = 'communication.space.member.batch.add',
+  COMMUNICATION_SPACE_MEMBER_BATCH_REMOVE = 'communication.space.member.batch.remove',
+  COMMUNICATION_SPACE_UPDATE = 'communication.space.update',
 
 }

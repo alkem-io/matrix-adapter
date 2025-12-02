@@ -8,6 +8,8 @@ const (
 	ErrCodeInvalidParam ErrorCode = "INVALID_PARAM"
 	// ErrCodeRoomNotFound indicates the referenced room does not exist.
 	ErrCodeRoomNotFound ErrorCode = "ROOM_NOT_FOUND"
+	// ErrCodeSpaceNotFound indicates the referenced space does not exist.
+	ErrCodeSpaceNotFound ErrorCode = "SPACE_NOT_FOUND"
 	// ErrCodeActorNotFound indicates the referenced actor does not exist.
 	ErrCodeActorNotFound ErrorCode = "ACTOR_NOT_FOUND"
 	// ErrCodeMatrixError indicates a Matrix SDK/homeserver error.

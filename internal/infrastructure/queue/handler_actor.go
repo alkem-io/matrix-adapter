@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/google/uuid"
-
 	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
@@ -24,22 +22,22 @@ func NewActorHandler(service *service.ActorService) *ActorHandler {
 
 // HandleSyncActor handles communication.actor.sync topic.
 // This is an idempotent operation that ensures an actor exists and updates their profile.
-func (h *ActorHandler) HandleSyncActor(payload []byte) (interface{}, error) {
+func (h *ActorHandler) HandleSyncActor(ctx context.Context, payload []byte) (interface{}, error) {
 	var req dto.SyncActorRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return NewInvalidPayloadError(err), nil
 	}
 
 	// Validate required fields
-	if req.ActorID.UUID() == uuid.Nil {
-		return NewInvalidParamError("actor_id is required"), nil
+	if errResp := RequireUUID(req.ActorID, "actor_id"); errResp != nil {
+		return *errResp, nil
 	}
-	if req.DisplayName == "" {
-		return NewInvalidParamError("display_name is required"), nil
+	if errResp := RequireNonEmpty(req.DisplayName, "display_name"); errResp != nil {
+		return *errResp, nil
 	}
 
 	err := h.service.SyncActor(
-		context.Background(),
+		ctx,
 		req.ActorID.UUID(),
 		req.DisplayName,
 		req.AvatarURL,

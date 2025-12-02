@@ -7,11 +7,14 @@ package dto
 // CreateRoomRequest creates a new communication channel.
 // Topic: communication.room.create
 type CreateRoomRequest struct {
-	AlkemioRoomID  AlkemioRoomID    `json:"alkemio_room_id"`
-	Type           RoomType         `json:"type"`
-	Name           string           `json:"name,omitempty"` // Ignored for 'direct'
-	InitialMembers []AlkemioActorID `json:"initial_members,omitempty"`
-	Topic          string           `json:"topic,omitempty"`
+	AlkemioRoomID   AlkemioRoomID     `json:"alkemio_room_id"`
+	Type            RoomType          `json:"type"`
+	Name            string            `json:"name,omitempty"` // Ignored for 'direct'
+	InitialMembers  []AlkemioActorID  `json:"initial_members,omitempty"`
+	Topic           string            `json:"topic,omitempty"`
+	AvatarURL       string            `json:"avatar_url,omitempty"`
+	ParentContextID *AlkemioContextID `json:"parent_context_id,omitempty"`
+	JoinRule        JoinRule          `json:"join_rule,omitempty"`
 }
 
 // CreateRoomResponse confirms room creation.
@@ -42,6 +45,8 @@ type UpdateRoomRequest struct {
 	Name          *string       `json:"name,omitempty"`
 	Topic         *string       `json:"topic,omitempty"`
 	IsPublic      *bool         `json:"is_public,omitempty"`
+	AvatarURL     *string       `json:"avatar_url,omitempty"`
+	JoinRule      *JoinRule     `json:"join_rule,omitempty"`
 }
 
 // UpdateRoomResponse confirms the update.
@@ -64,7 +69,6 @@ type DeleteRoomResponse struct {
 // ListRoomsRequest retrieves all rooms (admin operation).
 // Topic: communication.room.list
 type ListRoomsRequest struct {
-	Limit  int    `json:"limit,omitempty"`
 	Cursor string `json:"cursor,omitempty"`
 }
 

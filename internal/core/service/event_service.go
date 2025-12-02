@@ -50,7 +50,7 @@ func (s *EventService) HandleMessage(msg domain.Message) error {
 
 	s.logger.Info("Publishing message received event", "event_id", msg.ID, "sender_id", msg.SenderID)
 
-	if err := s.queue.Publish("message.received", payload); err != nil {
+	if err := s.queue.Publish("communication.message.received", payload); err != nil {
 		return fmt.Errorf("failed to publish message received event: %w", err)
 	}
 

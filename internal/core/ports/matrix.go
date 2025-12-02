@@ -21,17 +21,9 @@ type MatrixPort interface {
 	EnsureUser(ctx context.Context, actorID domain.Actor) (id.UserID, error)
 	SetUserProfile(ctx context.Context, actorID domain.Actor) error
 
-	// Actor Room Operations
-	JoinRoom(ctx context.Context, roomID id.RoomID, actorID domain.Actor) error
-	LeaveRoom(ctx context.Context, roomID id.RoomID, actorID domain.Actor) error
-	GetUserJoinedRooms(ctx context.Context, actorID domain.Actor) ([]id.RoomID, error)
-
 	// Room Management
-	CreateRoom(ctx context.Context, actorID domain.Actor, name string, metadata map[string]string) (id.RoomID, error)
 	CreateRoomWithAlias(ctx context.Context, alkemioRoomID uuid.UUID, roomType string, name, topic string, initialMembers []domain.Actor) (id.RoomID, error)
 	InviteUser(ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID domain.Actor) error
-	InviteUserByID(ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID id.UserID) error
-	ForgetRoom(ctx context.Context, roomID id.RoomID, actorID domain.Actor) error
 	GetRoomDetails(ctx context.Context, roomID id.RoomID) (*domain.Room, error)
 	GetRoomMembers(ctx context.Context, roomID id.RoomID) ([]id.UserID, error)
 	UpdateRoomState(ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, alias string) error
@@ -57,12 +49,39 @@ type MatrixPort interface {
 	) (id.EventID, error)
 	GetReaction(ctx context.Context, roomID id.RoomID, reactionID id.EventID) (*domain.Reaction, error)
 
-	// Direct Messaging
-	CreateDirectRoom(ctx context.Context, initiator domain.Actor, receiver domain.Actor) (id.RoomID, error)
-	GetDirectRooms(ctx context.Context, actorID domain.Actor) (map[id.UserID]id.RoomID, error)
-
 	// Admin Operations
 	GetAllJoinedRooms(ctx context.Context) ([]id.RoomID, error)
+
+	// ============================================================================
+	// Space Operations (MSC1772)
+	// ============================================================================
+
+	// CreateSpace creates a Matrix Space room with the given parameters.
+	CreateSpace(ctx context.Context, alkemioContextID uuid.UUID, name, topic, avatarURL string, joinRule string, initialMembers []domain.Actor) (id.RoomID, error)
+
+	// GetSpaceDetails retrieves space metadata and state.
+	GetSpaceDetails(ctx context.Context, roomID id.RoomID) (*domain.Space, error)
+
+	// GetSpaceMembers returns the list of members in a space.
+	GetSpaceMembers(ctx context.Context, roomID id.RoomID) ([]id.UserID, error)
+
+	// UpdateSpaceState updates space name, topic, avatar, or join rule.
+	UpdateSpaceState(ctx context.Context, roomID id.RoomID, name, topic, avatarURL, joinRule string) error
+
+	// GetSpaceChildren returns child rooms and subspaces of a space.
+	GetSpaceChildren(ctx context.Context, roomID id.RoomID) ([]domain.SpaceChild, error)
+
+	// AddSpaceChild adds a room or subspace as a child of a space.
+	AddSpaceChild(ctx context.Context, spaceID id.RoomID, childID id.RoomID, order string, suggested bool) error
+
+	// SetSpaceParent sets the parent space for a room or subspace (m.space.parent state event).
+	SetSpaceParent(ctx context.Context, childID id.RoomID, parentID id.RoomID) error
+
+	// InviteToSpace invites a user to a space.
+	InviteToSpace(ctx context.Context, spaceID id.RoomID, inviteeID domain.Actor) error
+
+	// KickFromSpace kicks a user from a space.
+	KickFromSpace(ctx context.Context, spaceID id.RoomID, userID id.UserID, reason string) error
 
 	// Event Listening
 	OnMessage(handler func(msg domain.Message) error)

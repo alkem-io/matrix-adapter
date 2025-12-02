@@ -1,35 +1,51 @@
 package queue
 
 import (
+	"context"
+
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 )
 
 // RegisterRoutes registers all queue subscribers to their respective topics.
-func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, log ports.Logger) {
-	routes := map[string]func([]byte) (interface{}, error){
+func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, space *SpaceHandler, log ports.Logger) {
+	routes := map[string]func(ctx context.Context, payload []byte) (interface{}, error){
 		// Room Routes (communication.room.*)
-		"communication.room.create": room.HandleCreateRoom,
-		"communication.room.get":    room.HandleGetRoom,
-		"communication.room.update": room.HandleUpdateRoom,
-		"communication.room.delete": room.HandleDeleteRoom,
-		"communication.room.list":   room.HandleListRooms,
+		TopicRoomCreate: room.HandleCreateRoom,
+		TopicRoomGet:    room.HandleGetRoom,
+		TopicRoomUpdate: room.HandleUpdateRoom,
+		TopicRoomDelete: room.HandleDeleteRoom,
+		TopicRoomList:   room.HandleListRooms,
 
 		// Message Routes (communication.message.*)
-		"communication.message.send":   room.HandleSendMessage,
-		"communication.message.get":    room.HandleGetMessage,
-		"communication.message.delete": room.HandleDeleteMessage,
+		TopicMessageSend:   room.HandleSendMessage,
+		TopicMessageGet:    room.HandleGetMessage,
+		TopicMessageDelete: room.HandleDeleteMessage,
 
 		// Reaction Routes (communication.reaction.*)
-		"communication.reaction.add":    room.HandleAddReaction,
-		"communication.reaction.remove": room.HandleRemoveReaction,
-		"communication.reaction.get":    room.HandleGetReaction,
+		TopicReactionAdd:    room.HandleAddReaction,
+		TopicReactionRemove: room.HandleRemoveReaction,
+		TopicReactionGet:    room.HandleGetReaction,
 
 		// Batch Member Routes (communication.room.member.batch.*)
-		"communication.room.member.batch.add":    room.HandleBatchAddMember,
-		"communication.room.member.batch.remove": room.HandleBatchRemoveMember,
+		TopicRoomMemberBatchAdd:    room.HandleBatchAddMember,
+		TopicRoomMemberBatchRemove: room.HandleBatchRemoveMember,
 
 		// Actor Routes (communication.actor.*)
-		"communication.actor.sync": actor.HandleSyncActor,
+		TopicActorSync: actor.HandleSyncActor,
+
+		// Space Routes (communication.space.*)
+		TopicSpaceCreate: space.HandleCreateSpace,
+		TopicSpaceGet:    space.HandleGetSpace,
+		TopicSpaceUpdate: space.HandleUpdateSpace,
+		TopicSpaceDelete: space.HandleDeleteSpace,
+		TopicSpaceList:   space.HandleListSpaces,
+
+		// Hierarchy Routes (communication.hierarchy.*)
+		TopicHierarchySetParent: space.HandleSetParent,
+
+		// Batch Space Member Routes (communication.space.member.batch.*)
+		TopicSpaceMemberBatchAdd:    space.HandleBatchAddSpaceMember,
+		TopicSpaceMemberBatchRemove: space.HandleBatchRemoveSpaceMember,
 	}
 
 	for topic, handler := range routes {
