@@ -115,3 +115,76 @@ The Matrix Adapter uses Actor IDs (UUIDs) to identify users.
 
 The adapter automatically handles the mapping between Actor IDs and Matrix IDs.
 All external APIs (RabbitMQ commands and events) use Actor IDs.
+
+## Protocol
+
+The Matrix Adapter implements a structured RabbitMQ protocol for communication with the Alkemio Server. See [MatrixAdapterProtocol_V3.md](MatrixAdapterProtocol_V3.md) for the full specification.
+
+### Supported Commands
+
+| Category | Command | Topic |
+|----------|---------|-------|
+| **Room** | Create Room | `communication.room.create` |
+| | Get Room | `communication.room.get` |
+| | Update Room | `communication.room.update` |
+| | Delete Room | `communication.room.delete` |
+| | List Rooms | `communication.room.list` |
+| | Batch Add Member | `communication.room.member.batch.add` |
+| | Batch Remove Member | `communication.room.member.batch.remove` |
+| **Space** | Create Space | `communication.space.create` |
+| | Get Space | `communication.space.get` |
+| | Update Space | `communication.space.update` |
+| | Delete Space | `communication.space.delete` |
+| | List Spaces | `communication.space.list` |
+| | Batch Add Member | `communication.space.member.batch.add` |
+| | Batch Remove Member | `communication.space.member.batch.remove` |
+| **Hierarchy** | Set Parent | `communication.hierarchy.set_parent` |
+| **Message** | Send Message | `communication.message.send` |
+| | Get Message | `communication.message.get` |
+| | Delete Message | `communication.message.delete` |
+| **Reaction** | Add Reaction | `communication.reaction.add` |
+| | Remove Reaction | `communication.reaction.remove` |
+| | Get Reaction | `communication.reaction.get` |
+| **Actor** | Sync Actor Profile | `communication.actor.sync` |
+
+### Outgoing Events
+
+| Event | Topic | Description |
+|-------|-------|-------------|
+| Message Received | `communication.message.received` | Emitted when a message is received in a room |
+
+### Response Structure
+
+All responses follow a standard envelope:
+
+```json
+{
+  "success": true,
+  "error": null
+}
+```
+
+Error responses include structured error information:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "ROOM_NOT_FOUND",
+    "message": "Room with ID xyz does not exist",
+    "details": "Optional technical details"
+  }
+}
+```
+
+### Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_PARAM` | Request validation failed (invalid payload or parameters) |
+| `ROOM_NOT_FOUND` | Referenced room does not exist |
+| `SPACE_NOT_FOUND` | Referenced space does not exist |
+| `ACTOR_NOT_FOUND` | Referenced actor does not exist |
+| `MATRIX_ERROR` | Matrix SDK/homeserver error |
+| `INTERNAL_ERROR` | Unexpected system error |
+| `NOT_ALLOWED` | Operation not permitted |

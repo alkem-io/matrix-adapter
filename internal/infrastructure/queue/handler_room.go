@@ -3,296 +3,538 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"time"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
-	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
+
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
+	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
 
 // RoomHandler handles queue messages related to room operations.
 type RoomHandler struct {
-	service *service.RoomService
+	service  *service.RoomService
+	matrix   ports.MatrixPort
+	idMapper *domain.IDMapper
 }
 
 // NewRoomHandler creates a new instance of RoomHandler.
-func NewRoomHandler(service *service.RoomService) *RoomHandler {
+func NewRoomHandler(service *service.RoomService, matrix ports.MatrixPort) *RoomHandler {
 	return &RoomHandler{
-		service: service,
+		service:  service,
+		matrix:   matrix,
+		idMapper: domain.NewIDMapper(matrix.HomeserverDomain()),
 	}
 }
 
-// HandleCreate handles the message to create a new room.
-func (h *RoomHandler) HandleCreate(payload []byte) (interface{}, error) {
-	var req dto.RoomCreatePayload
+// resolveRoomAlias resolves an Alkemio room ID to a Matrix room ID.
+// Returns the room ID and nil on success, or empty and an error response on failure.
+func (h *RoomHandler) resolveRoomAlias(ctx context.Context, alkemioRoomID dto.AlkemioRoomID) (id.RoomID, *dto.BaseResponse) {
+	alias := h.idMapper.RoomAlias(alkemioRoomID.UUID())
+	roomID, err := h.matrix.ResolveAlias(ctx, alias)
+	if err != nil {
+		resp := NewRoomNotFoundError(alkemioRoomID.String())
+		return "", &resp
+	}
+	return roomID, nil
+}
+
+// resolveRoomAliasForBatch resolves an Alkemio room ID to a Matrix room ID for batch operations.
+// Returns the room ID and nil on success, or empty and an error on failure.
+func (h *RoomHandler) resolveRoomAliasForBatch(ctx context.Context, alkemioRoomID dto.AlkemioRoomID) (id.RoomID, error) {
+	alias := h.idMapper.RoomAlias(alkemioRoomID.UUID())
+	roomID, err := h.matrix.ResolveAlias(ctx, alias)
+	if err != nil {
+		return "", err
+	}
+	return roomID, nil
+}
+
+// ============================================================================
+// Room Handlers (communication.room.*)
+// ============================================================================
+
+// HandleCreateRoom handles communication.room.create topic.
+func (h *RoomHandler) HandleCreateRoom(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.CreateRoomRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
+		return NewInvalidPayloadError(err), nil
 	}
 
-	actorID, err := uuid.Parse(req.TriggeredBy)
+	// Validate required fields
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	// Convert initial members to domain actors
+	var initialMembers []domain.Actor
+	for _, memberID := range req.InitialMembers {
+		if memberID.UUID() != uuid.Nil {
+			initialMembers = append(initialMembers, domain.NewActor(memberID.UUID()))
+		}
+	}
+
+	err := h.service.CreateRoomWithAlkemioID(
+		ctx,
+		req.AlkemioRoomID.UUID(),
+		string(req.Type),
+		req.Name,
+		req.Topic,
+		initialMembers,
+	)
 	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
-	actor := domain.Actor{ID: actorID}
+	return dto.CreateRoomResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+}
 
-	roomID, err := h.service.CreateRoom(context.Background(), actor, req.RoomName, req.Metadata)
+// HandleGetRoom handles communication.room.get topic.
+func (h *RoomHandler) HandleGetRoom(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.GetRoomRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	room, err := h.service.GetRoomWithMessages(ctx, req.AlkemioRoomID.UUID())
 	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
-	return dto.RoomCreateResponse{
-		Success: true,
-		RoomID:  string(roomID),
+	// Convert domain messages to DTOs
+	messages := make([]dto.MessageDto, 0, len(room.Messages))
+	for _, msg := range room.Messages {
+		msgDTO := dto.MessageDto{
+			ID:            dto.MessageID(msg.ID),
+			Content:       msg.Content,
+			SenderActorID: dto.AlkemioActorID(msg.SenderID),
+			Timestamp:     msg.Timestamp,
+		}
+		// Convert reactions
+		for _, r := range msg.Reactions {
+			reactionDTO := dto.ReactionDto{
+				ID:            dto.ReactionID(r.ID.String()),
+				Emoji:         r.Emoji,
+				SenderActorID: dto.AlkemioActorID(r.SenderID),
+				Timestamp:     r.Timestamp,
+			}
+			msgDTO.Reactions = append(msgDTO.Reactions, reactionDTO)
+		}
+		messages = append(messages, msgDTO)
+	}
+
+	// Convert member UUIDs to AlkemioActorID
+	memberActorIDs := make([]dto.AlkemioActorID, 0, len(room.MemberIDs))
+	for _, memberID := range room.MemberIDs {
+		memberActorIDs = append(memberActorIDs, dto.AlkemioActorID(memberID))
+	}
+
+	return dto.GetRoomResponse{
+		BaseResponse:   dto.NewSuccessResponse(),
+		AlkemioRoomID:  dto.AlkemioRoomID(room.AlkemioID),
+		DisplayName:    room.Name,
+		MemberActorIDs: memberActorIDs,
+		Messages:       messages,
 	}, nil
 }
 
-// HandleInvite handles the message to invite a user to a room.
-func (h *RoomHandler) HandleInvite(payload []byte) (interface{}, error) {
-	var req dto.RoomInvitePayload
+// HandleUpdateRoom handles communication.room.update topic.
+func (h *RoomHandler) HandleUpdateRoom(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.UpdateRoomRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
+		return NewInvalidPayloadError(err), nil
 	}
 
-	inviterID, err := uuid.Parse(req.TriggeredBy)
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	err := h.service.UpdateRoomMetadata(
+		ctx,
+		req.AlkemioRoomID.UUID(),
+		req.Name,
+		req.Topic,
+		req.IsPublic,
+	)
 	if err != nil {
-		return nil, err
-	}
-	inviteeID, err := uuid.Parse(req.InviteeID)
-	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
-	inviter := domain.Actor{ID: inviterID}
-	invitee := domain.Actor{ID: inviteeID}
-	roomID := id.RoomID(req.RoomID)
-
-	return nil, h.service.InviteUser(context.Background(), roomID, inviter, invitee)
+	return dto.UpdateRoomResponse{BaseResponse: dto.NewSuccessResponse()}, nil
 }
 
-// HandleGetDetails handles the message to get details of a room.
-func (h *RoomHandler) HandleGetDetails(payload []byte) (interface{}, error) {
-	var req dto.RoomDetailsPayload
+// HandleDeleteRoom handles communication.room.delete topic.
+func (h *RoomHandler) HandleDeleteRoom(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.DeleteRoomRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
+		return NewInvalidPayloadError(err), nil
 	}
 
-	room, err := h.service.GetRoomDetails(context.Background(), id.RoomID(req.RoomID))
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	err := h.service.DeleteRoomFully(ctx, req.AlkemioRoomID.UUID(), req.Reason)
 	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
-	return dto.RoomDetailsResponse{
-		RoomID: room.ID.String(),
-		Name:   room.Name,
-		Topic:  room.Topic,
-		Alias:  room.Alias,
+	return dto.DeleteRoomResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+}
+
+// HandleListRooms handles communication.room.list topic.
+func (h *RoomHandler) HandleListRooms(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.ListRoomsRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	alkemioRoomIDs, nextCursor, err := h.service.ListRooms(ctx, req.Cursor)
+	if err != nil {
+		return MapServiceError(err), nil
+	}
+
+	// Convert to DTO type
+	roomIDs := make([]dto.AlkemioRoomID, 0, len(alkemioRoomIDs))
+	for _, roomID := range alkemioRoomIDs {
+		roomIDs = append(roomIDs, dto.AlkemioRoomID(roomID))
+	}
+
+	return dto.ListRoomsResponse{
+		BaseResponse:   dto.NewSuccessResponse(),
+		AlkemioRoomIDs: roomIDs,
+		NextCursor:     nextCursor,
 	}, nil
 }
 
-// HandleGetMembers handles the message to get members of a room.
-func (h *RoomHandler) HandleGetMembers(payload []byte) (interface{}, error) {
-	var req dto.RoomMembersPayload
+// ============================================================================
+// Message Handlers (communication.message.*)
+// ============================================================================
+
+// HandleSendMessage handles communication.message.send topic.
+func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.SendMessageRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
+		return NewInvalidPayloadError(err), nil
 	}
 
-	members, err := h.service.GetRoomMembers(context.Background(), id.RoomID(req.RoomID))
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireUUID(req.SenderActorID, "sender_actor_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireNonEmpty(req.Content, "content"); errResp != nil {
+		return *errResp, nil
+	}
+
+	// Resolve room alias to Matrix room ID
+	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	sender := domain.NewActor(req.SenderActorID.UUID())
+
+	var eventID id.EventID
+	var err error
+	if req.ParentMessageID != nil && *req.ParentMessageID != "" {
+		// Send as reply/thread
+		eventID, err = h.service.SendReply(
+			ctx,
+			roomID,
+			sender,
+			req.Content,
+			id.EventID(*req.ParentMessageID),
+		)
+	} else {
+		// Send as regular message
+		eventID, err = h.service.SendMessage(ctx, roomID, sender, req.Content)
+	}
+
 	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
-	userIDs := make([]string, len(members))
-	for i, m := range members {
-		userIDs[i] = m.String()
-	}
-
-	return dto.RoomMembersResponse{
-		RoomID:  req.RoomID,
-		UserIDs: userIDs,
+	return dto.SendMessageResponse{
+		BaseResponse: dto.NewSuccessResponse(),
+		MessageID:    dto.MessageID(eventID.String()),
+		Timestamp:    time.Now().UTC(),
 	}, nil
 }
 
-// HandleUpdateState handles the message to update the state of a room.
-func (h *RoomHandler) HandleUpdateState(payload []byte) (interface{}, error) {
-	var req dto.RoomUpdateStatePayload
+// HandleGetMessage handles communication.message.get topic.
+func (h *RoomHandler) HandleGetMessage(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.GetMessageRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
+		return NewInvalidPayloadError(err), nil
 	}
 
-	actorID, err := uuid.Parse(req.TriggeredBy)
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireNonEmpty(string(req.MessageID), "message_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	// Resolve room alias to Matrix room ID
+	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	msg, err := h.service.GetMessage(ctx, roomID, id.EventID(req.MessageID))
 	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
-	err = h.service.UpdateRoomState(
-		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: actorID}, req.Name, req.Topic, req.Alias,
-	)
-	if err != nil {
-		return nil, err
+	msgDTO := dto.MessageDto{
+		ID:            dto.MessageID(msg.ID),
+		Content:       msg.Content,
+		SenderActorID: dto.AlkemioActorID(msg.SenderID),
+		Timestamp:     msg.Timestamp,
 	}
 
-	return dto.RoomUpdateStateResponse{Success: true}, nil
+	return dto.GetMessageResponse{
+		BaseResponse: dto.NewSuccessResponse(),
+		Message:      msgDTO,
+	}, nil
 }
 
-// HandleSendMessage handles the message to send a message to a room.
-func (h *RoomHandler) HandleSendMessage(payload []byte) (interface{}, error) {
-	var req dto.RoomMessageSendPayload
+// HandleDeleteMessage handles communication.message.delete topic.
+func (h *RoomHandler) HandleDeleteMessage(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.DeleteMessageRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
+		return NewInvalidPayloadError(err), nil
 	}
 
-	senderID, err := uuid.Parse(req.SenderActorID)
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireNonEmpty(string(req.MessageID), "message_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireUUID(req.SenderActorID, "sender_actor_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	// Resolve room alias to Matrix room ID
+	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	sender := domain.NewActor(req.SenderActorID.UUID())
+	err := h.service.RedactEvent(ctx, roomID, sender, id.EventID(req.MessageID), req.Reason)
 	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
-	eventID, err := h.service.SendMessage(
-		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, req.Message,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return dto.RoomMessageSendResponse{EventID: eventID.String()}, nil
+	return dto.DeleteMessageResponse{BaseResponse: dto.NewSuccessResponse()}, nil
 }
 
-// HandleSendReply handles the message to send a reply to a message in a room.
-func (h *RoomHandler) HandleSendReply(payload []byte) (interface{}, error) {
-	var req dto.RoomMessageSendReplyPayload
+// ============================================================================
+// Reaction Handlers (communication.reaction.*)
+// ============================================================================
+
+// HandleAddReaction handles communication.reaction.add topic.
+func (h *RoomHandler) HandleAddReaction(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.AddReactionRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
+		return NewInvalidPayloadError(err), nil
 	}
 
-	senderID, err := uuid.Parse(req.SenderActorID)
-	if err != nil {
-		return nil, err
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireNonEmpty(string(req.MessageID), "message_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireUUID(req.SenderActorID, "sender_actor_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireNonEmpty(req.Emoji, "emoji"); errResp != nil {
+		return *errResp, nil
 	}
 
-	eventID, err := h.service.SendReply(
-		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, req.Message, id.EventID(req.ThreadID),
-	)
-	if err != nil {
-		return nil, err
+	// Resolve room alias to Matrix room ID
+	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	if errResp != nil {
+		return *errResp, nil
 	}
 
-	return dto.RoomMessageSendReplyResponse{EventID: eventID.String()}, nil
-}
-
-// HandleDeleteMessage handles the message to delete a message in a room.
-func (h *RoomHandler) HandleDeleteMessage(payload []byte) (interface{}, error) {
-	var req dto.RoomMessageDeletePayload
-	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
-	}
-
-	senderID, err := uuid.Parse(req.SenderActorID)
-	if err != nil {
-		return nil, err
-	}
-
-	err = h.service.RedactEvent(
-		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, id.EventID(req.EventID), req.Reason,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return dto.RoomMessageDeleteResponse{Success: true}, nil
-}
-
-// HandleAddReaction handles the message to add a reaction to a message in a room.
-func (h *RoomHandler) HandleAddReaction(payload []byte) (interface{}, error) {
-	var req dto.RoomMessageAddReactionPayload
-	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
-	}
-
-	senderID, err := uuid.Parse(req.SenderActorID)
-	if err != nil {
-		return nil, err
-	}
-
+	sender := domain.NewActor(req.SenderActorID.UUID())
 	eventID, err := h.service.SendReaction(
-		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, id.EventID(req.MessageID), req.Emoji,
+		ctx,
+		roomID,
+		sender,
+		id.EventID(req.MessageID),
+		req.Emoji,
 	)
 	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
-	return dto.RoomMessageAddReactionResponse{EventID: eventID.String()}, nil
-}
-
-// HandleDelete handles the message to delete (forget) a room.
-func (h *RoomHandler) HandleDelete(payload []byte) (interface{}, error) {
-	var req dto.RoomDeletePayload
-	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
-	}
-
-	actorID, err := uuid.Parse(req.TriggeredBy)
-	if err != nil {
-		return nil, err
-	}
-
-	err = h.service.ForgetRoom(context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: actorID})
-	if err != nil {
-		return nil, err
-	}
-
-	return dto.RoomDeleteResponse{Success: true}, nil
-}
-
-// HandleMessageDetails handles the message to get message details.
-func (h *RoomHandler) HandleMessageDetails(payload []byte) (interface{}, error) {
-	var req dto.RoomMessageDetailsPayload
-	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
-	}
-
-	msg, err := h.service.GetMessage(context.Background(), id.RoomID(req.RoomID), id.EventID(req.EventID))
-	if err != nil {
-		return nil, err
-	}
-
-	return dto.RoomMessageDetailsResponse{
-		Message: dto.Message{
-			ID:        msg.ID,
-			Message:   msg.Content,
-			Sender:    msg.SenderMatrixID,
-			Timestamp: msg.Timestamp.UnixMilli(),
-		},
+	return dto.AddReactionResponse{
+		BaseResponse: dto.NewSuccessResponse(),
+		ReactionID:   dto.ReactionID(eventID.String()),
 	}, nil
 }
 
-// HandleRemoveReaction handles the message to remove a reaction.
-func (h *RoomHandler) HandleRemoveReaction(payload []byte) (interface{}, error) {
-	var req dto.RoomMessageRemoveReactionPayload
+// HandleRemoveReaction handles communication.reaction.remove topic.
+func (h *RoomHandler) HandleRemoveReaction(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.RemoveReactionRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, err
+		return NewInvalidPayloadError(err), nil
 	}
 
-	senderID, err := uuid.Parse(req.SenderActorID)
-	if err != nil {
-		return nil, err
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireNonEmpty(string(req.ReactionID), "reaction_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireUUID(req.SenderActorID, "sender_actor_id"); errResp != nil {
+		return *errResp, nil
 	}
 
-	// Find the reaction event ID
-	reactionEventID, err := h.service.GetReactionEventID(
-		context.Background(), id.RoomID(req.RoomID), id.EventID(req.MessageID), req.Emoji, domain.Actor{ID: senderID},
+	// Resolve room alias to Matrix room ID
+	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	sender := domain.NewActor(req.SenderActorID.UUID())
+	// Redact the reaction event directly using its ID
+	err := h.service.RedactEvent(
+		ctx,
+		roomID,
+		sender,
+		id.EventID(req.ReactionID),
+		"Reaction removed",
 	)
 	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
-	// Redact the reaction
-	err = h.service.RedactEvent(
-		context.Background(), id.RoomID(req.RoomID), domain.Actor{ID: senderID}, reactionEventID, "Reaction removed",
-	)
+	return dto.RemoveReactionResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+}
+
+// HandleGetReaction handles communication.reaction.get topic.
+func (h *RoomHandler) HandleGetReaction(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.GetReactionRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireNonEmpty(string(req.ReactionID), "reaction_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	// Resolve room alias to Matrix room ID
+	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	reaction, err := h.matrix.GetReaction(ctx, roomID, id.EventID(req.ReactionID))
 	if err != nil {
-		return nil, err
+		return MapServiceError(err), nil
 	}
 
-	return dto.RoomMessageRemoveReactionResponse{Success: true}, nil
+	reactionDTO := dto.ReactionDto{
+		ID:            dto.ReactionID(reaction.ID.String()),
+		Emoji:         reaction.Emoji,
+		SenderActorID: dto.AlkemioActorID(reaction.SenderID),
+		Timestamp:     reaction.Timestamp,
+	}
+
+	return dto.GetReactionResponse{
+		BaseResponse: dto.NewSuccessResponse(),
+		Reaction:     reactionDTO,
+	}, nil
+}
+
+// ============================================================================
+// Batch Handlers (communication.room.member.batch.*)
+// ============================================================================
+
+// HandleBatchAddMember handles communication.room.member.batch.add topic.
+func (h *RoomHandler) HandleBatchAddMember(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.BatchAddMemberRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.ActorID, "actor_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if len(req.AlkemioRoomIDs) == 0 {
+		return NewInvalidParamError("alkemio_room_ids is required"), nil
+	}
+
+	results := make(map[string]dto.BaseResponse)
+	actor := domain.NewActor(req.ActorID.UUID())
+
+	for _, alkemioRoomID := range req.AlkemioRoomIDs {
+		roomID, err := h.resolveRoomAliasForBatch(ctx, alkemioRoomID)
+		if err != nil {
+			results[alkemioRoomID.String()] = MapToBatchResult(err)
+			continue
+		}
+
+		// Invite user to room (uses the bot to invite)
+		err = h.matrix.InviteUser(ctx, roomID, domain.Actor{}, actor)
+		results[alkemioRoomID.String()] = MapToBatchResult(err)
+	}
+
+	return dto.BatchAddMemberResponse{
+		BaseResponse: dto.NewSuccessResponse(),
+		Results:      results,
+	}, nil
+}
+
+// HandleBatchRemoveMember handles communication.room.member.batch.remove topic.
+func (h *RoomHandler) HandleBatchRemoveMember(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.BatchRemoveMemberRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.ActorID, "actor_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if len(req.AlkemioRoomIDs) == 0 {
+		return NewInvalidParamError("alkemio_room_ids is required"), nil
+	}
+
+	results := make(map[string]dto.BaseResponse)
+	actorMatrixID := h.idMapper.UserID(req.ActorID.UUID())
+
+	for _, alkemioRoomID := range req.AlkemioRoomIDs {
+		roomID, err := h.resolveRoomAliasForBatch(ctx, alkemioRoomID)
+		if err != nil {
+			results[alkemioRoomID.String()] = MapToBatchResult(err)
+			continue
+		}
+
+		// Kick user from room
+		err = h.matrix.KickUser(ctx, roomID, actorMatrixID, req.Reason)
+		results[alkemioRoomID.String()] = MapToBatchResult(err)
+	}
+
+	return dto.BatchRemoveMemberResponse{
+		BaseResponse: dto.NewSuccessResponse(),
+		Results:      results,
+	}, nil
 }

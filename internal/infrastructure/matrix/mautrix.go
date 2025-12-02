@@ -9,6 +9,7 @@ import (
 	"github.com/alkem-io/matrix-adapter-go/internal/config"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/google/uuid"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/event"
@@ -17,9 +18,10 @@ import (
 
 // MautrixAdapter implements the MatrixPort interface using the mautrix-go library.
 type MautrixAdapter struct {
-	cfg    *config.Config
-	logger ports.Logger
-	as     *appservice.AppService
+	cfg      *config.Config
+	logger   ports.Logger
+	as       *appservice.AppService
+	idMapper *domain.IDMapper
 }
 
 // NewMautrixAdapter creates a new instance of MautrixAdapter.
@@ -30,9 +32,11 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		return nil, fmt.Errorf("invalid homeserver URL: %w", err)
 	}
 
+	homeserverDomain := hsURL.Hostname()
+
 	// Create AppService instance
 	as := appservice.Create()
-	as.HomeserverDomain = hsURL.Hostname()
+	as.HomeserverDomain = homeserverDomain
 	// as.HomeserverURL = cfg.Matrix.HomeserverURL // Removed as field doesn't exist
 	as.Registration = &appservice.Registration{
 		ID:              "alkemio-matrix-adapter",
@@ -51,9 +55,10 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 	}
 
 	return &MautrixAdapter{
-		cfg:    cfg,
-		logger: logger,
-		as:     as,
+		cfg:      cfg,
+		logger:   logger,
+		as:       as,
+		idMapper: domain.NewIDMapper(homeserverDomain),
 	}, nil
 }
 
@@ -120,38 +125,6 @@ func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id
 	return userID, nil
 }
 
-// CreateRoom creates a new room on the homeserver.
-func (m *MautrixAdapter) CreateRoom(
-	ctx context.Context, actorID domain.Actor, name string, metadata map[string]string,
-) (id.RoomID, error) {
-	// Get intent for the actor
-	userID, err := m.EnsureUser(ctx, actorID)
-	if err != nil {
-		return "", err
-	}
-	intent := m.as.Intent(userID)
-
-	// Create room options
-	req := &mautrix.ReqCreateRoom{
-		Name:   name,
-		Preset: "public_chat", // Default to public for now
-	}
-
-	if topic, ok := metadata["topic"]; ok {
-		req.Topic = topic
-	}
-	if alias, ok := metadata["alias"]; ok {
-		req.RoomAliasName = alias
-	}
-
-	resp, err := intent.CreateRoom(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("failed to create room: %w", err)
-	}
-
-	return resp.RoomID, nil
-}
-
 // InviteUser invites a user to a room.
 func (m *MautrixAdapter) InviteUser(
 	ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID domain.Actor,
@@ -177,42 +150,6 @@ func (m *MautrixAdapter) InviteUser(
 	return nil
 }
 
-// InviteUserByID invites a user (by Matrix ID) to a room.
-func (m *MautrixAdapter) InviteUserByID(
-	ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID id.UserID,
-) error {
-	inviterUserID, err := m.EnsureUser(ctx, inviterID)
-	if err != nil {
-		return err
-	}
-
-	intent := m.as.Intent(inviterUserID)
-	_, err = intent.InviteUser(
-		ctx, roomID, &mautrix.ReqInviteUser{
-			UserID: inviteeID,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to invite user: %w", err)
-	}
-	return nil
-}
-
-// JoinRoom joins a user to a room.
-func (m *MautrixAdapter) JoinRoom(ctx context.Context, roomID id.RoomID, actorID domain.Actor) error {
-	userID, err := m.EnsureUser(ctx, actorID)
-	if err != nil {
-		return err
-	}
-	intent := m.as.Intent(userID)
-
-	_, err = intent.JoinRoomByID(ctx, roomID)
-	if err != nil {
-		return fmt.Errorf("failed to join room: %w", err)
-	}
-	return nil
-}
-
 // SendMessage sends a message to a room.
 func (m *MautrixAdapter) SendMessage(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string,
@@ -228,36 +165,6 @@ func (m *MautrixAdapter) SendMessage(
 		return "", fmt.Errorf("failed to send message: %w", err)
 	}
 	return resp.EventID, nil
-}
-
-// LeaveRoom leaves a room.
-func (m *MautrixAdapter) LeaveRoom(ctx context.Context, roomID id.RoomID, actorID domain.Actor) error {
-	userID, err := m.EnsureUser(ctx, actorID)
-	if err != nil {
-		return err
-	}
-	intent := m.as.Intent(userID)
-
-	_, err = intent.LeaveRoom(ctx, roomID)
-	if err != nil {
-		return fmt.Errorf("failed to leave room: %w", err)
-	}
-	return nil
-}
-
-// GetUserJoinedRooms returns the list of rooms a user has joined.
-func (m *MautrixAdapter) GetUserJoinedRooms(ctx context.Context, actorID domain.Actor) ([]id.RoomID, error) {
-	userID, err := m.EnsureUser(ctx, actorID)
-	if err != nil {
-		return nil, err
-	}
-	intent := m.as.Intent(userID)
-
-	resp, err := intent.JoinedRooms(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get joined rooms: %w", err)
-	}
-	return resp.JoinedRooms, nil
 }
 
 // GetAllJoinedRooms returns the list of all rooms the bot has joined.
@@ -418,25 +325,6 @@ func (m *MautrixAdapter) SendReaction(
 	return resp.EventID, nil
 }
 
-// ForgetRoom forgets a room.
-func (m *MautrixAdapter) ForgetRoom(ctx context.Context, roomID id.RoomID, actorID domain.Actor) error {
-	userID, err := m.EnsureUser(ctx, actorID)
-	if err != nil {
-		return err
-	}
-	intent := m.as.Intent(userID)
-
-	if _, err := intent.LeaveRoom(ctx, roomID); err != nil {
-		// Ignore if already left?
-		m.logger.Warn("Failed to leave room before forgetting", "error", err)
-	}
-
-	if _, err := intent.ForgetRoom(ctx, roomID); err != nil {
-		return fmt.Errorf("failed to forget room: %w", err)
-	}
-	return nil
-}
-
 // GetMessage retrieves a specific message event.
 func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, eventID id.EventID) (
 	*domain.Message, error,
@@ -508,53 +396,467 @@ func (m *MautrixAdapter) GetReactionEventID(
 	return "", fmt.Errorf("reaction not found")
 }
 
-// CreateDirectRoom creates a direct message room.
-func (m *MautrixAdapter) CreateDirectRoom(
-	ctx context.Context, initiator domain.Actor, receiver domain.Actor,
-) (id.RoomID, error) {
-	initiatorID, err := m.EnsureUser(ctx, initiator)
+// HomeserverDomain returns the homeserver domain for room alias construction.
+func (m *MautrixAdapter) HomeserverDomain() string {
+	return m.as.HomeserverDomain
+}
+
+// SetUserProfile updates the user's display name and avatar.
+func (m *MautrixAdapter) SetUserProfile(ctx context.Context, actor domain.Actor) error {
+	userID, err := m.EnsureUser(ctx, actor)
 	if err != nil {
-		return "", err
+		return err
 	}
-	receiverID, err := m.EnsureUser(ctx, receiver)
-	if err != nil {
-		return "", err
+	intent := m.as.Intent(userID)
+
+	if actor.DisplayName != "" {
+		if err := intent.SetDisplayName(ctx, actor.DisplayName); err != nil {
+			m.logger.Warn("Failed to set display name", "user_id", userID, "error", err)
+		}
 	}
 
-	intent := m.as.Intent(initiatorID)
-	resp, err := intent.CreateRoom(
-		ctx, &mautrix.ReqCreateRoom{
-			Preset:   "trusted_private_chat",
-			IsDirect: true,
-			Invite:   []id.UserID{receiverID},
-			Topic:    "Direct Message",
-		},
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create DM room: %w", err)
+	if actor.AvatarURL != "" {
+		// AvatarURL should be a mxc:// URL
+		if err := intent.SetAvatarURL(ctx, id.ContentURI{}); err != nil {
+			m.logger.Warn("Failed to set avatar URL", "user_id", userID, "error", err)
+		}
 	}
+
+	return nil
+}
+
+// ResolveAlias resolves a room alias to a room ID.
+func (m *MautrixAdapter) ResolveAlias(ctx context.Context, alias string) (id.RoomID, error) {
+	intent := m.as.BotIntent()
+	resp, err := intent.ResolveAlias(ctx, id.RoomAlias(alias))
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve alias %s: %w", alias, err)
+	}
+	return resp.RoomID, nil
+}
+
+// DeleteAlias removes a room alias.
+func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
+	intent := m.as.BotIntent()
+	_, err := intent.DeleteAlias(ctx, id.RoomAlias(alias))
+	if err != nil {
+		return fmt.Errorf("failed to delete alias %s: %w", alias, err)
+	}
+	return nil
+}
+
+// KickUser kicks a user from a room.
+func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
+	intent := m.as.BotIntent()
+	_, err := intent.KickUser(ctx, roomID, &mautrix.ReqKickUser{
+		UserID: userID,
+		Reason: reason,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to kick user %s from room %s: %w", userID, roomID, err)
+	}
+	return nil
+}
+
+// GetRoomMessages retrieves all messages from a room.
+func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) ([]domain.Message, error) {
+	intent := m.as.BotIntent()
+
+	// Get messages using the messages endpoint
+	resp, err := intent.Messages(ctx, roomID, "", "", mautrix.DirectionBackward, nil, 1000)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get room messages: %w", err)
+	}
+
+	messages := make([]domain.Message, 0, len(resp.Chunk))
+	for _, evt := range resp.Chunk {
+		if evt.Type != event.EventMessage {
+			continue
+		}
+
+		content, ok := evt.Content.Parsed.(*event.MessageEventContent)
+		if !ok {
+			continue
+		}
+
+		msg := domain.Message{
+			ID:             evt.ID.String(),
+			RoomID:         roomID.String(),
+			Content:        content.Body,
+			SenderMatrixID: evt.Sender.String(),
+			Timestamp:      time.UnixMilli(evt.Timestamp),
+		}
+
+		// Check for thread/reply
+		if content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
+			msg.ThreadID = content.RelatesTo.InReplyTo.EventID.String()
+		}
+
+		messages = append(messages, msg)
+	}
+
+	// Log warning if message count exceeds 1000 for future pagination tracking
+	if len(messages) >= 1000 {
+		m.logger.Warn("Room has 1000+ messages, pagination may be needed in future", "room_id", roomID, "count", len(messages))
+	}
+
+	return messages, nil
+}
+
+// GetReaction retrieves details of a specific reaction.
+func (m *MautrixAdapter) GetReaction(ctx context.Context, roomID id.RoomID, reactionID id.EventID) (*domain.Reaction, error) {
+	intent := m.as.BotIntent()
+
+	evt, err := intent.GetEvent(ctx, roomID, reactionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get reaction event: %w", err)
+	}
+
+	if evt.Type != event.EventReaction {
+		return nil, fmt.Errorf("event is not a reaction")
+	}
+
+	content, ok := evt.Content.Parsed.(*event.ReactionEventContent)
+	if !ok {
+		return nil, fmt.Errorf("failed to parse reaction content")
+	}
+
+	return &domain.Reaction{
+		ID:        evt.ID,
+		RoomID:    roomID,
+		MessageID: content.RelatesTo.EventID,
+		Emoji:     content.RelatesTo.Key,
+		Timestamp: time.UnixMilli(evt.Timestamp),
+	}, nil
+}
+
+// CreateRoomWithAlias creates a new room with a specific alias based on Alkemio room ID.
+func (m *MautrixAdapter) CreateRoomWithAlias(
+	ctx context.Context,
+	alkemioRoomID uuid.UUID,
+	roomType string,
+	name, topic string,
+	initialMembers []domain.Actor,
+) (id.RoomID, error) {
+	// Use IDMapper for consistent alias construction
+	aliasLocalpart := m.idMapper.RoomAliasLocalpart(alkemioRoomID)
+
+	// Use bot intent for creating rooms
+	intent := m.as.BotIntent()
+
+	// Prepare initial invites
+	invites := make([]id.UserID, 0, len(initialMembers))
+	for _, member := range initialMembers {
+		userID, err := m.EnsureUser(ctx, member)
+		if err != nil {
+			return "", fmt.Errorf("failed to ensure member %s: %w", member.ID, err)
+		}
+		invites = append(invites, userID)
+	}
+
+	// Determine preset based on room type
+	preset := "public_chat"
+	isDirect := false
+	if roomType == "direct" {
+		preset = "trusted_private_chat"
+		isDirect = true
+	}
+
+	req := &mautrix.ReqCreateRoom{
+		Name:          name,
+		Topic:         topic,
+		Preset:        preset,
+		IsDirect:      isDirect,
+		RoomAliasName: aliasLocalpart,
+		Invite:        invites,
+	}
+
+	resp, err := intent.CreateRoom(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("failed to create room with alias: %w", err)
+	}
+
+	m.logger.Info("Room created with alias",
+		"room_id", resp.RoomID,
+		"alias", m.idMapper.RoomAlias(alkemioRoomID),
+		"alkemio_room_id", alkemioRoomID)
 
 	return resp.RoomID, nil
 }
 
-// GetDirectRooms returns the list of DM rooms for an actor.
-func (m *MautrixAdapter) GetDirectRooms(ctx context.Context, actorID domain.Actor) (map[id.UserID]id.RoomID, error) {
-	userID, err := m.EnsureUser(ctx, actorID)
+// ============================================================================
+// Space Operations (MSC1772)
+// ============================================================================
+
+// CreateSpace creates a Matrix Space room with the given parameters.
+func (m *MautrixAdapter) CreateSpace(
+	ctx context.Context,
+	alkemioContextID uuid.UUID,
+	name, topic, avatarURL string,
+	joinRule string,
+	initialMembers []domain.Actor,
+) (id.RoomID, error) {
+	// Use IDMapper for consistent alias construction
+	aliasLocalpart := m.idMapper.SpaceAliasLocalpart(alkemioContextID)
+
+	intent := m.as.BotIntent()
+
+	// Prepare initial invites
+	invites := make([]id.UserID, 0, len(initialMembers))
+	for _, member := range initialMembers {
+		userID, err := m.EnsureUser(ctx, member)
+		if err != nil {
+			m.logger.Warn("Failed to ensure member for space invite", "member_id", member.ID, "error", err)
+			continue
+		}
+		invites = append(invites, userID)
+	}
+
+	// Map join rule to Matrix preset
+	preset := "private_chat"
+	if joinRule == "public" {
+		preset = "public_chat"
+	}
+
+	// Create room with space type
+	req := &mautrix.ReqCreateRoom{
+		Name:          name,
+		Topic:         topic,
+		Preset:        preset,
+		RoomAliasName: aliasLocalpart,
+		Invite:        invites,
+		CreationContent: map[string]interface{}{
+			"type": "m.space",
+		},
+	}
+
+	// Set initial state events
+	initialState := make([]*event.Event, 0)
+
+	// Add join rule state event
+	if joinRule != "" {
+		joinRuleContent := &event.JoinRulesEventContent{
+			JoinRule: event.JoinRule(joinRule),
+		}
+		initialState = append(initialState, &event.Event{
+			Type:    event.StateJoinRules,
+			Content: event.Content{Parsed: joinRuleContent},
+		})
+	}
+
+	// Add avatar state event if provided
+	if avatarURL != "" {
+		avatarContent := &event.RoomAvatarEventContent{
+			URL: id.ContentURIString(avatarURL),
+		}
+		initialState = append(initialState, &event.Event{
+			Type:    event.StateRoomAvatar,
+			Content: event.Content{Parsed: avatarContent},
+		})
+	}
+
+	if len(initialState) > 0 {
+		req.InitialState = initialState
+	}
+
+	resp, err := intent.CreateRoom(ctx, req)
 	if err != nil {
-		return nil, err
-	}
-	intent := m.as.Intent(userID)
-
-	var directContent map[id.UserID][]id.RoomID
-	if err := intent.GetAccountData(ctx, "m.direct", &directContent); err != nil {
-		return map[id.UserID]id.RoomID{}, nil
+		return "", fmt.Errorf("failed to create space: %w", err)
 	}
 
-	result := make(map[id.UserID]id.RoomID)
-	for user, rooms := range directContent {
-		if len(rooms) > 0 {
-			result[user] = rooms[0]
+	m.logger.Info("Space created",
+		"room_id", resp.RoomID,
+		"alias", m.idMapper.SpaceAlias(alkemioContextID),
+		"alkemio_context_id", alkemioContextID)
+
+	return resp.RoomID, nil
+}
+
+// GetSpaceDetails retrieves space metadata and state.
+func (m *MautrixAdapter) GetSpaceDetails(ctx context.Context, roomID id.RoomID) (*domain.Space, error) {
+	intent := m.as.BotIntent()
+
+	var name, topic, alias, avatarURL, joinRule string
+
+	var nameContent event.RoomNameEventContent
+	if err := intent.StateEvent(ctx, roomID, event.StateRoomName, "", &nameContent); err == nil {
+		name = nameContent.Name
+	}
+
+	var topicContent event.TopicEventContent
+	if err := intent.StateEvent(ctx, roomID, event.StateTopic, "", &topicContent); err == nil {
+		topic = topicContent.Topic
+	}
+
+	var aliasContent event.CanonicalAliasEventContent
+	if err := intent.StateEvent(ctx, roomID, event.StateCanonicalAlias, "", &aliasContent); err == nil {
+		alias = string(aliasContent.Alias)
+	}
+
+	var avatarContent event.RoomAvatarEventContent
+	if err := intent.StateEvent(ctx, roomID, event.StateRoomAvatar, "", &avatarContent); err == nil {
+		avatarURL = string(avatarContent.URL)
+	}
+
+	var joinRuleContent event.JoinRulesEventContent
+	if err := intent.StateEvent(ctx, roomID, event.StateJoinRules, "", &joinRuleContent); err == nil {
+		joinRule = string(joinRuleContent.JoinRule)
+	}
+
+	return &domain.Space{
+		ID:        roomID,
+		Name:      name,
+		Topic:     topic,
+		Alias:     alias,
+		AvatarURL: avatarURL,
+		JoinRule:  joinRule,
+	}, nil
+}
+
+// GetSpaceMembers returns the list of members in a space.
+func (m *MautrixAdapter) GetSpaceMembers(ctx context.Context, roomID id.RoomID) ([]id.UserID, error) {
+	return m.GetRoomMembers(ctx, roomID)
+}
+
+// UpdateSpaceState updates space name, topic, avatar, or join rule.
+func (m *MautrixAdapter) UpdateSpaceState(ctx context.Context, roomID id.RoomID, name, topic, avatarURL, joinRule string) error {
+	intent := m.as.BotIntent()
+
+	if name != "" {
+		if _, err := intent.SetRoomName(ctx, roomID, name); err != nil {
+			return fmt.Errorf("failed to set space name: %w", err)
 		}
 	}
-	return result, nil
+
+	if topic != "" {
+		if _, err := intent.SetRoomTopic(ctx, roomID, topic); err != nil {
+			return fmt.Errorf("failed to set space topic: %w", err)
+		}
+	}
+
+	if avatarURL != "" {
+		avatarContent := &event.RoomAvatarEventContent{
+			URL: id.ContentURIString(avatarURL),
+		}
+		if _, err := intent.SendStateEvent(ctx, roomID, event.StateRoomAvatar, "", avatarContent); err != nil {
+			return fmt.Errorf("failed to set space avatar: %w", err)
+		}
+	}
+
+	if joinRule != "" {
+		joinRuleContent := &event.JoinRulesEventContent{
+			JoinRule: event.JoinRule(joinRule),
+		}
+		if _, err := intent.SendStateEvent(ctx, roomID, event.StateJoinRules, "", joinRuleContent); err != nil {
+			return fmt.Errorf("failed to set space join rule: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// GetSpaceChildren returns child rooms and subspaces of a space.
+func (m *MautrixAdapter) GetSpaceChildren(ctx context.Context, roomID id.RoomID) ([]domain.SpaceChild, error) {
+	intent := m.as.BotIntent()
+
+	// Get all state events for the room
+	stateMap, err := intent.State(ctx, roomID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get space state: %w", err)
+	}
+
+	children := make([]domain.SpaceChild, 0)
+
+	// Get m.space.child events from the state map
+	childEvents, ok := stateMap[event.StateSpaceChild]
+	if !ok {
+		return children, nil
+	}
+
+	for stateKey, evt := range childEvents {
+		content, ok := evt.Content.Parsed.(*event.SpaceChildEventContent)
+		if !ok {
+			continue
+		}
+
+		// Check if child is active (has "via" servers)
+		if len(content.Via) == 0 {
+			continue
+		}
+
+		child := domain.SpaceChild{
+			ChildID:   stateKey,
+			Order:     content.Order,
+			Suggested: content.Suggested,
+		}
+
+		// Determine if child is a space by checking its creation content
+		childRoomID := id.RoomID(stateKey)
+		var creationContent event.CreateEventContent
+		if err := intent.StateEvent(ctx, childRoomID, event.StateCreate, "", &creationContent); err == nil {
+			child.IsSpace = creationContent.Type == "m.space"
+		}
+
+		children = append(children, child)
+	}
+
+	return children, nil
+}
+
+// AddSpaceChild adds a room or subspace as a child of a space.
+func (m *MautrixAdapter) AddSpaceChild(ctx context.Context, spaceID id.RoomID, childID id.RoomID, order string, suggested bool) error {
+	intent := m.as.BotIntent()
+
+	content := &event.SpaceChildEventContent{
+		Via:       []string{m.as.HomeserverDomain},
+		Order:     order,
+		Suggested: suggested,
+	}
+
+	_, err := intent.SendStateEvent(ctx, spaceID, event.StateSpaceChild, string(childID), content)
+	if err != nil {
+		return fmt.Errorf("failed to add space child: %w", err)
+	}
+
+	return nil
+}
+
+// SetSpaceParent sets the parent space for a room or subspace (m.space.parent state event).
+func (m *MautrixAdapter) SetSpaceParent(ctx context.Context, childID id.RoomID, parentID id.RoomID) error {
+	intent := m.as.BotIntent()
+
+	content := &event.SpaceParentEventContent{
+		Via:       []string{m.as.HomeserverDomain},
+		Canonical: true,
+	}
+
+	_, err := intent.SendStateEvent(ctx, childID, event.StateSpaceParent, string(parentID), content)
+	if err != nil {
+		return fmt.Errorf("failed to set space parent: %w", err)
+	}
+
+	return nil
+}
+
+// InviteToSpace invites a user to a space.
+func (m *MautrixAdapter) InviteToSpace(ctx context.Context, spaceID id.RoomID, invitee domain.Actor) error {
+	inviteeUserID, err := m.EnsureUser(ctx, invitee)
+	if err != nil {
+		return fmt.Errorf("failed to ensure invitee user: %w", err)
+	}
+
+	intent := m.as.BotIntent()
+	_, err = intent.InviteUser(ctx, spaceID, &mautrix.ReqInviteUser{
+		UserID: inviteeUserID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to invite user to space: %w", err)
+	}
+
+	return nil
+}
+
+// KickFromSpace kicks a user from a space.
+func (m *MautrixAdapter) KickFromSpace(ctx context.Context, spaceID id.RoomID, userID id.UserID, reason string) error {
+	return m.KickUser(ctx, spaceID, userID, reason)
 }

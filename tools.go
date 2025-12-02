@@ -4,5 +4,6 @@
 package tools
 
 import (
+	_ "github.com/gzuidhof/tygo/cmd"
 	_ "github.com/gzuidhof/tygo/tygo"
 )

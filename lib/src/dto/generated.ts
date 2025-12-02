@@ -4,165 +4,112 @@
 // source: actor.go
 
 /**
- * ActorRegisterPayload represents the payload for registering an actor.
+ * SyncActorRequest ensures an actor exists in Matrix and updates their profile.
+ * This is an idempotent operation - calling with the same data has no effect.
+ * Topic: communication.actor.sync
  */
-export interface ActorRegisterPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  actorId: string;
-  displayName: string;
+export interface SyncActorRequest {
+  actor_id: AlkemioActorID;
+  display_name: string;
+  avatar_url?: string;
 }
 /**
- * ActorRegisterResponse represents the response after registering an actor.
+ * SyncActorResponse confirms the actor sync operation.
  */
-export interface ActorRegisterResponse {
-  success: boolean;
-  matrixId: string;
+export interface SyncActorResponse {
+  BaseResponse: BaseResponse;
 }
 
 //////////
-// source: actor_dm.go
+// source: batch.go
 
 /**
- * ActorStartDirectMessagingPayload represents the payload to start a DM.
+ * BatchAddMemberRequest adds a single actor to multiple rooms.
+ * Topic: communication.room.member.batch.add
  */
-export interface ActorStartDirectMessagingPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  receiverActorID: string;
-  initiatingActorID: string;
+export interface BatchAddMemberRequest {
+  actor_id: AlkemioActorID;
+  alkemio_room_ids: AlkemioRoomID[];
 }
 /**
- * ActorStartDirectMessagingResponse represents the response for starting a DM.
+ * BatchAddMemberResponse returns per-room results.
  */
-export interface ActorStartDirectMessagingResponse {
-  roomID: string;
+export interface BatchAddMemberResponse {
+  BaseResponse: BaseResponse;
   /**
-   * IsNew indicates if the room was just created or already existed.
+   * Results maps AlkemioRoomID (string) to operation result.
+   * Only populated if BaseResponse.Success is true (batch was processed).
    */
-  isNew: boolean;
+  results?: { [key: string]: BaseResponse};
 }
 /**
- * ActorStopDirectMessagingPayload represents the payload to stop a DM (leave/forget).
+ * BatchRemoveMemberRequest removes a single actor from multiple rooms.
+ * Topic: communication.room.member.batch.remove
  */
-export interface ActorStopDirectMessagingPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  receiverActorID: string;
-  initiatingActorID: string;
+export interface BatchRemoveMemberRequest {
+  actor_id: AlkemioActorID;
+  alkemio_room_ids: AlkemioRoomID[];
+  reason?: string;
 }
 /**
- * ActorStopDirectMessagingResponse represents the response for stopping a DM.
+ * BatchRemoveMemberResponse returns per-room results.
  */
-export interface ActorStopDirectMessagingResponse {
-  success: boolean;
-}
-/**
- * ActorRoomsDirectPayload represents the request to list DM rooms for an actor.
- */
-export interface ActorRoomsDirectPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  actorID: string;
-}
-/**
- * ActorRoomsDirectResponse represents the list of DM rooms.
- */
-export interface ActorRoomsDirectResponse {
-  /**
-   * Map of OtherActorID -> RoomID
-   */
-  directRooms: { [key: string]: string};
+export interface BatchRemoveMemberResponse {
+  BaseResponse: BaseResponse;
+  results?: { [key: string]: BaseResponse};
 }
 
 //////////
-// source: actor_rooms.go
+// source: error.go
 
 /**
- * ActorAddToRoomsPayload represents the payload for adding an actor to multiple rooms.
+ * ErrorCode represents categorized error types for programmatic handling.
  */
-export interface ActorAddToRoomsPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomIDs: string[];
-  actorID: string;
+export type ErrorCode = string;
+/**
+ * ErrCodeInvalidParam indicates request validation failed (invalid payload or parameters).
+ */
+export const ErrCodeInvalidParam: ErrorCode = "INVALID_PARAM";
+/**
+ * ErrCodeRoomNotFound indicates the referenced room does not exist.
+ */
+export const ErrCodeRoomNotFound: ErrorCode = "ROOM_NOT_FOUND";
+/**
+ * ErrCodeSpaceNotFound indicates the referenced space does not exist.
+ */
+export const ErrCodeSpaceNotFound: ErrorCode = "SPACE_NOT_FOUND";
+/**
+ * ErrCodeActorNotFound indicates the referenced actor does not exist.
+ */
+export const ErrCodeActorNotFound: ErrorCode = "ACTOR_NOT_FOUND";
+/**
+ * ErrCodeMatrixError indicates a Matrix SDK/homeserver error.
+ */
+export const ErrCodeMatrixError: ErrorCode = "MATRIX_ERROR";
+/**
+ * ErrCodeInternalError indicates an unexpected system error.
+ */
+export const ErrCodeInternalError: ErrorCode = "INTERNAL_ERROR";
+/**
+ * ErrCodeNotAllowed indicates the operation is not permitted.
+ */
+export const ErrCodeNotAllowed: ErrorCode = "NOT_ALLOWED";
+/**
+ * ErrorResponse contains structured error information.
+ */
+export interface ErrorResponse {
+  code: ErrorCode;
+  message: string;
+  details?: string; // Optional technical details
 }
 /**
- * ActorAddToRoomsResponse represents the response for adding an actor to rooms.
+ * BaseResponse is the standard response structure for all command responses.
+ * Operations that return only status use this directly.
+ * Operations with additional data embed this struct.
  */
-export interface ActorAddToRoomsResponse {
+export interface BaseResponse {
   success: boolean;
-  failedRooms?: string[];
-  createdRooms?: string[]; // If rooms were created on the fly? Unlikely, but keeping generic.
-}
-/**
- * ActorRemoveFromRoomsPayload represents the payload for removing an actor from multiple rooms.
- */
-export interface ActorRemoveFromRoomsPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomIDs: string[];
-  actorID: string;
-}
-/**
- * ActorRemoveFromRoomsResponse represents the response for removing an actor from rooms.
- */
-export interface ActorRemoveFromRoomsResponse {
-  success: boolean;
-  failedRooms?: string[];
-}
-/**
- * ActorRoomsPayload represents the request to list rooms for an actor.
- */
-export interface ActorRoomsPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  actorID: string;
-}
-/**
- * ActorRoomsResponse represents the list of rooms an actor is in.
- */
-export interface ActorRoomsResponse {
-  roomIDs: string[];
-}
-
-//////////
-// source: admin.go
-
-/**
- * AdminAllRoomsPayload represents the request to list all rooms (admin only).
- */
-export interface AdminAllRoomsPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-}
-/**
- * AdminAllRoomsResponse represents the list of all rooms.
- */
-export interface AdminAllRoomsResponse {
-  rooms: RoomDetailsResponse[];
-}
-/**
- * AdminReplicateRoomMembershipPayload represents the request to replicate membership from one room to another.
- */
-export interface AdminReplicateRoomMembershipPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  targetRoomID: string;
-  sourceRoomID: string;
-  actorToPrioritize: string;
-}
-/**
- * AdminReplicateRoomMembershipResponse represents the response for replication.
- */
-export interface AdminReplicateRoomMembershipResponse {
-  success: boolean;
-  addedUsers: string[];
-  failedUsers: string[];
-}
-
-//////////
-// source: base.go
-
-/**
- * BaseMatrixAdapterEventPayload represents the common fields for all Matrix adapter events.
- */
-export interface BaseMatrixAdapterEventPayload {
-  /**
-   * The Actor ID (UUID) of the user who triggered the event.
-   */
-  triggeredBy: string;
+  error?: ErrorResponse;
 }
 
 //////////
@@ -201,179 +148,433 @@ export interface Reaction {
 }
 
 //////////
-// source: room.go
+// source: hierarchy.go
 
 /**
- * RoomCreatePayload represents the payload to create a room.
+ * SetParentRequest establishes parent-child relationship for a room or subspace.
+ * Topic: communication.hierarchy.set_parent
  */
-export interface RoomCreatePayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomName: string;
-  metadata?: { [key: string]: string};
+export interface SetParentRequest {
+  /**
+   * ChildID is the AlkemioRoomID (for rooms) or AlkemioContextID (for subspaces) to add as child.
+   */
+  child_id: string;
+  is_space: boolean;
+  parent_context_id: AlkemioContextID;
+  order?: string;
+  suggested?: boolean;
 }
 /**
- * RoomCreateResponse represents the response for room creation.
+ * SetParentResponse confirms the hierarchy update.
  */
-export interface RoomCreateResponse {
-  success: boolean;
-  roomId: string;
-}
-/**
- * RoomInvitePayload is deprecated in favor of ActorAddToRoomsPayload.
- * Keeping it for now if needed for internal logic, but should be phased out.
- */
-export interface RoomInvitePayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  inviteeId: string;
-  roomId: string;
+export interface SetParentResponse {
+  BaseResponse: BaseResponse;
 }
 
 //////////
-// source: room_manage.go
+// source: message.go
 
 /**
- * RoomDeletePayload represents the payload to delete (leave/forget) a room.
+ * MessageDto represents a message in a room.
  */
-export interface RoomDeletePayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomID: string;
+export interface MessageDto {
+  id: MessageID;
+  content: string;
+  sender_actor_id: AlkemioActorID;
+  timestamp: string;
+  reactions: ReactionDto[];
+  thread_id?: MessageID;
 }
 /**
- * RoomDeleteResponse represents the response for room deletion.
+ * SendMessageRequest sends a text message to a room.
+ * Topic: communication.message.send
  */
-export interface RoomDeleteResponse {
-  success: boolean;
+export interface SendMessageRequest {
+  alkemio_room_id: AlkemioRoomID;
+  sender_actor_id: AlkemioActorID;
+  content: string; // Markdown supported
+  parent_message_id?: MessageID; // For threads
 }
 /**
- * RoomDetailsPayload represents the payload to get room details.
+ * SendMessageResponse returns the message ID and timestamp.
  */
-export interface RoomDetailsPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomID: string;
-  withState?: boolean;
+export interface SendMessageResponse {
+  BaseResponse: BaseResponse;
+  message_id: MessageID;
+  timestamp: string; // UTC time from Matrix
 }
 /**
- * RoomDetailsResponse represents the room details.
+ * GetMessageRequest retrieves details of a specific message.
+ * Topic: communication.message.get
  */
-export interface RoomDetailsResponse {
-  roomID: string;
-  name: string;
-  topic: string;
-  alias?: string;
-  isDirect: boolean;
-  joinedCount: number /* int */;
-  state?: { [key: string]: string}; // Key-Value pairs of state events if requested
+export interface GetMessageRequest {
+  alkemio_room_id: AlkemioRoomID;
+  message_id: MessageID;
 }
 /**
- * RoomMembersPayload represents the payload to get room members.
+ * GetMessageResponse returns message details.
  */
-export interface RoomMembersPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomID: string;
+export interface GetMessageResponse {
+  BaseResponse: BaseResponse;
+  message: MessageDto;
 }
 /**
- * RoomMembersResponse represents the list of room members.
+ * DeleteMessageRequest redacts/deletes a message.
+ * Topic: communication.message.delete
  */
-export interface RoomMembersResponse {
-  roomID: string;
-  userIDs: string[]; // Matrix User IDs
-}
-/**
- * RoomUpdateStatePayload represents the payload to update room state (name, topic, etc).
- */
-export interface RoomUpdateStatePayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomID: string;
-  name?: string;
-  topic?: string;
-  alias?: string;
-}
-/**
- * RoomUpdateStateResponse represents the response for state update.
- */
-export interface RoomUpdateStateResponse {
-  success: boolean;
-}
-
-//////////
-// source: room_message.go
-
-/**
- * RoomMessageSendPayload represents the payload to send a message.
- */
-export interface RoomMessageSendPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomID: string;
-  senderActorID: string;
-  message: string;
-}
-/**
- * RoomMessageSendResponse represents the response for sending a message.
- */
-export interface RoomMessageSendResponse {
-  eventID: string;
-}
-/**
- * RoomMessageSendReplyPayload represents the payload to reply to a message/thread.
- */
-export interface RoomMessageSendReplyPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomID: string;
-  senderActorID: string;
-  threadID: string; // The Event ID of the parent message
-  message: string;
-}
-/**
- * RoomMessageSendReplyResponse represents the response for sending a reply.
- */
-export interface RoomMessageSendReplyResponse {
-  eventID: string;
-}
-/**
- * RoomMessageDeletePayload represents the payload to redact/delete a message.
- */
-export interface RoomMessageDeletePayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomID: string;
-  senderActorID: string; // Who is deleting it (must be sender or admin)
-  eventID: string;
+export interface DeleteMessageRequest {
+  alkemio_room_id: AlkemioRoomID;
+  message_id: MessageID;
+  sender_actor_id: AlkemioActorID;
   reason?: string;
 }
 /**
- * RoomMessageDeleteResponse represents the response for message deletion.
+ * DeleteMessageResponse confirms deletion.
  */
-export interface RoomMessageDeleteResponse {
-  success: boolean;
+export interface DeleteMessageResponse {
+  BaseResponse: BaseResponse;
+}
+
+//////////
+// source: reaction.go
+
+/**
+ * ReactionDto represents a reaction to a message.
+ */
+export interface ReactionDto {
+  id: ReactionID;
+  emoji: string;
+  sender_actor_id: AlkemioActorID;
+  timestamp: string;
 }
 /**
- * RoomMessageAddReactionPayload represents the payload to add a reaction.
+ * AddReactionRequest adds an emoji reaction to a message.
+ * Topic: communication.reaction.add
  */
-export interface RoomMessageAddReactionPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomID: string;
-  senderActorID: string;
-  messageID: string; // Event ID to react to
+export interface AddReactionRequest {
+  alkemio_room_id: AlkemioRoomID;
+  message_id: MessageID;
+  sender_actor_id: AlkemioActorID;
   emoji: string;
 }
 /**
- * RoomMessageAddReactionResponse represents the response for adding a reaction.
+ * AddReactionResponse returns the reaction ID.
  */
-export interface RoomMessageAddReactionResponse {
-  eventID: string;
+export interface AddReactionResponse {
+  BaseResponse: BaseResponse;
+  reaction_id: ReactionID;
 }
 /**
- * RoomMessageRemoveReactionPayload represents the payload to remove a reaction.
+ * RemoveReactionRequest removes a previously added reaction.
+ * Topic: communication.reaction.remove
  */
-export interface RoomMessageRemoveReactionPayload {
-  BaseMatrixAdapterEventPayload: BaseMatrixAdapterEventPayload;
-  roomID: string;
-  senderActorID: string;
-  messageID: string;
-  emoji: string; // Needed to find the reaction event to redact
+export interface RemoveReactionRequest {
+  alkemio_room_id: AlkemioRoomID;
+  reaction_id: ReactionID;
+  sender_actor_id: AlkemioActorID;
 }
 /**
- * RoomMessageRemoveReactionResponse represents the response for removing a reaction.
+ * RemoveReactionResponse confirms removal.
  */
-export interface RoomMessageRemoveReactionResponse {
-  success: boolean;
+export interface RemoveReactionResponse {
+  BaseResponse: BaseResponse;
 }
+/**
+ * GetReactionRequest retrieves details of a specific reaction.
+ * Topic: communication.reaction.get
+ */
+export interface GetReactionRequest {
+  alkemio_room_id: AlkemioRoomID;
+  reaction_id: ReactionID;
+}
+/**
+ * GetReactionResponse returns reaction details.
+ */
+export interface GetReactionResponse {
+  BaseResponse: BaseResponse;
+  reaction: ReactionDto;
+}
+
+//////////
+// source: room.go
+
+/**
+ * CreateRoomRequest creates a new communication channel.
+ * Topic: communication.room.create
+ */
+export interface CreateRoomRequest {
+  alkemio_room_id: AlkemioRoomID;
+  type: RoomType;
+  name?: string; // Ignored for 'direct'
+  initial_members?: AlkemioActorID[];
+  topic?: string;
+  avatar_url?: string;
+  parent_context_id?: AlkemioContextID;
+  join_rule?: JoinRule;
+}
+/**
+ * CreateRoomResponse confirms room creation.
+ */
+export interface CreateRoomResponse {
+  BaseResponse: BaseResponse;
+}
+/**
+ * GetRoomRequest retrieves current state of a room.
+ * Topic: communication.room.get
+ */
+export interface GetRoomRequest {
+  alkemio_room_id: AlkemioRoomID;
+}
+/**
+ * GetRoomResponse returns room details with members and messages.
+ */
+export interface GetRoomResponse {
+  BaseResponse: BaseResponse;
+  alkemio_room_id: AlkemioRoomID;
+  display_name: string;
+  member_actor_ids: AlkemioActorID[];
+  messages: MessageDto[];
+}
+/**
+ * UpdateRoomRequest updates room metadata.
+ * Topic: communication.room.update
+ */
+export interface UpdateRoomRequest {
+  alkemio_room_id: AlkemioRoomID;
+  name?: string;
+  topic?: string;
+  is_public?: boolean;
+  avatar_url?: string;
+  join_rule?: JoinRule;
+}
+/**
+ * UpdateRoomResponse confirms the update.
+ */
+export interface UpdateRoomResponse {
+  BaseResponse: BaseResponse;
+}
+/**
+ * DeleteRoomRequest archives or deletes a room.
+ * Topic: communication.room.delete
+ */
+export interface DeleteRoomRequest {
+  alkemio_room_id: AlkemioRoomID;
+  reason?: string;
+}
+/**
+ * DeleteRoomResponse confirms deletion.
+ */
+export interface DeleteRoomResponse {
+  BaseResponse: BaseResponse;
+}
+/**
+ * ListRoomsRequest retrieves all rooms (admin operation).
+ * Topic: communication.room.list
+ */
+export interface ListRoomsRequest {
+  cursor?: string;
+}
+/**
+ * ListRoomsResponse returns paginated room list.
+ */
+export interface ListRoomsResponse {
+  BaseResponse: BaseResponse;
+  alkemio_room_ids: AlkemioRoomID[];
+  next_cursor?: string;
+}
+
+//////////
+// source: space.go
+
+/**
+ * SpaceChildDto represents a child room or subspace within a space.
+ */
+export interface SpaceChildDto {
+  /**
+   * ChildID is the AlkemioRoomID of a child room or AlkemioContextID of a subspace.
+   */
+  child_id: string;
+  is_space: boolean;
+  order?: string;
+  suggested?: boolean;
+}
+/**
+ * CreateSpaceRequest creates a new Matrix Space for an Alkemio context.
+ * Topic: communication.space.create
+ */
+export interface CreateSpaceRequest {
+  alkemio_context_id: AlkemioContextID;
+  name: string;
+  topic?: string;
+  avatar_url?: string;
+  parent_context_id?: AlkemioContextID;
+  join_rule?: JoinRule;
+  initial_members?: AlkemioActorID[];
+}
+/**
+ * CreateSpaceResponse confirms space creation.
+ */
+export interface CreateSpaceResponse {
+  BaseResponse: BaseResponse;
+}
+/**
+ * GetSpaceRequest retrieves current state of a space.
+ * Topic: communication.space.get
+ */
+export interface GetSpaceRequest {
+  alkemio_context_id: AlkemioContextID;
+}
+/**
+ * GetSpaceResponse returns space details.
+ */
+export interface GetSpaceResponse {
+  BaseResponse: BaseResponse;
+  alkemio_context_id: AlkemioContextID;
+  display_name: string;
+  topic?: string;
+  avatar_url?: string;
+  join_rule: JoinRule;
+  member_actor_ids: AlkemioActorID[];
+  children: SpaceChildDto[];
+  parent_context_id?: AlkemioContextID;
+}
+/**
+ * UpdateSpaceRequest updates space metadata.
+ * Topic: communication.space.update
+ */
+export interface UpdateSpaceRequest {
+  alkemio_context_id: AlkemioContextID;
+  name?: string;
+  topic?: string;
+  avatar_url?: string;
+  join_rule?: JoinRule;
+}
+/**
+ * UpdateSpaceResponse confirms the update.
+ */
+export interface UpdateSpaceResponse {
+  BaseResponse: BaseResponse;
+}
+/**
+ * DeleteSpaceRequest archives/deletes a space.
+ * Topic: communication.space.delete
+ */
+export interface DeleteSpaceRequest {
+  alkemio_context_id: AlkemioContextID;
+  reason?: string;
+}
+/**
+ * DeleteSpaceResponse confirms deletion.
+ */
+export interface DeleteSpaceResponse {
+  BaseResponse: BaseResponse;
+}
+/**
+ * ListSpacesRequest retrieves all spaces (admin operation).
+ * Topic: communication.space.list
+ */
+export interface ListSpacesRequest {
+  cursor?: string;
+}
+/**
+ * ListSpacesResponse returns paginated space list.
+ */
+export interface ListSpacesResponse {
+  BaseResponse: BaseResponse;
+  alkemio_context_ids: AlkemioContextID[];
+  next_cursor?: string;
+}
+/**
+ * BatchAddSpaceMemberRequest adds an actor to multiple spaces.
+ * Topic: communication.space.member.batch.add
+ */
+export interface BatchAddSpaceMemberRequest {
+  actor_id: AlkemioActorID;
+  alkemio_context_ids: AlkemioContextID[];
+}
+/**
+ * BatchAddSpaceMemberResponse returns per-space results.
+ */
+export interface BatchAddSpaceMemberResponse {
+  BaseResponse: BaseResponse;
+  /**
+   * Results maps AlkemioContextID (string) to operation result.
+   */
+  results?: { [key: string]: BaseResponse};
+}
+/**
+ * BatchRemoveSpaceMemberRequest removes an actor from multiple spaces.
+ * Topic: communication.space.member.batch.remove
+ */
+export interface BatchRemoveSpaceMemberRequest {
+  actor_id: AlkemioActorID;
+  alkemio_context_ids: AlkemioContextID[];
+  reason?: string;
+}
+/**
+ * BatchRemoveSpaceMemberResponse returns per-space results.
+ */
+export interface BatchRemoveSpaceMemberResponse {
+  BaseResponse: BaseResponse;
+  results?: { [key: string]: BaseResponse};
+}
+
+//////////
+// source: types.go
+/*
+Package dto defines public Data Transfer Objects for the RabbitMQ protocol.
+*/
+
+/**
+ * AlkemioRoomID is a UUID v4 or v7 identifying a room in Alkemio.
+ * The adapter maps this to a Matrix room ID via room alias.
+ */
+export type AlkemioRoomID = string;
+/**
+ * AlkemioActorID is a UUID v4 or v7 identifying an actor (user or bot) in Alkemio.
+ * The adapter maps this to a Matrix user ID.
+ */
+export type AlkemioActorID = string;
+/**
+ * MessageID is an opaque string identifier for a message.
+ * Internally maps to Matrix Event ID.
+ */
+export type MessageID = string;
+/**
+ * ReactionID is an opaque string identifier for a reaction.
+ * Internally maps to Matrix Event ID.
+ */
+export type ReactionID = string;
+/**
+ * AlkemioContextID is a UUID v4 or v7 identifying a context (Space/Subspace) in Alkemio.
+ * The adapter maps this to a Matrix Space room.
+ */
+export type AlkemioContextID = string;
+/**
+ * RoomType defines the type of room to create.
+ */
+export type RoomType = string;
+/**
+ * RoomTypeCommunity is a general community room.
+ */
+export const RoomTypeCommunity: RoomType = "community";
+/**
+ * RoomTypeDirect is a direct message room between exactly 2 actors.
+ */
+export const RoomTypeDirect: RoomType = "direct";
+/**
+ * JoinRule defines access control for rooms and spaces.
+ */
+export type JoinRule = string;
+/**
+ * JoinRulePublic allows anyone to join.
+ */
+export const JoinRulePublic: JoinRule = "public";
+/**
+ * JoinRuleInvite requires an invitation to join.
+ */
+export const JoinRuleInvite: JoinRule = "invite";
+/**
+ * JoinRuleRestricted allows members of parent space to join (MSC3083).
+ */
+export const JoinRuleRestricted: JoinRule = "restricted";

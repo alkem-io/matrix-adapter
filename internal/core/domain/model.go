@@ -13,14 +13,46 @@ type Actor struct {
 	ID          uuid.UUID
 	MatrixID    id.UserID
 	DisplayName string
+	AvatarURL   string
+}
+
+// NewActor creates a new Actor with the given Alkemio actor ID.
+func NewActor(id uuid.UUID) Actor {
+	return Actor{ID: id}
 }
 
 // Room represents a Matrix room.
 type Room struct {
-	ID    id.RoomID
-	Alias string
-	Name  string
-	Topic string
+	ID        id.RoomID
+	AlkemioID uuid.UUID // Alkemio room UUID
+	Alias     string
+	Name      string
+	Topic     string
+	Type      string      // "community" or "direct"
+	MemberIDs []uuid.UUID // Alkemio actor IDs
+	Messages  []Message   // For room.get operations
+}
+
+// Space represents a Matrix Space (MSC1772) mapped to an Alkemio context.
+type Space struct {
+	ID               id.RoomID
+	AlkemioContextID uuid.UUID
+	Name             string
+	Topic            string
+	AvatarURL        string
+	Alias            string
+	JoinRule         string
+	MemberIDs        []uuid.UUID
+	Children         []SpaceChild
+	ParentContextID  *uuid.UUID
+}
+
+// SpaceChild represents a child room or subspace within a space.
+type SpaceChild struct {
+	ChildID   string // Matrix room ID of child
+	IsSpace   bool
+	Order     string
+	Suggested bool
 }
 
 // Message represents a chat event.
@@ -32,4 +64,16 @@ type Message struct {
 	SenderMatrixID string // Matrix User ID
 	Content        string
 	Timestamp      time.Time
+	ThreadID       string     // Parent message ID for threads
+	Reactions      []Reaction // Reactions to this message
+}
+
+// Reaction represents a reaction event.
+type Reaction struct {
+	ID        id.EventID
+	RoomID    id.RoomID
+	MessageID id.EventID
+	Emoji     string
+	SenderID  uuid.UUID
+	Timestamp time.Time
 }

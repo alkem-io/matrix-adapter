@@ -10,6 +10,7 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/alkem-io/matrix-adapter-go/internal/config"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
 
 // WatermillAdapter implements the QueuePort interface using the Watermill library and RabbitMQ.
@@ -81,7 +82,7 @@ func (w *WatermillAdapter) Publish(topic string, payload interface{}) error {
 }
 
 // Subscribe subscribes to the specified topic and handles incoming messages using the provided handler.
-func (w *WatermillAdapter) Subscribe(topic string, handler func(payload []byte) (interface{}, error)) error {
+func (w *WatermillAdapter) Subscribe(topic string, handler ports.MessageHandler) error {
 	messages, err := w.subscriber.Subscribe(context.Background(), topic)
 	if err != nil {
 		return err
@@ -96,18 +97,74 @@ func (w *WatermillAdapter) Subscribe(topic string, handler func(payload []byte) 
 	return nil
 }
 
-func (w *WatermillAdapter) processMessage(msg *message.Message, handler func(payload []byte) (interface{}, error)) {
-	resp, err := handler(msg.Payload)
+func (w *WatermillAdapter) processMessage(msg *message.Message, handler ports.MessageHandler) {
+	// Use the message context for proper cancellation and timeout support
+	ctx := msg.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	resp, err := handler(ctx, msg.Payload)
 	if err != nil {
-		msg.Nack()
-		return
+		// This should never happen - handlers return error responses, not errors
+		w.logger.Error("Unexpected handler error",
+			"error", err,
+			"correlationId", msg.UUID,
+		)
 	}
 
 	if resp != nil {
+		// Log error responses for observability (FR-009)
+		w.logErrorResponse(msg, resp)
 		w.sendReply(msg, resp)
 	}
 
+	// Always ACK - retrying would cause duplicate operations
 	msg.Ack()
+}
+
+// logErrorResponse logs structured error information when response indicates failure.
+// Uses reflection to check for BaseResponse fields in any response type.
+func (w *WatermillAdapter) logErrorResponse(msg *message.Message, resp interface{}) {
+	// Check for direct BaseResponse type
+	if br, ok := resp.(dto.BaseResponse); ok {
+		if !br.Success && br.Error != nil {
+			w.logger.Error("Command failed",
+				"correlationId", msg.UUID,
+				"errorCode", string(br.Error.Code),
+				"errorMessage", br.Error.Message,
+			)
+		}
+		return
+	}
+
+	// Use JSON marshaling to extract error info from embedded BaseResponse
+	// This is more flexible than type assertions and works with any struct embedding BaseResponse
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return
+	}
+
+	var baseCheck struct {
+		Success bool `json:"success"`
+		Error   *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
+	}
+
+	if err := json.Unmarshal(data, &baseCheck); err != nil {
+		return
+	}
+
+	// Only log if we have an error (Success=false with error details)
+	if !baseCheck.Success && baseCheck.Error != nil {
+		w.logger.Error("Command failed",
+			"correlationId", msg.UUID,
+			"errorCode", baseCheck.Error.Code,
+			"errorMessage", baseCheck.Error.Message,
+		)
+	}
 }
 
 func (w *WatermillAdapter) sendReply(reqMsg *message.Message, resp interface{}) {

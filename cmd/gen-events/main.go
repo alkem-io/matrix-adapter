@@ -20,10 +20,10 @@ func main() {
 	}
 	outputFile := os.Args[1]
 
-	// 1. Parse router.go for incoming events
-	routerEvents, err := parseRouterEvents("internal/infrastructure/queue/router.go")
+	// 1. Parse topics.go for topic constants
+	topicEvents, err := parseTopicConstants("internal/infrastructure/queue/topics.go")
 	if err != nil {
-		fmt.Printf("Error parsing router.go: %v\n", err)
+		fmt.Printf("Error parsing topics.go: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -36,7 +36,7 @@ func main() {
 
 	// Combine events
 	allEvents := make(map[string]string) // value -> key
-	for _, evt := range routerEvents {
+	for _, evt := range topicEvents {
 		allEvents[evt] = generateEnumKey(evt)
 	}
 	for _, evt := range outgoingEvents {
@@ -64,7 +64,7 @@ func main() {
 	fmt.Printf("Successfully generated %s with %d events\n", outputFile, len(allEvents))
 }
 
-func parseRouterEvents(path string) ([]string, error) {
+func parseTopicConstants(path string) ([]string, error) {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 	if err != nil {
@@ -73,47 +73,31 @@ func parseRouterEvents(path string) ([]string, error) {
 
 	var events []string
 	ast.Inspect(node, func(n ast.Node) bool {
-		if extracted := extractEventsFromNode(n); len(extracted) > 0 {
-			events = append(events, extracted...)
+		// Look for const declarations
+		genDecl, ok := n.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.CONST {
+			return true
+		}
+
+		for _, spec := range genDecl.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+
+			// Check each value in the spec
+			for _, value := range valueSpec.Values {
+				lit, ok := value.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					continue
+				}
+				events = append(events, strings.Trim(lit.Value, "\""))
+			}
 		}
 		return true
 	})
 
 	return events, nil
-}
-
-func extractEventsFromNode(n ast.Node) []string {
-	// Look for map[string]func... literal
-	compLit, ok := n.(*ast.CompositeLit)
-	if !ok {
-		return nil
-	}
-
-	// Check if it's a map
-	mapType, ok := compLit.Type.(*ast.MapType)
-	if !ok {
-		return nil
-	}
-
-	// Check key type is string
-	if ident, ok := mapType.Key.(*ast.Ident); !ok || ident.Name != "string" {
-		return nil
-	}
-
-	events := make([]string, 0, len(compLit.Elts))
-	// Extract keys
-	for _, elt := range compLit.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
-			continue
-		}
-		lit, ok := kv.Key.(*ast.BasicLit)
-		if !ok || lit.Kind != token.STRING {
-			continue
-		}
-		events = append(events, strings.Trim(lit.Value, "\""))
-	}
-	return events
 }
 
 func parseOutgoingEvents(path string) ([]string, error) {

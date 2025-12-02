@@ -5,3 +5,4 @@ packages:
     type_mappings:
       "github.com/google/uuid.UUID": "string"
       "time.Time": "string"
+      "uuid.UUID": "string"
