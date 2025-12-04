@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
+
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 )
 
 // RoomService handles operations related to Matrix rooms.
@@ -113,6 +114,20 @@ func (s *RoomService) GetRoomWithMessages(
 		s.logger.Warn("Failed to get room messages", "room_id", roomID, "error", err)
 		messages = []domain.Message{}
 	}
+
+	// Convert SenderMatrixID to SenderID (Alkemio actor UUID) for messages and reactions
+	for i := range messages {
+		if messages[i].SenderMatrixID != "" {
+			messages[i].SenderID = s.idMapper.AlkemioActorID(id.UserID(messages[i].SenderMatrixID))
+		}
+		// Convert reaction sender IDs
+		for j := range messages[i].Reactions {
+			if messages[i].Reactions[j].SenderMatrixID != "" {
+				messages[i].Reactions[j].SenderID = s.idMapper.AlkemioActorID(id.UserID(messages[i].Reactions[j].SenderMatrixID))
+			}
+		}
+	}
+
 	room.Messages = messages
 
 	return room, nil
@@ -268,5 +283,15 @@ func (s *RoomService) SendReaction(
 
 // GetMessage retrieves a specific message.
 func (s *RoomService) GetMessage(ctx context.Context, roomID id.RoomID, eventID id.EventID) (*domain.Message, error) {
-	return s.matrix.GetMessage(ctx, roomID, eventID)
+	msg, err := s.matrix.GetMessage(ctx, roomID, eventID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert SenderMatrixID to SenderID (Alkemio actor UUID)
+	if msg != nil && msg.SenderMatrixID != "" {
+		msg.SenderID = s.idMapper.AlkemioActorID(id.UserID(msg.SenderMatrixID))
+	}
+
+	return msg, nil
 }

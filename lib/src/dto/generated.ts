@@ -55,6 +55,98 @@ export interface BatchRemoveMemberResponse extends BaseResponse {
 // source: commands.go
 
 /**
+ * Room command topics
+ */
+export const TopicRoomCreate = "communication.room.create";
+/**
+ * Room command topics
+ */
+export const TopicRoomGet = "communication.room.get";
+/**
+ * Room command topics
+ */
+export const TopicRoomUpdate = "communication.room.update";
+/**
+ * Room command topics
+ */
+export const TopicRoomDelete = "communication.room.delete";
+/**
+ * Room command topics
+ */
+export const TopicRoomList = "communication.room.list";
+/**
+ * Message command topics
+ */
+export const TopicMessageSend = "communication.message.send";
+/**
+ * Message command topics
+ */
+export const TopicMessageGet = "communication.message.get";
+/**
+ * Message command topics
+ */
+export const TopicMessageDelete = "communication.message.delete";
+/**
+ * Message command topics
+ */
+export const TopicMessageReceived = "communication.message.received"; // Outbound event
+/**
+ * Reaction command topics
+ */
+export const TopicReactionAdd = "communication.reaction.add";
+/**
+ * Reaction command topics
+ */
+export const TopicReactionRemove = "communication.reaction.remove";
+/**
+ * Reaction command topics
+ */
+export const TopicReactionGet = "communication.reaction.get";
+/**
+ * Room batch member command topics
+ */
+export const TopicRoomMemberBatchAdd = "communication.room.member.batch.add";
+/**
+ * Room batch member command topics
+ */
+export const TopicRoomMemberBatchRemove = "communication.room.member.batch.remove";
+/**
+ * TopicActorSync is the topic for actor synchronization commands.
+ */
+export const TopicActorSync = "communication.actor.sync";
+/**
+ * Space command topics
+ */
+export const TopicSpaceCreate = "communication.space.create";
+/**
+ * Space command topics
+ */
+export const TopicSpaceGet = "communication.space.get";
+/**
+ * Space command topics
+ */
+export const TopicSpaceUpdate = "communication.space.update";
+/**
+ * Space command topics
+ */
+export const TopicSpaceDelete = "communication.space.delete";
+/**
+ * Space command topics
+ */
+export const TopicSpaceList = "communication.space.list";
+/**
+ * TopicHierarchySetParent is the topic for setting space hierarchy parent commands.
+ */
+export const TopicHierarchySetParent = "communication.hierarchy.set_parent";
+/**
+ * Space batch member command topics
+ */
+export const TopicSpaceMemberBatchAdd = "communication.space.member.batch.add";
+/**
+ * Space batch member command topics
+ */
+export const TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove";
+/**
  * CommandDef defines a command with its topic, request type name, and response type name.
  * This is used by the TypeScript generator to create type-safe command definitions.
  */
@@ -87,6 +179,14 @@ export const ErrCodeSpaceNotFound: ErrorCode = "SPACE_NOT_FOUND";
  * ErrCodeActorNotFound indicates the referenced actor does not exist.
  */
 export const ErrCodeActorNotFound: ErrorCode = "ACTOR_NOT_FOUND";
+/**
+ * ErrCodeMessageNotFound indicates the referenced message does not exist.
+ */
+export const ErrCodeMessageNotFound: ErrorCode = "MESSAGE_NOT_FOUND";
+/**
+ * ErrCodeReactionNotFound indicates the referenced reaction does not exist.
+ */
+export const ErrCodeReactionNotFound: ErrorCode = "REACTION_NOT_FOUND";
 /**
  * ErrCodeMatrixError indicates a Matrix SDK/homeserver error.
  */

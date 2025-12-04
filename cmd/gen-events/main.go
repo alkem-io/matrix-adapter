@@ -105,15 +105,38 @@ func parseCommandRegistry(path string) ([]CommandDef, error) {
 		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 
-	var commands []CommandDef
+	// First pass: collect all const string values
+	constants := make(map[string]string)
+	ast.Inspect(node, func(n ast.Node) bool {
+		genDecl, ok := n.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.CONST {
+			return true
+		}
+		for _, spec := range genDecl.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range valueSpec.Names {
+				if i < len(valueSpec.Values) {
+					if lit, ok := valueSpec.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+						constants[name.Name] = strings.Trim(lit.Value, "\"")
+					}
+				}
+			}
+		}
+		return true
+	})
 
+	// Second pass: extract command definitions
+	var commands []CommandDef
 	ast.Inspect(node, func(n ast.Node) bool {
 		genDecl, ok := n.(*ast.GenDecl)
 		if !ok || genDecl.Tok != token.VAR {
 			return true
 		}
 
-		commands = append(commands, extractCommandsFromGenDecl(genDecl)...)
+		commands = append(commands, extractCommandsFromGenDecl(genDecl, constants)...)
 		return true
 	})
 
@@ -121,7 +144,7 @@ func parseCommandRegistry(path string) ([]CommandDef, error) {
 }
 
 // extractCommandsFromGenDecl extracts CommandDef entries from a var declaration.
-func extractCommandsFromGenDecl(genDecl *ast.GenDecl) []CommandDef {
+func extractCommandsFromGenDecl(genDecl *ast.GenDecl, constants map[string]string) []CommandDef {
 	var commands []CommandDef
 
 	for _, spec := range genDecl.Specs {
@@ -129,14 +152,14 @@ func extractCommandsFromGenDecl(genDecl *ast.GenDecl) []CommandDef {
 		if !ok {
 			continue
 		}
-		commands = append(commands, extractCommandsFromValueSpec(valueSpec)...)
+		commands = append(commands, extractCommandsFromValueSpec(valueSpec, constants)...)
 	}
 
 	return commands
 }
 
 // extractCommandsFromValueSpec extracts CommandDef entries from a value spec.
-func extractCommandsFromValueSpec(valueSpec *ast.ValueSpec) []CommandDef {
+func extractCommandsFromValueSpec(valueSpec *ast.ValueSpec, constants map[string]string) []CommandDef {
 	var commands []CommandDef
 
 	for i, name := range valueSpec.Names {
@@ -153,7 +176,7 @@ func extractCommandsFromValueSpec(valueSpec *ast.ValueSpec) []CommandDef {
 		}
 
 		for _, elt := range compLit.Elts {
-			if cmd := parseCommandDefLiteral(elt); cmd != nil {
+			if cmd := parseCommandDefLiteral(elt, constants); cmd != nil {
 				commands = append(commands, *cmd)
 			}
 		}
@@ -163,7 +186,7 @@ func extractCommandsFromValueSpec(valueSpec *ast.ValueSpec) []CommandDef {
 }
 
 // parseCommandDefLiteral extracts CommandDef fields from an AST composite literal.
-func parseCommandDefLiteral(expr ast.Expr) *CommandDef {
+func parseCommandDefLiteral(expr ast.Expr, constants map[string]string) *CommandDef {
 	compLit, ok := expr.(*ast.CompositeLit)
 	if !ok {
 		return nil
@@ -176,7 +199,7 @@ func parseCommandDefLiteral(expr ast.Expr) *CommandDef {
 		if !ok {
 			continue
 		}
-		extractCommandField(kv, cmd)
+		extractCommandField(kv, cmd, constants)
 	}
 
 	if cmd.Topic != "" && cmd.ResponseType != "" {
@@ -186,18 +209,31 @@ func parseCommandDefLiteral(expr ast.Expr) *CommandDef {
 }
 
 // extractCommandField extracts a single field from a key-value expression.
-func extractCommandField(kv *ast.KeyValueExpr, cmd *CommandDef) {
+func extractCommandField(kv *ast.KeyValueExpr, cmd *CommandDef, constants map[string]string) {
 	key, ok := kv.Key.(*ast.Ident)
 	if !ok {
 		return
 	}
 
-	value, ok := kv.Value.(*ast.BasicLit)
-	if !ok || value.Kind != token.STRING {
+	var strVal string
+
+	switch v := kv.Value.(type) {
+	case *ast.BasicLit:
+		// Direct string literal: Topic: "communication.room.create"
+		if v.Kind != token.STRING {
+			return
+		}
+		strVal = strings.Trim(v.Value, "\"")
+	case *ast.Ident:
+		// Constant reference: Topic: TopicRoomCreate
+		resolved, ok := constants[v.Name]
+		if !ok {
+			return
+		}
+		strVal = resolved
+	default:
 		return
 	}
-
-	strVal := strings.Trim(value.Value, "\"")
 
 	switch key.Name {
 	case "Topic":

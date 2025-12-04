@@ -8,11 +8,12 @@ import (
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill-amqp/v2/pkg/amqp"
 	"github.com/ThreeDotsLabs/watermill/message"
+	"github.com/pkg/errors"
+	stdAmqp "github.com/rabbitmq/amqp091-go"
+
 	"github.com/alkem-io/matrix-adapter-go/internal/config"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
-	"github.com/pkg/errors"
-	stdAmqp "github.com/rabbitmq/amqp091-go"
 )
 
 // Metadata keys for AMQP native properties

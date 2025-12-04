@@ -64,14 +64,6 @@ func IsRoomNotFoundError(err error) bool {
 	return errors.Is(err, ErrRoomNotFound)
 }
 
-// IsSpaceNotFoundError checks if an error specifically indicates a space not found.
-func IsSpaceNotFoundError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return errors.Is(err, ErrSpaceNotFound)
-}
-
 // IsForbiddenError checks if an error indicates a permission/access denial.
 func IsForbiddenError(err error) bool {
 	if err == nil {
@@ -120,10 +112,4 @@ func NewParentNotFoundError(parentID string) error {
 // NewChildNotFoundError creates a child not found error with context.
 func NewChildNotFoundError(childID string) error {
 	return wrapError(ErrChildNotFound, childID)
-}
-
-// WrapNotFound wraps an underlying error as a not found error.
-// Useful when ResolveAlias fails - preserves the original error.
-func WrapNotFound(err error, entity, id string) error {
-	return fmt.Errorf("%s not found: %s: %w", entity, id, err)
 }

@@ -70,10 +70,11 @@ type Message struct {
 
 // Reaction represents a reaction event.
 type Reaction struct {
-	ID        id.EventID
-	RoomID    id.RoomID
-	MessageID id.EventID
-	Emoji     string
-	SenderID  uuid.UUID
-	Timestamp time.Time
+	ID             id.EventID
+	RoomID         id.RoomID
+	MessageID      id.EventID
+	Emoji          string
+	SenderID       uuid.UUID
+	SenderMatrixID string // Matrix User ID for conversion
+	Timestamp      time.Time
 }

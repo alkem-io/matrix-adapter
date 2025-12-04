@@ -7,6 +7,8 @@ require (
 	github.com/ThreeDotsLabs/watermill-amqp/v2 v2.1.3
 	github.com/google/uuid v1.6.0
 	github.com/gzuidhof/tygo v0.2.20
+	github.com/pkg/errors v0.9.1
+	github.com/rabbitmq/amqp091-go v1.10.0
 	go.uber.org/zap v1.27.1
 	gopkg.in/yaml.v2 v2.4.0
 	maunium.net/go/mautrix v0.26.0
@@ -24,8 +26,6 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
-	github.com/rabbitmq/amqp091-go v1.10.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/rs/zerolog v1.34.0 // indirect
 	github.com/spf13/cobra v1.3.0 // indirect

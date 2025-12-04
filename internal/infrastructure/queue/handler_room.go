@@ -294,6 +294,9 @@ func (h *RoomHandler) HandleGetMessage(ctx context.Context, payload []byte) (int
 	if err != nil {
 		return MapServiceError(err), nil
 	}
+	if msg == nil {
+		return NewMessageNotFoundError(string(req.MessageID)), nil
+	}
 
 	msgDTO := dto.MessageDto{
 		ID:            dto.MessageID(msg.ID),
@@ -450,6 +453,14 @@ func (h *RoomHandler) HandleGetReaction(ctx context.Context, payload []byte) (in
 	reaction, err := h.matrix.GetReaction(ctx, roomID, id.EventID(req.ReactionID))
 	if err != nil {
 		return MapServiceError(err), nil
+	}
+	if reaction == nil {
+		return NewReactionNotFoundError(string(req.ReactionID)), nil
+	}
+
+	// Convert SenderMatrixID to SenderID (Alkemio actor UUID)
+	if reaction.SenderMatrixID != "" {
+		reaction.SenderID = h.idMapper.AlkemioActorID(id.UserID(reaction.SenderMatrixID))
 	}
 
 	reactionDTO := dto.ReactionDto{

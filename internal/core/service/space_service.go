@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
+
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 )
 
 // SpaceService handles operations related to Matrix Spaces.

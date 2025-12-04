@@ -6,14 +6,15 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/config"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
+
+	"github.com/alkem-io/matrix-adapter-go/internal/config"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 )
 
 // MautrixAdapter implements the MatrixPort interface using the mautrix-go library.
@@ -26,13 +27,21 @@ type MautrixAdapter struct {
 
 // NewMautrixAdapter creates a new instance of MautrixAdapter.
 func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter, error) {
-	// Parse Homeserver URL to get domain
+	// Parse Homeserver URL for client configuration
 	hsURL, err := url.Parse(cfg.Matrix.HomeserverURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid homeserver URL: %w", err)
 	}
 
-	homeserverDomain := hsURL.Hostname()
+	// Use configured homeserver name for room aliases and user IDs
+	// This should match Synapse's server_name, not the Docker hostname
+	homeserverDomain := cfg.Matrix.HomeserverName
+	if homeserverDomain == "" {
+		// Fallback to URL hostname if not configured (not recommended)
+		homeserverDomain = hsURL.Hostname()
+		logger.Warn("SYNAPSE_HOMESERVER_NAME not set, falling back to URL hostname",
+			"hostname", homeserverDomain)
+	}
 
 	// Create AppService instance
 	as := appservice.Create()
@@ -54,6 +63,11 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		},
 	}
 
+	// Set homeserver URL on the AppService so all clients/intents get it
+	if err := as.SetHomeserverURL(cfg.Matrix.HomeserverURL); err != nil {
+		return nil, fmt.Errorf("failed to set homeserver URL: %w", err)
+	}
+
 	return &MautrixAdapter{
 		cfg:      cfg,
 		logger:   logger,
@@ -65,16 +79,6 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 // Connect initializes the connection to the Matrix homeserver.
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	m.logger.Info("Initializing Matrix AppService connection...")
-
-	// Initialize the AppService
-	// m.as.Init() is not available, we assume Create() did enough or we use Start() later.
-	// However, we need to set the HomeserverURL on the BotClient if it wasn't set.
-	// The AppService struct doesn't have HomeserverURL, but the Client does.
-	// When we call BotClient(), it returns a client. We should ensure it has the URL.
-
-	// Actually, we should probably use CreateFull or manually configure the client.
-	// For now, let's just set it on the bot client.
-	m.as.BotClient().HomeserverURL, _ = url.Parse(m.cfg.Matrix.HomeserverURL)
 
 	// Start the AppService (this starts the HTTP server for transactions)
 	go m.as.Start()
@@ -335,9 +339,27 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 		return nil, fmt.Errorf("failed to get event: %w", err)
 	}
 
+	// Try to parse content - handle nil Parsed case
 	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
 	if !ok {
-		return nil, fmt.Errorf("event is not a message")
+		// Try parsing raw content
+		if err := evt.Content.ParseRaw(evt.Type); err != nil {
+			return nil, fmt.Errorf("failed to parse message content: %w", err)
+		}
+		content, ok = evt.Content.Parsed.(*event.MessageEventContent)
+		if !ok {
+			// Last resort: try raw JSON
+			if rawBody, ok := evt.Content.Raw["body"].(string); ok {
+				return &domain.Message{
+					ID:             evt.ID.String(),
+					RoomID:         roomID.String(),
+					Content:        rawBody,
+					SenderMatrixID: evt.Sender.String(),
+					Timestamp:      time.UnixMilli(evt.Timestamp),
+				}, nil
+			}
+			return nil, fmt.Errorf("event is not a message")
+		}
 	}
 
 	return &domain.Message{
@@ -386,8 +408,19 @@ func (m *MautrixAdapter) GetReactionEventID(
 
 	for _, evt := range resp.Chunk {
 		if evt.Sender == senderUserID && evt.Type == event.EventReaction {
+			// Try to parse content - handle nil Parsed case
 			content, ok := evt.Content.Parsed.(*event.ReactionEventContent)
-			if ok && content.RelatesTo.Key == emoji {
+			if !ok {
+				// Try parsing raw content
+				if err := evt.Content.ParseRaw(evt.Type); err != nil {
+					continue
+				}
+				content, ok = evt.Content.Parsed.(*event.ReactionEventContent)
+				if !ok {
+					continue
+				}
+			}
+			if content.RelatesTo.Key == emoji {
 				return evt.ID, nil
 			}
 		}
@@ -458,7 +491,7 @@ func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID 
 	return nil
 }
 
-// GetRoomMessages retrieves all messages from a room.
+// GetRoomMessages retrieves all messages from a room, including their reactions.
 func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) ([]domain.Message, error) {
 	intent := m.as.BotIntent()
 
@@ -468,31 +501,39 @@ func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) 
 		return nil, fmt.Errorf("failed to get room messages: %w", err)
 	}
 
+	// First pass: collect messages into a map by event ID
+	messageMap := make(map[string]*domain.Message)
 	messages := make([]domain.Message, 0, len(resp.Chunk))
+
 	for _, evt := range resp.Chunk {
 		if evt.Type != event.EventMessage {
 			continue
 		}
 
-		content, ok := evt.Content.Parsed.(*event.MessageEventContent)
-		if !ok {
+		msg := m.parseMessageEvent(evt, roomID)
+		if msg != nil {
+			msg.Reactions = []domain.Reaction{} // Initialize empty slice
+			messages = append(messages, *msg)
+			messageMap[msg.ID] = &messages[len(messages)-1]
+		}
+	}
+
+	// Second pass: collect reactions and attach to their parent messages
+	for _, evt := range resp.Chunk {
+		if evt.Type != event.EventReaction {
 			continue
 		}
 
-		msg := domain.Message{
-			ID:             evt.ID.String(),
-			RoomID:         roomID.String(),
-			Content:        content.Body,
-			SenderMatrixID: evt.Sender.String(),
-			Timestamp:      time.UnixMilli(evt.Timestamp),
+		reaction := m.parseReactionEvent(evt, roomID)
+		if reaction == nil {
+			continue
 		}
 
-		// Check for thread/reply
-		if content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
-			msg.ThreadID = content.RelatesTo.InReplyTo.EventID.String()
+		// Find parent message and attach reaction
+		parentMsgID := reaction.MessageID.String()
+		if parentMsg, exists := messageMap[parentMsgID]; exists {
+			parentMsg.Reactions = append(parentMsg.Reactions, *reaction)
 		}
-
-		messages = append(messages, msg)
 	}
 
 	// Log warning if message count exceeds 1000 for future pagination tracking
@@ -501,6 +542,82 @@ func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) 
 	}
 
 	return messages, nil
+}
+
+// parseReactionEvent extracts a domain.Reaction from a Matrix reaction event.
+func (m *MautrixAdapter) parseReactionEvent(evt *event.Event, roomID id.RoomID) *domain.Reaction {
+	// Try to parse content
+	content, ok := evt.Content.Parsed.(*event.ReactionEventContent)
+	if !ok {
+		// Try parsing raw content
+		if err := evt.Content.ParseRaw(evt.Type); err != nil {
+			return nil
+		}
+		content, ok = evt.Content.Parsed.(*event.ReactionEventContent)
+		if !ok {
+			return nil
+		}
+	}
+
+	if content.RelatesTo.EventID == "" {
+		return nil
+	}
+
+	return &domain.Reaction{
+		ID:             evt.ID,
+		RoomID:         roomID,
+		MessageID:      content.RelatesTo.EventID,
+		Emoji:          content.RelatesTo.Key,
+		SenderMatrixID: evt.Sender.String(),
+		Timestamp:      time.UnixMilli(evt.Timestamp),
+	}
+}
+
+// parseMessageEvent extracts a domain.Message from a Matrix event.
+func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *domain.Message {
+	body := m.extractMessageBody(evt)
+	if body == "" {
+		return nil
+	}
+
+	msg := &domain.Message{
+		ID:             evt.ID.String(),
+		RoomID:         roomID.String(),
+		Content:        body,
+		SenderMatrixID: evt.Sender.String(),
+		Timestamp:      time.UnixMilli(evt.Timestamp),
+	}
+
+	// Check for thread/reply from parsed content
+	if content, ok := evt.Content.Parsed.(*event.MessageEventContent); ok {
+		if content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
+			msg.ThreadID = content.RelatesTo.InReplyTo.EventID.String()
+		}
+	}
+
+	return msg
+}
+
+// extractMessageBody gets the message body from an event, trying multiple approaches.
+func (m *MautrixAdapter) extractMessageBody(evt *event.Event) string {
+	// Try parsed content first
+	if content, ok := evt.Content.Parsed.(*event.MessageEventContent); ok {
+		return content.Body
+	}
+
+	// Parse from raw content if Parsed is nil
+	if err := evt.Content.ParseRaw(evt.Type); err == nil {
+		if content, ok := evt.Content.Parsed.(*event.MessageEventContent); ok {
+			return content.Body
+		}
+	}
+
+	// Try raw JSON as last resort
+	if rawBody, ok := evt.Content.Raw["body"].(string); ok {
+		return rawBody
+	}
+
+	return ""
 }
 
 // GetReaction retrieves details of a specific reaction.
@@ -516,17 +633,26 @@ func (m *MautrixAdapter) GetReaction(ctx context.Context, roomID id.RoomID, reac
 		return nil, fmt.Errorf("event is not a reaction")
 	}
 
+	// Try to parse content - handle nil Parsed case
 	content, ok := evt.Content.Parsed.(*event.ReactionEventContent)
 	if !ok {
-		return nil, fmt.Errorf("failed to parse reaction content")
+		// Try parsing raw content
+		if err := evt.Content.ParseRaw(evt.Type); err != nil {
+			return nil, fmt.Errorf("failed to parse reaction content: %w", err)
+		}
+		content, ok = evt.Content.Parsed.(*event.ReactionEventContent)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse reaction content after ParseRaw")
+		}
 	}
 
 	return &domain.Reaction{
-		ID:        evt.ID,
-		RoomID:    roomID,
-		MessageID: content.RelatesTo.EventID,
-		Emoji:     content.RelatesTo.Key,
-		Timestamp: time.UnixMilli(evt.Timestamp),
+		ID:             evt.ID,
+		RoomID:         roomID,
+		MessageID:      content.RelatesTo.EventID,
+		Emoji:          content.RelatesTo.Key,
+		SenderMatrixID: evt.Sender.String(),
+		Timestamp:      time.UnixMilli(evt.Timestamp),
 	}, nil
 }
 
@@ -774,9 +900,17 @@ func (m *MautrixAdapter) GetSpaceChildren(ctx context.Context, roomID id.RoomID)
 	}
 
 	for stateKey, evt := range childEvents {
+		// Try to parse content - handle nil Parsed case
 		content, ok := evt.Content.Parsed.(*event.SpaceChildEventContent)
 		if !ok {
-			continue
+			// Try parsing raw content
+			if err := evt.Content.ParseRaw(evt.Type); err != nil {
+				continue
+			}
+			content, ok = evt.Content.Parsed.(*event.SpaceChildEventContent)
+			if !ok {
+				continue
+			}
 		}
 
 		// Check if child is active (has "via" servers)
