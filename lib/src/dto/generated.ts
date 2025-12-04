@@ -52,6 +52,19 @@ export interface BatchRemoveMemberResponse extends BaseResponse {
 }
 
 //////////
+// source: commands.go
+
+/**
+ * CommandDef defines a command with its topic, request type name, and response type name.
+ * This is used by the TypeScript generator to create type-safe command definitions.
+ */
+export interface CommandDef {
+  Topic: string;
+  RequestType: string;
+  ResponseType: string;
+}
+
+//////////
 // source: error.go
 
 /**
