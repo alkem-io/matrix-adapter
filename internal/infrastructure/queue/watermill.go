@@ -224,14 +224,14 @@ func (w *WatermillAdapter) sendReply(reqMsg *message.Message, resp interface{}) 
 	replyTo := reqMsg.Metadata.Get(MetadataReplyTo)
 	correlationID := reqMsg.Metadata.Get(MetadataCorrelationID)
 
-	w.logger.Info("Preparing to send reply",
+	w.logger.Debug("Preparing to send reply",
 		"reply_to", replyTo,
 		"correlation_id", correlationID,
 		"has_response", resp != nil,
 	)
 
 	if replyTo == "" {
-		w.logger.Info("No reply_to set, skipping response")
+		w.logger.Debug("No reply_to set, skipping response")
 		return
 	}
 
@@ -246,7 +246,7 @@ func (w *WatermillAdapter) sendReply(reqMsg *message.Message, resp interface{}) 
 		respMsg.Metadata.Set(MetadataCorrelationID, correlationID)
 	}
 
-	w.logger.Info("Publishing response",
+	w.logger.Debug("Publishing response",
 		"reply_to", replyTo,
 		"correlation_id", correlationID,
 		"payload_size", len(respData),
@@ -255,6 +255,6 @@ func (w *WatermillAdapter) sendReply(reqMsg *message.Message, resp interface{}) 
 	if err := w.publisher.Publish(replyTo, respMsg); err != nil {
 		w.logger.Error("Failed to publish response", "error", err)
 	} else {
-		w.logger.Info("Response published successfully", "reply_to", replyTo)
+		w.logger.Debug("Response published successfully", "reply_to", replyTo)
 	}
 }

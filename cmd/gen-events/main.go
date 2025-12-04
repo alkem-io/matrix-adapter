@@ -96,29 +96,117 @@ type CommandDef struct {
 	ResponseType string
 }
 
+// parseCommandRegistry parses the CommandRegistry and OutgoingEventRegistry slices
+// from the Go source file using AST parsing for reliability.
 func parseCommandRegistry(path string) ([]CommandDef, error) {
-	//nolint:gosec // CLI tool reading known path
-	content, err := os.ReadFile(path)
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
-
-	// Parse the CommandRegistry and OutgoingEventRegistry slices
-	// Regex to find {Topic: "...", RequestType: "...", ResponseType: "..."}
-	re := regexp.MustCompile(`\{Topic:\s*"([^"]+)",\s*RequestType:\s*"([^"]*)",\s*ResponseType:\s*"([^"]+)"\}`)
-	matches := re.FindAllStringSubmatch(string(content), -1)
 
 	var commands []CommandDef
-	for _, m := range matches {
-		if len(m) > 3 {
-			commands = append(commands, CommandDef{
-				Topic:        m[1],
-				RequestType:  m[2],
-				ResponseType: m[3],
-			})
+
+	ast.Inspect(node, func(n ast.Node) bool {
+		genDecl, ok := n.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.VAR {
+			return true
+		}
+
+		commands = append(commands, extractCommandsFromGenDecl(genDecl)...)
+		return true
+	})
+
+	return commands, nil
+}
+
+// extractCommandsFromGenDecl extracts CommandDef entries from a var declaration.
+func extractCommandsFromGenDecl(genDecl *ast.GenDecl) []CommandDef {
+	var commands []CommandDef
+
+	for _, spec := range genDecl.Specs {
+		valueSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		commands = append(commands, extractCommandsFromValueSpec(valueSpec)...)
+	}
+
+	return commands
+}
+
+// extractCommandsFromValueSpec extracts CommandDef entries from a value spec.
+func extractCommandsFromValueSpec(valueSpec *ast.ValueSpec) []CommandDef {
+	var commands []CommandDef
+
+	for i, name := range valueSpec.Names {
+		if name.Name != "CommandRegistry" && name.Name != "OutgoingEventRegistry" {
+			continue
+		}
+		if i >= len(valueSpec.Values) {
+			continue
+		}
+
+		compLit, ok := valueSpec.Values[i].(*ast.CompositeLit)
+		if !ok {
+			continue
+		}
+
+		for _, elt := range compLit.Elts {
+			if cmd := parseCommandDefLiteral(elt); cmd != nil {
+				commands = append(commands, *cmd)
+			}
 		}
 	}
-	return commands, nil
+
+	return commands
+}
+
+// parseCommandDefLiteral extracts CommandDef fields from an AST composite literal.
+func parseCommandDefLiteral(expr ast.Expr) *CommandDef {
+	compLit, ok := expr.(*ast.CompositeLit)
+	if !ok {
+		return nil
+	}
+
+	cmd := &CommandDef{}
+
+	for _, elt := range compLit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		extractCommandField(kv, cmd)
+	}
+
+	if cmd.Topic != "" && cmd.ResponseType != "" {
+		return cmd
+	}
+	return nil
+}
+
+// extractCommandField extracts a single field from a key-value expression.
+func extractCommandField(kv *ast.KeyValueExpr, cmd *CommandDef) {
+	key, ok := kv.Key.(*ast.Ident)
+	if !ok {
+		return
+	}
+
+	value, ok := kv.Value.(*ast.BasicLit)
+	if !ok || value.Kind != token.STRING {
+		return
+	}
+
+	strVal := strings.Trim(value.Value, "\"")
+
+	switch key.Name {
+	case "Topic":
+		cmd.Topic = strVal
+	case "RequestType":
+		cmd.RequestType = strVal
+	case "ResponseType":
+		cmd.ResponseType = strVal
+	}
 }
 
 func generateCommandsTS(commands []CommandDef) string {
@@ -234,31 +322,37 @@ func parseTopicConstants(path string) ([]string, error) {
 
 	var events []string
 	ast.Inspect(node, func(n ast.Node) bool {
-		// Look for const declarations
 		genDecl, ok := n.(*ast.GenDecl)
 		if !ok || genDecl.Tok != token.CONST {
 			return true
 		}
-
-		for _, spec := range genDecl.Specs {
-			valueSpec, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-
-			// Check each value in the spec
-			for _, value := range valueSpec.Values {
-				lit, ok := value.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					continue
-				}
-				events = append(events, strings.Trim(lit.Value, "\""))
-			}
-		}
+		events = append(events, extractStringConstants(genDecl)...)
 		return true
 	})
 
 	return events, nil
+}
+
+// extractStringConstants extracts string constant values from a const declaration.
+func extractStringConstants(genDecl *ast.GenDecl) []string {
+	var constants []string
+
+	for _, spec := range genDecl.Specs {
+		valueSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+
+		for _, value := range valueSpec.Values {
+			lit, ok := value.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				continue
+			}
+			constants = append(constants, strings.Trim(lit.Value, "\""))
+		}
+	}
+
+	return constants
 }
 
 func parseOutgoingEvents(path string) ([]string, error) {
