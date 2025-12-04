@@ -127,11 +127,11 @@ const (
 
 #### Response Payload
 
+Operations that only confirm success/failure return `BaseResponse` directly:
+
 ```go
-type CreateRoomResponse struct {
-    BaseResponse
-    // No additional data needed on success, as Server already knows the ID.
-}
+// Returns BaseResponse - no additional data needed on success,
+// as Server already knows the ID.
 ```
 
 **Adapter Actions**:
@@ -228,11 +228,7 @@ type RemoveReactionRequest struct {
 
 #### Response Payload
 
-```go
-type RemoveReactionResponse struct {
-    BaseResponse
-}
-```
+Returns `BaseResponse` directly.
 
 ---
 
@@ -255,11 +251,7 @@ type DeleteMessageRequest struct {
 
 #### Response Payload
 
-```go
-type DeleteMessageResponse struct {
-    BaseResponse
-}
-```
+Returns `BaseResponse` directly.
 
 ---
 
@@ -372,11 +364,7 @@ type UpdateRoomRequest struct {
 
 #### Response Payload
 
-```go
-type UpdateRoomResponse struct {
-    BaseResponse
-}
-```
+Returns `BaseResponse` directly.
 
 ---
 
@@ -397,11 +385,7 @@ type DeleteRoomRequest struct {
 
 #### Response Payload
 
-```go
-type DeleteRoomResponse struct {
-    BaseResponse
-}
-```
+Returns `BaseResponse` directly.
 
 ---
 
@@ -451,11 +435,7 @@ type SyncActorRequest struct {
 
 #### Response Payload
 
-```go
-type SyncActorResponse struct {
-    BaseResponse
-}
-```
+Returns `BaseResponse` directly.
 
 ---
 
@@ -558,11 +538,7 @@ type CreateSpaceRequest struct {
 
 #### Response Payload
 
-```go
-type CreateSpaceResponse struct {
-    BaseResponse
-}
-```
+Returns `BaseResponse` directly.
 
 **Adapter Actions**:
 1.  Check if mapping for `AlkemioContextID` exists.
@@ -592,11 +568,7 @@ type UpdateSpaceRequest struct {
 
 #### Response Payload
 
-```go
-type UpdateSpaceResponse struct {
-    BaseResponse
-}
-```
+Returns `BaseResponse` directly.
 
 ---
 
@@ -617,11 +589,7 @@ type DeleteSpaceRequest struct {
 
 #### Response Payload
 
-```go
-type DeleteSpaceResponse struct {
-    BaseResponse
-}
-```
+Returns `BaseResponse` directly.
 
 ---
 
@@ -646,11 +614,7 @@ type SetParentRequest struct {
 
 #### Response Payload
 
-```go
-type SetParentResponse struct {
-    BaseResponse
-}
-```
+Returns `BaseResponse` directly.
 
 **Adapter Actions**:
 1.  Parse `ChildID` as UUID and resolve to Matrix Room ID (using `IsSpace` to determine alias pattern).

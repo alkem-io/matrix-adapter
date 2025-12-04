@@ -27,9 +27,9 @@ type SendMessageRequest struct {
 
 // SendMessageResponse returns the message ID and timestamp.
 type SendMessageResponse struct {
-	BaseResponse
-	MessageID MessageID `json:"message_id"`
-	Timestamp time.Time `json:"timestamp"` // UTC time from Matrix
+	BaseResponse `tstype:",extends"`
+	MessageID    MessageID `json:"message_id"`
+	Timestamp    time.Time `json:"timestamp"` // UTC time from Matrix
 }
 
 // GetMessageRequest retrieves details of a specific message.
@@ -41,8 +41,8 @@ type GetMessageRequest struct {
 
 // GetMessageResponse returns message details.
 type GetMessageResponse struct {
-	BaseResponse
-	Message MessageDto `json:"message"`
+	BaseResponse `tstype:",extends"`
+	Message      MessageDto `json:"message"`
 }
 
 // DeleteMessageRequest redacts/deletes a message.
@@ -52,9 +52,4 @@ type DeleteMessageRequest struct {
 	MessageID     MessageID      `json:"message_id"`
 	SenderActorID AlkemioActorID `json:"sender_actor_id"`
 	Reason        string         `json:"reason,omitempty"`
-}
-
-// DeleteMessageResponse confirms deletion.
-type DeleteMessageResponse struct {
-	BaseResponse
 }

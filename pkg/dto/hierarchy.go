@@ -14,8 +14,3 @@ type SetParentRequest struct {
 	Order           string           `json:"order,omitempty"`
 	Suggested       bool             `json:"suggested,omitempty"`
 }
-
-// SetParentResponse confirms the hierarchy update.
-type SetParentResponse struct {
-	BaseResponse
-}

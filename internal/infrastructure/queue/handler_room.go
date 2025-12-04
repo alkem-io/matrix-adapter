@@ -89,7 +89,7 @@ func (h *RoomHandler) HandleCreateRoom(ctx context.Context, payload []byte) (int
 		return MapServiceError(err), nil
 	}
 
-	return dto.CreateRoomResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+	return dto.NewSuccessResponse(), nil
 }
 
 // HandleGetRoom handles communication.room.get topic.
@@ -167,7 +167,7 @@ func (h *RoomHandler) HandleUpdateRoom(ctx context.Context, payload []byte) (int
 		return MapServiceError(err), nil
 	}
 
-	return dto.UpdateRoomResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+	return dto.NewSuccessResponse(), nil
 }
 
 // HandleDeleteRoom handles communication.room.delete topic.
@@ -186,7 +186,7 @@ func (h *RoomHandler) HandleDeleteRoom(ctx context.Context, payload []byte) (int
 		return MapServiceError(err), nil
 	}
 
-	return dto.DeleteRoomResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+	return dto.NewSuccessResponse(), nil
 }
 
 // HandleListRooms handles communication.room.list topic.
@@ -337,7 +337,7 @@ func (h *RoomHandler) HandleDeleteMessage(ctx context.Context, payload []byte) (
 		return MapServiceError(err), nil
 	}
 
-	return dto.DeleteMessageResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+	return dto.NewSuccessResponse(), nil
 }
 
 // ============================================================================
@@ -424,7 +424,7 @@ func (h *RoomHandler) HandleRemoveReaction(ctx context.Context, payload []byte) 
 		return MapServiceError(err), nil
 	}
 
-	return dto.RemoveReactionResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+	return dto.NewSuccessResponse(), nil
 }
 
 // HandleGetReaction handles communication.reaction.get topic.

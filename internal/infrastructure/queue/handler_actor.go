@@ -46,5 +46,5 @@ func (h *ActorHandler) HandleSyncActor(ctx context.Context, payload []byte) (int
 		return MapServiceError(err), nil
 	}
 
-	return dto.SyncActorResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+	return dto.NewSuccessResponse(), nil
 }

@@ -12,8 +12,3 @@ type SyncActorRequest struct {
 	DisplayName string         `json:"display_name"`
 	AvatarURL   string         `json:"avatar_url,omitempty"`
 }
-
-// SyncActorResponse confirms the actor sync operation.
-type SyncActorResponse struct {
-	BaseResponse
-}
