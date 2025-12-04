@@ -21,7 +21,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o matrix-adapter ./cmd/adapter
 # Final Stage
 FROM alpine:3.19
 
-## Add the wait script to the image
+## Add the wait script to the image for production use
+## Custom deployments override CMD to use /wait for startup sequencing
 ADD https://github.com/ufoscout/docker-compose-wait/releases/download/2.7.3/wait /wait
 RUN chmod +x /wait
 
