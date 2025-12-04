@@ -13,7 +13,7 @@ type BatchAddMemberRequest struct {
 
 // BatchAddMemberResponse returns per-room results.
 type BatchAddMemberResponse struct {
-	BaseResponse
+	BaseResponse `tstype:",extends"`
 	// Results maps AlkemioRoomID (string) to operation result.
 	// Only populated if BaseResponse.Success is true (batch was processed).
 	Results map[string]BaseResponse `json:"results,omitempty"`
@@ -29,6 +29,6 @@ type BatchRemoveMemberRequest struct {
 
 // BatchRemoveMemberResponse returns per-room results.
 type BatchRemoveMemberResponse struct {
-	BaseResponse
-	Results map[string]BaseResponse `json:"results,omitempty"`
+	BaseResponse `tstype:",extends"`
+	Results      map[string]BaseResponse `json:"results,omitempty"`
 }

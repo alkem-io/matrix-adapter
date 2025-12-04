@@ -29,11 +29,6 @@ type CreateSpaceRequest struct {
 	InitialMembers   []AlkemioActorID  `json:"initial_members,omitempty"`
 }
 
-// CreateSpaceResponse confirms space creation.
-type CreateSpaceResponse struct {
-	BaseResponse
-}
-
 // ============================================================================
 // GetSpace (communication.space.get)
 // ============================================================================
@@ -46,7 +41,7 @@ type GetSpaceRequest struct {
 
 // GetSpaceResponse returns space details.
 type GetSpaceResponse struct {
-	BaseResponse
+	BaseResponse     `tstype:",extends"`
 	AlkemioContextID AlkemioContextID  `json:"alkemio_context_id"`
 	DisplayName      string            `json:"display_name"`
 	Topic            string            `json:"topic,omitempty"`
@@ -71,11 +66,6 @@ type UpdateSpaceRequest struct {
 	JoinRule         *JoinRule        `json:"join_rule,omitempty"`
 }
 
-// UpdateSpaceResponse confirms the update.
-type UpdateSpaceResponse struct {
-	BaseResponse
-}
-
 // ============================================================================
 // DeleteSpace (communication.space.delete)
 // ============================================================================
@@ -85,11 +75,6 @@ type UpdateSpaceResponse struct {
 type DeleteSpaceRequest struct {
 	AlkemioContextID AlkemioContextID `json:"alkemio_context_id"`
 	Reason           string           `json:"reason,omitempty"`
-}
-
-// DeleteSpaceResponse confirms deletion.
-type DeleteSpaceResponse struct {
-	BaseResponse
 }
 
 // ============================================================================
@@ -104,7 +89,7 @@ type ListSpacesRequest struct {
 
 // ListSpacesResponse returns paginated space list.
 type ListSpacesResponse struct {
-	BaseResponse
+	BaseResponse      `tstype:",extends"`
 	AlkemioContextIDs []AlkemioContextID `json:"alkemio_context_ids"`
 	NextCursor        string             `json:"next_cursor,omitempty"`
 }
@@ -122,7 +107,7 @@ type BatchAddSpaceMemberRequest struct {
 
 // BatchAddSpaceMemberResponse returns per-space results.
 type BatchAddSpaceMemberResponse struct {
-	BaseResponse
+	BaseResponse `tstype:",extends"`
 	// Results maps AlkemioContextID (string) to operation result.
 	Results map[string]BaseResponse `json:"results,omitempty"`
 }
@@ -137,6 +122,6 @@ type BatchRemoveSpaceMemberRequest struct {
 
 // BatchRemoveSpaceMemberResponse returns per-space results.
 type BatchRemoveSpaceMemberResponse struct {
-	BaseResponse
-	Results map[string]BaseResponse `json:"results,omitempty"`
+	BaseResponse `tstype:",extends"`
+	Results      map[string]BaseResponse `json:"results,omitempty"`
 }

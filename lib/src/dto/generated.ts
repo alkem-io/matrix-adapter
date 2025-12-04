@@ -13,12 +13,6 @@ export interface SyncActorRequest {
   display_name: string;
   avatar_url?: string;
 }
-/**
- * SyncActorResponse confirms the actor sync operation.
- */
-export interface SyncActorResponse {
-  BaseResponse: BaseResponse;
-}
 
 //////////
 // source: batch.go
@@ -34,8 +28,7 @@ export interface BatchAddMemberRequest {
 /**
  * BatchAddMemberResponse returns per-room results.
  */
-export interface BatchAddMemberResponse {
-  BaseResponse: BaseResponse;
+export interface BatchAddMemberResponse extends BaseResponse {
   /**
    * Results maps AlkemioRoomID (string) to operation result.
    * Only populated if BaseResponse.Success is true (batch was processed).
@@ -54,9 +47,21 @@ export interface BatchRemoveMemberRequest {
 /**
  * BatchRemoveMemberResponse returns per-room results.
  */
-export interface BatchRemoveMemberResponse {
-  BaseResponse: BaseResponse;
+export interface BatchRemoveMemberResponse extends BaseResponse {
   results?: { [key: string]: BaseResponse};
+}
+
+//////////
+// source: commands.go
+
+/**
+ * CommandDef defines a command with its topic, request type name, and response type name.
+ * This is used by the TypeScript generator to create type-safe command definitions.
+ */
+export interface CommandDef {
+  Topic: string;
+  RequestType: string;
+  ResponseType: string;
 }
 
 //////////
@@ -164,12 +169,6 @@ export interface SetParentRequest {
   order?: string;
   suggested?: boolean;
 }
-/**
- * SetParentResponse confirms the hierarchy update.
- */
-export interface SetParentResponse {
-  BaseResponse: BaseResponse;
-}
 
 //////////
 // source: message.go
@@ -198,8 +197,7 @@ export interface SendMessageRequest {
 /**
  * SendMessageResponse returns the message ID and timestamp.
  */
-export interface SendMessageResponse {
-  BaseResponse: BaseResponse;
+export interface SendMessageResponse extends BaseResponse {
   message_id: MessageID;
   timestamp: string; // UTC time from Matrix
 }
@@ -214,8 +212,7 @@ export interface GetMessageRequest {
 /**
  * GetMessageResponse returns message details.
  */
-export interface GetMessageResponse {
-  BaseResponse: BaseResponse;
+export interface GetMessageResponse extends BaseResponse {
   message: MessageDto;
 }
 /**
@@ -227,12 +224,6 @@ export interface DeleteMessageRequest {
   message_id: MessageID;
   sender_actor_id: AlkemioActorID;
   reason?: string;
-}
-/**
- * DeleteMessageResponse confirms deletion.
- */
-export interface DeleteMessageResponse {
-  BaseResponse: BaseResponse;
 }
 
 //////////
@@ -260,8 +251,7 @@ export interface AddReactionRequest {
 /**
  * AddReactionResponse returns the reaction ID.
  */
-export interface AddReactionResponse {
-  BaseResponse: BaseResponse;
+export interface AddReactionResponse extends BaseResponse {
   reaction_id: ReactionID;
 }
 /**
@@ -274,12 +264,6 @@ export interface RemoveReactionRequest {
   sender_actor_id: AlkemioActorID;
 }
 /**
- * RemoveReactionResponse confirms removal.
- */
-export interface RemoveReactionResponse {
-  BaseResponse: BaseResponse;
-}
-/**
  * GetReactionRequest retrieves details of a specific reaction.
  * Topic: communication.reaction.get
  */
@@ -290,8 +274,7 @@ export interface GetReactionRequest {
 /**
  * GetReactionResponse returns reaction details.
  */
-export interface GetReactionResponse {
-  BaseResponse: BaseResponse;
+export interface GetReactionResponse extends BaseResponse {
   reaction: ReactionDto;
 }
 
@@ -313,12 +296,6 @@ export interface CreateRoomRequest {
   join_rule?: JoinRule;
 }
 /**
- * CreateRoomResponse confirms room creation.
- */
-export interface CreateRoomResponse {
-  BaseResponse: BaseResponse;
-}
-/**
  * GetRoomRequest retrieves current state of a room.
  * Topic: communication.room.get
  */
@@ -328,8 +305,7 @@ export interface GetRoomRequest {
 /**
  * GetRoomResponse returns room details with members and messages.
  */
-export interface GetRoomResponse {
-  BaseResponse: BaseResponse;
+export interface GetRoomResponse extends BaseResponse {
   alkemio_room_id: AlkemioRoomID;
   display_name: string;
   member_actor_ids: AlkemioActorID[];
@@ -348,24 +324,12 @@ export interface UpdateRoomRequest {
   join_rule?: JoinRule;
 }
 /**
- * UpdateRoomResponse confirms the update.
- */
-export interface UpdateRoomResponse {
-  BaseResponse: BaseResponse;
-}
-/**
  * DeleteRoomRequest archives or deletes a room.
  * Topic: communication.room.delete
  */
 export interface DeleteRoomRequest {
   alkemio_room_id: AlkemioRoomID;
   reason?: string;
-}
-/**
- * DeleteRoomResponse confirms deletion.
- */
-export interface DeleteRoomResponse {
-  BaseResponse: BaseResponse;
 }
 /**
  * ListRoomsRequest retrieves all rooms (admin operation).
@@ -377,8 +341,7 @@ export interface ListRoomsRequest {
 /**
  * ListRoomsResponse returns paginated room list.
  */
-export interface ListRoomsResponse {
-  BaseResponse: BaseResponse;
+export interface ListRoomsResponse extends BaseResponse {
   alkemio_room_ids: AlkemioRoomID[];
   next_cursor?: string;
 }
@@ -412,12 +375,6 @@ export interface CreateSpaceRequest {
   initial_members?: AlkemioActorID[];
 }
 /**
- * CreateSpaceResponse confirms space creation.
- */
-export interface CreateSpaceResponse {
-  BaseResponse: BaseResponse;
-}
-/**
  * GetSpaceRequest retrieves current state of a space.
  * Topic: communication.space.get
  */
@@ -427,8 +384,7 @@ export interface GetSpaceRequest {
 /**
  * GetSpaceResponse returns space details.
  */
-export interface GetSpaceResponse {
-  BaseResponse: BaseResponse;
+export interface GetSpaceResponse extends BaseResponse {
   alkemio_context_id: AlkemioContextID;
   display_name: string;
   topic?: string;
@@ -450,24 +406,12 @@ export interface UpdateSpaceRequest {
   join_rule?: JoinRule;
 }
 /**
- * UpdateSpaceResponse confirms the update.
- */
-export interface UpdateSpaceResponse {
-  BaseResponse: BaseResponse;
-}
-/**
  * DeleteSpaceRequest archives/deletes a space.
  * Topic: communication.space.delete
  */
 export interface DeleteSpaceRequest {
   alkemio_context_id: AlkemioContextID;
   reason?: string;
-}
-/**
- * DeleteSpaceResponse confirms deletion.
- */
-export interface DeleteSpaceResponse {
-  BaseResponse: BaseResponse;
 }
 /**
  * ListSpacesRequest retrieves all spaces (admin operation).
@@ -479,8 +423,7 @@ export interface ListSpacesRequest {
 /**
  * ListSpacesResponse returns paginated space list.
  */
-export interface ListSpacesResponse {
-  BaseResponse: BaseResponse;
+export interface ListSpacesResponse extends BaseResponse {
   alkemio_context_ids: AlkemioContextID[];
   next_cursor?: string;
 }
@@ -495,8 +438,7 @@ export interface BatchAddSpaceMemberRequest {
 /**
  * BatchAddSpaceMemberResponse returns per-space results.
  */
-export interface BatchAddSpaceMemberResponse {
-  BaseResponse: BaseResponse;
+export interface BatchAddSpaceMemberResponse extends BaseResponse {
   /**
    * Results maps AlkemioContextID (string) to operation result.
    */
@@ -514,8 +456,7 @@ export interface BatchRemoveSpaceMemberRequest {
 /**
  * BatchRemoveSpaceMemberResponse returns per-space results.
  */
-export interface BatchRemoveSpaceMemberResponse {
-  BaseResponse: BaseResponse;
+export interface BatchRemoveSpaceMemberResponse extends BaseResponse {
   results?: { [key: string]: BaseResponse};
 }
 

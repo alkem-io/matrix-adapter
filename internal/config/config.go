@@ -94,6 +94,9 @@ func loadMatrixEnv(cfg *Config) {
 	if v := os.Getenv("MATRIX_HS_TOKEN"); v != "" {
 		cfg.Matrix.HomeserverToken = v
 	}
+	if v := os.Getenv("MATRIX_SENDER_LOCALPART"); v != "" {
+		cfg.Matrix.SenderLocalpart = v
+	}
 	if v := os.Getenv("MATRIX_BOT_ACTOR_ID"); v != "" {
 		cfg.Matrix.BotActorID = v
 	}
@@ -109,7 +112,12 @@ func loadRabbitMQEnv(cfg *Config) {
 		user := os.Getenv("RABBITMQ_USER")
 		pass := os.Getenv("RABBITMQ_PASSWORD")
 
-		if host != "" && port != "" {
+		// Default port if not specified
+		if port == "" {
+			port = "5672"
+		}
+
+		if host != "" {
 			if user != "" && pass != "" {
 				cfg.RabbitMQ.URL = fmt.Sprintf("amqp://%s:%s@%s:%s/", user, pass, host, port)
 			} else {

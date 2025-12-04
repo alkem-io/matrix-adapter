@@ -25,8 +25,8 @@ type AddReactionRequest struct {
 
 // AddReactionResponse returns the reaction ID.
 type AddReactionResponse struct {
-	BaseResponse
-	ReactionID ReactionID `json:"reaction_id"`
+	BaseResponse `tstype:",extends"`
+	ReactionID   ReactionID `json:"reaction_id"`
 }
 
 // RemoveReactionRequest removes a previously added reaction.
@@ -35,11 +35,6 @@ type RemoveReactionRequest struct {
 	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
 	ReactionID    ReactionID     `json:"reaction_id"`
 	SenderActorID AlkemioActorID `json:"sender_actor_id"`
-}
-
-// RemoveReactionResponse confirms removal.
-type RemoveReactionResponse struct {
-	BaseResponse
 }
 
 // GetReactionRequest retrieves details of a specific reaction.
@@ -51,6 +46,6 @@ type GetReactionRequest struct {
 
 // GetReactionResponse returns reaction details.
 type GetReactionResponse struct {
-	BaseResponse
-	Reaction ReactionDto `json:"reaction"`
+	BaseResponse `tstype:",extends"`
+	Reaction     ReactionDto `json:"reaction"`
 }

@@ -71,7 +71,7 @@ func (h *SpaceHandler) HandleCreateSpace(ctx context.Context, payload []byte) (i
 		return MapServiceError(err), nil
 	}
 
-	return dto.CreateSpaceResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+	return dto.NewSuccessResponse(), nil
 }
 
 // HandleGetSpace handles communication.space.get topic.
@@ -157,7 +157,7 @@ func (h *SpaceHandler) HandleUpdateSpace(ctx context.Context, payload []byte) (i
 		return MapServiceError(err), nil
 	}
 
-	return dto.UpdateSpaceResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+	return dto.NewSuccessResponse(), nil
 }
 
 // HandleDeleteSpace handles communication.space.delete topic.
@@ -176,7 +176,7 @@ func (h *SpaceHandler) HandleDeleteSpace(ctx context.Context, payload []byte) (i
 		return MapServiceError(err), nil
 	}
 
-	return dto.DeleteSpaceResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+	return dto.NewSuccessResponse(), nil
 }
 
 // HandleListSpaces handles communication.space.list topic.
@@ -234,7 +234,7 @@ func (h *SpaceHandler) HandleSetParent(ctx context.Context, payload []byte) (int
 		return MapServiceError(err), nil
 	}
 
-	return dto.SetParentResponse{BaseResponse: dto.NewSuccessResponse()}, nil
+	return dto.NewSuccessResponse(), nil
 }
 
 // ============================================================================

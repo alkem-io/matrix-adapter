@@ -11,7 +11,58 @@ import (
 	"github.com/alkem-io/matrix-adapter-go/internal/config"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
+	"github.com/pkg/errors"
+	stdAmqp "github.com/rabbitmq/amqp091-go"
 )
+
+// Metadata keys for AMQP native properties
+const (
+	MetadataReplyTo       = "reply_to"
+	MetadataCorrelationID = "correlation_id"
+)
+
+// RPCMarshaler extends DefaultMarshaler to include native AMQP properties (ReplyTo, CorrelationId)
+// in the message metadata. This is necessary for RPC-style communication where the caller
+// sets these properties directly on the AMQP message rather than in headers.
+type RPCMarshaler struct {
+	amqp.DefaultMarshaler
+}
+
+// Unmarshal converts an AMQP Delivery to a Watermill message, including native AMQP properties
+func (m RPCMarshaler) Unmarshal(amqpMsg stdAmqp.Delivery) (*message.Message, error) {
+	msg, err := m.DefaultMarshaler.Unmarshal(amqpMsg)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to unmarshal message")
+	}
+
+	// Map native AMQP properties to metadata if present
+	if amqpMsg.ReplyTo != "" {
+		msg.Metadata.Set(MetadataReplyTo, amqpMsg.ReplyTo)
+	}
+	if amqpMsg.CorrelationId != "" {
+		msg.Metadata.Set(MetadataCorrelationID, amqpMsg.CorrelationId)
+	}
+
+	return msg, nil
+}
+
+// Marshal converts a Watermill message to AMQP Publishing, including native AMQP properties
+func (m RPCMarshaler) Marshal(msg *message.Message) (stdAmqp.Publishing, error) {
+	publishing, err := m.DefaultMarshaler.Marshal(msg)
+	if err != nil {
+		return publishing, errors.Wrap(err, "failed to marshal message")
+	}
+
+	// Map metadata to native AMQP properties if present
+	if replyTo := msg.Metadata.Get(MetadataReplyTo); replyTo != "" {
+		publishing.ReplyTo = replyTo
+	}
+	if correlationID := msg.Metadata.Get(MetadataCorrelationID); correlationID != "" {
+		publishing.CorrelationId = correlationID
+	}
+
+	return publishing, nil
+}
 
 // WatermillAdapter implements the QueuePort interface using the Watermill library and RabbitMQ.
 type WatermillAdapter struct {
@@ -32,6 +83,8 @@ func NewWatermillAdapter(cfg *config.Config, logger ports.Logger) (*WatermillAda
 // Connect establishes the connection to the RabbitMQ broker.
 func (w *WatermillAdapter) Connect(_ context.Context) error {
 	amqpConfig := amqp.NewDurableQueueConfig(w.cfg.RabbitMQ.URL)
+	// Use custom RPC marshaler to handle native AMQP properties (ReplyTo, CorrelationId)
+	amqpConfig.Marshaler = RPCMarshaler{}
 
 	// Create Publisher
 	publisher, err := amqp.NewPublisher(amqpConfig, watermill.NewStdLogger(false, false))
@@ -168,8 +221,17 @@ func (w *WatermillAdapter) logErrorResponse(msg *message.Message, resp interface
 }
 
 func (w *WatermillAdapter) sendReply(reqMsg *message.Message, resp interface{}) {
-	replyTo := reqMsg.Metadata.Get("reply_to")
+	replyTo := reqMsg.Metadata.Get(MetadataReplyTo)
+	correlationID := reqMsg.Metadata.Get(MetadataCorrelationID)
+
+	w.logger.Debug("Preparing to send reply",
+		"reply_to", replyTo,
+		"correlation_id", correlationID,
+		"has_response", resp != nil,
+	)
+
 	if replyTo == "" {
+		w.logger.Debug("No reply_to set, skipping response")
 		return
 	}
 
@@ -180,12 +242,19 @@ func (w *WatermillAdapter) sendReply(reqMsg *message.Message, resp interface{}) 
 	}
 
 	respMsg := message.NewMessage(watermill.NewUUID(), respData)
-	correlationID := reqMsg.Metadata.Get("correlation_id")
 	if correlationID != "" {
-		respMsg.Metadata.Set("correlation_id", correlationID)
+		respMsg.Metadata.Set(MetadataCorrelationID, correlationID)
 	}
+
+	w.logger.Debug("Publishing response",
+		"reply_to", replyTo,
+		"correlation_id", correlationID,
+		"payload_size", len(respData),
+	)
 
 	if err := w.publisher.Publish(replyTo, respMsg); err != nil {
 		w.logger.Error("Failed to publish response", "error", err)
+	} else {
+		w.logger.Debug("Response published successfully", "reply_to", replyTo)
 	}
 }

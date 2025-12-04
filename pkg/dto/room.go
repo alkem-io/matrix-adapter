@@ -17,12 +17,6 @@ type CreateRoomRequest struct {
 	JoinRule        JoinRule          `json:"join_rule,omitempty"`
 }
 
-// CreateRoomResponse confirms room creation.
-type CreateRoomResponse struct {
-	BaseResponse
-	// No additional data - server already knows the ID
-}
-
 // GetRoomRequest retrieves current state of a room.
 // Topic: communication.room.get
 type GetRoomRequest struct {
@@ -31,7 +25,7 @@ type GetRoomRequest struct {
 
 // GetRoomResponse returns room details with members and messages.
 type GetRoomResponse struct {
-	BaseResponse
+	BaseResponse   `tstype:",extends"`
 	AlkemioRoomID  AlkemioRoomID    `json:"alkemio_room_id"`
 	DisplayName    string           `json:"display_name"`
 	MemberActorIDs []AlkemioActorID `json:"member_actor_ids"`
@@ -49,21 +43,11 @@ type UpdateRoomRequest struct {
 	JoinRule      *JoinRule     `json:"join_rule,omitempty"`
 }
 
-// UpdateRoomResponse confirms the update.
-type UpdateRoomResponse struct {
-	BaseResponse
-}
-
 // DeleteRoomRequest archives or deletes a room.
 // Topic: communication.room.delete
 type DeleteRoomRequest struct {
 	AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
 	Reason        string        `json:"reason,omitempty"`
-}
-
-// DeleteRoomResponse confirms deletion.
-type DeleteRoomResponse struct {
-	BaseResponse
 }
 
 // ListRoomsRequest retrieves all rooms (admin operation).
@@ -74,7 +58,7 @@ type ListRoomsRequest struct {
 
 // ListRoomsResponse returns paginated room list.
 type ListRoomsResponse struct {
-	BaseResponse
+	BaseResponse   `tstype:",extends"`
 	AlkemioRoomIDs []AlkemioRoomID `json:"alkemio_room_ids"`
 	NextCursor     string          `json:"next_cursor,omitempty"`
 }

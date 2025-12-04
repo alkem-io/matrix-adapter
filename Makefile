@@ -69,11 +69,11 @@ generate-go:
 	@echo "Generating Go code..."
 	$(GO) generate ./...
 
-# Generate events TS file
+# Generate TypeScript files (events + commands)
 .PHONY: generate-events
 generate-events:
-	@echo "Generating events TS file..."
-	$(GO) run cmd/gen-events/main.go lib/src/matrix.adapter.event.type.ts
+	@echo "Generating TypeScript files..."
+	$(GO) run cmd/gen-events/main.go lib/src
 
 # Serve documentation
 .PHONY: doc

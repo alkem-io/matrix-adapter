@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -15,10 +16,17 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: gen-events <output-ts-file>")
+		fmt.Println("Usage: gen-events <output-dir>")
+		fmt.Println("  Generates matrix.adapter.event.type.ts and commands.ts in the output directory")
 		os.Exit(1)
 	}
-	outputFile := os.Args[1]
+	outputDir := os.Args[1]
+
+	// Ensure output directory exists
+	if err := os.MkdirAll(outputDir, 0750); err != nil {
+		fmt.Printf("Error creating output directory: %v\n", err)
+		os.Exit(1)
+	}
 
 	// 1. Parse topics.go for topic constants
 	topicEvents, err := parseTopicConstants("internal/infrastructure/queue/topics.go")
@@ -34,7 +42,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Combine events
+	// Combine events for enum generation
 	allEvents := make(map[string]string) // value -> key
 	for _, evt := range topicEvents {
 		allEvents[evt] = generateEnumKey(evt)
@@ -44,24 +52,265 @@ func main() {
 	}
 
 	// 3. Read existing TS file to preserve custom mappings if any
-	existingMapping := parseExistingTSFile(outputFile)
+	eventTypeFile := filepath.Join(outputDir, "matrix.adapter.event.type.ts")
+	existingMapping := parseExistingTSFile(eventTypeFile)
 	for val, key := range existingMapping {
 		if _, ok := allEvents[val]; ok {
 			allEvents[val] = key
 		}
 	}
 
-	// 4. Generate TS content
-	content := generateTSContent(allEvents)
+	// 4. Generate event type enum TS content
+	eventContent := generateTSContent(allEvents)
 
-	// 5. Write to file
-	err = os.WriteFile(outputFile, []byte(content), 0600)
+	// 5. Write event type file
+	err = os.WriteFile(eventTypeFile, []byte(eventContent), 0600)
 	if err != nil {
-		fmt.Printf("Error writing output file: %v\n", err)
+		fmt.Printf("Error writing event type file: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Successfully generated %s with %d events\n", eventTypeFile, len(allEvents))
+
+	// 6. Parse command registry from Go
+	commands, err := parseCommandRegistry("pkg/dto/commands.go")
+	if err != nil {
+		fmt.Printf("Error parsing commands.go: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Successfully generated %s with %d events\n", outputFile, len(allEvents))
+	// 7. Generate commands.ts
+	commandsFile := filepath.Join(outputDir, "commands.ts")
+	commandsContent := generateCommandsTS(commands)
+	err = os.WriteFile(commandsFile, []byte(commandsContent), 0600)
+	if err != nil {
+		fmt.Printf("Error writing commands file: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Successfully generated %s with %d commands\n", commandsFile, len(commands))
+}
+
+// CommandDef mirrors the Go struct for parsing
+type CommandDef struct {
+	Topic        string
+	RequestType  string
+	ResponseType string
+}
+
+// parseCommandRegistry parses the CommandRegistry and OutgoingEventRegistry slices
+// from the Go source file using AST parsing for reliability.
+func parseCommandRegistry(path string) ([]CommandDef, error) {
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+
+	var commands []CommandDef
+
+	ast.Inspect(node, func(n ast.Node) bool {
+		genDecl, ok := n.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.VAR {
+			return true
+		}
+
+		commands = append(commands, extractCommandsFromGenDecl(genDecl)...)
+		return true
+	})
+
+	return commands, nil
+}
+
+// extractCommandsFromGenDecl extracts CommandDef entries from a var declaration.
+func extractCommandsFromGenDecl(genDecl *ast.GenDecl) []CommandDef {
+	var commands []CommandDef
+
+	for _, spec := range genDecl.Specs {
+		valueSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		commands = append(commands, extractCommandsFromValueSpec(valueSpec)...)
+	}
+
+	return commands
+}
+
+// extractCommandsFromValueSpec extracts CommandDef entries from a value spec.
+func extractCommandsFromValueSpec(valueSpec *ast.ValueSpec) []CommandDef {
+	var commands []CommandDef
+
+	for i, name := range valueSpec.Names {
+		if name.Name != "CommandRegistry" && name.Name != "OutgoingEventRegistry" {
+			continue
+		}
+		if i >= len(valueSpec.Values) {
+			continue
+		}
+
+		compLit, ok := valueSpec.Values[i].(*ast.CompositeLit)
+		if !ok {
+			continue
+		}
+
+		for _, elt := range compLit.Elts {
+			if cmd := parseCommandDefLiteral(elt); cmd != nil {
+				commands = append(commands, *cmd)
+			}
+		}
+	}
+
+	return commands
+}
+
+// parseCommandDefLiteral extracts CommandDef fields from an AST composite literal.
+func parseCommandDefLiteral(expr ast.Expr) *CommandDef {
+	compLit, ok := expr.(*ast.CompositeLit)
+	if !ok {
+		return nil
+	}
+
+	cmd := &CommandDef{}
+
+	for _, elt := range compLit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		extractCommandField(kv, cmd)
+	}
+
+	if cmd.Topic != "" && cmd.ResponseType != "" {
+		return cmd
+	}
+	return nil
+}
+
+// extractCommandField extracts a single field from a key-value expression.
+func extractCommandField(kv *ast.KeyValueExpr, cmd *CommandDef) {
+	key, ok := kv.Key.(*ast.Ident)
+	if !ok {
+		return
+	}
+
+	value, ok := kv.Value.(*ast.BasicLit)
+	if !ok || value.Kind != token.STRING {
+		return
+	}
+
+	strVal := strings.Trim(value.Value, "\"")
+
+	switch key.Name {
+	case "Topic":
+		cmd.Topic = strVal
+	case "RequestType":
+		cmd.RequestType = strVal
+	case "ResponseType":
+		cmd.ResponseType = strVal
+	}
+}
+
+func generateCommandsTS(commands []CommandDef) string {
+	var sb strings.Builder
+
+	sb.WriteString("// Code generated by gen-events. DO NOT EDIT.\n\n")
+	sb.WriteString("import type {\n")
+
+	// Collect unique types for imports
+	types := make(map[string]bool)
+	for _, cmd := range commands {
+		if cmd.RequestType != "" {
+			types[cmd.RequestType] = true
+		}
+		types[cmd.ResponseType] = true
+	}
+
+	// Sort for deterministic output
+	typeList := make([]string, 0, len(types))
+	for t := range types {
+		typeList = append(typeList, t)
+	}
+	sort.Strings(typeList)
+
+	for _, t := range typeList {
+		sb.WriteString(fmt.Sprintf("  %s,\n", t))
+	}
+	sb.WriteString("} from './dto';\n\n")
+
+	// Generate Commands object
+	sb.WriteString("/**\n")
+	sb.WriteString(" * Command registry mapping topics to their request/response types.\n")
+	sb.WriteString(" * Use RequestFor<T> and ResponseFor<T> type helpers for type-safe access.\n")
+	sb.WriteString(" */\n")
+	sb.WriteString("export const Commands = {\n")
+
+	// Separate commands (have request type) from events (no request type)
+	var cmdList []CommandDef
+	var eventList []CommandDef
+	for _, cmd := range commands {
+		if cmd.RequestType != "" {
+			cmdList = append(cmdList, cmd)
+		} else {
+			eventList = append(eventList, cmd)
+		}
+	}
+
+	// Sort commands by topic
+	sort.Slice(cmdList, func(i, j int) bool {
+		return cmdList[i].Topic < cmdList[j].Topic
+	})
+
+	for _, cmd := range cmdList {
+		sb.WriteString(fmt.Sprintf("  '%s': {\n", cmd.Topic))
+		sb.WriteString(fmt.Sprintf("    request: {} as %s,\n", cmd.RequestType))
+		sb.WriteString(fmt.Sprintf("    response: {} as %s,\n", cmd.ResponseType))
+		sb.WriteString("  },\n")
+	}
+
+	sb.WriteString("} as const;\n\n")
+
+	// Generate OutgoingEvents object
+	if len(eventList) > 0 {
+		sb.WriteString("/**\n")
+		sb.WriteString(" * Outgoing events emitted by the adapter (no request, only payload).\n")
+		sb.WriteString(" */\n")
+		sb.WriteString("export const OutgoingEvents = {\n")
+
+		sort.Slice(eventList, func(i, j int) bool {
+			return eventList[i].Topic < eventList[j].Topic
+		})
+
+		for _, evt := range eventList {
+			sb.WriteString(fmt.Sprintf("  '%s': {\n", evt.Topic))
+			sb.WriteString(fmt.Sprintf("    payload: {} as %s,\n", evt.ResponseType))
+			sb.WriteString("  },\n")
+		}
+
+		sb.WriteString("} as const;\n\n")
+	}
+
+	// Generate type helpers
+	sb.WriteString("// ============================================================================\n")
+	sb.WriteString("// Type Helpers\n")
+	sb.WriteString("// ============================================================================\n\n")
+
+	sb.WriteString("/** All command topics */\n")
+	sb.WriteString("export type CommandTopic = keyof typeof Commands;\n\n")
+
+	sb.WriteString("/** Get the request type for a given command topic */\n")
+	sb.WriteString("export type RequestFor<T extends CommandTopic> = (typeof Commands)[T]['request'];\n\n")
+
+	sb.WriteString("/** Get the response type for a given command topic */\n")
+	sb.WriteString("export type ResponseFor<T extends CommandTopic> = (typeof Commands)[T]['response'];\n\n")
+
+	if len(eventList) > 0 {
+		sb.WriteString("/** All outgoing event topics */\n")
+		sb.WriteString("export type OutgoingEventTopic = keyof typeof OutgoingEvents;\n\n")
+
+		sb.WriteString("/** Get the payload type for a given outgoing event topic */\n")
+		sb.WriteString("export type PayloadFor<T extends OutgoingEventTopic> = (typeof OutgoingEvents)[T]['payload'];\n")
+	}
+
+	return sb.String()
 }
 
 func parseTopicConstants(path string) ([]string, error) {
@@ -73,31 +322,37 @@ func parseTopicConstants(path string) ([]string, error) {
 
 	var events []string
 	ast.Inspect(node, func(n ast.Node) bool {
-		// Look for const declarations
 		genDecl, ok := n.(*ast.GenDecl)
 		if !ok || genDecl.Tok != token.CONST {
 			return true
 		}
-
-		for _, spec := range genDecl.Specs {
-			valueSpec, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-
-			// Check each value in the spec
-			for _, value := range valueSpec.Values {
-				lit, ok := value.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					continue
-				}
-				events = append(events, strings.Trim(lit.Value, "\""))
-			}
-		}
+		events = append(events, extractStringConstants(genDecl)...)
 		return true
 	})
 
 	return events, nil
+}
+
+// extractStringConstants extracts string constant values from a const declaration.
+func extractStringConstants(genDecl *ast.GenDecl) []string {
+	var constants []string
+
+	for _, spec := range genDecl.Specs {
+		valueSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+
+		for _, value := range valueSpec.Values {
+			lit, ok := value.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				continue
+			}
+			constants = append(constants, strings.Trim(lit.Value, "\""))
+		}
+	}
+
+	return constants
 }
 
 func parseOutgoingEvents(path string) ([]string, error) {
