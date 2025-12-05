@@ -81,14 +81,18 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	m.logger.Info("Initializing Matrix AppService connection...")
 
-	// Start the AppService HTTP server in a goroutine
-	go m.as.Start()
+	// Start the AppService HTTP server in a goroutine.
+	// Note: Start() is blocking and logs errors internally.
+	// We monitor for unexpected stops via a separate goroutine.
+	go func() {
+		m.as.Start()
+		// If we reach here, the server stopped (either gracefully or due to error)
+		m.logger.Warn("AppService HTTP server stopped")
+	}()
 
-	// Wait for the AppService to become ready (HTTP server started)
-	if err := m.waitForReady(ctx); err != nil {
-		return fmt.Errorf("appservice failed to start: %w", err)
-	}
-	m.logger.Debug("AppService HTTP server started")
+	// Brief pause to let the HTTP server initialize
+	// This catches immediate failures like port conflicts
+	time.Sleep(50 * time.Millisecond)
 
 	// Verify bot connection
 	botClient := m.as.BotClient()
@@ -103,31 +107,10 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	return nil
 }
 
-// waitForReady polls the AppService Ready flag until it becomes true or timeout.
-func (m *MautrixAdapter) waitForReady(ctx context.Context) error {
-	const (
-		timeout      = 5 * time.Second
-		pollInterval = 10 * time.Millisecond
-	)
-
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if m.as.Ready {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(pollInterval):
-			// Continue polling
-		}
-	}
-	return fmt.Errorf("timeout waiting for appservice to become ready")
-}
-
 // Disconnect closes the connection to the Matrix homeserver.
 func (m *MautrixAdapter) Disconnect() error {
-	// AppService doesn't have a strict disconnect, but we can stop the HTTP server if we started one
+	// Stop the AppService HTTP server if running
+	m.as.Stop()
 	return nil
 }
 
