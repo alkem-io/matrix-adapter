@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,9 +81,16 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	m.logger.Info("Initializing Matrix AppService connection...")
 
-	// Start the AppService (this starts the HTTP server for transactions)
+	// Start the AppService HTTP server in a goroutine
 	go m.as.Start()
 
+	// Wait for the AppService to become ready (HTTP server started)
+	if err := m.waitForReady(ctx); err != nil {
+		return fmt.Errorf("appservice failed to start: %w", err)
+	}
+	m.logger.Debug("AppService HTTP server started")
+
+	// Verify bot connection
 	botClient := m.as.BotClient()
 	whoami, err := botClient.Whoami(ctx)
 	if err != nil {
@@ -93,6 +101,28 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// waitForReady polls the AppService Ready flag until it becomes true or timeout.
+func (m *MautrixAdapter) waitForReady(ctx context.Context) error {
+	const (
+		timeout      = 5 * time.Second
+		pollInterval = 10 * time.Millisecond
+	)
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if m.as.Ready {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+			// Continue polling
+		}
+	}
+	return fmt.Errorf("timeout waiting for appservice to become ready")
 }
 
 // Disconnect closes the connection to the Matrix homeserver.
@@ -385,11 +415,7 @@ func (m *MautrixAdapter) GetReactionEventID(
 	// Manually build request for relations
 	// BuildURL signature is tricky in this version, so we construct the URL manually.
 	// We assume Client.HomeserverURL is set and valid.
-	hsURL := intent.HomeserverURL.String()
-	// Ensure no trailing slash
-	if hsURL[len(hsURL)-1] == '/' {
-		hsURL = hsURL[:len(hsURL)-1]
-	}
+	hsURL := strings.TrimSuffix(intent.HomeserverURL.String(), "/")
 	u := fmt.Sprintf(
 		"%s/_matrix/client/v1/rooms/%s/relations/%s/%s/%s", hsURL, roomID, eventID, event.RelAnnotation,
 		event.EventReaction,
@@ -501,8 +527,8 @@ func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) 
 		return nil, fmt.Errorf("failed to get room messages: %w", err)
 	}
 
-	// First pass: collect messages into a map by event ID
-	messageMap := make(map[string]*domain.Message)
+	// First pass: collect messages and track indices by event ID
+	messageIndices := make(map[string]int)
 	messages := make([]domain.Message, 0, len(resp.Chunk))
 
 	for _, evt := range resp.Chunk {
@@ -514,7 +540,7 @@ func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) 
 		if msg != nil {
 			msg.Reactions = []domain.Reaction{} // Initialize empty slice
 			messages = append(messages, *msg)
-			messageMap[msg.ID] = &messages[len(messages)-1]
+			messageIndices[msg.ID] = len(messages) - 1
 		}
 	}
 
@@ -531,8 +557,8 @@ func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) 
 
 		// Find parent message and attach reaction
 		parentMsgID := reaction.MessageID.String()
-		if parentMsg, exists := messageMap[parentMsgID]; exists {
-			parentMsg.Reactions = append(parentMsg.Reactions, *reaction)
+		if idx, exists := messageIndices[parentMsgID]; exists {
+			messages[idx].Reactions = append(messages[idx].Reactions, *reaction)
 		}
 	}
 

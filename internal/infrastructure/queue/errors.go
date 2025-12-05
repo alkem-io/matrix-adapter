@@ -27,12 +27,12 @@ func NewRoomNotFoundError(msg string) dto.BaseResponse {
 
 // NewMessageNotFoundError creates an error response for message not found errors.
 func NewMessageNotFoundError(msg string) dto.BaseResponse {
-	return dto.NewErrorResponse(dto.ErrCodeMessageNotFound, "message not found: "+msg)
+	return dto.NewErrorResponse(dto.ErrCodeMessageNotFound, msg)
 }
 
 // NewReactionNotFoundError creates an error response for reaction not found errors.
 func NewReactionNotFoundError(msg string) dto.BaseResponse {
-	return dto.NewErrorResponse(dto.ErrCodeReactionNotFound, "reaction not found: "+msg)
+	return dto.NewErrorResponse(dto.ErrCodeReactionNotFound, msg)
 }
 
 // NewInvalidPayloadError creates an error response for JSON unmarshal errors.

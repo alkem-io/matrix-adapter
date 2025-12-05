@@ -107,38 +107,42 @@ func parseCommandRegistry(path string) ([]CommandDef, error) {
 
 	// First pass: collect all const string values
 	constants := make(map[string]string)
-	ast.Inspect(node, func(n ast.Node) bool {
-		genDecl, ok := n.(*ast.GenDecl)
-		if !ok || genDecl.Tok != token.CONST {
-			return true
-		}
-		for _, spec := range genDecl.Specs {
-			valueSpec, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
+	ast.Inspect(
+		node, func(n ast.Node) bool {
+			genDecl, ok := n.(*ast.GenDecl)
+			if !ok || genDecl.Tok != token.CONST {
+				return true
 			}
-			for i, name := range valueSpec.Names {
-				if i < len(valueSpec.Values) {
-					if lit, ok := valueSpec.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-						constants[name.Name] = strings.Trim(lit.Value, "\"")
+			for _, spec := range genDecl.Specs {
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range valueSpec.Names {
+					if i < len(valueSpec.Values) {
+						if lit, ok := valueSpec.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+							constants[name.Name] = strings.Trim(lit.Value, "\"")
+						}
 					}
 				}
 			}
-		}
-		return true
-	})
+			return true
+		},
+	)
 
 	// Second pass: extract command definitions
 	var commands []CommandDef
-	ast.Inspect(node, func(n ast.Node) bool {
-		genDecl, ok := n.(*ast.GenDecl)
-		if !ok || genDecl.Tok != token.VAR {
-			return true
-		}
+	ast.Inspect(
+		node, func(n ast.Node) bool {
+			genDecl, ok := n.(*ast.GenDecl)
+			if !ok || genDecl.Tok != token.VAR {
+				return true
+			}
 
-		commands = append(commands, extractCommandsFromGenDecl(genDecl, constants)...)
-		return true
-	})
+			commands = append(commands, extractCommandsFromGenDecl(genDecl, constants)...)
+			return true
+		},
+	)
 
 	return commands, nil
 }
@@ -228,6 +232,7 @@ func extractCommandField(kv *ast.KeyValueExpr, cmd *CommandDef, constants map[st
 		// Constant reference: Topic: TopicRoomCreate
 		resolved, ok := constants[v.Name]
 		if !ok {
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: unresolved constant %s\n", v.Name)
 			return
 		}
 		strVal = resolved
@@ -291,9 +296,11 @@ func generateCommandsTS(commands []CommandDef) string {
 	}
 
 	// Sort commands by topic
-	sort.Slice(cmdList, func(i, j int) bool {
-		return cmdList[i].Topic < cmdList[j].Topic
-	})
+	sort.Slice(
+		cmdList, func(i, j int) bool {
+			return cmdList[i].Topic < cmdList[j].Topic
+		},
+	)
 
 	for _, cmd := range cmdList {
 		sb.WriteString(fmt.Sprintf("  '%s': {\n", cmd.Topic))
@@ -311,9 +318,11 @@ func generateCommandsTS(commands []CommandDef) string {
 		sb.WriteString(" */\n")
 		sb.WriteString("export const OutgoingEvents = {\n")
 
-		sort.Slice(eventList, func(i, j int) bool {
-			return eventList[i].Topic < eventList[j].Topic
-		})
+		sort.Slice(
+			eventList, func(i, j int) bool {
+				return eventList[i].Topic < eventList[j].Topic
+			},
+		)
 
 		for _, evt := range eventList {
 			sb.WriteString(fmt.Sprintf("  '%s': {\n", evt.Topic))
@@ -357,14 +366,16 @@ func parseTopicConstants(path string) ([]string, error) {
 	}
 
 	var events []string
-	ast.Inspect(node, func(n ast.Node) bool {
-		genDecl, ok := n.(*ast.GenDecl)
-		if !ok || genDecl.Tok != token.CONST {
+	ast.Inspect(
+		node, func(n ast.Node) bool {
+			genDecl, ok := n.(*ast.GenDecl)
+			if !ok || genDecl.Tok != token.CONST {
+				return true
+			}
+			events = append(events, extractStringConstants(genDecl)...)
 			return true
-		}
-		events = append(events, extractStringConstants(genDecl)...)
-		return true
-	})
+		},
+	)
 
 	return events, nil
 }
@@ -471,9 +482,11 @@ func generateTSContent(events map[string]string) string {
 		pairs = append(pairs, pair{Key: events[val], Value: val})
 	}
 
-	sort.Slice(pairs, func(i, j int) bool {
-		return pairs[i].Key < pairs[j].Key
-	})
+	sort.Slice(
+		pairs, func(i, j int) bool {
+			return pairs[i].Key < pairs[j].Key
+		},
+	)
 
 	for _, p := range pairs {
 		sb.WriteString(fmt.Sprintf("  %s = '%s',\n", p.Key, p.Value))
