@@ -44,6 +44,11 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Update npm
+        run: npm install -g npm@latest
 
       - name: Generate Library
         run: make generate
