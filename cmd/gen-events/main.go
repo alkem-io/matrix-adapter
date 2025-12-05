@@ -28,17 +28,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 1. Parse topics.go for topic constants
-	topicEvents, err := parseTopicConstants("internal/infrastructure/queue/topics.go")
+	// 1. Parse topic constants from dto (source of truth)
+	topicEvents, err := parseTopicConstants("pkg/dto/commands.go")
 	if err != nil {
-		fmt.Printf("Error parsing topics.go: %v\n", err)
-		os.Exit(1)
-	}
-
-	// 2. Parse event_service.go for outgoing events
-	outgoingEvents, err := parseOutgoingEvents("internal/core/service/event_service.go")
-	if err != nil {
-		fmt.Printf("Error parsing event_service.go: %v\n", err)
+		fmt.Printf("Error parsing dto/commands.go for topics: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -47,11 +40,8 @@ func main() {
 	for _, evt := range topicEvents {
 		allEvents[evt] = generateEnumKey(evt)
 	}
-	for _, evt := range outgoingEvents {
-		allEvents[evt] = generateEnumKey(evt)
-	}
 
-	// 3. Read existing TS file to preserve custom mappings if any
+	// 2. Read existing TS file to preserve custom mappings if any
 	eventTypeFile := filepath.Join(outputDir, "matrix.adapter.event.type.ts")
 	existingMapping := parseExistingTSFile(eventTypeFile)
 	for val, key := range existingMapping {
@@ -60,10 +50,10 @@ func main() {
 		}
 	}
 
-	// 4. Generate event type enum TS content
+	// 3. Generate event type enum TS content
 	eventContent := generateTSContent(allEvents)
 
-	// 5. Write event type file
+	// 4. Write event type file
 	err = os.WriteFile(eventTypeFile, []byte(eventContent), 0600)
 	if err != nil {
 		fmt.Printf("Error writing event type file: %v\n", err)
@@ -71,7 +61,7 @@ func main() {
 	}
 	fmt.Printf("Successfully generated %s with %d events\n", eventTypeFile, len(allEvents))
 
-	// 6. Parse command registry from Go
+	// 5. Parse command registry from Go
 	commands, err := parseCommandRegistry("pkg/dto/commands.go")
 	if err != nil {
 		fmt.Printf("Error parsing commands.go: %v\n", err)
@@ -233,6 +223,14 @@ func extractCommandField(kv *ast.KeyValueExpr, cmd *CommandDef, constants map[st
 		resolved, ok := constants[v.Name]
 		if !ok {
 			fmt.Fprintf(os.Stderr, "Warning: unresolved constant %s\n", v.Name)
+			return
+		}
+		strVal = resolved
+	case *ast.SelectorExpr:
+		// Qualified constant reference: Topic: dto.TopicRoomCreate
+		resolved, ok := constants[v.Sel.Name]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Warning: unresolved selector constant %s\n", v.Sel.Name)
 			return
 		}
 		strVal = resolved
@@ -400,27 +398,6 @@ func extractStringConstants(genDecl *ast.GenDecl) []string {
 	}
 
 	return constants
-}
-
-func parseOutgoingEvents(path string) ([]string, error) {
-	//nolint:gosec // CLI tool reading known path
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	// Regex to find s.queue.Publish("event.name", ...)
-	// This is a simple heuristic
-	re := regexp.MustCompile(`Publish\("([^"]+)"`)
-	matches := re.FindAllStringSubmatch(string(content), -1)
-
-	var events []string
-	for _, m := range matches {
-		if len(m) > 1 {
-			events = append(events, m[1])
-		}
-	}
-	return events, nil
 }
 
 func parseExistingTSFile(path string) map[string]string {

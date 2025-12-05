@@ -3,6 +3,7 @@ package matrix
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -81,18 +82,24 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	m.logger.Info("Initializing Matrix AppService connection...")
 
-	// Start the AppService HTTP server in a goroutine.
-	// Note: Start() is blocking and logs errors internally.
-	// We monitor for unexpected stops via a separate goroutine.
+	// Channel to signal when the server has started or failed
+	startedCh := make(chan error, 1)
+
+	// Start the AppService HTTP server in a goroutine
 	go func() {
+		// Start() blocks until the server stops
 		m.as.Start()
-		// If we reach here, the server stopped (either gracefully or due to error)
+		// If we reach here immediately (before readiness check), it means startup failed
+		// The readiness check will detect this via the probe
 		m.logger.Warn("AppService HTTP server stopped")
 	}()
 
-	// Brief pause to let the HTTP server initialize
-	// This catches immediate failures like port conflicts
-	time.Sleep(50 * time.Millisecond)
+	// Perform readiness check with timeout
+	if err := m.waitForServerReady(ctx, startedCh); err != nil {
+		return fmt.Errorf("appservice failed to start: %w", err)
+	}
+
+	m.logger.Debug("AppService HTTP server is ready")
 
 	// Verify bot connection
 	botClient := m.as.BotClient()
@@ -104,6 +111,64 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 		m.logger.Info("Matrix AppService connected", "user_id", whoami.UserID)
 	}
 
+	return nil
+}
+
+// waitForServerReady probes the AppService HTTP server until it's ready or times out.
+func (m *MautrixAdapter) waitForServerReady(ctx context.Context, _ chan error) error {
+	const (
+		timeout      = 5 * time.Second
+		pollInterval = 25 * time.Millisecond
+	)
+
+	// Build the server address for health check
+	serverAddr := m.getServerAddress()
+	if serverAddr == "" {
+		return fmt.Errorf("appservice host not configured")
+	}
+
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Try to connect to the server
+		if err := m.probeServer(serverAddr); err == nil {
+			return nil // Server is ready
+		} else {
+			lastErr = err
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("timeout waiting for server (last error: %w)", lastErr)
+	}
+	return fmt.Errorf("timeout waiting for server to become ready")
+}
+
+// getServerAddress returns the HTTP address of the AppService server.
+func (m *MautrixAdapter) getServerAddress() string {
+	if m.as.Host.IsUnixSocket() {
+		return "" // Unix sockets need different handling, skip for now
+	}
+	return m.as.Host.Address()
+}
+
+// probeServer attempts to connect to the server to verify it's listening.
+func (m *MautrixAdapter) probeServer(addr string) error {
+	// Use a TCP connection probe - faster than HTTP and doesn't require valid routes
+	conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
 	return nil
 }
 
@@ -363,13 +428,22 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 		if !ok {
 			// Last resort: try raw JSON
 			if rawBody, ok := evt.Content.Raw["body"].(string); ok {
-				return &domain.Message{
+				msg := &domain.Message{
 					ID:             evt.ID.String(),
 					RoomID:         roomID.String(),
 					Content:        rawBody,
 					SenderMatrixID: evt.Sender.String(),
 					Timestamp:      time.UnixMilli(evt.Timestamp),
-				}, nil
+				}
+				// Try to extract thread info from raw content
+				if relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{}); ok {
+					if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
+						if eventID, ok := inReplyTo["event_id"].(string); ok {
+							msg.ThreadID = eventID
+						}
+					}
+				}
+				return msg, nil
 			}
 			return nil, fmt.Errorf("event is not a message")
 		}
