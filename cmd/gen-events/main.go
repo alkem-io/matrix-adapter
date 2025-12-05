@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -111,7 +112,9 @@ func parseCommandRegistry(path string) ([]CommandDef, error) {
 				for i, name := range valueSpec.Names {
 					if i < len(valueSpec.Values) {
 						if lit, ok := valueSpec.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-							constants[name.Name] = strings.Trim(lit.Value, "\"")
+							if unquoted, err := strconv.Unquote(lit.Value); err == nil {
+								constants[name.Name] = unquoted
+							}
 						}
 					}
 				}
@@ -217,7 +220,11 @@ func extractCommandField(kv *ast.KeyValueExpr, cmd *CommandDef, constants map[st
 		if v.Kind != token.STRING {
 			return
 		}
-		strVal = strings.Trim(v.Value, "\"")
+		unquoted, err := strconv.Unquote(v.Value)
+		if err != nil {
+			return
+		}
+		strVal = unquoted
 	case *ast.Ident:
 		// Constant reference: Topic: TopicRoomCreate
 		resolved, ok := constants[v.Name]
@@ -393,7 +400,9 @@ func extractStringConstants(genDecl *ast.GenDecl) []string {
 			if !ok || lit.Kind != token.STRING {
 				continue
 			}
-			constants = append(constants, strings.Trim(lit.Value, "\""))
+			if unquoted, err := strconv.Unquote(lit.Value); err == nil {
+				constants = append(constants, unquoted)
+			}
 		}
 	}
 
