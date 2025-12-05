@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
-	"github.com/google/uuid"
 )
 
 // ============================================================================
@@ -24,6 +25,16 @@ func NewRoomNotFoundError(msg string) dto.BaseResponse {
 	return dto.NewErrorResponse(dto.ErrCodeRoomNotFound, msg)
 }
 
+// NewMessageNotFoundError creates an error response for message not found errors.
+func NewMessageNotFoundError(msg string) dto.BaseResponse {
+	return dto.NewErrorResponse(dto.ErrCodeMessageNotFound, msg)
+}
+
+// NewReactionNotFoundError creates an error response for reaction not found errors.
+func NewReactionNotFoundError(msg string) dto.BaseResponse {
+	return dto.NewErrorResponse(dto.ErrCodeReactionNotFound, msg)
+}
+
 // NewInvalidPayloadError creates an error response for JSON unmarshal errors.
 func NewInvalidPayloadError(err error) dto.BaseResponse {
 	return dto.NewErrorResponse(dto.ErrCodeInvalidParam, "invalid payload: "+err.Error())
@@ -35,6 +46,7 @@ func NewInvalidPayloadError(err error) dto.BaseResponse {
 
 // UUIDValidator is an interface for types that can return a UUID.
 type UUIDValidator interface {
+	// UUID returns the UUID value of the implementing type.
 	UUID() uuid.UUID
 }
 

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -28,17 +29,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 1. Parse topics.go for topic constants
-	topicEvents, err := parseTopicConstants("internal/infrastructure/queue/topics.go")
+	// 1. Parse topic constants from dto (source of truth)
+	topicEvents, err := parseTopicConstants("pkg/dto/commands.go")
 	if err != nil {
-		fmt.Printf("Error parsing topics.go: %v\n", err)
-		os.Exit(1)
-	}
-
-	// 2. Parse event_service.go for outgoing events
-	outgoingEvents, err := parseOutgoingEvents("internal/core/service/event_service.go")
-	if err != nil {
-		fmt.Printf("Error parsing event_service.go: %v\n", err)
+		fmt.Printf("Error parsing dto/commands.go for topics: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -47,11 +41,8 @@ func main() {
 	for _, evt := range topicEvents {
 		allEvents[evt] = generateEnumKey(evt)
 	}
-	for _, evt := range outgoingEvents {
-		allEvents[evt] = generateEnumKey(evt)
-	}
 
-	// 3. Read existing TS file to preserve custom mappings if any
+	// 2. Read existing TS file to preserve custom mappings if any
 	eventTypeFile := filepath.Join(outputDir, "matrix.adapter.event.type.ts")
 	existingMapping := parseExistingTSFile(eventTypeFile)
 	for val, key := range existingMapping {
@@ -60,10 +51,10 @@ func main() {
 		}
 	}
 
-	// 4. Generate event type enum TS content
+	// 3. Generate event type enum TS content
 	eventContent := generateTSContent(allEvents)
 
-	// 5. Write event type file
+	// 4. Write event type file
 	err = os.WriteFile(eventTypeFile, []byte(eventContent), 0600)
 	if err != nil {
 		fmt.Printf("Error writing event type file: %v\n", err)
@@ -71,7 +62,7 @@ func main() {
 	}
 	fmt.Printf("Successfully generated %s with %d events\n", eventTypeFile, len(allEvents))
 
-	// 6. Parse command registry from Go
+	// 5. Parse command registry from Go
 	commands, err := parseCommandRegistry("pkg/dto/commands.go")
 	if err != nil {
 		fmt.Printf("Error parsing commands.go: %v\n", err)
@@ -105,23 +96,52 @@ func parseCommandRegistry(path string) ([]CommandDef, error) {
 		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 
-	var commands []CommandDef
-
-	ast.Inspect(node, func(n ast.Node) bool {
-		genDecl, ok := n.(*ast.GenDecl)
-		if !ok || genDecl.Tok != token.VAR {
+	// First pass: collect all const string values
+	constants := make(map[string]string)
+	ast.Inspect(
+		node, func(n ast.Node) bool {
+			genDecl, ok := n.(*ast.GenDecl)
+			if !ok || genDecl.Tok != token.CONST {
+				return true
+			}
+			for _, spec := range genDecl.Specs {
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range valueSpec.Names {
+					if i < len(valueSpec.Values) {
+						if lit, ok := valueSpec.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+							if unquoted, err := strconv.Unquote(lit.Value); err == nil {
+								constants[name.Name] = unquoted
+							}
+						}
+					}
+				}
+			}
 			return true
-		}
+		},
+	)
 
-		commands = append(commands, extractCommandsFromGenDecl(genDecl)...)
-		return true
-	})
+	// Second pass: extract command definitions
+	var commands []CommandDef
+	ast.Inspect(
+		node, func(n ast.Node) bool {
+			genDecl, ok := n.(*ast.GenDecl)
+			if !ok || genDecl.Tok != token.VAR {
+				return true
+			}
+
+			commands = append(commands, extractCommandsFromGenDecl(genDecl, constants)...)
+			return true
+		},
+	)
 
 	return commands, nil
 }
 
 // extractCommandsFromGenDecl extracts CommandDef entries from a var declaration.
-func extractCommandsFromGenDecl(genDecl *ast.GenDecl) []CommandDef {
+func extractCommandsFromGenDecl(genDecl *ast.GenDecl, constants map[string]string) []CommandDef {
 	var commands []CommandDef
 
 	for _, spec := range genDecl.Specs {
@@ -129,14 +149,14 @@ func extractCommandsFromGenDecl(genDecl *ast.GenDecl) []CommandDef {
 		if !ok {
 			continue
 		}
-		commands = append(commands, extractCommandsFromValueSpec(valueSpec)...)
+		commands = append(commands, extractCommandsFromValueSpec(valueSpec, constants)...)
 	}
 
 	return commands
 }
 
 // extractCommandsFromValueSpec extracts CommandDef entries from a value spec.
-func extractCommandsFromValueSpec(valueSpec *ast.ValueSpec) []CommandDef {
+func extractCommandsFromValueSpec(valueSpec *ast.ValueSpec, constants map[string]string) []CommandDef {
 	var commands []CommandDef
 
 	for i, name := range valueSpec.Names {
@@ -153,7 +173,7 @@ func extractCommandsFromValueSpec(valueSpec *ast.ValueSpec) []CommandDef {
 		}
 
 		for _, elt := range compLit.Elts {
-			if cmd := parseCommandDefLiteral(elt); cmd != nil {
+			if cmd := parseCommandDefLiteral(elt, constants); cmd != nil {
 				commands = append(commands, *cmd)
 			}
 		}
@@ -163,7 +183,7 @@ func extractCommandsFromValueSpec(valueSpec *ast.ValueSpec) []CommandDef {
 }
 
 // parseCommandDefLiteral extracts CommandDef fields from an AST composite literal.
-func parseCommandDefLiteral(expr ast.Expr) *CommandDef {
+func parseCommandDefLiteral(expr ast.Expr, constants map[string]string) *CommandDef {
 	compLit, ok := expr.(*ast.CompositeLit)
 	if !ok {
 		return nil
@@ -176,7 +196,7 @@ func parseCommandDefLiteral(expr ast.Expr) *CommandDef {
 		if !ok {
 			continue
 		}
-		extractCommandField(kv, cmd)
+		extractCommandField(kv, cmd, constants)
 	}
 
 	if cmd.Topic != "" && cmd.ResponseType != "" {
@@ -186,18 +206,44 @@ func parseCommandDefLiteral(expr ast.Expr) *CommandDef {
 }
 
 // extractCommandField extracts a single field from a key-value expression.
-func extractCommandField(kv *ast.KeyValueExpr, cmd *CommandDef) {
+func extractCommandField(kv *ast.KeyValueExpr, cmd *CommandDef, constants map[string]string) {
 	key, ok := kv.Key.(*ast.Ident)
 	if !ok {
 		return
 	}
 
-	value, ok := kv.Value.(*ast.BasicLit)
-	if !ok || value.Kind != token.STRING {
+	var strVal string
+
+	switch v := kv.Value.(type) {
+	case *ast.BasicLit:
+		// Direct string literal: Topic: "communication.room.create"
+		if v.Kind != token.STRING {
+			return
+		}
+		unquoted, err := strconv.Unquote(v.Value)
+		if err != nil {
+			return
+		}
+		strVal = unquoted
+	case *ast.Ident:
+		// Constant reference: Topic: TopicRoomCreate
+		resolved, ok := constants[v.Name]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Warning: unresolved constant %s\n", v.Name)
+			return
+		}
+		strVal = resolved
+	case *ast.SelectorExpr:
+		// Qualified constant reference: Topic: dto.TopicRoomCreate
+		resolved, ok := constants[v.Sel.Name]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Warning: unresolved selector constant %s\n", v.Sel.Name)
+			return
+		}
+		strVal = resolved
+	default:
 		return
 	}
-
-	strVal := strings.Trim(value.Value, "\"")
 
 	switch key.Name {
 	case "Topic":
@@ -255,9 +301,11 @@ func generateCommandsTS(commands []CommandDef) string {
 	}
 
 	// Sort commands by topic
-	sort.Slice(cmdList, func(i, j int) bool {
-		return cmdList[i].Topic < cmdList[j].Topic
-	})
+	sort.Slice(
+		cmdList, func(i, j int) bool {
+			return cmdList[i].Topic < cmdList[j].Topic
+		},
+	)
 
 	for _, cmd := range cmdList {
 		sb.WriteString(fmt.Sprintf("  '%s': {\n", cmd.Topic))
@@ -275,9 +323,11 @@ func generateCommandsTS(commands []CommandDef) string {
 		sb.WriteString(" */\n")
 		sb.WriteString("export const OutgoingEvents = {\n")
 
-		sort.Slice(eventList, func(i, j int) bool {
-			return eventList[i].Topic < eventList[j].Topic
-		})
+		sort.Slice(
+			eventList, func(i, j int) bool {
+				return eventList[i].Topic < eventList[j].Topic
+			},
+		)
 
 		for _, evt := range eventList {
 			sb.WriteString(fmt.Sprintf("  '%s': {\n", evt.Topic))
@@ -321,14 +371,16 @@ func parseTopicConstants(path string) ([]string, error) {
 	}
 
 	var events []string
-	ast.Inspect(node, func(n ast.Node) bool {
-		genDecl, ok := n.(*ast.GenDecl)
-		if !ok || genDecl.Tok != token.CONST {
+	ast.Inspect(
+		node, func(n ast.Node) bool {
+			genDecl, ok := n.(*ast.GenDecl)
+			if !ok || genDecl.Tok != token.CONST {
+				return true
+			}
+			events = append(events, extractStringConstants(genDecl)...)
 			return true
-		}
-		events = append(events, extractStringConstants(genDecl)...)
-		return true
-	})
+		},
+	)
 
 	return events, nil
 }
@@ -348,32 +400,13 @@ func extractStringConstants(genDecl *ast.GenDecl) []string {
 			if !ok || lit.Kind != token.STRING {
 				continue
 			}
-			constants = append(constants, strings.Trim(lit.Value, "\""))
+			if unquoted, err := strconv.Unquote(lit.Value); err == nil {
+				constants = append(constants, unquoted)
+			}
 		}
 	}
 
 	return constants
-}
-
-func parseOutgoingEvents(path string) ([]string, error) {
-	//nolint:gosec // CLI tool reading known path
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	// Regex to find s.queue.Publish("event.name", ...)
-	// This is a simple heuristic
-	re := regexp.MustCompile(`Publish\("([^"]+)"`)
-	matches := re.FindAllStringSubmatch(string(content), -1)
-
-	var events []string
-	for _, m := range matches {
-		if len(m) > 1 {
-			events = append(events, m[1])
-		}
-	}
-	return events, nil
 }
 
 func parseExistingTSFile(path string) map[string]string {
@@ -435,9 +468,11 @@ func generateTSContent(events map[string]string) string {
 		pairs = append(pairs, pair{Key: events[val], Value: val})
 	}
 
-	sort.Slice(pairs, func(i, j int) bool {
-		return pairs[i].Key < pairs[j].Key
-	})
+	sort.Slice(
+		pairs, func(i, j int) bool {
+			return pairs[i].Key < pairs[j].Key
+		},
+	)
 
 	for _, p := range pairs {
 		sb.WriteString(fmt.Sprintf("  %s = '%s',\n", p.Key, p.Value))

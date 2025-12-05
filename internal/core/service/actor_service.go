@@ -3,9 +3,10 @@ package service
 import (
 	"context"
 
+	"github.com/google/uuid"
+
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
-	"github.com/google/uuid"
 )
 
 // ActorService handles operations related to actor profile synchronization.

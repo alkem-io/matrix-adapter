@@ -1,69 +1,59 @@
 // Package queue provides RabbitMQ message queue infrastructure.
 package queue
 
-// ============================================================================
-// Command Topics (Inbound from Alkemio Server)
-// ============================================================================
+import "github.com/alkem-io/matrix-adapter-go/pkg/dto"
 
-// Room command topics
+// Topic aliases for internal use - imported from dto (single source of truth).
 const (
-	TopicRoomCreate = "communication.room.create"
-	TopicRoomGet    = "communication.room.get"
-	TopicRoomUpdate = "communication.room.update"
-	TopicRoomDelete = "communication.room.delete"
-	TopicRoomList   = "communication.room.list"
-)
+	// TopicRoomCreate is the topic for room creation commands.
+	TopicRoomCreate = dto.TopicRoomCreate
+	// TopicRoomGet is the topic for room retrieval commands.
+	TopicRoomGet = dto.TopicRoomGet
+	// TopicRoomUpdate is the topic for room update commands.
+	TopicRoomUpdate = dto.TopicRoomUpdate
+	// TopicRoomDelete is the topic for room deletion commands.
+	TopicRoomDelete = dto.TopicRoomDelete
+	// TopicRoomList is the topic for room listing commands.
+	TopicRoomList = dto.TopicRoomList
 
-// Message command topics
-const (
-	TopicMessageSend   = "communication.message.send"
-	TopicMessageGet    = "communication.message.get"
-	TopicMessageDelete = "communication.message.delete"
-)
+	// TopicMessageSend is the topic for message send commands.
+	TopicMessageSend = dto.TopicMessageSend
+	// TopicMessageGet is the topic for message retrieval commands.
+	TopicMessageGet = dto.TopicMessageGet
+	// TopicMessageDelete is the topic for message deletion commands.
+	TopicMessageDelete = dto.TopicMessageDelete
 
-// Reaction command topics
-const (
-	TopicReactionAdd    = "communication.reaction.add"
-	TopicReactionRemove = "communication.reaction.remove"
-	TopicReactionGet    = "communication.reaction.get"
-)
+	// TopicReactionAdd is the topic for reaction add commands.
+	TopicReactionAdd = dto.TopicReactionAdd
+	// TopicReactionRemove is the topic for reaction remove commands.
+	TopicReactionRemove = dto.TopicReactionRemove
+	// TopicReactionGet is the topic for reaction retrieval commands.
+	TopicReactionGet = dto.TopicReactionGet
 
-// Room batch member command topics
-const (
-	TopicRoomMemberBatchAdd    = "communication.room.member.batch.add"
-	TopicRoomMemberBatchRemove = "communication.room.member.batch.remove"
-)
+	// TopicRoomMemberBatchAdd is the topic for batch adding room members.
+	TopicRoomMemberBatchAdd = dto.TopicRoomMemberBatchAdd
+	// TopicRoomMemberBatchRemove is the topic for batch removing room members.
+	TopicRoomMemberBatchRemove = dto.TopicRoomMemberBatchRemove
 
-// Actor command topics
-const (
-	TopicActorSync = "communication.actor.sync"
-)
+	// TopicActorSync is the topic for actor synchronization commands.
+	TopicActorSync = dto.TopicActorSync
 
-// Space command topics
-const (
-	TopicSpaceCreate = "communication.space.create"
-	TopicSpaceGet    = "communication.space.get"
-	TopicSpaceUpdate = "communication.space.update"
-	TopicSpaceDelete = "communication.space.delete"
-	TopicSpaceList   = "communication.space.list"
-)
+	// TopicSpaceCreate is the topic for space creation commands.
+	TopicSpaceCreate = dto.TopicSpaceCreate
+	// TopicSpaceGet is the topic for space retrieval commands.
+	TopicSpaceGet = dto.TopicSpaceGet
+	// TopicSpaceUpdate is the topic for space update commands.
+	TopicSpaceUpdate = dto.TopicSpaceUpdate
+	// TopicSpaceDelete is the topic for space deletion commands.
+	TopicSpaceDelete = dto.TopicSpaceDelete
+	// TopicSpaceList is the topic for space listing commands.
+	TopicSpaceList = dto.TopicSpaceList
 
-// Hierarchy command topics
-const (
-	TopicHierarchySetParent = "communication.hierarchy.set_parent"
-)
+	// TopicHierarchySetParent is the topic for setting space hierarchy parent.
+	TopicHierarchySetParent = dto.TopicHierarchySetParent
 
-// Space batch member command topics
-const (
-	TopicSpaceMemberBatchAdd    = "communication.space.member.batch.add"
-	TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove"
-)
-
-// ============================================================================
-// Event Topics (Outbound to Alkemio Server)
-// ============================================================================
-
-// Message event topics
-const (
-	TopicMessageReceived = "communication.message.received"
+	// TopicSpaceMemberBatchAdd is the topic for batch adding space members.
+	TopicSpaceMemberBatchAdd = dto.TopicSpaceMemberBatchAdd
+	// TopicSpaceMemberBatchRemove is the topic for batch removing space members.
+	TopicSpaceMemberBatchRemove = dto.TopicSpaceMemberBatchRemove
 )

@@ -57,17 +57,17 @@ func TestMapServiceError(t *testing.T) {
 		},
 		{
 			name:         "forbidden string matches",
-			err:          errors.New("forbidden: you cannot do this"),
+			err:          errors.New("forbidden: you cannot do this"), //nolint:err113 // test fixture
 			expectedCode: dto.ErrCodeNotAllowed,
 		},
 		{
 			name:         "not found string matches",
-			err:          errors.New("resource not found"),
+			err:          errors.New("resource not found"), //nolint:err113 // test fixture
 			expectedCode: dto.ErrCodeRoomNotFound,
 		},
 		{
 			name:         "unknown error maps to MATRIX_ERROR",
-			err:          errors.New("connection timeout"),
+			err:          errors.New("connection timeout"), //nolint:err113 // test fixture
 			expectedCode: dto.ErrCodeMatrixError,
 		},
 	}

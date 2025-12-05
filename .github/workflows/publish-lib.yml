@@ -16,6 +16,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # Required for npm provenance / trusted publishing
 
     steps:
       - name: Checkout code
@@ -26,12 +27,21 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Setup Node.js
+      - name: Setup Node.js (GitHub Packages)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@alkem-io'
+
+      - name: Setup Node.js (npmjs)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          scope: '@alkemio'
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -49,13 +59,17 @@ jobs:
         working-directory: lib
         run: pnpm build
 
-      - name: Set Version (Tag)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Set Version and Package Name (Tag - npmjs)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         working-directory: lib
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          echo "Setting version to $VERSION"
+          echo "Setting version to $VERSION for npmjs"
+          # Update package name for npmjs
+          npm pkg set name="@alkemio/matrix-adapter-lib"
           npm version $VERSION --no-git-tag-version
+          # Update publishConfig for npmjs
+          npm pkg set publishConfig.registry="https://registry.npmjs.org/"
 
       - name: Set Version (PR)
         if: github.event_name == 'pull_request'
@@ -76,13 +90,14 @@ jobs:
           echo "Setting version to $VERSION"
           npm version $VERSION --no-git-tag-version
 
-      - name: Publish
+      - name: Publish to npmjs (Tag)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         working-directory: lib
-        run: |
-          TAG="canary"
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            TAG="latest"
-          fi
-          pnpm publish --no-git-checks --tag $TAG
+        run: pnpm publish --no-git-checks --tag latest --access public --provenance
+
+      - name: Publish to GitHub Packages (PR/Manual)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        working-directory: lib
+        run: pnpm publish --no-git-checks --tag canary
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

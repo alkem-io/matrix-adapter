@@ -3,6 +3,7 @@ package httpinfra
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -48,7 +49,7 @@ func NewHealthServer(port string, logger ports.Logger) *HealthServer {
 func (s *HealthServer) Start() {
 	go func() {
 		s.logger.Info("Starting Health Server", "addr", s.server.Addr)
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.Error("Health Server failed", "error", err)
 		}
 	}()

@@ -2,9 +2,10 @@
 package logger
 
 import (
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 )
 
 // ZapLogger is a Logger implementation using Uber's zap library.

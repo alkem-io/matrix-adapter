@@ -1,4 +1,4 @@
-version: 2
+version: "2"
 
 run:
   timeout: 5m
@@ -7,9 +7,10 @@ run:
 linters:
   enable:
     - errcheck
+    - errorlint         # Catches direct error comparisons that fail on wrapped errors
     - govet
     - ineffassign
-    - staticcheck
+    - staticcheck      # Includes stylecheck rules for error strings
     - unused
     - bodyclose
     - gocyclo
@@ -21,31 +22,42 @@ linters:
     - gosec
     - prealloc
     - whitespace
+  settings:
+    gocyclo:
+      min-complexity: 15
+    staticcheck:
+      checks:
+        - "all"         # Enable all rules including ST1020 (comment format)
+    revive:
+      enable-all-rules: false
+      rules:
+        - name: exported
+          severity: warning
+          arguments:
+            - "checkPrivateReceivers"
+            - "sayRepetitiveInsteadOfStutters"
+            - "checkPublicInterface"    # Check comments on public interface methods
+        - name: package-comments
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+        - name: defer
+        - name: constant-logical-expr
+        - name: bool-literal-in-expr
+        - name: atomic
+        - name: error-strings    # Error strings should not be capitalized or end with punctuation
+  exclusions:
+    presets: []  # No default exclusions - we want all linter warnings
 
 formatters:
   enable:
     - gofmt
-    - goimports
-
-linters-settings:
-  gocyclo:
-    min-complexity: 15
-  goimports:
-    local-prefixes: github.com/alkem-io/matrix-adapter-go
-  revive:
-    enable-all-rules: false
-    rules:
-      - name: exported
-      - name: package-comments
-      - name: unused-parameter
-      - name: unreachable-code
-      - name: redefines-builtin-id
-      - name: defer
-      - name: constant-logical-expr
-      - name: bool-literal-in-expr
-      - name: atomic
+    - goimports       # Checks import sorting
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/alkem-io/matrix-adapter-go
 
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0

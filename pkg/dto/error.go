@@ -12,6 +12,10 @@ const (
 	ErrCodeSpaceNotFound ErrorCode = "SPACE_NOT_FOUND"
 	// ErrCodeActorNotFound indicates the referenced actor does not exist.
 	ErrCodeActorNotFound ErrorCode = "ACTOR_NOT_FOUND"
+	// ErrCodeMessageNotFound indicates the referenced message does not exist.
+	ErrCodeMessageNotFound ErrorCode = "MESSAGE_NOT_FOUND"
+	// ErrCodeReactionNotFound indicates the referenced reaction does not exist.
+	ErrCodeReactionNotFound ErrorCode = "REACTION_NOT_FOUND"
 	// ErrCodeMatrixError indicates a Matrix SDK/homeserver error.
 	ErrCodeMatrixError ErrorCode = "MATRIX_ERROR"
 	// ErrCodeInternalError indicates an unexpected system error.

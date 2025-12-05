@@ -3,53 +3,69 @@ package ports
 import (
 	"context"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
+
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 )
 
 // MatrixPort defines the interface for Matrix operations.
 type MatrixPort interface {
-	// Connection
+	// Connect establishes a connection to the Matrix homeserver.
 	Connect(ctx context.Context) error
+	// Disconnect terminates the connection to the Matrix homeserver.
 	Disconnect() error
 
 	// HomeserverDomain returns the homeserver domain for room alias construction.
 	HomeserverDomain() string
 
-	// Actor Management
+	// EnsureUser ensures that a Matrix user exists for the given actor, creating if necessary.
 	EnsureUser(ctx context.Context, actorID domain.Actor) (id.UserID, error)
+	// SetUserProfile updates the display name and avatar for a Matrix user.
 	SetUserProfile(ctx context.Context, actorID domain.Actor) error
 
-	// Room Management
+	// CreateRoomWithAlias creates a new Matrix room with the specified alias and initial members.
 	CreateRoomWithAlias(ctx context.Context, alkemioRoomID uuid.UUID, roomType string, name, topic string, initialMembers []domain.Actor) (id.RoomID, error)
+	// InviteUser invites a user to a Matrix room on behalf of another user.
 	InviteUser(ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID domain.Actor) error
+	// GetRoomDetails retrieves room metadata including name, topic, and state.
 	GetRoomDetails(ctx context.Context, roomID id.RoomID) (*domain.Room, error)
+	// GetRoomMembers returns the list of member user IDs in a room.
 	GetRoomMembers(ctx context.Context, roomID id.RoomID) ([]id.UserID, error)
+	// UpdateRoomState updates a room's name, topic, and canonical alias.
 	UpdateRoomState(ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, alias string) error
 
-	// Room Alias Operations
+	// ResolveAlias resolves a room alias to a room ID.
 	ResolveAlias(ctx context.Context, alias string) (id.RoomID, error)
+	// DeleteAlias removes a room alias from the homeserver.
 	DeleteAlias(ctx context.Context, alias string) error
+	// KickUser removes a user from a room with the specified reason.
 	KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error
 
-	// Messaging
+	// SendMessage sends a text message to a room on behalf of a user.
 	SendMessage(ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string) (id.EventID, error)
+	// SendReply sends a threaded reply to an existing message.
 	SendReply(
 		ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
 	) (id.EventID, error)
+	// RedactEvent deletes an event from a room.
 	RedactEvent(ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string) error
+	// SendReaction adds an emoji reaction to an event.
 	SendReaction(
 		ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, emoji string,
 	) (id.EventID, error)
+	// GetMessage retrieves a single message event from a room.
 	GetMessage(ctx context.Context, roomID id.RoomID, eventID id.EventID) (*domain.Message, error)
+	// GetRoomMessages retrieves all messages from a room.
 	GetRoomMessages(ctx context.Context, roomID id.RoomID) ([]domain.Message, error)
+	// GetReactionEventID finds the event ID of a specific reaction by a user.
 	GetReactionEventID(
 		ctx context.Context, roomID id.RoomID, eventID id.EventID, emoji string, senderID domain.Actor,
 	) (id.EventID, error)
+	// GetReaction retrieves a reaction event by its ID.
 	GetReaction(ctx context.Context, roomID id.RoomID, reactionID id.EventID) (*domain.Reaction, error)
 
-	// Admin Operations
+	// GetAllJoinedRooms returns all rooms the appservice bot has joined.
 	GetAllJoinedRooms(ctx context.Context) ([]id.RoomID, error)
 
 	// ============================================================================
@@ -83,6 +99,6 @@ type MatrixPort interface {
 	// KickFromSpace kicks a user from a space.
 	KickFromSpace(ctx context.Context, spaceID id.RoomID, userID id.UserID, reason string) error
 
-	// Event Listening
+	// OnMessage registers a handler for incoming message events.
 	OnMessage(handler func(msg domain.Message) error)
 }
