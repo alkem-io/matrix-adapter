@@ -232,7 +232,7 @@ func extractCommandField(kv *ast.KeyValueExpr, cmd *CommandDef, constants map[st
 		// Constant reference: Topic: TopicRoomCreate
 		resolved, ok := constants[v.Name]
 		if !ok {
-			_, _ = fmt.Fprintf(os.Stderr, "Warning: unresolved constant %s\n", v.Name)
+			fmt.Fprintf(os.Stderr, "Warning: unresolved constant %s\n", v.Name)
 			return
 		}
 		strVal = resolved
