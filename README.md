@@ -94,6 +94,43 @@ docker-compose up --build
 - **Format**: `make fmt`
 - **Generate DTOs**: `make generate` (Updates Go DTOs and generates TypeScript definitions in `lib/`)
 
+## TypeScript Library Publishing
+
+The shared TypeScript library (`lib/`) is automatically published via GitHub Actions workflows.
+
+### Publishing Targets
+
+| Trigger | Registry | Package Name | Version | Tag |
+|---------|----------|--------------|---------|-----|
+| Git tag (`v*`) | **npmjs** | `@alkemio/matrix-adapter-lib` | From tag (e.g., `v1.2.3` → `1.2.3`) | `latest` |
+| Pull Request | GitHub Packages | `@alkem-io/matrix-adapter-go-lib` | `0.0.0-pr-{number}-{sha}` | `canary` |
+| Manual dispatch | GitHub Packages | `@alkem-io/matrix-adapter-go-lib` | `0.0.0-manual-{sha}` | `canary` |
+
+### Release Process
+
+1. **Development**: PRs that modify `lib/` or `pkg/dto/` automatically publish canary versions to GitHub Packages for testing.
+
+2. **Production Release**: Create a git tag to publish to npmjs:
+   ```bash
+   git tag v1.2.3
+   git push origin v1.2.3
+   ```
+
+3. **Install from npmjs** (production):
+   ```bash
+   npm install @alkemio/matrix-adapter-lib
+   ```
+
+4. **Install from GitHub Packages** (development/testing):
+   ```bash
+   npm install @alkem-io/matrix-adapter-go-lib@canary --registry=https://npm.pkg.github.com
+   ```
+
+### Authentication
+
+- **npmjs**: Uses OIDC trusted publishing (no token required) with provenance attestation.
+- **GitHub Packages**: Uses `GITHUB_TOKEN` automatically provided by Actions.
+
 ## Architecture
 
 The project follows a Hexagonal (Ports & Adapters) architecture:

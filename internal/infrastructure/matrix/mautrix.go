@@ -48,7 +48,12 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 	// Create AppService instance
 	as := appservice.Create()
 	as.HomeserverDomain = homeserverDomain
-	// as.HomeserverURL = cfg.Matrix.HomeserverURL // Removed as field doesn't exist
+
+	// Configure the HTTP server listener for the AppService
+	// This is the address the AppService will listen on for incoming requests from the homeserver
+	as.Host.Hostname = "0.0.0.0"
+	as.Host.Port = 8080
+
 	as.Registration = &appservice.Registration{
 		ID:              "alkemio-matrix-adapter",
 		URL:             "http://localhost:8080",
