@@ -41,12 +41,14 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-          scope: '@alkemio'
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10
+
+      - name: Update npm
+        run: npm install -g npm@11
 
       - name: Generate Library
         run: make generate
