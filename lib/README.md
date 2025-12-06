@@ -131,6 +131,7 @@ const batchRequest: BatchAddSpaceMemberRequest = {
 | `COMMUNICATION_REACTION_GET` | `communication.reaction.get` | Get reaction details |
 | `COMMUNICATION_ACTOR_SYNC` | `communication.actor.sync` | Sync actor profile |
 | `COMMUNICATION_MESSAGE_RECEIVED` | `communication.message.received` | Message received event |
+| `COMMUNICATION_ROOM_DM_REQUESTED` | `communication.room.dm.requested` | DM room creation requested (outbound) |
 
 ### Type Aliases
 

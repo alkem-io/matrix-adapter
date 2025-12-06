@@ -14,6 +14,7 @@ import type {
   BatchRemoveSpaceMemberResponse,
   CreateRoomRequest,
   CreateSpaceRequest,
+  DMRequestedEvent,
   DeleteMessageRequest,
   DeleteRoomRequest,
   DeleteSpaceRequest,
@@ -140,6 +141,9 @@ export const Commands = {
 export const OutgoingEvents = {
   'communication.message.received': {
     payload: {} as MessageReceivedPayload,
+  },
+  'communication.room.dm.requested': {
+    payload: {} as DMRequestedEvent,
   },
 } as const;
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/config"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
 	httpinfra "github.com/alkem-io/matrix-adapter-go/internal/infrastructure/http"
@@ -20,7 +21,7 @@ type App struct {
 	logger        ports.Logger
 	matrixAdapter ports.MatrixPort
 	queueAdapter  ports.QueuePort
-	healthServer  *httpinfra.HealthServer
+	httpServer    *httpinfra.HTTPServer
 
 	// Handlers
 	roomHandler  *queue.RoomHandler
@@ -54,13 +55,22 @@ func NewApp(cfg *config.Config) (*App, error) {
 	actorService := service.NewActorService(matrixAdapter, log)
 	eventService := service.NewEventService(queueAdapter, log, cfg)
 	spaceService := service.NewSpaceService(matrixAdapter, log)
+	dmService := service.NewDMService(queueAdapter, log)
 
 	// 4. Initialize Handlers
 	roomHandler := queue.NewRoomHandler(roomService, matrixAdapter)
 	actorHandler := queue.NewActorHandler(actorService)
 	spaceHandler := queue.NewSpaceHandler(spaceService)
 
-	// 5. Wire up Event Listeners (Matrix -> Queue)
+	// 5. Initialize HTTP Server with health checks and webhook endpoints
+	httpServer := httpinfra.NewHTTPServer("8081", log)
+
+	// 6. Register DM Webhook Handler
+	idMapper := domain.NewIDMapper(cfg.Matrix.HomeserverName)
+	dmWebhookHandler := httpinfra.NewDMWebhookHandler(dmService, idMapper, cfg.Matrix.HomeserverToken, log)
+	dmWebhookHandler.RegisterRoutes(httpServer.Mux())
+
+	// 7. Wire up Event Listeners (Matrix -> Queue)
 	// This can be done here as it just registers a callback, doesn't start IO usually.
 	matrixAdapter.OnMessage(eventService.HandleMessage)
 
@@ -69,7 +79,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		logger:        log,
 		matrixAdapter: matrixAdapter,
 		queueAdapter:  queueAdapter,
-		healthServer:  httpinfra.NewHealthServer("8081", log),
+		httpServer:    httpServer,
 		roomHandler:   roomHandler,
 		actorHandler:  actorHandler,
 		spaceHandler:  spaceHandler,
@@ -91,8 +101,8 @@ func (a *App) Start(ctx context.Context) error {
 	// Wire up Queue Subscribers
 	queue.RegisterRoutes(a.queueAdapter, a.roomHandler, a.actorHandler, a.spaceHandler, a.logger)
 
-	// Start Health Server
-	a.healthServer.Start()
+	// Start HTTP Server (health checks + webhooks)
+	a.httpServer.Start()
 
 	return nil
 }
@@ -101,8 +111,8 @@ func (a *App) Start(ctx context.Context) error {
 func (a *App) Stop(ctx context.Context) {
 	a.logger.Info("Stopping application...")
 
-	if err := a.healthServer.Stop(ctx); err != nil {
-		a.logger.Error("Failed to stop health server", "error", err)
+	if err := a.httpServer.Stop(ctx); err != nil {
+		a.logger.Error("Failed to stop HTTP server", "error", err)
 	}
 
 	if err := a.matrixAdapter.Disconnect(); err != nil {

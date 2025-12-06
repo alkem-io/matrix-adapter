@@ -147,6 +147,10 @@ export const TopicSpaceMemberBatchAdd = "communication.space.member.batch.add";
  */
 export const TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove";
 /**
+ * DM room request topic (outbound event to Server)
+ */
+export const TopicRoomDMRequested = "communication.room.dm.requested";
+/**
  * CommandDef defines a command with its topic, request type name, and response type name.
  * This is used by the TypeScript generator to create type-safe command definitions.
  */
@@ -154,6 +158,42 @@ export interface CommandDef {
   Topic: string;
   RequestType: string;
   ResponseType: string;
+}
+
+//////////
+// source: dm.go
+/*
+Package dto provides Data Transfer Objects for the Matrix Adapter.
+*/
+
+/**
+ * DMRequestedEvent represents the event published when Synapse requests approval
+ * for a DM room creation between two Alkemio users.
+ * This is published to the communication.room.dm.requested topic.
+ */
+export interface DMRequestedEvent {
+  /**
+   * InitiatorActorID is the Alkemio UUID of the user who initiated the DM request.
+   */
+  initiator_actor_id: string;
+  /**
+   * TargetActorID is the Alkemio UUID of the user who is being invited to the DM.
+   */
+  target_actor_id: string;
+}
+/**
+ * DMWebhookPayload represents the payload received from Synapse's DM request webhook.
+ * The spam checker module sends this when a user attempts to create a DM room.
+ */
+export interface DMWebhookPayload {
+  /**
+   * Inviter is the Matrix user ID of the user initiating the DM (format: @{uuid}:{domain}).
+   */
+  inviter: string;
+  /**
+   * Invitee is the Matrix user ID of the user being invited (format: @{uuid}:{domain}).
+   */
+  invitee: string;
 }
 
 //////////

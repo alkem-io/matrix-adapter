@@ -11,6 +11,7 @@ export enum MatrixAdapterEventType {
   COMMUNICATION_REACTION_REMOVE = 'communication.reaction.remove',
   COMMUNICATION_ROOM_CREATE = 'communication.room.create',
   COMMUNICATION_ROOM_DELETE = 'communication.room.delete',
+  COMMUNICATION_ROOM_DM_REQUESTED = 'communication.room.dm.requested',
   COMMUNICATION_ROOM_GET = 'communication.room.get',
   COMMUNICATION_ROOM_LIST = 'communication.room.list',
   COMMUNICATION_ROOM_MEMBER_BATCH_ADD = 'communication.room.member.batch.add',

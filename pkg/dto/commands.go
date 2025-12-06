@@ -55,6 +55,9 @@ const (
 	TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove"
 )
 
+// TopicRoomDMRequested is the topic for DM room request events (outbound to Server).
+const TopicRoomDMRequested = "communication.room.dm.requested"
+
 // ============================================================================
 // Command Registry - Topic/Request/Response Mapping for Code Generation
 // ============================================================================
@@ -116,4 +119,5 @@ var CommandRegistry = []CommandDef{
 //nolint:gochecknoglobals // Registry is intentionally global for code generation
 var OutgoingEventRegistry = []CommandDef{
 	{Topic: TopicMessageReceived, RequestType: "", ResponseType: "MessageReceivedPayload"},
+	{Topic: TopicRoomDMRequested, RequestType: "", ResponseType: "DMRequestedEvent"},
 }

@@ -743,6 +743,103 @@ type ListSpacesResponse struct {
 
 ---
 
+## Outgoing Events
+
+Events emitted by the Adapter to notify Alkemio Server of external actions.
+
+### 23. Message Received (Outgoing Event)
+
+Published when the Adapter receives a message in a room from a user.
+
+*   **Event Subject**: `communication.message.received`
+
+#### Payload
+
+```go
+type MessageReceivedPayload struct {
+    RoomID      string  `json:"roomId"`
+    RoomName    string  `json:"roomName"`
+    Message     Message `json:"message"`
+    ActorID     string  `json:"actorID"`
+    CommunityID string  `json:"communityId,omitempty"`
+}
+```
+
+---
+
+### 24. DM Requested (Outgoing Event)
+
+Published when a Synapse spam checker module requests approval for a DM room creation. This event is triggered via the Adapter's webhook endpoint.
+
+*   **Event Subject**: `communication.room.dm.requested`
+
+#### Payload
+
+```go
+type DMRequestedEvent struct {
+    InitiatorActorID string `json:"initiator_actor_id"` // Alkemio UUID of initiating user
+    TargetActorID    string `json:"target_actor_id"`    // Alkemio UUID of target user
+}
+```
+
+**Source**: HTTP webhook from Synapse module at `POST /_matrix/app/alkemio/dm-request`
+
+**Server Response**: If approved, Server sends `communication.room.create` with `type: "direct"` and both actors in `initial_members`.
+
+---
+
+## HTTP Endpoints
+
+### Health Check
+
+*   **Method**: `GET`
+*   **Path**: `/health`
+*   **Response**: `{"status": "ok"}`
+
+### DM Request Webhook
+
+Receives DM creation requests from the Synapse spam checker module.
+
+*   **Method**: `POST`
+*   **Path**: `/_matrix/app/alkemio/dm-request`
+*   **Authentication**: Bearer token (HS token from AppService registration)
+
+#### Request Headers
+
+```
+Authorization: Bearer <hs_token>
+Content-Type: application/json
+```
+
+#### Request Payload
+
+```go
+type DMWebhookPayload struct {
+    Inviter string `json:"inviter"` // Matrix user ID: @uuid:domain
+    Invitee string `json:"invitee"` // Matrix user ID: @uuid:domain
+}
+```
+
+#### Response
+
+Success (200 OK):
+```json
+{"status": "accepted"}
+```
+
+Errors:
+- `401 Unauthorized`: Invalid or missing Bearer token
+- `400 Bad Request`: Missing required fields or invalid user ID format
+- `500 Internal Server Error`: Failed to publish event to RabbitMQ
+
+**Adapter Actions**:
+1. Validate Bearer token matches configured HS token
+2. Extract Alkemio Actor UUIDs from Matrix user IDs
+3. Publish `DMRequestedEvent` to `communication.room.dm.requested` topic
+4. Return 200 OK (fire-and-forget)
+
+---
+
 ## Error Handling Strategy
 
 The Adapter must distinguish between:
