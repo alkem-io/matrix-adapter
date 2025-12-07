@@ -105,7 +105,7 @@
 
 ## Dependencies
 
-```
+```text
 Phase 1 (T001-T005) → Phase 2 (T006-T007) → User Stories (T008-T017) → Phase 8 (T018-T020)
                                             ↳ US1-US5 can run in parallel
 ```

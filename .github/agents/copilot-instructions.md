@@ -30,7 +30,6 @@ Go 1.25: Follow standard conventions
 
 ## Recent Changes
 - 007-rmq-events-extension: Added Go 1.25 + mautrix-go (Matrix SDK), Watermill (RabbitMQ), Zap (logging)
-- 007-rmq-events-extension: Added [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
 - 006-room-creation-control: Added Go 1.25, Python 3.11+ (Synapse module) + mautrix-go, Watermill (RabbitMQ), aiohttp (Python), net/http (Go)
 
 

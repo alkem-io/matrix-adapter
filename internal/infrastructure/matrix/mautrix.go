@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/event"
@@ -48,35 +50,70 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 			"hostname", homeserverDomain)
 	}
 
-	// Create AppService instance
-	as := appservice.Create()
-	as.HomeserverDomain = homeserverDomain
+	// Create a proper MemoryStateStore with all maps initialized
+	stateStore := mautrix.NewMemoryStateStore()
 
-	// Configure the HTTP server listener for the AppService
-	// This is the address the AppService will listen on for incoming requests from the homeserver
-	as.Host.Hostname = "0.0.0.0"
-	as.Host.Port = 8080
+	// Verify the StateStore is properly initialized
+	memStore, ok := stateStore.(*mautrix.MemoryStateStore)
+	if !ok {
+		return nil, fmt.Errorf("failed to create MemoryStateStore: unexpected type")
+	}
 
-	as.Registration = &appservice.Registration{
+	// WORKAROUND: mautrix-go v0.26.0 has a bug where NewMemoryStateStore() doesn't
+	// initialize the JoinRules map even though SetJoinRules expects it to be non-nil.
+	// TODO: Remove this workaround when upgrading to mautrix-go > v0.26.0
+	if memStore.JoinRules == nil {
+		memStore.JoinRules = make(map[id.RoomID]*event.JoinRulesEventContent)
+	}
+
+	// Build registration
+	registration := &appservice.Registration{
 		ID:              "alkemio-matrix-adapter",
-		URL:             "http://localhost:8080",
+		URL:             "http://localhost:8280",
 		AppToken:        cfg.Matrix.AppServiceToken,
 		ServerToken:     cfg.Matrix.HomeserverToken,
 		SenderLocalpart: cfg.Matrix.SenderLocalpart,
 		Namespaces: appservice.Namespaces{
 			UserIDs: []appservice.Namespace{
 				{
+					// Bot user - exclusive, only AS can control
+					Exclusive: true,
+					Regex:     "@matrix-adapter:.*",
+				},
+				{
+					// UUID users - NOT exclusive so they can login via OIDC/Element
+					// Events received via room alias registration instead
 					Exclusive: false,
 					Regex:     "@[0-9a-fA-F-]{36}:.*",
+				},
+			},
+			RoomAliases: []appservice.Namespace{
+				{
+					// Room aliases - exclusive, AS receives all events for these rooms
+					Exclusive: true,
+					Regex:     "#[0-9a-fA-F-]{36}:.*",
 				},
 			},
 		},
 	}
 
-	// Set homeserver URL on the AppService so all clients/intents get it
-	if err := as.SetHomeserverURL(cfg.Matrix.HomeserverURL); err != nil {
-		return nil, fmt.Errorf("failed to set homeserver URL: %w", err)
+	// Create AppService using CreateFull to ensure StateStore is set from the start
+	as, err := appservice.CreateFull(appservice.CreateOpts{
+		Registration:     registration,
+		HomeserverDomain: homeserverDomain,
+		HomeserverURL:    cfg.Matrix.HomeserverURL,
+		HostConfig: appservice.HostConfig{
+			Hostname: "0.0.0.0",
+			Port:     8280,
+		},
+		StateStore: stateStore.(appservice.StateStore),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create appservice: %w", err)
 	}
+
+	// Enable zerolog for mautrix-go internal logging
+	as.Log = zerolog.New(zerolog.NewConsoleWriter()).With().Timestamp().Str("component", "mautrix").Logger()
 
 	return &MautrixAdapter{
 		cfg:      cfg,
@@ -92,7 +129,7 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 
 // Connect initializes the connection to the Matrix homeserver.
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
-	m.logger.Info("Initializing Matrix AppService connection...")
+	m.logger.Info("Initializing Matrix AppService connection")
 
 	// Channel to signal when the server has started or failed
 	startedCh := make(chan error, 1)
@@ -101,8 +138,6 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	go func() {
 		// Start() blocks until the server stops
 		m.as.Start()
-		// If we reach here immediately (before readiness check), it means startup failed
-		// The readiness check will detect this via the probe
 		m.logger.Warn("AppService HTTP server stopped")
 	}()
 
@@ -110,8 +145,6 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	if err := m.waitForServerReady(ctx, startedCh); err != nil {
 		return fmt.Errorf("appservice failed to start: %w", err)
 	}
-
-	m.logger.Debug("AppService HTTP server is ready")
 
 	// Verify bot connection
 	botClient := m.as.BotClient()
@@ -443,13 +476,18 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 
 	// Try to parse using generic helper
 	if content, ok := parseEventContent[event.MessageEventContent](evt); ok {
-		return &domain.Message{
+		msg := &domain.Message{
 			ID:             evt.ID.String(),
 			RoomID:         roomID.String(),
 			Content:        content.Body,
 			SenderMatrixID: evt.Sender.String(),
 			Timestamp:      time.UnixMilli(evt.Timestamp),
-		}, nil
+		}
+		// Extract thread ID from RelatesTo (same logic as fallback path)
+		if content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
+			msg.ThreadID = content.RelatesTo.InReplyTo.EventID.String()
+		}
+		return msg, nil
 	}
 
 	// Fallback: try raw JSON body
@@ -564,6 +602,12 @@ func (m *MautrixAdapter) findReactionByEmojiAndSender(events []event.Event, send
 // HomeserverDomain returns the homeserver domain for room alias construction.
 func (m *MautrixAdapter) HomeserverDomain() string {
 	return m.as.HomeserverDomain
+}
+
+// Router returns the AppService HTTP router for registering custom endpoints.
+// Custom endpoints will be served on the same port as the AppService transaction API.
+func (m *MautrixAdapter) Router() *http.ServeMux {
+	return m.as.Router
 }
 
 // SetUserProfile updates the user's display name and avatar.

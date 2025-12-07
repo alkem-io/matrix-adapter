@@ -3,8 +3,6 @@ package matrix
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,10 +29,12 @@ func (m *MautrixAdapter) SetEventHandlers(handlers EventHandlers) {
 // startEventLoop starts the event processing loop if not already started.
 func (m *MautrixAdapter) startEventLoop() {
 	m.eventLoopOnce.Do(func() {
+		m.logger.Info("Starting Matrix event loop")
 		go func() {
 			for evt := range m.as.Events {
 				m.processEvent(evt)
 			}
+			m.logger.Warn("Matrix event channel closed, event loop exiting")
 		}()
 	})
 }
@@ -65,24 +65,29 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 	// Parse content
 	content, ok := evt.Content.Raw["body"].(string)
 	if !ok {
+		m.logger.Warn("Failed to parse message body", "event_id", evt.ID)
 		return
 	}
 
-	// Parse Sender UUID
-	senderUUID, err := m.parseActorID(evt.Sender)
-	if err != nil {
-		m.logger.Warn("Ignoring message from invalid user", "sender", evt.Sender, "error", err)
+	// Parse Sender UUID using IDMapper
+	senderUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	if senderUUID == uuid.Nil {
+		m.logger.Debug("Ignoring message from non-UUID user", "sender", evt.Sender)
 		return
 	}
 
 	go func(e *event.Event, c string, s uuid.UUID) {
-		var roomName string
+		// Resolve Alkemio room ID from Matrix room ID (HTTP call - must be async)
+		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID)
+		if alkemioRoomID == uuid.Nil {
+			m.logger.Warn("Could not resolve Alkemio room ID for message", "room_id", e.RoomID)
+			return
+		}
 
 		if err := m.eventHandlers.OnMessage(
 			domain.Message{
 				ID:        e.ID.String(),
-				RoomID:    e.RoomID.String(),
-				RoomName:  roomName,
+				RoomID:    alkemioRoomID.String(),
 				SenderID:  s,
 				Content:   c,
 				Timestamp: time.UnixMilli(e.Timestamp),
@@ -98,30 +103,31 @@ func (m *MautrixAdapter) handleReactionEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse sender UUID - skip if not a ghost user
-	senderUUID, err := m.parseActorID(evt.Sender)
-	if err != nil {
-		m.logger.Debug("Ignoring reaction from non-ghost user", "sender", evt.Sender)
+	// Parse sender UUID using IDMapper - skip if not a ghost user
+	senderUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	if senderUUID == uuid.Nil {
+		m.logger.Debug("Ignoring reaction from non-UUID user", "sender", evt.Sender)
 		return
 	}
 
 	// Parse reaction content using generic helper
 	content, ok := parseEventContent[event.ReactionEventContent](evt)
 	if !ok {
-		m.logger.Warn("Failed to parse reaction content")
+		m.logger.Warn("Failed to parse reaction content", "event_id", evt.ID)
 		return
 	}
 
-	// Get room alias to extract Alkemio room ID
-	alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), evt.RoomID)
-	if alkemioRoomID == uuid.Nil {
-		m.logger.Warn("Could not resolve Alkemio room ID for reaction", "room_id", evt.RoomID)
-		return
-	}
+	// Move all blocking calls inside the goroutine to avoid blocking the event loop
+	go func(e *event.Event, c *event.ReactionEventContent, s uuid.UUID) {
+		// Get room alias to extract Alkemio room ID (HTTP call - must be async)
+		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID)
+		if alkemioRoomID == uuid.Nil {
+			m.logger.Warn("Could not resolve Alkemio room ID for reaction", "room_id", e.RoomID)
+			return
+		}
 
-	go func(e *event.Event, c *event.ReactionEventContent, s uuid.UUID, roomID uuid.UUID) {
 		if err := m.eventHandlers.OnReactionAdded(domain.ReactionEvent{
-			AlkemioRoomID: roomID,
+			AlkemioRoomID: alkemioRoomID,
 			MessageID:     c.RelatesTo.EventID,
 			ReactionID:    e.ID,
 			Emoji:         c.RelatesTo.Key,
@@ -130,7 +136,7 @@ func (m *MautrixAdapter) handleReactionEvent(evt *event.Event) {
 		}); err != nil {
 			m.logger.Error("Error handling reaction", "error", err)
 		}
-	}(evt, content, senderUUID, alkemioRoomID)
+	}(evt, content, senderUUID)
 }
 
 func (m *MautrixAdapter) handleRedactionEvent(evt *event.Event) {
@@ -138,10 +144,10 @@ func (m *MautrixAdapter) handleRedactionEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse sender UUID - skip if not a ghost user
-	senderUUID, err := m.parseActorID(evt.Sender)
-	if err != nil {
-		m.logger.Debug("Ignoring redaction from non-ghost user", "sender", evt.Sender)
+	// Parse sender UUID using IDMapper - skip if not a ghost user
+	senderUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	if senderUUID == uuid.Nil {
+		m.logger.Debug("Ignoring redaction from non-UUID user", "sender", evt.Sender)
 		return
 	}
 
@@ -155,50 +161,46 @@ func (m *MautrixAdapter) handleRedactionEvent(evt *event.Event) {
 	}
 
 	if redactedEventID == "" {
-		m.logger.Debug("Redaction event missing redacted event ID")
 		return
 	}
 
-	// Try to look up the original reaction to get emoji and target message
-	// If we can't find it, we still publish with empty emoji
-	ctx := context.Background()
-	var emoji string
-	var messageID id.EventID
+	// Move all blocking HTTP calls inside the goroutine to avoid blocking the event loop
+	go func(e *event.Event, s uuid.UUID, redactedID id.EventID) {
+		ctx := context.Background()
+		var emoji string
+		var messageID id.EventID
 
-	// Try to get the original reaction event
-	originalEvt, err := m.as.BotIntent().GetEvent(ctx, evt.RoomID, redactedEventID)
-	if err == nil && originalEvt.Type == event.EventReaction {
-		// Parse reaction content using generic helper
-		if content, ok := parseEventContent[event.ReactionEventContent](originalEvt); ok {
-			emoji = content.RelatesTo.Key
-			messageID = content.RelatesTo.EventID
+		// Try to get the original reaction event (HTTP call - must be async)
+		originalEvt, err := m.as.BotIntent().GetEvent(ctx, e.RoomID, redactedID)
+		if err == nil && originalEvt.Type == event.EventReaction {
+			// Parse reaction content using generic helper
+			if content, ok := parseEventContent[event.ReactionEventContent](originalEvt); ok {
+				emoji = content.RelatesTo.Key
+				messageID = content.RelatesTo.EventID
+			}
+		} else {
+			// Could not verify this was a reaction redaction - skip
+			return
 		}
-	} else {
-		// Could not verify this was a reaction redaction - skip
-		// (We only want to publish reaction removed events for actual reactions)
-		m.logger.Debug("Redaction is not for a reaction event, ignoring", "redacted_id", redactedEventID)
-		return
-	}
 
-	// Get Alkemio room ID
-	alkemioRoomID := m.resolveAlkemioRoomID(ctx, evt.RoomID)
-	if alkemioRoomID == uuid.Nil {
-		m.logger.Warn("Could not resolve Alkemio room ID for redaction", "room_id", evt.RoomID)
-		return
-	}
+		// Get Alkemio room ID (HTTP call - must be async)
+		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID)
+		if alkemioRoomID == uuid.Nil {
+			m.logger.Warn("Could not resolve Alkemio room ID for redaction", "room_id", e.RoomID)
+			return
+		}
 
-	go func(e *event.Event, s uuid.UUID, roomID uuid.UUID, emoji string, msgID id.EventID, reactionID id.EventID) {
 		if err := m.eventHandlers.OnReactionRemoved(domain.ReactionRemovedEvent{
-			AlkemioRoomID: roomID,
-			MessageID:     msgID,
-			ReactionID:    reactionID,
+			AlkemioRoomID: alkemioRoomID,
+			MessageID:     messageID,
+			ReactionID:    redactedID,
 			Emoji:         emoji,
 			SenderActorID: s,
 			Timestamp:     time.UnixMilli(e.Timestamp),
 		}); err != nil {
 			m.logger.Error("Error handling reaction removal", "error", err)
 		}
-	}(evt, senderUUID, alkemioRoomID, emoji, messageID, redactedEventID)
+	}(evt, senderUUID, redactedEventID)
 }
 
 func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
@@ -228,17 +230,10 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse target user UUID - skip if not a ghost user
-	targetUUID, err := m.parseActorID(targetUserID)
-	if err != nil {
-		m.logger.Debug("Ignoring membership event for non-ghost user", "target", targetUserID)
-		return
-	}
-
-	// Get Alkemio room ID
-	alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), evt.RoomID)
-	if alkemioRoomID == uuid.Nil {
-		m.logger.Warn("Could not resolve Alkemio room ID for membership event", "room_id", evt.RoomID)
+	// Parse target user UUID using IDMapper - skip if not a ghost user
+	targetUUID := m.idMapper.AlkemioActorID(targetUserID)
+	if targetUUID == uuid.Nil {
+		m.logger.Debug("Ignoring membership event for non-UUID user", "target", targetUserID)
 		return
 	}
 
@@ -248,16 +243,24 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 		reason = content.Reason
 	}
 
-	go func(e *event.Event, actorID uuid.UUID, roomID uuid.UUID, reason string) {
+	// Move HTTP call inside goroutine to avoid blocking the event loop
+	go func(e *event.Event, actorID uuid.UUID, reason string) {
+		// Get Alkemio room ID (HTTP call - must be async)
+		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID)
+		if alkemioRoomID == uuid.Nil {
+			m.logger.Warn("Could not resolve Alkemio room ID for membership event", "room_id", e.RoomID)
+			return
+		}
+
 		if err := m.eventHandlers.OnMemberLeft(domain.MembershipEvent{
-			AlkemioRoomID: roomID,
+			AlkemioRoomID: alkemioRoomID,
 			ActorID:       actorID,
 			Reason:        reason,
 			Timestamp:     time.UnixMilli(e.Timestamp),
 		}); err != nil {
 			m.logger.Error("Error handling membership event", "error", err)
 		}
-	}(evt, targetUUID, alkemioRoomID, reason)
+	}(evt, targetUUID, reason)
 }
 
 // resolveAlkemioRoomID gets the Alkemio room UUID from a Matrix room ID.
@@ -270,15 +273,4 @@ func (m *MautrixAdapter) resolveAlkemioRoomID(ctx context.Context, roomID id.Roo
 
 	// Use IDMapper to extract UUID from alias
 	return m.idMapper.AlkemioRoomID(details.Alias)
-}
-
-func (m *MautrixAdapter) parseActorID(mxid id.UserID) (uuid.UUID, error) {
-	s := string(mxid)
-	// Format: @uuid:domain
-	parts := strings.Split(s, ":")
-	if len(parts) != 2 {
-		return uuid.Nil, fmt.Errorf("invalid format")
-	}
-	localpart := strings.TrimPrefix(parts[0], "@")
-	return uuid.Parse(localpart)
 }

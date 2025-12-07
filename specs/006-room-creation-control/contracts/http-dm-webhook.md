@@ -55,24 +55,19 @@ The `hs_token` is the **homeserver token** from the AppService registration file
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "DMWebhookRequest",
   "type": "object",
-  "required": ["initiator_user_id", "target_user_id", "timestamp"],
+  "required": ["inviter", "invitee"],
   "properties": {
-    "initiator_user_id": {
+    "inviter": {
       "type": "string",
       "description": "Full Matrix user ID of the DM initiator (format: @{uuid}:{domain})",
       "pattern": "^@[a-fA-F0-9-]+:[a-zA-Z0-9.-]+$",
       "example": "@550e8400-e29b-41d4-a716-446655440000:matrix.alkemio.org"
     },
-    "target_user_id": {
+    "invitee": {
       "type": "string",
       "description": "Full Matrix user ID of the intended DM recipient (format: @{uuid}:{domain})",
       "pattern": "^@[a-fA-F0-9-]+:[a-zA-Z0-9.-]+$",
       "example": "@6ba7b810-9dad-11d1-80b4-00c04fd430c8:matrix.alkemio.org"
-    },
-    "timestamp": {
-      "type": "string",
-      "format": "date-time",
-      "description": "ISO 8601 timestamp of the request"
     }
   }
 }
@@ -88,9 +83,8 @@ Content-Type: application/json
 X-Request-ID: 550e8400-e29b-41d4-a716-446655440000
 
 {
-  "initiator_user_id": "@550e8400-e29b-41d4-a716-446655440000:matrix.alkemio.org",
-  "target_user_id": "@6ba7b810-9dad-11d1-80b4-00c04fd430c8:matrix.alkemio.org",
-  "timestamp": "2024-01-15T10:30:00.000Z"
+  "inviter": "@550e8400-e29b-41d4-a716-446655440000:matrix.alkemio.org",
+  "invitee": "@6ba7b810-9dad-11d1-80b4-00c04fd430c8:matrix.alkemio.org"
 }
 ```
 
@@ -121,7 +115,7 @@ Malformed JSON or missing required fields.
 {
   "error": {
     "code": "INVALID_PAYLOAD",
-    "message": "missing required field: initiator_user_id"
+    "message": "missing required field: inviter"
   }
 }
 ```
@@ -177,13 +171,12 @@ The Synapse spam checker module (`alkemio_room_control.py`) calls this endpoint:
 ```python
 async def _notify_dm_request(
     self,
-    initiator_user_id: str,
-    target_user_id: str,
+    inviter: str,
+    invitee: str,
 ) -> bool:
     payload = {
-        "initiator_user_id": initiator_user_id,
-        "target_user_id": target_user_id,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "inviter": inviter,
+        "invitee": invitee,
     }
     
     async with aiohttp.ClientSession() as session:
@@ -240,9 +233,8 @@ curl -X POST http://localhost:8080/_matrix/app/alkemio/dm-request \
   -H "Authorization: Bearer your_hs_token" \
   -H "Content-Type: application/json" \
   -d '{
-    "initiator_user_id": "@550e8400-e29b-41d4-a716-446655440000:localhost",
-    "target_user_id": "@6ba7b810-9dad-11d1-80b4-00c04fd430c8:localhost",
-    "timestamp": "2024-01-15T10:30:00Z"
+    "inviter": "@550e8400-e29b-41d4-a716-446655440000:localhost",
+    "invitee": "@6ba7b810-9dad-11d1-80b4-00c04fd430c8:localhost"
   }'
 ```
 
@@ -260,6 +252,6 @@ curl -X POST http://localhost:8080/_matrix/app/alkemio/dm-request \
 curl -X POST http://localhost:8080/_matrix/app/alkemio/dm-request \
   -H "Authorization: Bearer your_hs_token" \
   -H "Content-Type: application/json" \
-  -d '{"initiator_user_id": "@user1:localhost"}'
+  -d '{"inviter": "@user1:localhost"}'
 # Expected: 400 Bad Request
 ```

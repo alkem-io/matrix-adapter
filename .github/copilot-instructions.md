@@ -92,17 +92,15 @@ DO NOT create duplicate ID conversion utilities. The IDMapper is the **single so
 
 **Usage patterns:**
 - Handlers/Services: Create `idMapper := domain.NewIDMapper(matrix.HomeserverDomain())`
-- Infrastructure layer (mautrix.go): Has its own `m.idMapper` field
-- Listener (listener.go): Uses `m.parseActorID()` helper which wraps IDMapper logic
+- Infrastructure layer (mautrix.go, listener.go): Has its own `m.idMapper` field
 
-**Infrastructure helpers (listener.go only):**
+**Infrastructure helper (listener.go only):**
 
 | Helper | Purpose | Uses |
 |--------|---------|------|
-| `m.parseActorID(userID)` | Parse UUID from Matrix user ID | Direct UUID parsing (same logic as IDMapper) |
 | `m.resolveAlkemioRoomID(ctx, roomID)` | Get Alkemio UUID from Matrix room ID | `GetRoomDetails()` + `IDMapper.AlkemioRoomID()` |
 
-These helpers exist ONLY in `internal/infrastructure/matrix/listener.go` because they need access to the Matrix adapter's methods. DO NOT duplicate them elsewhere.
+This helper exists ONLY in `internal/infrastructure/matrix/listener.go` because it needs access to the Matrix adapter's `GetRoomDetails()` method for HTTP lookup. DO NOT duplicate it elsewhere.
 
 **NEVER duplicate these conversions inline or create new utility functions.**
 

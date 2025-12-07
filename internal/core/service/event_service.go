@@ -28,15 +28,10 @@ func NewEventService(queue ports.QueuePort, logger ports.Logger, cfg *config.Con
 
 // HandleMessage processes a message event from Matrix and publishes it to the queue.
 func (s *EventService) HandleMessage(msg domain.Message) error {
-	// Filter out messages from non-UUID users (e.g. bots, bridges)
-	// The domain.Message already has SenderID as UUID, so if it was parsed successfully, it's valid.
-	// However, we might want to double check or handle parsing errors upstream.
-	// For now, we assume domain.Message is valid.
-
 	payload := dto.MessageReceivedPayload{
 		RoomID:   msg.RoomID,
 		RoomName: msg.RoomName,
-		ActorID:  s.cfg.Matrix.BotActorID,
+		ActorID:  msg.SenderID.String(),
 		Message: dto.Message{
 			ID:        msg.ID,
 			Message:   msg.Content,
@@ -50,7 +45,7 @@ func (s *EventService) HandleMessage(msg domain.Message) error {
 	if err := s.queue.Publish(dto.TopicMessageReceived, payload); err != nil {
 		return fmt.Errorf("failed to publish message received event: %w", err)
 	}
-
+	s.logger.Debug("Event published successfully", "event_id", msg.ID, "sender_id", msg.SenderID)
 	return nil
 }
 
@@ -65,11 +60,13 @@ func (s *EventService) HandleReactionAdded(evt domain.ReactionEvent) error {
 		Timestamp:     evt.Timestamp.UnixMilli(),
 	}
 
-	s.logger.Debug("Publishing reaction added event",
+	s.logger.Debug(
+		"Publishing reaction added event",
 		"room_id", evt.AlkemioRoomID,
 		"message_id", evt.MessageID,
 		"emoji", evt.Emoji,
-		"sender", evt.SenderActorID)
+		"sender", evt.SenderActorID,
+	)
 
 	if err := s.queue.Publish(dto.TopicReactionAdded, payload); err != nil {
 		return fmt.Errorf("failed to publish reaction added event: %w", err)
@@ -89,11 +86,13 @@ func (s *EventService) HandleReactionRemoved(evt domain.ReactionRemovedEvent) er
 		Timestamp:     evt.Timestamp.UnixMilli(),
 	}
 
-	s.logger.Debug("Publishing reaction removed event",
+	s.logger.Debug(
+		"Publishing reaction removed event",
 		"room_id", evt.AlkemioRoomID,
 		"message_id", evt.MessageID,
 		"emoji", evt.Emoji,
-		"sender", evt.SenderActorID)
+		"sender", evt.SenderActorID,
+	)
 
 	if err := s.queue.Publish(dto.TopicReactionRemoved, payload); err != nil {
 		return fmt.Errorf("failed to publish reaction removed event: %w", err)
@@ -111,10 +110,12 @@ func (s *EventService) HandleMemberLeft(evt domain.MembershipEvent) error {
 		Timestamp:     evt.Timestamp.UnixMilli(),
 	}
 
-	s.logger.Debug("Publishing room member left event",
+	s.logger.Debug(
+		"Publishing room member left event",
 		"room_id", evt.AlkemioRoomID,
 		"actor_id", evt.ActorID,
-		"reason", evt.Reason)
+		"reason", evt.Reason,
+	)
 
 	if err := s.queue.Publish(dto.TopicRoomMemberLeft, payload); err != nil {
 		return fmt.Errorf("failed to publish room member left event: %w", err)

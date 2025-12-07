@@ -30,6 +30,7 @@ from typing import Optional
 from synapse.module_api import ModuleApi
 from synapse.module_api.errors import Codes, SynapseError
 from synapse.http.client import SimpleHttpClient
+from synapse.types import Requester
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,7 @@ class AlkemioRoomControl:
 
     async def on_create_room(
         self,
-        requester: "synapse.types.Requester",
+        requester: Requester,
         request_content: dict,
         is_requester_admin: bool,
     ) -> None:

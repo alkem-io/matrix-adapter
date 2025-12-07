@@ -38,8 +38,8 @@ COPY --from=builder /app/matrix-adapter .
 RUN adduser -D -g '' appuser
 USER appuser
 
-# Expose health check port
-EXPOSE 8081
+# Expose AppService port (Matrix transactions, health checks, webhooks)
+EXPOSE 8280
 
 # Run the binary
 CMD ["./matrix-adapter"]

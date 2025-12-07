@@ -79,8 +79,6 @@ MATRIX_SERVER_NAME=localhost
 # RabbitMQ
 RABBITMQ_URL=amqp://guest:guest@localhost:5672/
 
-# HTTP server (for webhook endpoint)
-ADAPTER_HTTP_PORT=8080
 ```
 
 ### 2.3 Run
@@ -238,7 +236,6 @@ services:
     environment:
       - MATRIX_HOMESERVER_URL=http://synapse:8008
       - RABBITMQ_URL=amqp://rabbitmq:5672/
-      - ADAPTER_HTTP_PORT=8080
     ports:
       - "8080:8080"
     depends_on:

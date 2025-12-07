@@ -47,7 +47,7 @@ The module **automatically loads all configuration** from the AppService with id
 |-----------|-----------|--------|
 | AppService Bot | Any | ✅ Allowed |
 | Ghost User | Community Room | ❌ Blocked |
-| Ghost User | DM Room | ❌ Blocked (but notifies Adapter for async creation) |
+| Ghost User | DM Room | ✅ Allowed (but notifies Adapter for async creation) |
 
 ## DM Creation Flow
 
@@ -56,7 +56,7 @@ When a ghost user tries to create a DM in Element:
 1. Module intercepts the `createRoom` request
 2. Detects it's a DM (`is_direct=true`, single invitee)
 3. Sends webhook to Adapter: `POST /_matrix/app/alkemio/dm-request`
-4. Returns `M_FORBIDDEN` to client
+4. Don't stop from room creation.
 5. Adapter notifies Alkemio Server via RabbitMQ
 6. Server decides and commands Adapter to create room
 7. AppService bot creates the DM room
@@ -110,8 +110,8 @@ grep -i "DM creation attempt" /var/log/synapse/homeserver.log
 
 Expected log on startup:
 ```
-Loaded config from AppService 'alkemio-matrix-adapter': sender=matrix-adapter, url=http://matrix-adapter:8080
-AlkemioRoomControl initialized - AppService: @matrix-adapter:alkemio.io, Adapter: http://matrix-adapter:8080, Token: configured
+Loaded config from AppService 'alkemio-matrix-adapter': sender=matrix-adapter, url=http://matrix-adapter:8280
+AlkemioRoomControl initialized - AppService: @matrix-adapter:alkemio.io, Adapter: http://matrix-adapter:8280, Token: configured
 ```
 
 If the AppService is not found, you'll see:
