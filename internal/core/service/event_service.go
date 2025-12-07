@@ -3,9 +3,6 @@ package service
 
 import (
 	"fmt"
-	"strings"
-
-	"github.com/google/uuid"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/config"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
@@ -57,13 +54,71 @@ func (s *EventService) HandleMessage(msg domain.Message) error {
 	return nil
 }
 
-// ParseActorIDFromMatrixID extracts the UUID from a Matrix ID like @uuid:domain
-func (s *EventService) ParseActorIDFromMatrixID(matrixID string) (uuid.UUID, error) {
-	// Remove @ and :domain
-	parts := strings.Split(matrixID, ":")
-	if len(parts) != 2 {
-		return uuid.Nil, fmt.Errorf("invalid matrix ID format")
+// HandleReactionAdded processes a reaction added event and publishes it to the queue.
+func (s *EventService) HandleReactionAdded(evt domain.ReactionEvent) error {
+	payload := dto.ReactionAddedEvent{
+		AlkemioRoomID: dto.AlkemioRoomID(evt.AlkemioRoomID),
+		MessageID:     dto.MessageID(evt.MessageID.String()),
+		ReactionID:    dto.ReactionID(evt.ReactionID.String()),
+		Emoji:         evt.Emoji,
+		SenderActorID: dto.AlkemioActorID(evt.SenderActorID),
+		Timestamp:     evt.Timestamp.UnixMilli(),
 	}
-	localpart := strings.TrimPrefix(parts[0], "@")
-	return uuid.Parse(localpart)
+
+	s.logger.Debug("Publishing reaction added event",
+		"room_id", evt.AlkemioRoomID,
+		"message_id", evt.MessageID,
+		"emoji", evt.Emoji,
+		"sender", evt.SenderActorID)
+
+	if err := s.queue.Publish(dto.TopicReactionAdded, payload); err != nil {
+		return fmt.Errorf("failed to publish reaction added event: %w", err)
+	}
+
+	return nil
+}
+
+// HandleReactionRemoved processes a reaction removed event and publishes it to the queue.
+func (s *EventService) HandleReactionRemoved(evt domain.ReactionRemovedEvent) error {
+	payload := dto.ReactionRemovedEvent{
+		AlkemioRoomID: dto.AlkemioRoomID(evt.AlkemioRoomID),
+		MessageID:     dto.MessageID(evt.MessageID.String()),
+		ReactionID:    dto.ReactionID(evt.ReactionID.String()),
+		Emoji:         evt.Emoji,
+		SenderActorID: dto.AlkemioActorID(evt.SenderActorID),
+		Timestamp:     evt.Timestamp.UnixMilli(),
+	}
+
+	s.logger.Debug("Publishing reaction removed event",
+		"room_id", evt.AlkemioRoomID,
+		"message_id", evt.MessageID,
+		"emoji", evt.Emoji,
+		"sender", evt.SenderActorID)
+
+	if err := s.queue.Publish(dto.TopicReactionRemoved, payload); err != nil {
+		return fmt.Errorf("failed to publish reaction removed event: %w", err)
+	}
+
+	return nil
+}
+
+// HandleMemberLeft processes a member left event and publishes it to the queue.
+func (s *EventService) HandleMemberLeft(evt domain.MembershipEvent) error {
+	payload := dto.RoomMemberLeftEvent{
+		AlkemioRoomID: dto.AlkemioRoomID(evt.AlkemioRoomID),
+		ActorID:       dto.AlkemioActorID(evt.ActorID),
+		Reason:        evt.Reason,
+		Timestamp:     evt.Timestamp.UnixMilli(),
+	}
+
+	s.logger.Debug("Publishing room member left event",
+		"room_id", evt.AlkemioRoomID,
+		"actor_id", evt.ActorID,
+		"reason", evt.Reason)
+
+	if err := s.queue.Publish(dto.TopicRoomMemberLeft, payload); err != nil {
+		return fmt.Errorf("failed to publish room member left event: %w", err)
+	}
+
+	return nil
 }

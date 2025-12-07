@@ -549,3 +549,113 @@ func (h *RoomHandler) HandleBatchRemoveMember(ctx context.Context, payload []byt
 		Results:      results,
 	}, nil
 }
+
+// ============================================================================
+// Room Members Query (communication.room.members.*)
+// ============================================================================
+
+// HandleGetRoomMembers handles communication.room.members.get topic.
+func (h *RoomHandler) HandleGetRoomMembers(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.GetRoomMembersRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	// Resolve room alias to Matrix room ID
+	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	// Get room members from Matrix
+	members, err := h.matrix.GetRoomMembers(ctx, roomID)
+	if err != nil {
+		return MapServiceError(err), nil
+	}
+
+	// Convert Matrix user IDs to Alkemio actor IDs
+	memberActorIDs := make([]dto.AlkemioActorID, 0, len(members))
+	for _, memberUserID := range members {
+		actorID := h.idMapper.AlkemioActorID(memberUserID)
+		// Skip non-ghost users (uuid.Nil indicates not a valid ghost user)
+		if actorID == uuid.Nil {
+			continue
+		}
+		memberActorIDs = append(memberActorIDs, dto.AlkemioActorID(actorID))
+	}
+
+	return dto.GetRoomMembersResponse{
+		BaseResponse:   dto.NewSuccessResponse(),
+		AlkemioRoomID:  req.AlkemioRoomID,
+		MemberActorIDs: memberActorIDs,
+	}, nil
+}
+
+// ============================================================================
+// Thread Messages Query (communication.thread.*)
+// ============================================================================
+
+// HandleGetThreadMessages handles communication.thread.messages.get topic.
+func (h *RoomHandler) HandleGetThreadMessages(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.GetThreadMessagesRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireNonEmpty(string(req.ThreadRootID), "thread_root_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	// Resolve room alias to Matrix room ID
+	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	// Get thread messages from Matrix
+	messages, err := h.matrix.GetThreadMessages(ctx, roomID, id.EventID(req.ThreadRootID))
+	if err != nil {
+		return MapServiceError(err), nil
+	}
+
+	// Convert domain messages to DTOs
+	messageDTOs := make([]dto.MessageDto, 0, len(messages))
+	for _, msg := range messages {
+		// Convert sender Matrix ID to Alkemio actor ID
+		senderActorID := uuid.Nil
+		if msg.SenderMatrixID != "" {
+			senderActorID = h.idMapper.AlkemioActorID(id.UserID(msg.SenderMatrixID))
+		} else if msg.SenderID != uuid.Nil {
+			senderActorID = msg.SenderID
+		}
+
+		msgDTO := dto.MessageDto{
+			ID:            dto.MessageID(msg.ID),
+			Content:       msg.Content,
+			SenderActorID: dto.AlkemioActorID(senderActorID),
+			Timestamp:     msg.Timestamp,
+		}
+
+		// Set thread ID if present (for replies within the thread)
+		if msg.ThreadID != "" {
+			threadID := dto.MessageID(msg.ThreadID)
+			msgDTO.ThreadID = &threadID
+		}
+
+		messageDTOs = append(messageDTOs, msgDTO)
+	}
+
+	return dto.GetThreadMessagesResponse{
+		BaseResponse:  dto.NewSuccessResponse(),
+		AlkemioRoomID: req.AlkemioRoomID,
+		ThreadRootID:  req.ThreadRootID,
+		Messages:      messageDTOs,
+	}, nil
+}

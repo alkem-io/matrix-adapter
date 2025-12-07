@@ -72,7 +72,13 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 	// 7. Wire up Event Listeners (Matrix -> Queue)
 	// This can be done here as it just registers a callback, doesn't start IO usually.
-	matrixAdapter.OnMessage(eventService.HandleMessage)
+	// Use SetEventHandlers to register all event handlers at once
+	matrixAdapter.SetEventHandlers(matrix.EventHandlers{
+		OnMessage:         eventService.HandleMessage,
+		OnReactionAdded:   eventService.HandleReactionAdded,
+		OnReactionRemoved: eventService.HandleReactionRemoved,
+		OnMemberLeft:      eventService.HandleMemberLeft,
+	})
 
 	return &App{
 		cfg:           cfg,

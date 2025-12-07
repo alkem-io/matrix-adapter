@@ -27,3 +27,38 @@ type Reaction struct {
 	Timestamp int64  `json:"timestamp"`
 	MessageID string `json:"messageId"`
 }
+
+// ============================================================================
+// Outgoing Events (Adapter → Server) - V4 Protocol Extension
+// ============================================================================
+
+// ReactionAddedEvent is published when a user adds a reaction to a message.
+// Topic: communication.reaction.added
+type ReactionAddedEvent struct {
+	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+	MessageID     MessageID      `json:"message_id"`
+	ReactionID    ReactionID     `json:"reaction_id"`
+	Emoji         string         `json:"emoji"`
+	SenderActorID AlkemioActorID `json:"sender_actor_id"`
+	Timestamp     int64          `json:"timestamp"`
+}
+
+// ReactionRemovedEvent is published when a user removes a reaction from a message.
+// Topic: communication.reaction.removed
+type ReactionRemovedEvent struct {
+	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+	MessageID     MessageID      `json:"message_id"`
+	ReactionID    ReactionID     `json:"reaction_id"`
+	Emoji         string         `json:"emoji"`
+	SenderActorID AlkemioActorID `json:"sender_actor_id"`
+	Timestamp     int64          `json:"timestamp"`
+}
+
+// RoomMemberLeftEvent is published when a user leaves or is kicked from a room.
+// Topic: communication.room.member.left
+type RoomMemberLeftEvent struct {
+	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+	ActorID       AlkemioActorID `json:"actor_id"`
+	Reason        string         `json:"reason,omitempty"`
+	Timestamp     int64          `json:"timestamp"`
+}

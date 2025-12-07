@@ -167,6 +167,7 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 | | Update Room | `communication.room.update` |
 | | Delete Room | `communication.room.delete` |
 | | List Rooms | `communication.room.list` |
+| | Get Room Members | `communication.room.members.get` |
 | | Batch Add Member | `communication.room.member.batch.add` |
 | | Batch Remove Member | `communication.room.member.batch.remove` |
 | **Space** | Create Space | `communication.space.create` |
@@ -183,6 +184,7 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 | **Reaction** | Add Reaction | `communication.reaction.add` |
 | | Remove Reaction | `communication.reaction.remove` |
 | | Get Reaction | `communication.reaction.get` |
+| **Thread** | Get Thread Messages | `communication.thread.messages.get` |
 | **Actor** | Sync Actor Profile | `communication.actor.sync` |
 
 ### Outgoing Events
@@ -191,6 +193,9 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 |-------|-------|-------------|
 | Message Received | `communication.message.received` | Emitted when a message is received in a room |
 | DM Requested | `communication.room.dm.requested` | Emitted when a DM room creation is requested via webhook |
+| Reaction Added | `communication.reaction.added` | Emitted when a user adds a reaction to a message |
+| Reaction Removed | `communication.reaction.removed` | Emitted when a user removes a reaction from a message |
+| Room Member Left | `communication.room.member.left` | Emitted when a user leaves or is kicked from a room |
 
 ## DM Room Creation Flow
 

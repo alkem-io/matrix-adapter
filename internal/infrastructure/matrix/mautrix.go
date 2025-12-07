@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,10 +22,12 @@ import (
 
 // MautrixAdapter implements the MatrixPort interface using the mautrix-go library.
 type MautrixAdapter struct {
-	cfg      *config.Config
-	logger   ports.Logger
-	as       *appservice.AppService
-	idMapper *domain.IDMapper
+	cfg           *config.Config
+	logger        ports.Logger
+	as            *appservice.AppService
+	idMapper      *domain.IDMapper
+	eventHandlers EventHandlers
+	eventLoopOnce sync.Once
 }
 
 // NewMautrixAdapter creates a new instance of MautrixAdapter.
@@ -742,6 +745,58 @@ func (m *MautrixAdapter) GetReaction(ctx context.Context, roomID id.RoomID, reac
 		SenderMatrixID: evt.Sender.String(),
 		Timestamp:      time.UnixMilli(evt.Timestamp),
 	}, nil
+}
+
+// GetThreadMessages retrieves all messages in a thread, including the thread root.
+func (m *MautrixAdapter) GetThreadMessages(ctx context.Context, roomID id.RoomID, threadRootID id.EventID) ([]domain.Message, error) {
+	intent := m.as.BotIntent()
+
+	// First, get the thread root message
+	rootEvt, err := intent.GetEvent(ctx, roomID, threadRootID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get thread root message: %w", err)
+	}
+
+	messages := make([]domain.Message, 0)
+
+	// Parse the root message
+	rootMsg := m.parseMessageEvent(rootEvt, roomID)
+	if rootMsg != nil {
+		rootMsg.Reactions = []domain.Reaction{} // Initialize empty slice
+		messages = append(messages, *rootMsg)
+	}
+
+	// Get thread replies using relations API
+	// Build request for thread relations
+	hsURL := strings.TrimSuffix(intent.HomeserverURL.String(), "/")
+	u := fmt.Sprintf(
+		"%s/_matrix/client/v1/rooms/%s/relations/%s/%s/%s",
+		hsURL, roomID, threadRootID, event.RelThread, event.EventMessage,
+	)
+
+	var resp RespRelations
+	_, err = intent.MakeRequest(ctx, "GET", u, nil, &resp)
+	if err != nil {
+		// If no relations found, return just the root message
+		m.logger.Debug("No thread relations found, returning only root", "thread_root_id", threadRootID)
+		return messages, nil
+	}
+
+	// Parse thread reply messages
+	for _, evt := range resp.Chunk {
+		if evt.Type != event.EventMessage {
+			continue
+		}
+
+		msg := m.parseMessageEvent(&evt, roomID)
+		if msg != nil {
+			msg.Reactions = []domain.Reaction{} // Initialize empty slice
+			msg.ThreadID = threadRootID.String()
+			messages = append(messages, *msg)
+		}
+	}
+
+	return messages, nil
 }
 
 // CreateRoomWithAlias creates a new room with a specific alias based on Alkemio room ID.

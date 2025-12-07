@@ -65,6 +65,9 @@ type MatrixPort interface {
 	// GetReaction retrieves a reaction event by its ID.
 	GetReaction(ctx context.Context, roomID id.RoomID, reactionID id.EventID) (*domain.Reaction, error)
 
+	// GetThreadMessages retrieves all messages in a thread including the thread root.
+	GetThreadMessages(ctx context.Context, roomID id.RoomID, threadRootID id.EventID) ([]domain.Message, error)
+
 	// GetAllJoinedRooms returns all rooms the appservice bot has joined.
 	GetAllJoinedRooms(ctx context.Context) ([]id.RoomID, error)
 

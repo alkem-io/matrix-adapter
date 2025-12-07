@@ -78,3 +78,31 @@ type Reaction struct {
 	SenderMatrixID string // Matrix User ID for conversion
 	Timestamp      time.Time
 }
+
+// ReactionEvent represents an incoming reaction event from Matrix.
+type ReactionEvent struct {
+	AlkemioRoomID uuid.UUID
+	MessageID     id.EventID
+	ReactionID    id.EventID
+	Emoji         string
+	SenderActorID uuid.UUID
+	Timestamp     time.Time
+}
+
+// ReactionRemovedEvent represents a reaction removal event from Matrix.
+type ReactionRemovedEvent struct {
+	AlkemioRoomID uuid.UUID
+	MessageID     id.EventID
+	ReactionID    id.EventID
+	Emoji         string
+	SenderActorID uuid.UUID
+	Timestamp     time.Time
+}
+
+// MembershipEvent represents a membership change event from Matrix.
+type MembershipEvent struct {
+	AlkemioRoomID uuid.UUID
+	ActorID       uuid.UUID
+	Reason        string
+	Timestamp     time.Time
+}

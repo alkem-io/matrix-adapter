@@ -1,13 +1,13 @@
 # Matrix Adapter Protocol Specification (V3)
 
-> **Status**: ✅ **Current** (v3.0.0)  
-> **Last Updated**: 2025-12-02
+> **Status**: ✅ **Current** (v3.1.0)  
+> **Last Updated**: 2025-12-07
 
 ## Implementation Reference
 
 - **Go DTOs**: `pkg/dto/` - Source of truth for all data structures
 - **TypeScript Library**: `lib/src/dto/generated.ts` - Auto-generated from Go
-- **Event Types**: `lib/src/matrix.adapter.event.type.ts` - Enum of all 23 topics
+- **Event Types**: `lib/src/matrix.adapter.event.type.ts` - Enum of all 29 topics
 - **Topic Constants**: `internal/infrastructure/queue/topics.go` - Single source of truth
 
 This document defines the communication protocol between the Alkemio Server and the Matrix Adapter service. The protocol is designed to be transport-agnostic but is currently implemented over RabbitMQ.
@@ -785,6 +785,121 @@ type DMRequestedEvent struct {
 **Source**: HTTP webhook from Synapse module at `POST /_matrix/app/alkemio/dm-request`
 
 **Server Response**: If approved, Server sends `communication.room.create` with `type: "direct"` and both actors in `initial_members`.
+
+---
+
+### 25. Reaction Added (Outgoing Event)
+
+Published when a user adds a reaction to a message.
+
+*   **Event Subject**: `communication.reaction.added`
+
+#### Payload
+
+```go
+type ReactionAddedEvent struct {
+    AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+    MessageID     MessageID      `json:"message_id"`
+    ReactionID    ReactionID     `json:"reaction_id"`
+    Emoji         string         `json:"emoji"`
+    SenderActorID AlkemioActorID `json:"sender_actor_id"`
+    Timestamp     int64          `json:"timestamp"` // Unix milliseconds
+}
+```
+
+---
+
+### 26. Reaction Removed (Outgoing Event)
+
+Published when a user removes a reaction from a message.
+
+*   **Event Subject**: `communication.reaction.removed`
+
+#### Payload
+
+```go
+type ReactionRemovedEvent struct {
+    AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+    MessageID     MessageID      `json:"message_id"`
+    ReactionID    ReactionID     `json:"reaction_id"`
+    Emoji         string         `json:"emoji"` // May be empty if original reaction unavailable
+    SenderActorID AlkemioActorID `json:"sender_actor_id"`
+    Timestamp     int64          `json:"timestamp"` // Unix milliseconds
+}
+```
+
+---
+
+### 27. Room Member Left (Outgoing Event)
+
+Published when a user leaves or is kicked/banned from a room.
+
+*   **Event Subject**: `communication.room.member.left`
+
+#### Payload
+
+```go
+type RoomMemberLeftEvent struct {
+    AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+    ActorID       AlkemioActorID `json:"actor_id"`
+    Reason        string         `json:"reason,omitempty"`
+    Timestamp     int64          `json:"timestamp"` // Unix milliseconds
+}
+```
+
+---
+
+### 28. Get Room Members
+
+Retrieves the list of joined members in a room.
+
+*   **Event Subject**: `communication.room.members.get`
+
+#### Request Payload
+
+```go
+type GetRoomMembersRequest struct {
+    AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
+}
+```
+
+#### Response Payload
+
+```go
+type GetRoomMembersResponse struct {
+    BaseResponse
+    AlkemioRoomID  AlkemioRoomID    `json:"alkemio_room_id"`
+    MemberActorIDs []AlkemioActorID `json:"member_actor_ids"`
+}
+```
+
+---
+
+### 29. Get Thread Messages
+
+Retrieves all messages in a thread, including the thread root message.
+
+*   **Event Subject**: `communication.thread.messages.get`
+
+#### Request Payload
+
+```go
+type GetThreadMessagesRequest struct {
+    AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
+    ThreadRootID  MessageID     `json:"thread_root_id"`
+}
+```
+
+#### Response Payload
+
+```go
+type GetThreadMessagesResponse struct {
+    BaseResponse
+    AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
+    ThreadRootID  MessageID     `json:"thread_root_id"`
+    Messages      []MessageDto  `json:"messages"` // Root message first, then replies
+}
+```
 
 ---
 

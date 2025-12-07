@@ -147,9 +147,29 @@ export const TopicSpaceMemberBatchAdd = "communication.space.member.batch.add";
  */
 export const TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove";
 /**
- * DM room request topic (outbound event to Server)
+ * TopicRoomDMRequested is the topic for DM room request events (outbound to Server).
  */
 export const TopicRoomDMRequested = "communication.room.dm.requested";
+/**
+ * TopicReactionAdded is the topic for reaction added events.
+ */
+export const TopicReactionAdded = "communication.reaction.added";
+/**
+ * TopicReactionRemoved is the topic for reaction removed events.
+ */
+export const TopicReactionRemoved = "communication.reaction.removed";
+/**
+ * TopicRoomMemberLeft is the topic for room member left events.
+ */
+export const TopicRoomMemberLeft = "communication.room.member.left";
+/**
+ * TopicRoomMembersGet is the topic for getting room members.
+ */
+export const TopicRoomMembersGet = "communication.room.members.get";
+/**
+ * TopicThreadMessagesGet is the topic for getting thread messages.
+ */
+export const TopicThreadMessagesGet = "communication.thread.messages.get";
 /**
  * CommandDef defines a command with its topic, request type name, and response type name.
  * This is used by the TypeScript generator to create type-safe command definitions.
@@ -291,6 +311,40 @@ export interface Reaction {
   timestamp: number /* int64 */;
   messageId: string;
 }
+/**
+ * ReactionAddedEvent is published when a user adds a reaction to a message.
+ * Topic: communication.reaction.added
+ */
+export interface ReactionAddedEvent {
+  alkemio_room_id: AlkemioRoomID;
+  message_id: MessageID;
+  reaction_id: ReactionID;
+  emoji: string;
+  sender_actor_id: AlkemioActorID;
+  timestamp: number /* int64 */;
+}
+/**
+ * ReactionRemovedEvent is published when a user removes a reaction from a message.
+ * Topic: communication.reaction.removed
+ */
+export interface ReactionRemovedEvent {
+  alkemio_room_id: AlkemioRoomID;
+  message_id: MessageID;
+  reaction_id: ReactionID;
+  emoji: string;
+  sender_actor_id: AlkemioActorID;
+  timestamp: number /* int64 */;
+}
+/**
+ * RoomMemberLeftEvent is published when a user leaves or is kicked from a room.
+ * Topic: communication.room.member.left
+ */
+export interface RoomMemberLeftEvent {
+  alkemio_room_id: AlkemioRoomID;
+  actor_id: AlkemioActorID;
+  reason?: string;
+  timestamp: number /* int64 */;
+}
 
 //////////
 // source: hierarchy.go
@@ -364,6 +418,22 @@ export interface DeleteMessageRequest {
   message_id: MessageID;
   sender_actor_id: AlkemioActorID;
   reason?: string;
+}
+/**
+ * GetThreadMessagesRequest retrieves messages in a thread.
+ * Topic: communication.thread.messages.get
+ */
+export interface GetThreadMessagesRequest {
+  alkemio_room_id: AlkemioRoomID;
+  thread_root_id: MessageID;
+}
+/**
+ * GetThreadMessagesResponse returns thread messages.
+ */
+export interface GetThreadMessagesResponse extends BaseResponse {
+  alkemio_room_id: AlkemioRoomID;
+  thread_root_id: MessageID;
+  messages: MessageDto[];
 }
 
 //////////
@@ -484,6 +554,20 @@ export interface ListRoomsRequest {
 export interface ListRoomsResponse extends BaseResponse {
   alkemio_room_ids: AlkemioRoomID[];
   next_cursor?: string;
+}
+/**
+ * GetRoomMembersRequest retrieves the list of members in a room.
+ * Topic: communication.room.members.get
+ */
+export interface GetRoomMembersRequest {
+  alkemio_room_id: AlkemioRoomID;
+}
+/**
+ * GetRoomMembersResponse returns the list of joined member actor IDs.
+ */
+export interface GetRoomMembersResponse extends BaseResponse {
+  alkemio_room_id: AlkemioRoomID;
+  member_actor_ids: AlkemioActorID[];
 }
 
 //////////

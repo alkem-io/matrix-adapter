@@ -53,3 +53,22 @@ type DeleteMessageRequest struct {
 	SenderActorID AlkemioActorID `json:"sender_actor_id"`
 	Reason        string         `json:"reason,omitempty"`
 }
+
+// ============================================================================
+// Thread Message DTOs (communication.thread.*)
+// ============================================================================
+
+// GetThreadMessagesRequest retrieves messages in a thread.
+// Topic: communication.thread.messages.get
+type GetThreadMessagesRequest struct {
+	AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
+	ThreadRootID  MessageID     `json:"thread_root_id"`
+}
+
+// GetThreadMessagesResponse returns thread messages.
+type GetThreadMessagesResponse struct {
+	BaseResponse  `tstype:",extends"`
+	AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
+	ThreadRootID  MessageID     `json:"thread_root_id"`
+	Messages      []MessageDto  `json:"messages"`
+}
