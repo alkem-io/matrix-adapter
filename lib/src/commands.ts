@@ -14,6 +14,7 @@ import type {
   BatchRemoveSpaceMemberResponse,
   CreateRoomRequest,
   CreateSpaceRequest,
+  DMRequestedEvent,
   DeleteMessageRequest,
   DeleteRoomRequest,
   DeleteSpaceRequest,
@@ -21,16 +22,23 @@ import type {
   GetMessageResponse,
   GetReactionRequest,
   GetReactionResponse,
+  GetRoomMembersRequest,
+  GetRoomMembersResponse,
   GetRoomRequest,
   GetRoomResponse,
   GetSpaceRequest,
   GetSpaceResponse,
+  GetThreadMessagesRequest,
+  GetThreadMessagesResponse,
   ListRoomsRequest,
   ListRoomsResponse,
   ListSpacesRequest,
   ListSpacesResponse,
   MessageReceivedPayload,
+  ReactionAddedEvent,
+  ReactionRemovedEvent,
   RemoveReactionRequest,
+  RoomMemberLeftEvent,
   SendMessageRequest,
   SendMessageResponse,
   SetParentRequest,
@@ -100,6 +108,10 @@ export const Commands = {
     request: {} as BatchRemoveMemberRequest,
     response: {} as BatchRemoveMemberResponse,
   },
+  'communication.room.members.get': {
+    request: {} as GetRoomMembersRequest,
+    response: {} as GetRoomMembersResponse,
+  },
   'communication.room.update': {
     request: {} as UpdateRoomRequest,
     response: {} as BaseResponse,
@@ -132,6 +144,10 @@ export const Commands = {
     request: {} as UpdateSpaceRequest,
     response: {} as BaseResponse,
   },
+  'communication.thread.messages.get': {
+    request: {} as GetThreadMessagesRequest,
+    response: {} as GetThreadMessagesResponse,
+  },
 } as const;
 
 /**
@@ -140,6 +156,18 @@ export const Commands = {
 export const OutgoingEvents = {
   'communication.message.received': {
     payload: {} as MessageReceivedPayload,
+  },
+  'communication.reaction.added': {
+    payload: {} as ReactionAddedEvent,
+  },
+  'communication.reaction.removed': {
+    payload: {} as ReactionRemovedEvent,
+  },
+  'communication.room.dm.requested': {
+    payload: {} as DMRequestedEvent,
+  },
+  'communication.room.member.left': {
+    payload: {} as RoomMemberLeftEvent,
   },
 } as const;
 

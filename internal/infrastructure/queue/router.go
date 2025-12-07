@@ -16,10 +16,16 @@ func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, s
 		TopicRoomDelete: room.HandleDeleteRoom,
 		TopicRoomList:   room.HandleListRooms,
 
+		// Room Members Query (communication.room.members.*)
+		TopicRoomMembersGet: room.HandleGetRoomMembers,
+
 		// Message Routes (communication.message.*)
 		TopicMessageSend:   room.HandleSendMessage,
 		TopicMessageGet:    room.HandleGetMessage,
 		TopicMessageDelete: room.HandleDeleteMessage,
+
+		// Thread Messages Query (communication.thread.*)
+		TopicThreadMessagesGet: room.HandleGetThreadMessages,
 
 		// Reaction Routes (communication.reaction.*)
 		TopicReactionAdd:    room.HandleAddReaction,

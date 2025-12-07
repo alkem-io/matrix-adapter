@@ -167,6 +167,7 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 | | Update Room | `communication.room.update` |
 | | Delete Room | `communication.room.delete` |
 | | List Rooms | `communication.room.list` |
+| | Get Room Members | `communication.room.members.get` |
 | | Batch Add Member | `communication.room.member.batch.add` |
 | | Batch Remove Member | `communication.room.member.batch.remove` |
 | **Space** | Create Space | `communication.space.create` |
@@ -183,6 +184,7 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 | **Reaction** | Add Reaction | `communication.reaction.add` |
 | | Remove Reaction | `communication.reaction.remove` |
 | | Get Reaction | `communication.reaction.get` |
+| **Thread** | Get Thread Messages | `communication.thread.messages.get` |
 | **Actor** | Sync Actor Profile | `communication.actor.sync` |
 
 ### Outgoing Events
@@ -190,6 +192,77 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 | Event | Topic | Description |
 |-------|-------|-------------|
 | Message Received | `communication.message.received` | Emitted when a message is received in a room |
+| DM Requested | `communication.room.dm.requested` | Emitted when a DM room creation is requested via webhook |
+| Reaction Added | `communication.reaction.added` | Emitted when a user adds a reaction to a message |
+| Reaction Removed | `communication.reaction.removed` | Emitted when a user removes a reaction from a message |
+| Room Member Left | `communication.room.member.left` | Emitted when a user leaves or is kicked from a room |
+
+## DM Room Creation Flow
+
+The adapter supports controlled DM (Direct Message) room creation through a webhook-based flow. This allows Synapse to request approval from the Alkemio Server before creating DM rooms.
+
+### Flow Overview
+
+```
+┌─────────┐        ┌──────────────┐        ┌─────────────────┐        ┌───────────┐
+│ Synapse │  1.    │   Adapter    │   2.   │  Alkemio Server │   3.   │  Adapter  │
+│  Spam   │───────▶│   Webhook    │───────▶│   (via RabbitMQ)│───────▶│  (via     │
+│ Checker │ POST   │   Handler    │ Publish│                 │ Command│  RabbitMQ)│
+└─────────┘        └──────────────┘        └─────────────────┘        └───────────┘
+                                                                            │
+                                                    4. Create DM Room       │
+                                                    (type: "direct")        ▼
+                                                                     ┌───────────┐
+                                                                     │   Matrix  │
+                                                                     │Homeserver │
+                                                                     └───────────┘
+```
+
+1. **Synapse Spam Checker** calls the adapter's webhook when a user attempts to create a DM
+2. **Adapter** publishes `DMRequestedEvent` to `communication.room.dm.requested` topic
+3. **Alkemio Server** processes the request and sends `communication.room.create` with `type: "direct"`
+4. **Adapter** creates the DM room in Matrix using existing room creation logic
+
+### Webhook Endpoint
+
+| Method | Path | Auth |
+|--------|------|------|
+| POST | `/_matrix/app/alkemio/dm-request` | Bearer token (HS token) |
+
+### Request Payload
+
+```json
+{
+  "inviter": "@550e8400-e29b-41d4-a716-446655440001:matrix.alkemio.org",
+  "invitee": "@660e8400-e29b-41d4-a716-446655440002:matrix.alkemio.org"
+}
+```
+
+### Response
+
+Success (202 Accepted):
+```json
+{"status": "accepted"}
+```
+
+Error responses use standard HTTP error codes with JSON error messages:
+- `401 Unauthorized`: Invalid or missing Bearer token
+- `400 Bad Request`: Invalid payload or missing fields
+- `500 Internal Server Error`: Failed to publish event
+
+### DM Room Creation Command
+
+The Alkemio Server creates DM rooms using the existing `communication.room.create` command with `type: "direct"`:
+
+```json
+{
+  "alkemio_room_id": "new-uuid-for-dm-room",
+  "type": "direct",
+  "name": "DM: User A - User B",
+  "initial_members": ["actor-uuid-1", "actor-uuid-2"],
+  "join_rule": "invite"
+}
+```
 
 ### Response Structure
 

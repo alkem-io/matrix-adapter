@@ -147,6 +147,30 @@ export const TopicSpaceMemberBatchAdd = "communication.space.member.batch.add";
  */
 export const TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove";
 /**
+ * TopicRoomDMRequested is the topic for DM room request events (outbound to Server).
+ */
+export const TopicRoomDMRequested = "communication.room.dm.requested";
+/**
+ * TopicReactionAdded is the topic for reaction added events.
+ */
+export const TopicReactionAdded = "communication.reaction.added";
+/**
+ * TopicReactionRemoved is the topic for reaction removed events.
+ */
+export const TopicReactionRemoved = "communication.reaction.removed";
+/**
+ * TopicRoomMemberLeft is the topic for room member left events.
+ */
+export const TopicRoomMemberLeft = "communication.room.member.left";
+/**
+ * TopicRoomMembersGet is the topic for getting room members.
+ */
+export const TopicRoomMembersGet = "communication.room.members.get";
+/**
+ * TopicThreadMessagesGet is the topic for getting thread messages.
+ */
+export const TopicThreadMessagesGet = "communication.thread.messages.get";
+/**
  * CommandDef defines a command with its topic, request type name, and response type name.
  * This is used by the TypeScript generator to create type-safe command definitions.
  */
@@ -154,6 +178,42 @@ export interface CommandDef {
   Topic: string;
   RequestType: string;
   ResponseType: string;
+}
+
+//////////
+// source: dm.go
+/*
+Package dto provides Data Transfer Objects for the Matrix Adapter.
+*/
+
+/**
+ * DMRequestedEvent represents the event published when Synapse requests approval
+ * for a DM room creation between two Alkemio users.
+ * This is published to the communication.room.dm.requested topic.
+ */
+export interface DMRequestedEvent {
+  /**
+   * InitiatorActorID is the Alkemio UUID of the user who initiated the DM request.
+   */
+  initiator_actor_id: string;
+  /**
+   * TargetActorID is the Alkemio UUID of the user who is being invited to the DM.
+   */
+  target_actor_id: string;
+}
+/**
+ * DMWebhookPayload represents the payload received from Synapse's DM request webhook.
+ * The spam checker module sends this when a user attempts to create a DM room.
+ */
+export interface DMWebhookPayload {
+  /**
+   * Inviter is the Matrix user ID of the user initiating the DM (format: @{uuid}:{domain}).
+   */
+  inviter: string;
+  /**
+   * Invitee is the Matrix user ID of the user being invited (format: @{uuid}:{domain}).
+   */
+  invitee: string;
 }
 
 //////////
@@ -251,6 +311,40 @@ export interface Reaction {
   timestamp: number /* int64 */;
   messageId: string;
 }
+/**
+ * ReactionAddedEvent is published when a user adds a reaction to a message.
+ * Topic: communication.reaction.added
+ */
+export interface ReactionAddedEvent {
+  alkemio_room_id: AlkemioRoomID;
+  message_id: MessageID;
+  reaction_id: ReactionID;
+  emoji: string;
+  sender_actor_id: AlkemioActorID;
+  timestamp: number /* int64 */;
+}
+/**
+ * ReactionRemovedEvent is published when a user removes a reaction from a message.
+ * Topic: communication.reaction.removed
+ */
+export interface ReactionRemovedEvent {
+  alkemio_room_id: AlkemioRoomID;
+  message_id: MessageID;
+  reaction_id: ReactionID;
+  emoji: string;
+  sender_actor_id: AlkemioActorID;
+  timestamp: number /* int64 */;
+}
+/**
+ * RoomMemberLeftEvent is published when a user leaves or is kicked from a room.
+ * Topic: communication.room.member.left
+ */
+export interface RoomMemberLeftEvent {
+  alkemio_room_id: AlkemioRoomID;
+  actor_id: AlkemioActorID;
+  reason?: string;
+  timestamp: number /* int64 */;
+}
 
 //////////
 // source: hierarchy.go
@@ -324,6 +418,22 @@ export interface DeleteMessageRequest {
   message_id: MessageID;
   sender_actor_id: AlkemioActorID;
   reason?: string;
+}
+/**
+ * GetThreadMessagesRequest retrieves messages in a thread.
+ * Topic: communication.thread.messages.get
+ */
+export interface GetThreadMessagesRequest {
+  alkemio_room_id: AlkemioRoomID;
+  thread_root_id: MessageID;
+}
+/**
+ * GetThreadMessagesResponse returns thread messages.
+ */
+export interface GetThreadMessagesResponse extends BaseResponse {
+  alkemio_room_id: AlkemioRoomID;
+  thread_root_id: MessageID;
+  messages: MessageDto[];
 }
 
 //////////
@@ -444,6 +554,20 @@ export interface ListRoomsRequest {
 export interface ListRoomsResponse extends BaseResponse {
   alkemio_room_ids: AlkemioRoomID[];
   next_cursor?: string;
+}
+/**
+ * GetRoomMembersRequest retrieves the list of members in a room.
+ * Topic: communication.room.members.get
+ */
+export interface GetRoomMembersRequest {
+  alkemio_room_id: AlkemioRoomID;
+}
+/**
+ * GetRoomMembersResponse returns the list of joined member actor IDs.
+ */
+export interface GetRoomMembersResponse extends BaseResponse {
+  alkemio_room_id: AlkemioRoomID;
+  member_actor_ids: AlkemioActorID[];
 }
 
 //////////

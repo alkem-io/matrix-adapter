@@ -55,6 +55,27 @@ const (
 	TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove"
 )
 
+// TopicRoomDMRequested is the topic for DM room request events (outbound to Server).
+const TopicRoomDMRequested = "communication.room.dm.requested"
+
+// Outgoing Event Topics (Adapter → Server) - V4 Protocol Extension
+const (
+	// TopicReactionAdded is the topic for reaction added events.
+	TopicReactionAdded = "communication.reaction.added"
+	// TopicReactionRemoved is the topic for reaction removed events.
+	TopicReactionRemoved = "communication.reaction.removed"
+	// TopicRoomMemberLeft is the topic for room member left events.
+	TopicRoomMemberLeft = "communication.room.member.left"
+)
+
+// Command Topics (Server → Adapter) - V4 Protocol Extension
+const (
+	// TopicRoomMembersGet is the topic for getting room members.
+	TopicRoomMembersGet = "communication.room.members.get"
+	// TopicThreadMessagesGet is the topic for getting thread messages.
+	TopicThreadMessagesGet = "communication.thread.messages.get"
+)
+
 // ============================================================================
 // Command Registry - Topic/Request/Response Mapping for Code Generation
 // ============================================================================
@@ -109,6 +130,12 @@ var CommandRegistry = []CommandDef{
 	// Space batch membership commands
 	{Topic: TopicSpaceMemberBatchAdd, RequestType: "BatchAddSpaceMemberRequest", ResponseType: "BatchAddSpaceMemberResponse"},
 	{Topic: TopicSpaceMemberBatchRemove, RequestType: "BatchRemoveSpaceMemberRequest", ResponseType: "BatchRemoveSpaceMemberResponse"},
+
+	// Room members query (V4)
+	{Topic: TopicRoomMembersGet, RequestType: "GetRoomMembersRequest", ResponseType: "GetRoomMembersResponse"},
+
+	// Thread messages query (V4)
+	{Topic: TopicThreadMessagesGet, RequestType: "GetThreadMessagesRequest", ResponseType: "GetThreadMessagesResponse"},
 }
 
 // OutgoingEventRegistry defines events emitted by the adapter (not commands).
@@ -116,4 +143,9 @@ var CommandRegistry = []CommandDef{
 //nolint:gochecknoglobals // Registry is intentionally global for code generation
 var OutgoingEventRegistry = []CommandDef{
 	{Topic: TopicMessageReceived, RequestType: "", ResponseType: "MessageReceivedPayload"},
+	{Topic: TopicRoomDMRequested, RequestType: "", ResponseType: "DMRequestedEvent"},
+	// V4 Protocol Extension - New Outgoing Events
+	{Topic: TopicReactionAdded, RequestType: "", ResponseType: "ReactionAddedEvent"},
+	{Topic: TopicReactionRemoved, RequestType: "", ResponseType: "ReactionRemovedEvent"},
+	{Topic: TopicRoomMemberLeft, RequestType: "", ResponseType: "RoomMemberLeftEvent"},
 }

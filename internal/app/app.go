@@ -4,8 +4,10 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/config"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
 	httpinfra "github.com/alkem-io/matrix-adapter-go/internal/infrastructure/http"
@@ -18,9 +20,8 @@ import (
 type App struct {
 	cfg           *config.Config
 	logger        ports.Logger
-	matrixAdapter ports.MatrixPort
+	matrixAdapter *matrix.MautrixAdapter
 	queueAdapter  ports.QueuePort
-	healthServer  *httpinfra.HealthServer
 
 	// Handlers
 	roomHandler  *queue.RoomHandler
@@ -54,22 +55,44 @@ func NewApp(cfg *config.Config) (*App, error) {
 	actorService := service.NewActorService(matrixAdapter, log)
 	eventService := service.NewEventService(queueAdapter, log, cfg)
 	spaceService := service.NewSpaceService(matrixAdapter, log)
+	dmService := service.NewDMService(queueAdapter, log)
 
 	// 4. Initialize Handlers
 	roomHandler := queue.NewRoomHandler(roomService, matrixAdapter)
 	actorHandler := queue.NewActorHandler(actorService)
 	spaceHandler := queue.NewSpaceHandler(spaceService)
 
-	// 5. Wire up Event Listeners (Matrix -> Queue)
-	// This can be done here as it just registers a callback, doesn't start IO usually.
-	matrixAdapter.OnMessage(eventService.HandleMessage)
+	// 5. Register all HTTP endpoints on AppService router (single port 8280)
+	router := matrixAdapter.Router()
+
+	// Health endpoints for k8s probes
+	router.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+	router.HandleFunc("GET /health/ready", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
+	// DM Webhook endpoint
+	idMapper := domain.NewIDMapper(cfg.Matrix.HomeserverName)
+	dmWebhookHandler := httpinfra.NewDMWebhookHandler(dmService, idMapper, cfg.Matrix.HomeserverToken, log)
+	dmWebhookHandler.RegisterRoutes(router)
+
+	// 6. Wire up Event Listeners (Matrix -> Queue)
+	matrixAdapter.SetEventHandlers(matrix.EventHandlers{
+		OnMessage:         eventService.HandleMessage,
+		OnReactionAdded:   eventService.HandleReactionAdded,
+		OnReactionRemoved: eventService.HandleReactionRemoved,
+		OnMemberLeft:      eventService.HandleMemberLeft,
+	})
 
 	return &App{
 		cfg:           cfg,
 		logger:        log,
 		matrixAdapter: matrixAdapter,
 		queueAdapter:  queueAdapter,
-		healthServer:  httpinfra.NewHealthServer("8081", log),
 		roomHandler:   roomHandler,
 		actorHandler:  actorHandler,
 		spaceHandler:  spaceHandler,
@@ -91,19 +114,12 @@ func (a *App) Start(ctx context.Context) error {
 	// Wire up Queue Subscribers
 	queue.RegisterRoutes(a.queueAdapter, a.roomHandler, a.actorHandler, a.spaceHandler, a.logger)
 
-	// Start Health Server
-	a.healthServer.Start()
-
 	return nil
 }
 
 // Stop gracefully stops the application and its components.
-func (a *App) Stop(ctx context.Context) {
+func (a *App) Stop(_ context.Context) {
 	a.logger.Info("Stopping application...")
-
-	if err := a.healthServer.Stop(ctx); err != nil {
-		a.logger.Error("Failed to stop health server", "error", err)
-	}
 
 	if err := a.matrixAdapter.Disconnect(); err != nil {
 		a.logger.Error("Failed to disconnect Matrix", "error", err)

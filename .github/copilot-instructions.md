@@ -75,6 +75,35 @@
   - Use **GitHub MCP** for repo context.
   - Use **Context7** or **Tavily** for Matrix Spec or Mautrix documentation queries.
 
+## ID Mapping (CRITICAL)
+
+**All Alkemio ↔ Matrix ID conversions MUST use `internal/core/domain.IDMapper`.**
+
+DO NOT create duplicate ID conversion utilities. The IDMapper is the **single source of truth** for:
+
+| Conversion | Method |
+|------------|--------|
+| Alkemio Room UUID → Matrix Alias | `IDMapper.RoomAlias(uuid)` |
+| Alkemio Context UUID → Matrix Space Alias | `IDMapper.SpaceAlias(uuid)` |
+| Alkemio Actor UUID → Matrix User ID | `IDMapper.UserID(uuid)` |
+| Matrix Room Alias → Alkemio UUID | `IDMapper.AlkemioRoomID(alias)` |
+| Matrix Space Alias → Alkemio UUID | `IDMapper.AlkemioContextID(alias)` |
+| Matrix User ID → Alkemio Actor UUID | `IDMapper.AlkemioActorID(userID)` |
+
+**Usage patterns:**
+- Handlers/Services: Create `idMapper := domain.NewIDMapper(matrix.HomeserverDomain())`
+- Infrastructure layer (mautrix.go, listener.go): Has its own `m.idMapper` field
+
+**Infrastructure helper (listener.go only):**
+
+| Helper | Purpose | Uses |
+|--------|---------|------|
+| `m.resolveAlkemioRoomID(ctx, roomID)` | Get Alkemio UUID from Matrix room ID | `GetRoomDetails()` + `IDMapper.AlkemioRoomID()` |
+
+This helper exists ONLY in `internal/infrastructure/matrix/listener.go` because it needs access to the Matrix adapter's `GetRoomDetails()` method for HTTP lookup. DO NOT duplicate it elsewhere.
+
+**NEVER duplicate these conversions inline or create new utility functions.**
+
 ## Active Technologies
 
 - **Runtime**: Go 1.25.

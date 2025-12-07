@@ -56,4 +56,16 @@ const (
 	TopicSpaceMemberBatchAdd = dto.TopicSpaceMemberBatchAdd
 	// TopicSpaceMemberBatchRemove is the topic for batch removing space members.
 	TopicSpaceMemberBatchRemove = dto.TopicSpaceMemberBatchRemove
+
+	// TopicRoomMembersGet is the topic for getting room members (V4).
+	TopicRoomMembersGet = dto.TopicRoomMembersGet
+	// TopicThreadMessagesGet is the topic for getting thread messages (V4).
+	TopicThreadMessagesGet = dto.TopicThreadMessagesGet
+
+	// TopicReactionAdded is the topic for reaction added events (V4 outgoing).
+	TopicReactionAdded = dto.TopicReactionAdded
+	// TopicReactionRemoved is the topic for reaction removed events (V4 outgoing).
+	TopicReactionRemoved = dto.TopicReactionRemoved
+	// TopicRoomMemberLeft is the topic for room member left events (V4 outgoing).
+	TopicRoomMemberLeft = dto.TopicRoomMemberLeft
 )

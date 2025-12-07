@@ -9,6 +9,7 @@ require (
 	github.com/gzuidhof/tygo v0.2.20
 	github.com/pkg/errors v0.9.1
 	github.com/rabbitmq/amqp091-go v1.10.0
+	github.com/rs/zerolog v1.34.0
 	go.uber.org/zap v1.27.1
 	gopkg.in/yaml.v2 v2.4.0
 	maunium.net/go/mautrix v0.26.0
@@ -27,7 +28,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
-	github.com/rs/zerolog v1.34.0 // indirect
 	github.com/spf13/cobra v1.3.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect

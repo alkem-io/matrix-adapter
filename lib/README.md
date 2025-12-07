@@ -113,6 +113,7 @@ const batchRequest: BatchAddSpaceMemberRequest = {
 | `COMMUNICATION_ROOM_UPDATE` | `communication.room.update` | Update room metadata |
 | `COMMUNICATION_ROOM_DELETE` | `communication.room.delete` | Delete a room |
 | `COMMUNICATION_ROOM_LIST` | `communication.room.list` | List all rooms |
+| `COMMUNICATION_ROOM_MEMBERS_GET` | `communication.room.members.get` | Get room members |
 | `COMMUNICATION_ROOM_MEMBER_BATCH_ADD` | `communication.room.member.batch.add` | Add actor to rooms |
 | `COMMUNICATION_ROOM_MEMBER_BATCH_REMOVE` | `communication.room.member.batch.remove` | Remove actor from rooms |
 | `COMMUNICATION_SPACE_CREATE` | `communication.space.create` | Create a space |
@@ -129,8 +130,13 @@ const batchRequest: BatchAddSpaceMemberRequest = {
 | `COMMUNICATION_REACTION_ADD` | `communication.reaction.add` | Add reaction |
 | `COMMUNICATION_REACTION_REMOVE` | `communication.reaction.remove` | Remove reaction |
 | `COMMUNICATION_REACTION_GET` | `communication.reaction.get` | Get reaction details |
+| `COMMUNICATION_THREAD_MESSAGES_GET` | `communication.thread.messages.get` | Get thread messages |
 | `COMMUNICATION_ACTOR_SYNC` | `communication.actor.sync` | Sync actor profile |
 | `COMMUNICATION_MESSAGE_RECEIVED` | `communication.message.received` | Message received event |
+| `COMMUNICATION_ROOM_DM_REQUESTED` | `communication.room.dm.requested` | DM room creation requested (outbound) |
+| `COMMUNICATION_REACTION_ADDED` | `communication.reaction.added` | Reaction added event (outbound) |
+| `COMMUNICATION_REACTION_REMOVED` | `communication.reaction.removed` | Reaction removed event (outbound) |
+| `COMMUNICATION_ROOM_MEMBER_LEFT` | `communication.room.member.left` | Room member left event (outbound) |
 
 ### Type Aliases
 

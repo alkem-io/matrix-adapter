@@ -6,8 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8080:8080" # AppService Transaction API
-      - "8081:8081" # Health Check
+      - "8280:8280" # AppService API (transactions, webhooks, health)
     environment:
       - ENVIRONMENT=development
       - LOGGING_LEVEL_CONSOLE=debug

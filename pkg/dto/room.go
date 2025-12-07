@@ -62,3 +62,20 @@ type ListRoomsResponse struct {
 	AlkemioRoomIDs []AlkemioRoomID `json:"alkemio_room_ids"`
 	NextCursor     string          `json:"next_cursor,omitempty"`
 }
+
+// ============================================================================
+// Room Members Query (communication.room.members.*)
+// ============================================================================
+
+// GetRoomMembersRequest retrieves the list of members in a room.
+// Topic: communication.room.members.get
+type GetRoomMembersRequest struct {
+	AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
+}
+
+// GetRoomMembersResponse returns the list of joined member actor IDs.
+type GetRoomMembersResponse struct {
+	BaseResponse   `tstype:",extends"`
+	AlkemioRoomID  AlkemioRoomID    `json:"alkemio_room_id"`
+	MemberActorIDs []AlkemioActorID `json:"member_actor_ids"`
+}
