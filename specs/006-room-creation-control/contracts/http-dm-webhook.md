@@ -210,11 +210,13 @@ async def _notify_dm_request(
 ## 8. Monitoring
 
 **Metrics to Track**:
+
 | Metric | Type | Labels |
 |--------|------|--------|
 | `dm_webhook_requests_total` | Counter | `status` (200/400/401/500) |
 | `dm_webhook_duration_seconds` | Histogram | - |
 | `dm_webhook_auth_failures_total` | Counter | - |
+
 
 **Logging**:
 - INFO: Successful webhook received (correlation_id, initiator, target)
