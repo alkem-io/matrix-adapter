@@ -109,12 +109,12 @@ grep -i "DM creation attempt" /var/log/synapse/homeserver.log
 ```
 
 Expected log on startup:
-```
+```text
 Loaded config from AppService 'alkemio-matrix-adapter': sender=matrix-adapter, url=http://matrix-adapter:8280
 AlkemioRoomControl initialized - AppService: @matrix-adapter:alkemio.io, Adapter: http://matrix-adapter:8280, Token: configured
 ```
 
 If the AppService is not found, you'll see:
-```
+```text
 AppService 'alkemio-matrix-adapter' not found! Check registration.yaml is loaded.
 ```
