@@ -33,6 +33,7 @@ func NewRoomService(matrix ports.MatrixPort, logger ports.Logger) *RoomService {
 
 // CreateRoomWithAlkemioID creates a new Matrix room with idempotent alias lookup.
 // If the room already exists (alias resolves), it returns success.
+// For direct rooms: If a DM already exists between the 2 users, sets the alias on that room.
 func (s *RoomService) CreateRoomWithAlkemioID(
 	ctx context.Context,
 	alkemioRoomID uuid.UUID,
@@ -61,6 +62,28 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	// If error is not "not found", return it
 	if !domain.IsNotFoundError(err) {
 		return fmt.Errorf("failed to check room alias: %w", err)
+	}
+
+	// For direct rooms with 2 members, check if a DM room already exists between them
+	if roomType == "direct" && len(initialMembers) == 2 {
+		existingDMRoom, err := s.matrix.FindExistingDirectRoom(ctx, initialMembers[0], initialMembers[1])
+		if err != nil {
+			s.logger.Warn("Failed to check for existing direct room, proceeding with creation",
+				"error", err)
+		} else if existingDMRoom != "" {
+			// Direct room already exists - set alias on it
+			s.logger.Info("Found existing direct room, setting alias",
+				"alkemio_room_id", alkemioRoomID,
+				"existing_room_id", existingDMRoom)
+
+			if err := s.matrix.SetRoomAlias(ctx, existingDMRoom, alias); err != nil {
+				s.logger.Warn("Failed to set alias on existing direct room",
+					"error", err,
+					"existing_room_id", existingDMRoom)
+				// Continue - alias setting failure is non-fatal
+			}
+			return nil
+		}
 	}
 
 	// Create the room with alias

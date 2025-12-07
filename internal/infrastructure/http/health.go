@@ -68,13 +68,3 @@ func (s *HTTPServer) Stop(ctx context.Context) error {
 	defer cancel()
 	return s.server.Shutdown(ctx)
 }
-
-// HealthServer is an alias for HTTPServer for backward compatibility.
-// Deprecated: Use HTTPServer instead.
-type HealthServer = HTTPServer
-
-// NewHealthServer creates a new instance of HTTPServer (alias for backward compatibility).
-// Deprecated: Use NewHTTPServer instead.
-func NewHealthServer(port string, logger ports.Logger) *HTTPServer {
-	return NewHTTPServer(port, logger)
-}

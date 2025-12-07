@@ -28,13 +28,6 @@ func (m *MautrixAdapter) SetEventHandlers(handlers EventHandlers) {
 	m.startEventLoop()
 }
 
-// OnMessage registers a handler for incoming Matrix messages.
-// Deprecated: Use SetEventHandlers instead for full event support.
-func (m *MautrixAdapter) OnMessage(handler func(msg domain.Message) error) {
-	m.eventHandlers.OnMessage = handler
-	m.startEventLoop()
-}
-
 // startEventLoop starts the event processing loop if not already started.
 func (m *MautrixAdapter) startEventLoop() {
 	m.eventLoopOnce.Do(func() {
@@ -112,18 +105,11 @@ func (m *MautrixAdapter) handleReactionEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse reaction content
-	content, ok := evt.Content.Parsed.(*event.ReactionEventContent)
+	// Parse reaction content using generic helper
+	content, ok := parseEventContent[event.ReactionEventContent](evt)
 	if !ok {
-		// Try parsing raw content
-		if err := evt.Content.ParseRaw(evt.Type); err != nil {
-			m.logger.Warn("Failed to parse reaction content", "error", err)
-			return
-		}
-		content, ok = evt.Content.Parsed.(*event.ReactionEventContent)
-		if !ok {
-			return
-		}
+		m.logger.Warn("Failed to parse reaction content")
+		return
 	}
 
 	// Get room alias to extract Alkemio room ID
@@ -182,14 +168,8 @@ func (m *MautrixAdapter) handleRedactionEvent(evt *event.Event) {
 	// Try to get the original reaction event
 	originalEvt, err := m.as.BotIntent().GetEvent(ctx, evt.RoomID, redactedEventID)
 	if err == nil && originalEvt.Type == event.EventReaction {
-		// Parse reaction content
-		content, ok := originalEvt.Content.Parsed.(*event.ReactionEventContent)
-		if !ok {
-			if parseErr := originalEvt.Content.ParseRaw(originalEvt.Type); parseErr == nil {
-				content, ok = originalEvt.Content.Parsed.(*event.ReactionEventContent)
-			}
-		}
-		if ok && content != nil {
+		// Parse reaction content using generic helper
+		if content, ok := parseEventContent[event.ReactionEventContent](originalEvt); ok {
 			emoji = content.RelatesTo.Key
 			messageID = content.RelatesTo.EventID
 		}
@@ -226,16 +206,10 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse membership content
-	content, ok := evt.Content.Parsed.(*event.MemberEventContent)
+	// Parse membership content using generic helper
+	content, ok := parseEventContent[event.MemberEventContent](evt)
 	if !ok {
-		if err := evt.Content.ParseRaw(evt.Type); err != nil {
-			return
-		}
-		content, ok = evt.Content.Parsed.(*event.MemberEventContent)
-		if !ok {
-			return
-		}
+		return
 	}
 
 	// Only handle leave and ban events

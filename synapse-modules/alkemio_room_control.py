@@ -226,6 +226,12 @@ class AlkemioRoomControl:
         This runs BEFORE the spam checker and can raise SynapseError with
         a custom message that Element may display.
         
+        Room creation policy:
+        - Server admins and AppService bot: Always allowed
+        - DM rooms (is_direct=true, 1 invitee): ALLOWED, but adapter is notified
+          so it can track/manage the room (e.g., set alias if room already exists)
+        - Community rooms: BLOCKED - must be created via Alkemio platform
+        
         Args:
             requester: The user requesting room creation
             request_content: The room creation request body
@@ -244,11 +250,12 @@ class AlkemioRoomControl:
         if is_direct and len(invite_list) == 1:
             target_user_id = invite_list[0]
             logger.info(
-                "DM creation blocked via third_party_rules: %s -> %s",
+                "DM creation ALLOWED - notifying adapter: %s -> %s",
                 user_id,
                 target_user_id,
             )
             # Notify adapter about DM request (fire and forget - don't block on failure)
+            # Adapter can use this to track the DM or set an alias if room already exists
             try:
                 await self._notify_dm_request(user_id, target_user_id)
             except Exception as e:
@@ -257,12 +264,9 @@ class AlkemioRoomControl:
                     str(e),
                 )
             
-            raise SynapseError(
-                403,
-                "Direct messages must be initiated through Alkemio. "
-                "Your request has been forwarded for processing.",
-                Codes.FORBIDDEN,
-            )
+            # ALLOW the DM room creation to proceed
+            # The adapter will be notified and can manage the room as needed
+            return
         
         # Block non-DM room creation
         logger.info(

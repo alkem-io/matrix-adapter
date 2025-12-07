@@ -68,6 +68,13 @@ type MatrixPort interface {
 	// GetThreadMessages retrieves all messages in a thread including the thread root.
 	GetThreadMessages(ctx context.Context, roomID id.RoomID, threadRootID id.EventID) ([]domain.Message, error)
 
+	// FindExistingDirectRoom finds an existing direct room between two users.
+	// Returns the room ID if found, or empty string if no direct room exists.
+	FindExistingDirectRoom(ctx context.Context, user1 domain.Actor, user2 domain.Actor) (id.RoomID, error)
+
+	// SetRoomAlias sets a room alias for an existing room.
+	SetRoomAlias(ctx context.Context, roomID id.RoomID, alias string) error
+
 	// GetAllJoinedRooms returns all rooms the appservice bot has joined.
 	GetAllJoinedRooms(ctx context.Context) ([]id.RoomID, error)
 
@@ -101,7 +108,4 @@ type MatrixPort interface {
 
 	// KickFromSpace kicks a user from a space.
 	KickFromSpace(ctx context.Context, spaceID id.RoomID, userID id.UserID, reason string) error
-
-	// OnMessage registers a handler for incoming message events.
-	OnMessage(handler func(msg domain.Message) error)
 }

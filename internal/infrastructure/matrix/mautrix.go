@@ -86,6 +86,10 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 	}, nil
 }
 
+// ============================================================================
+// Core / Connection
+// ============================================================================
+
 // Connect initializes the connection to the Matrix homeserver.
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	m.logger.Info("Initializing Matrix AppService connection...")
@@ -187,6 +191,10 @@ func (m *MautrixAdapter) Disconnect() error {
 	return nil
 }
 
+// ============================================================================
+// User Operations
+// ============================================================================
+
 // EnsureUser provisions a user on the homeserver if it doesn't exist
 func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id.UserID, error) {
 	// Construct Matrix ID from Actor ID (UUID)
@@ -256,6 +264,10 @@ func (m *MautrixAdapter) SendMessage(
 	}
 	return resp.EventID, nil
 }
+
+// ============================================================================
+// Room Operations
+// ============================================================================
 
 // GetAllJoinedRooms returns the list of all rooms the bot has joined.
 func (m *MautrixAdapter) GetAllJoinedRooms(ctx context.Context) ([]id.RoomID, error) {
@@ -342,6 +354,10 @@ func (m *MautrixAdapter) UpdateRoomState(
 	return nil
 }
 
+// ============================================================================
+// Message & Reaction Operations
+// ============================================================================
+
 // SendReply sends a reply to a message.
 func (m *MautrixAdapter) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
@@ -425,45 +441,54 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 		return nil, fmt.Errorf("failed to get event: %w", err)
 	}
 
-	// Try to parse content - handle nil Parsed case
-	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
-	if !ok {
-		// Try parsing raw content
-		if err := evt.Content.ParseRaw(evt.Type); err != nil {
-			return nil, fmt.Errorf("failed to parse message content: %w", err)
-		}
-		content, ok = evt.Content.Parsed.(*event.MessageEventContent)
-		if !ok {
-			// Last resort: try raw JSON
-			if rawBody, ok := evt.Content.Raw["body"].(string); ok {
-				msg := &domain.Message{
-					ID:             evt.ID.String(),
-					RoomID:         roomID.String(),
-					Content:        rawBody,
-					SenderMatrixID: evt.Sender.String(),
-					Timestamp:      time.UnixMilli(evt.Timestamp),
-				}
-				// Try to extract thread info from raw content
-				if relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{}); ok {
-					if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
-						if eventID, ok := inReplyTo["event_id"].(string); ok {
-							msg.ThreadID = eventID
-						}
-					}
-				}
-				return msg, nil
-			}
-			return nil, fmt.Errorf("event is not a message")
-		}
+	// Try to parse using generic helper
+	if content, ok := parseEventContent[event.MessageEventContent](evt); ok {
+		return &domain.Message{
+			ID:             evt.ID.String(),
+			RoomID:         roomID.String(),
+			Content:        content.Body,
+			SenderMatrixID: evt.Sender.String(),
+			Timestamp:      time.UnixMilli(evt.Timestamp),
+		}, nil
 	}
 
-	return &domain.Message{
+	// Fallback: try raw JSON body
+	return m.parseMessageFromRaw(evt, roomID)
+}
+
+// parseMessageFromRaw extracts a message from raw event content as a fallback.
+func (m *MautrixAdapter) parseMessageFromRaw(evt *event.Event, roomID id.RoomID) (*domain.Message, error) {
+	rawBody, ok := evt.Content.Raw["body"].(string)
+	if !ok {
+		return nil, fmt.Errorf("event is not a message")
+	}
+
+	msg := &domain.Message{
 		ID:             evt.ID.String(),
 		RoomID:         roomID.String(),
-		Content:        content.Body,
+		Content:        rawBody,
 		SenderMatrixID: evt.Sender.String(),
 		Timestamp:      time.UnixMilli(evt.Timestamp),
-	}, nil
+	}
+
+	// Try to extract thread info from raw content
+	msg.ThreadID = m.extractThreadIDFromRaw(evt)
+
+	return msg, nil
+}
+
+// extractThreadIDFromRaw extracts thread ID from raw event content.
+func (m *MautrixAdapter) extractThreadIDFromRaw(evt *event.Event) string {
+	relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	threadID, _ := inReplyTo["event_id"].(string)
+	return threadID
 }
 
 // RespRelations defines the response for relations endpoint
@@ -471,20 +496,38 @@ type RespRelations struct {
 	Chunk []event.Event `json:"chunk"`
 }
 
+// relationsURLFormat is the format string for the Matrix relations API endpoint.
+const relationsURLFormat = "%s/_matrix/client/v1/rooms/%s/relations/%s/%s/%s"
+
+// buildRelationsURL constructs a URL for the Matrix relations API.
+func (m *MautrixAdapter) buildRelationsURL(intent *appservice.IntentAPI, roomID id.RoomID, eventID id.EventID, relType event.RelationType, eventType event.Type) string {
+	hsURL := strings.TrimSuffix(intent.HomeserverURL.String(), "/")
+	return fmt.Sprintf(relationsURLFormat, hsURL, roomID, eventID, relType, eventType)
+}
+
+// parseEventContent attempts to parse event content, trying Parsed first then ParseRaw.
+// Returns the parsed content and true if successful, nil and false otherwise.
+func parseEventContent[T any](evt *event.Event) (*T, bool) {
+	// Try parsed content first
+	if content, ok := evt.Content.Parsed.(*T); ok {
+		return content, true
+	}
+
+	// Try parsing raw content
+	if err := evt.Content.ParseRaw(evt.Type); err != nil {
+		return nil, false
+	}
+
+	content, ok := evt.Content.Parsed.(*T)
+	return content, ok
+}
+
 // GetReactionEventID finds the event ID of a reaction.
 func (m *MautrixAdapter) GetReactionEventID(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID, emoji string, senderID domain.Actor,
 ) (id.EventID, error) {
 	intent := m.as.BotIntent()
-
-	// Manually build request for relations
-	// BuildURL signature is tricky in this version, so we construct the URL manually.
-	// We assume Client.HomeserverURL is set and valid.
-	hsURL := strings.TrimSuffix(intent.HomeserverURL.String(), "/")
-	u := fmt.Sprintf(
-		"%s/_matrix/client/v1/rooms/%s/relations/%s/%s/%s", hsURL, roomID, eventID, event.RelAnnotation,
-		event.EventReaction,
-	)
+	u := m.buildRelationsURL(intent, roomID, eventID, event.RelAnnotation, event.EventReaction)
 
 	var resp RespRelations
 	_, err := intent.MakeRequest(ctx, "GET", u, nil, &resp)
@@ -497,28 +540,26 @@ func (m *MautrixAdapter) GetReactionEventID(
 		return "", err
 	}
 
-	for _, evt := range resp.Chunk {
-		if evt.Sender == senderUserID && evt.Type == event.EventReaction {
-			// Try to parse content - handle nil Parsed case
-			content, ok := evt.Content.Parsed.(*event.ReactionEventContent)
-			if !ok {
-				// Try parsing raw content
-				if err := evt.Content.ParseRaw(evt.Type); err != nil {
-					continue
-				}
-				content, ok = evt.Content.Parsed.(*event.ReactionEventContent)
-				if !ok {
-					continue
-				}
-			}
-			if content.RelatesTo.Key == emoji {
-				return evt.ID, nil
-			}
+	return m.findReactionByEmojiAndSender(resp.Chunk, senderUserID, emoji)
+}
+
+// findReactionByEmojiAndSender searches for a specific reaction in a list of events.
+func (m *MautrixAdapter) findReactionByEmojiAndSender(events []event.Event, senderUserID id.UserID, emoji string) (id.EventID, error) {
+	for _, evt := range events {
+		if evt.Sender != senderUserID || evt.Type != event.EventReaction {
+			continue
+		}
+		content, ok := parseEventContent[event.ReactionEventContent](&evt)
+		if ok && content.RelatesTo.Key == emoji {
+			return evt.ID, nil
 		}
 	}
-
 	return "", fmt.Errorf("reaction not found")
 }
+
+// ============================================================================
+// Helpers & Utilities
+// ============================================================================
 
 // HomeserverDomain returns the homeserver domain for room alias construction.
 func (m *MautrixAdapter) HomeserverDomain() string {
@@ -637,20 +678,8 @@ func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) 
 
 // parseReactionEvent extracts a domain.Reaction from a Matrix reaction event.
 func (m *MautrixAdapter) parseReactionEvent(evt *event.Event, roomID id.RoomID) *domain.Reaction {
-	// Try to parse content
-	content, ok := evt.Content.Parsed.(*event.ReactionEventContent)
-	if !ok {
-		// Try parsing raw content
-		if err := evt.Content.ParseRaw(evt.Type); err != nil {
-			return nil
-		}
-		content, ok = evt.Content.Parsed.(*event.ReactionEventContent)
-		if !ok {
-			return nil
-		}
-	}
-
-	if content.RelatesTo.EventID == "" {
+	content, ok := parseEventContent[event.ReactionEventContent](evt)
+	if !ok || content.RelatesTo.EventID == "" {
 		return nil
 	}
 
@@ -691,16 +720,9 @@ func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *
 
 // extractMessageBody gets the message body from an event, trying multiple approaches.
 func (m *MautrixAdapter) extractMessageBody(evt *event.Event) string {
-	// Try parsed content first
-	if content, ok := evt.Content.Parsed.(*event.MessageEventContent); ok {
+	// Try the generic parser first
+	if content, ok := parseEventContent[event.MessageEventContent](evt); ok {
 		return content.Body
-	}
-
-	// Parse from raw content if Parsed is nil
-	if err := evt.Content.ParseRaw(evt.Type); err == nil {
-		if content, ok := evt.Content.Parsed.(*event.MessageEventContent); ok {
-			return content.Body
-		}
 	}
 
 	// Try raw JSON as last resort
@@ -724,17 +746,9 @@ func (m *MautrixAdapter) GetReaction(ctx context.Context, roomID id.RoomID, reac
 		return nil, fmt.Errorf("event is not a reaction")
 	}
 
-	// Try to parse content - handle nil Parsed case
-	content, ok := evt.Content.Parsed.(*event.ReactionEventContent)
+	content, ok := parseEventContent[event.ReactionEventContent](evt)
 	if !ok {
-		// Try parsing raw content
-		if err := evt.Content.ParseRaw(evt.Type); err != nil {
-			return nil, fmt.Errorf("failed to parse reaction content: %w", err)
-		}
-		content, ok = evt.Content.Parsed.(*event.ReactionEventContent)
-		if !ok {
-			return nil, fmt.Errorf("failed to parse reaction content after ParseRaw")
-		}
+		return nil, fmt.Errorf("failed to parse reaction content")
 	}
 
 	return &domain.Reaction{
@@ -767,12 +781,7 @@ func (m *MautrixAdapter) GetThreadMessages(ctx context.Context, roomID id.RoomID
 	}
 
 	// Get thread replies using relations API
-	// Build request for thread relations
-	hsURL := strings.TrimSuffix(intent.HomeserverURL.String(), "/")
-	u := fmt.Sprintf(
-		"%s/_matrix/client/v1/rooms/%s/relations/%s/%s/%s",
-		hsURL, roomID, threadRootID, event.RelThread, event.EventMessage,
-	)
+	u := m.buildRelationsURL(intent, roomID, threadRootID, event.RelThread, event.EventMessage)
 
 	var resp RespRelations
 	_, err = intent.MakeRequest(ctx, "GET", u, nil, &resp)
@@ -851,6 +860,117 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		"alkemio_room_id", alkemioRoomID)
 
 	return resp.RoomID, nil
+}
+
+// FindExistingDirectRoom finds an existing direct room between two users.
+// It checks if user1 has a direct room where user2 is also a member.
+// Returns the room ID if found, or empty string if no direct room exists.
+func (m *MautrixAdapter) FindExistingDirectRoom(
+	ctx context.Context,
+	user1 domain.Actor,
+	user2 domain.Actor,
+) (id.RoomID, error) {
+	user1ID, err := m.EnsureUser(ctx, user1)
+	if err != nil {
+		return "", fmt.Errorf("failed to ensure user1: %w", err)
+	}
+	user2ID, err := m.EnsureUser(ctx, user2)
+	if err != nil {
+		return "", fmt.Errorf("failed to ensure user2: %w", err)
+	}
+
+	// Get the direct rooms for user1 from their account data
+	intent := m.as.Intent(user1ID)
+
+	// Fetch the m.direct account data
+	var directContent map[string][]string
+	err = intent.GetAccountData(ctx, "m.direct", &directContent)
+	if err != nil {
+		// No m.direct data means no direct rooms
+		m.logger.Debug("No m.direct account data for user", "user_id", user1ID)
+		return "", nil
+	}
+
+	// Look for rooms with user2
+	directRooms, exists := directContent[user2ID.String()]
+	if !exists || len(directRooms) == 0 {
+		return "", nil
+	}
+
+	// Check each direct room to find one where both users are members
+	return m.findRoomWithBothUsers(ctx, directRooms, user1ID, user2ID)
+}
+
+// findRoomWithBothUsers checks a list of room IDs to find one where both users are members.
+func (m *MautrixAdapter) findRoomWithBothUsers(
+	ctx context.Context,
+	roomIDs []string,
+	user1ID, user2ID id.UserID,
+) (id.RoomID, error) {
+	for _, roomIDStr := range roomIDs {
+		roomID := id.RoomID(roomIDStr)
+
+		if m.roomContainsBothUsers(ctx, roomID, user1ID, user2ID) {
+			m.logger.Info("Found existing direct room between users",
+				"room_id", roomID,
+				"user1", user1ID,
+				"user2", user2ID)
+			return roomID, nil
+		}
+	}
+	return "", nil
+}
+
+// roomContainsBothUsers checks if a room contains both specified users.
+func (m *MautrixAdapter) roomContainsBothUsers(
+	ctx context.Context,
+	roomID id.RoomID,
+	user1ID, user2ID id.UserID,
+) bool {
+	members, err := m.GetRoomMembers(ctx, roomID)
+	if err != nil {
+		m.logger.Debug("Failed to get members for direct room, skipping",
+			"room_id", roomID, "error", err)
+		return false
+	}
+
+	hasUser1, hasUser2 := false, false
+	for _, member := range members {
+		if member == user1ID {
+			hasUser1 = true
+		}
+		if member == user2ID {
+			hasUser2 = true
+		}
+		if hasUser1 && hasUser2 {
+			return true
+		}
+	}
+	return false
+}
+
+// SetRoomAlias sets a room alias for an existing room.
+func (m *MautrixAdapter) SetRoomAlias(ctx context.Context, roomID id.RoomID, alias string) error {
+	intent := m.as.BotIntent()
+
+	// Add the alias to the room
+	_, err := intent.CreateAlias(ctx, id.RoomAlias(alias), roomID)
+	if err != nil {
+		return fmt.Errorf("failed to create room alias: %w", err)
+	}
+
+	// Set it as the canonical alias
+	content := event.CanonicalAliasEventContent{
+		Alias: id.RoomAlias(alias),
+	}
+	_, err = intent.SendStateEvent(ctx, roomID, event.StateCanonicalAlias, "", &content)
+	if err != nil {
+		m.logger.Warn("Failed to set canonical alias, alias was still created",
+			"room_id", roomID, "alias", alias, "error", err)
+	}
+
+	m.logger.Info("Room alias set", "room_id", roomID, "alias", alias)
+	return nil
 }
 
 // ============================================================================
@@ -1043,21 +1163,8 @@ func (m *MautrixAdapter) GetSpaceChildren(ctx context.Context, roomID id.RoomID)
 	}
 
 	for stateKey, evt := range childEvents {
-		// Try to parse content - handle nil Parsed case
-		content, ok := evt.Content.Parsed.(*event.SpaceChildEventContent)
-		if !ok {
-			// Try parsing raw content
-			if err := evt.Content.ParseRaw(evt.Type); err != nil {
-				continue
-			}
-			content, ok = evt.Content.Parsed.(*event.SpaceChildEventContent)
-			if !ok {
-				continue
-			}
-		}
-
-		// Check if child is active (has "via" servers)
-		if len(content.Via) == 0 {
+		content, ok := parseEventContent[event.SpaceChildEventContent](evt)
+		if !ok || len(content.Via) == 0 {
 			continue
 		}
 
