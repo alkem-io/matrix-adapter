@@ -9,8 +9,8 @@ package dto
 type MarkMessageReadRequest struct {
 	ActorID       AlkemioActorID `json:"actor_id"`
 	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
-	MessageID     string         `json:"message_id"`
-	ThreadRootID  *string        `json:"thread_root_id,omitempty"` // Optional: for thread-specific receipts
+	MessageID     MessageID      `json:"message_id"`
+	ThreadRootID  *MessageID     `json:"thread_root_id,omitempty"` // Optional: for thread-specific receipts
 }
 
 // GetUnreadCountsRequest is the command to get unread counts for a user in a room.
@@ -18,12 +18,12 @@ type MarkMessageReadRequest struct {
 type GetUnreadCountsRequest struct {
 	ActorID       AlkemioActorID `json:"actor_id"`
 	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
-	ThreadRootIDs []string       `json:"thread_root_ids,omitempty"` // Optional: specific threads to query
+	ThreadRootIDs []MessageID    `json:"thread_root_ids,omitempty"` // Optional: specific threads to query
 }
 
 // GetUnreadCountsResponse is the response for GetUnreadCountsRequest.
 type GetUnreadCountsResponse struct {
-	BaseResponse
+	BaseResponse       `tstype:",extends"`
 	RoomUnreadCount    int            `json:"room_unread_count"`
 	ThreadUnreadCounts map[string]int `json:"thread_unread_counts,omitempty"` // Map[ThreadID]Count
 }
@@ -37,8 +37,8 @@ type GetUnreadCountsResponse struct {
 type ReadReceiptUpdatedEvent struct {
 	AlkemioRoomID  AlkemioRoomID  `json:"alkemio_room_id"`
 	ActorID        AlkemioActorID `json:"actor_id"`
-	MatrixEventID  string         `json:"matrix_event_id"`            // Matrix event ID that was marked as read
-	MatrixThreadID *string        `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if thread-level)
+	MatrixEventID  MessageID      `json:"matrix_event_id"`            // Matrix event ID that was marked as read
+	MatrixThreadID *MessageID     `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if thread-level)
 	Timestamp      int64          `json:"timestamp"`
 }
 
@@ -51,10 +51,10 @@ type ReadReceiptUpdatedEvent struct {
 type MessageEditedEvent struct {
 	AlkemioRoomID       AlkemioRoomID  `json:"alkemio_room_id"`
 	SenderActorID       AlkemioActorID `json:"sender_actor_id"`
-	OriginalMatrixMsgID string         `json:"original_matrix_msg_id"` // Matrix event ID of original message
-	NewMatrixMsgID      string         `json:"new_matrix_msg_id"`      // Matrix event ID of the edit event
+	OriginalMatrixMsgID MessageID      `json:"original_matrix_msg_id"` // Matrix event ID of original message
+	NewMatrixMsgID      MessageID      `json:"new_matrix_msg_id"`      // Matrix event ID of the edit event
 	NewContent          string         `json:"new_content"`
-	MatrixThreadID      *string        `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if in thread)
+	MatrixThreadID      *MessageID     `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if in thread)
 	Timestamp           int64          `json:"timestamp"`
 }
 
@@ -63,10 +63,10 @@ type MessageEditedEvent struct {
 type MessageRedactedEvent struct {
 	AlkemioRoomID        AlkemioRoomID  `json:"alkemio_room_id"`
 	RedactorActorID      AlkemioActorID `json:"redactor_actor_id"`
-	RedactedMatrixMsgID  string         `json:"redacted_matrix_msg_id"`  // Matrix event ID of the redacted message
-	RedactionMatrixMsgID string         `json:"redaction_matrix_msg_id"` // Matrix event ID of the redaction event
+	RedactedMatrixMsgID  MessageID      `json:"redacted_matrix_msg_id"`  // Matrix event ID of the redacted message
+	RedactionMatrixMsgID MessageID      `json:"redaction_matrix_msg_id"` // Matrix event ID of the redaction event
 	Reason               string         `json:"reason,omitempty"`
-	MatrixThreadID       *string        `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if in thread)
+	MatrixThreadID       *MessageID     `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if in thread)
 	Timestamp            int64          `json:"timestamp"`
 }
 

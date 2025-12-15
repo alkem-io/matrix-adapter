@@ -526,8 +526,8 @@ export interface GetReactionResponse extends BaseResponse {
 export interface MarkMessageReadRequest {
   actor_id: AlkemioActorID;
   alkemio_room_id: AlkemioRoomID;
-  message_id: string;
-  thread_root_id?: string; // Optional: for thread-specific receipts
+  message_id: MessageID;
+  thread_root_id?: MessageID; // Optional: for thread-specific receipts
 }
 /**
  * GetUnreadCountsRequest is the command to get unread counts for a user in a room.
@@ -536,13 +536,12 @@ export interface MarkMessageReadRequest {
 export interface GetUnreadCountsRequest {
   actor_id: AlkemioActorID;
   alkemio_room_id: AlkemioRoomID;
-  thread_root_ids?: string[]; // Optional: specific threads to query
+  thread_root_ids?: MessageID[]; // Optional: specific threads to query
 }
 /**
  * GetUnreadCountsResponse is the response for GetUnreadCountsRequest.
  */
-export interface GetUnreadCountsResponse {
-  BaseResponse: BaseResponse;
+export interface GetUnreadCountsResponse extends BaseResponse {
   room_unread_count: number /* int */;
   thread_unread_counts?: { [key: string]: number /* int */}; // Map[ThreadID]Count
 }
@@ -553,8 +552,8 @@ export interface GetUnreadCountsResponse {
 export interface ReadReceiptUpdatedEvent {
   alkemio_room_id: AlkemioRoomID;
   actor_id: AlkemioActorID;
-  matrix_event_id: string; // Matrix event ID that was marked as read
-  matrix_thread_id?: string; // Matrix thread root event ID (if thread-level)
+  matrix_event_id: MessageID; // Matrix event ID that was marked as read
+  matrix_thread_id?: MessageID; // Matrix thread root event ID (if thread-level)
   timestamp: number /* int64 */;
 }
 /**
@@ -564,10 +563,10 @@ export interface ReadReceiptUpdatedEvent {
 export interface MessageEditedEvent {
   alkemio_room_id: AlkemioRoomID;
   sender_actor_id: AlkemioActorID;
-  original_matrix_msg_id: string; // Matrix event ID of original message
-  new_matrix_msg_id: string; // Matrix event ID of the edit event
+  original_matrix_msg_id: MessageID; // Matrix event ID of original message
+  new_matrix_msg_id: MessageID; // Matrix event ID of the edit event
   new_content: string;
-  matrix_thread_id?: string; // Matrix thread root event ID (if in thread)
+  matrix_thread_id?: MessageID; // Matrix thread root event ID (if in thread)
   timestamp: number /* int64 */;
 }
 /**
@@ -577,10 +576,10 @@ export interface MessageEditedEvent {
 export interface MessageRedactedEvent {
   alkemio_room_id: AlkemioRoomID;
   redactor_actor_id: AlkemioActorID;
-  redacted_matrix_msg_id: string; // Matrix event ID of the redacted message
-  redaction_matrix_msg_id: string; // Matrix event ID of the redaction event
+  redacted_matrix_msg_id: MessageID; // Matrix event ID of the redacted message
+  redaction_matrix_msg_id: MessageID; // Matrix event ID of the redaction event
   reason?: string;
-  matrix_thread_id?: string; // Matrix thread root event ID (if in thread)
+  matrix_thread_id?: MessageID; // Matrix thread root event ID (if in thread)
   timestamp: number /* int64 */;
 }
 /**

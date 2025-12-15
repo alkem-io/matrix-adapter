@@ -230,11 +230,8 @@ func (m *MautrixAdapter) Disconnect() error {
 
 // EnsureUser provisions a user on the homeserver if it doesn't exist
 func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id.UserID, error) {
-	// Construct Matrix ID from Actor ID (UUID)
-	// Format: @uuid:domain
-	// Note: We need to ensure the localpart is valid. UUIDs are safe.
-	localpart := actor.ID.String()
-	userID := id.NewUserID(localpart, m.as.HomeserverDomain)
+	// Use centralized IDMapper for consistent user ID construction
+	userID := m.idMapper.UserID(actor.ID)
 
 	// Check if user exists (intent)
 	intent := m.as.Intent(userID)
@@ -1294,21 +1291,24 @@ func (m *MautrixAdapter) KickFromSpace(ctx context.Context, spaceID id.RoomID, u
 // ============================================================================
 
 // SendReadReceipt sends a read receipt for a message in a room.
-// If threadRootID is provided, sends an m.read.thread receipt for thread-level tracking.
+// If threadRootID is provided, sends an m.read receipt with thread_id for thread-level tracking.
 // Otherwise, sends a standard m.read receipt for room-level tracking.
 func (m *MautrixAdapter) SendReadReceipt(ctx context.Context, actor domain.Actor, roomID id.RoomID, eventID id.EventID, threadRootID *id.EventID) error {
-	userID, err := m.EnsureUser(ctx, actor)
-	if err != nil {
-		return fmt.Errorf("failed to ensure user: %w", err)
-	}
-
+	// Use centralized IDMapper for user ID
+	userID := m.idMapper.UserID(actor.ID)
 	intent := m.as.Intent(userID)
 
-	// Determine receipt type based on thread context
-	receiptType := event.ReceiptTypeRead
+	// Ensure user is registered
+	if err := intent.EnsureRegistered(ctx); err != nil {
+		return fmt.Errorf("failed to ensure user registered: %w", err)
+	}
+
+	// Prepare receipt content - use ReqSendReceipt for thread-level receipts (MSC3771)
+	var content interface{}
 	if threadRootID != nil {
-		// For thread-level receipts, we use m.read with thread_id in extra content
-		// mautrix-go may not have direct support for m.read.thread yet
+		content = &mautrix.ReqSendReceipt{
+			ThreadID: threadRootID.String(),
+		}
 		m.logger.Debug("Sending thread-level read receipt",
 			"room_id", roomID,
 			"event_id", eventID,
@@ -1323,8 +1323,8 @@ func (m *MautrixAdapter) SendReadReceipt(ctx context.Context, actor domain.Actor
 		)
 	}
 
-	// Send the read receipt
-	err = intent.SendReceipt(ctx, roomID, eventID, receiptType, nil)
+	// Send the read receipt with optional thread context
+	err := intent.SendReceipt(ctx, roomID, eventID, event.ReceiptTypeRead, content)
 	if err != nil {
 		return fmt.Errorf("failed to send read receipt: %w", err)
 	}
@@ -1332,42 +1332,23 @@ func (m *MautrixAdapter) SendReadReceipt(ctx context.Context, actor domain.Actor
 	return nil
 }
 
-// GetUnreadCounts retrieves unread message counts for a room and optionally specific threads.
-// Returns room-level unread count and per-thread unread counts for any specified threadRootIDs.
-func (m *MautrixAdapter) GetUnreadCounts(ctx context.Context, actor domain.Actor, roomID id.RoomID, threadRootIDs []id.EventID) (*domain.UnreadCountSummary, error) {
-	userID, err := m.EnsureUser(ctx, actor)
-	if err != nil {
-		return nil, fmt.Errorf("failed to ensure user: %w", err)
-	}
+// ErrUnreadCountsNotSupported is returned when unread count calculation is not available.
+// Matrix read receipts are ephemeral events that require sync state tracking,
+// which is not available in the appservice context.
+var ErrUnreadCountsNotSupported = fmt.Errorf("unread counts not supported: read receipt position tracking requires sync state")
 
-	m.logger.Debug("Getting unread counts",
+// GetUnreadCounts retrieves unread message counts for a room and optionally specific threads.
+// Returns ErrUnreadCountsNotSupported because accurate unread counting requires access to
+// the user's read receipt position, which is stored as ephemeral sync state not accessible
+// via the appservice API.
+func (m *MautrixAdapter) GetUnreadCounts(_ context.Context, actor domain.Actor, roomID id.RoomID, threadRootIDs []id.EventID) (*domain.UnreadCountSummary, error) {
+	m.logger.Warn("GetUnreadCounts called but feature is not fully implemented",
 		"room_id", roomID,
-		"user_id", userID,
+		"actor_id", actor.ID,
 		"thread_count", len(threadRootIDs),
 	)
 
-	// Matrix doesn't have a direct API to get unread counts.
-	// This is typically calculated client-side by comparing read receipts to room timeline.
-	// For now, we return zero counts. The actual implementation would need to:
-	// 1. Get the user's read receipt position
-	// 2. Count messages after that position
-	// 3. For threads, get thread-specific read receipts and count thread replies
-
-	summary := &domain.UnreadCountSummary{
-		RoomUnreadCount:    0,
-		ThreadUnreadCounts: make(map[id.EventID]int),
-	}
-
-	// Initialize thread counts to zero
-	for _, threadID := range threadRootIDs {
-		summary.ThreadUnreadCounts[threadID] = 0
-	}
-
-	// TODO: Implement actual unread count calculation
-	// This requires fetching:
-	// - The user's read receipt for the room (m.read)
-	// - The user's read receipts for each thread (m.read.thread)
-	// - Messages/events after those positions
-
-	return summary, nil
+	// Return error to signal that unread counts are not available.
+	// Callers should not treat zero counts as authoritative.
+	return nil, ErrUnreadCountsNotSupported
 }

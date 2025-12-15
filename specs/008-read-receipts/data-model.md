@@ -128,17 +128,17 @@ type RoomCreatedEvent struct {
 }
 ```
 
-#### RoomMemberEvent
+#### RoomMemberUpdatedEvent
 
-Emitted when a user joins/leaves/invites (`m.room.member`).
+Emitted when a user's membership status changes (`m.room.member`).
 
 ```go
-type RoomMemberEvent struct {
-    RoomID    string    `json:"room_id"`
-    UserID    string    `json:"user_id"`
-    Membership string   `json:"membership"` // join, leave, invite, ban, knock
-    SenderID  string    `json:"sender_id"`  // Who performed the action
-    Timestamp int64     `json:"timestamp"`
+type RoomMemberUpdatedEvent struct {
+    RoomID     string `json:"room_id"`
+    MemberID   string `json:"member_id"`   // Actor whose membership changed
+    Membership string `json:"membership"`  // join, leave, invite, ban, knock
+    SenderID   string `json:"sender_id"`   // Actor who performed the action
+    Timestamp  int64  `json:"timestamp"`
 }
 ```
 

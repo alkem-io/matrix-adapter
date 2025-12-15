@@ -557,13 +557,39 @@ func (m *MautrixAdapter) handleRoomCreateEvent(evt *event.Event) {
 			return
 		}
 
+		// Fetch room name and topic from state (best-effort)
+		name, topic := m.getRoomNameAndTopic(ctx, e.RoomID)
+
 		if err := m.eventHandlers.OnRoomCreated(domain.RoomCreatedEvent{
 			AlkemioRoomID: alkemioRoomID,
+			MatrixRoomID:  e.RoomID,
 			CreatorID:     creator,
 			RoomType:      rType,
+			Name:          name,
+			Topic:         topic,
 			Timestamp:     time.UnixMilli(e.Timestamp),
 		}); err != nil {
 			m.logger.Error("Error handling room create", "error", err)
 		}
 	}(evt, creatorUUID, roomType)
+}
+
+// getRoomNameAndTopic fetches the room name and topic from state events.
+// Returns empty strings if the state events are absent or fetching fails.
+func (m *MautrixAdapter) getRoomNameAndTopic(ctx context.Context, roomID id.RoomID) (name, topic string) {
+	intent := m.as.BotIntent()
+
+	// Fetch room name (best-effort)
+	var nameContent event.RoomNameEventContent
+	if err := intent.StateEvent(ctx, roomID, event.StateRoomName, "", &nameContent); err == nil {
+		name = nameContent.Name
+	}
+
+	// Fetch room topic (best-effort)
+	var topicContent event.TopicEventContent
+	if err := intent.StateEvent(ctx, roomID, event.StateTopic, "", &topicContent); err == nil {
+		topic = topicContent.Topic
+	}
+
+	return name, topic
 }

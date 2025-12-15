@@ -47,7 +47,9 @@ func (s *EventService) HandleMessage(msg domain.Message) error {
 		},
 	}
 
-	s.logger.Debug("Publishing message received event", "event_id", msg.ID, "sender_id", msg.SenderID, "thread_id", threadID)
+	s.logger.Debug(
+		"Publishing message received event", "event_id", msg.ID, "sender_id", msg.SenderID, "thread_id", threadID,
+	)
 
 	if err := s.queue.Publish(dto.TopicMessageReceived, payload); err != nil {
 		return fmt.Errorf("failed to publish message received event: %w", err)
@@ -133,16 +135,16 @@ func (s *EventService) HandleMemberLeft(evt domain.MembershipEvent) error {
 
 // HandleReadReceiptUpdated processes a read receipt update event and publishes it to the queue.
 func (s *EventService) HandleReadReceiptUpdated(evt domain.ReadReceiptEvent) error {
-	var matrixThreadID *string
+	var matrixThreadID *dto.MessageID
 	if evt.ThreadID != nil {
-		tid := evt.ThreadID.String()
+		tid := dto.MessageID(evt.ThreadID.String())
 		matrixThreadID = &tid
 	}
 
 	payload := dto.ReadReceiptUpdatedEvent{
 		AlkemioRoomID:  dto.AlkemioRoomID(evt.AlkemioRoomID),
 		ActorID:        dto.AlkemioActorID(evt.UserID),
-		MatrixEventID:  evt.EventID.String(),
+		MatrixEventID:  dto.MessageID(evt.EventID.String()),
 		MatrixThreadID: matrixThreadID,
 		Timestamp:      evt.Timestamp.UnixMilli(),
 	}
@@ -164,17 +166,17 @@ func (s *EventService) HandleReadReceiptUpdated(evt domain.ReadReceiptEvent) err
 
 // HandleMessageEdited processes a message edited event and publishes it to the queue.
 func (s *EventService) HandleMessageEdited(evt domain.MessageEditedEvent) error {
-	var matrixThreadID *string
+	var matrixThreadID *dto.MessageID
 	if evt.ThreadID != nil {
-		tid := evt.ThreadID.String()
+		tid := dto.MessageID(evt.ThreadID.String())
 		matrixThreadID = &tid
 	}
 
 	payload := dto.MessageEditedEvent{
 		AlkemioRoomID:       dto.AlkemioRoomID(evt.AlkemioRoomID),
 		SenderActorID:       dto.AlkemioActorID(evt.SenderID),
-		OriginalMatrixMsgID: evt.OriginalEventID.String(),
-		NewMatrixMsgID:      evt.NewEventID.String(),
+		OriginalMatrixMsgID: dto.MessageID(evt.OriginalEventID.String()),
+		NewMatrixMsgID:      dto.MessageID(evt.NewEventID.String()),
 		NewContent:          evt.NewContent,
 		MatrixThreadID:      matrixThreadID,
 		Timestamp:           evt.Timestamp.UnixMilli(),
@@ -196,17 +198,17 @@ func (s *EventService) HandleMessageEdited(evt domain.MessageEditedEvent) error 
 
 // HandleMessageRedacted processes a message redacted event and publishes it to the queue.
 func (s *EventService) HandleMessageRedacted(evt domain.MessageRedactedEvent) error {
-	var matrixThreadID *string
+	var matrixThreadID *dto.MessageID
 	if evt.ThreadID != nil {
-		tid := evt.ThreadID.String()
+		tid := dto.MessageID(evt.ThreadID.String())
 		matrixThreadID = &tid
 	}
 
 	payload := dto.MessageRedactedEvent{
 		AlkemioRoomID:        dto.AlkemioRoomID(evt.AlkemioRoomID),
 		RedactorActorID:      dto.AlkemioActorID(evt.RedactorID),
-		RedactedMatrixMsgID:  evt.RedactedEventID.String(),
-		RedactionMatrixMsgID: evt.RedactionEventID.String(),
+		RedactedMatrixMsgID:  dto.MessageID(evt.RedactedEventID.String()),
+		RedactionMatrixMsgID: dto.MessageID(evt.RedactionEventID.String()),
 		Reason:               evt.Reason,
 		MatrixThreadID:       matrixThreadID,
 		Timestamp:            evt.Timestamp.UnixMilli(),
