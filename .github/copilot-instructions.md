@@ -106,8 +106,4 @@ This helper exists ONLY in `internal/infrastructure/matrix/listener.go` because 
 
 ## Active Technologies
 
-- **Runtime**: Go 1.25.
-- **Matrix**: `mautrix-go`.
-- **Messaging**: Watermill (RabbitMQ).
-- **Logging**: Zap.
-- **Testing**: Go `testing` package, `testify`.
+See **Stack** in Repository Snapshot. Testing uses the standard Go `testing` package.

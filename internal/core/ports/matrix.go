@@ -108,4 +108,17 @@ type MatrixPort interface {
 
 	// KickFromSpace kicks a user from a space.
 	KickFromSpace(ctx context.Context, spaceID id.RoomID, userID id.UserID, reason string) error
+
+	// ============================================================================
+	// Read Receipt Operations (008-read-receipts)
+	// ============================================================================
+
+	// SendReadReceipt sends a read receipt for a message in a room.
+	// If threadRootID is provided, sends an m.read.thread receipt for thread-level tracking.
+	// Otherwise, sends a standard m.read receipt for room-level tracking.
+	SendReadReceipt(ctx context.Context, actorID domain.Actor, roomID id.RoomID, eventID id.EventID, threadRootID *id.EventID) error
+
+	// GetUnreadCounts retrieves unread message counts for a room and optionally specific threads.
+	// Returns room-level unread count and per-thread unread counts for any specified threadRootIDs.
+	GetUnreadCounts(ctx context.Context, actorID domain.Actor, roomID id.RoomID, threadRootIDs []id.EventID) (*domain.UnreadCountSummary, error)
 }

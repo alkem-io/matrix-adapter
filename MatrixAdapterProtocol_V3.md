@@ -1,13 +1,13 @@
 # Matrix Adapter Protocol Specification (V3)
 
-> **Status**: ✅ **Current** (v3.1.0)  
-> **Last Updated**: 2025-12-07
+> **Status**: ✅ **Current** (v3.2.0)
+> **Last Updated**: 2025-12-15
 
 ## Implementation Reference
 
 - **Go DTOs**: `pkg/dto/` - Source of truth for all data structures
 - **TypeScript Library**: `lib/src/dto/generated.ts` - Auto-generated from Go
-- **Event Types**: `lib/src/matrix.adapter.event.type.ts` - Enum of all 29 topics
+- **Event Types**: `lib/src/matrix.adapter.event.type.ts` - Enum of all 36 topics
 - **Topic Constants**: `internal/infrastructure/queue/topics.go` - Single source of truth
 
 This document defines the communication protocol between the Alkemio Server and the Matrix Adapter service. The protocol is designed to be transport-agnostic but is currently implemented over RabbitMQ.
@@ -849,6 +849,111 @@ type RoomMemberLeftEvent struct {
 
 ---
 
+### 27a. Read Receipt Updated (Outgoing Event)
+
+Published when a user's read receipt is updated (message marked as read).
+
+*   **Event Subject**: `matrix.room.receipt.updated`
+
+#### Payload
+
+```go
+type ReadReceiptUpdatedEvent struct {
+    AlkemioRoomID  AlkemioRoomID  `json:"alkemio_room_id"`
+    ActorID        AlkemioActorID `json:"actor_id"`
+    MatrixEventID  string         `json:"matrix_event_id"`            // Matrix event ID that was marked as read
+    MatrixThreadID *string        `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if thread-level)
+    Timestamp      int64          `json:"timestamp"`                  // Unix milliseconds
+}
+```
+
+---
+
+### 27b. Message Edited (Outgoing Event)
+
+Published when a message is edited (via Matrix `m.replace` relation).
+
+*   **Event Subject**: `matrix.room.message.edited`
+
+#### Payload
+
+```go
+type MessageEditedEvent struct {
+    AlkemioRoomID       AlkemioRoomID  `json:"alkemio_room_id"`
+    SenderActorID       AlkemioActorID `json:"sender_actor_id"`
+    OriginalMatrixMsgID string         `json:"original_matrix_msg_id"` // Matrix event ID of original message
+    NewMatrixMsgID      string         `json:"new_matrix_msg_id"`      // Matrix event ID of the edit event
+    NewContent          string         `json:"new_content"`
+    MatrixThreadID      *string        `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if in thread)
+    Timestamp           int64          `json:"timestamp"`              // Unix milliseconds
+}
+```
+
+---
+
+### 27c. Message Redacted (Outgoing Event)
+
+Published when a message is redacted (deleted).
+
+*   **Event Subject**: `matrix.room.message.redacted`
+
+#### Payload
+
+```go
+type MessageRedactedEvent struct {
+    AlkemioRoomID        AlkemioRoomID  `json:"alkemio_room_id"`
+    RedactorActorID      AlkemioActorID `json:"redactor_actor_id"`
+    RedactedMatrixMsgID  string         `json:"redacted_matrix_msg_id"`  // Matrix event ID of the redacted message
+    RedactionMatrixMsgID string         `json:"redaction_matrix_msg_id"` // Matrix event ID of the redaction event
+    Reason               string         `json:"reason,omitempty"`
+    MatrixThreadID       *string        `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if in thread)
+    Timestamp            int64          `json:"timestamp"`               // Unix milliseconds
+}
+```
+
+---
+
+### 27d. Room Created (Outgoing Event)
+
+Published when a room is created in Matrix.
+
+*   **Event Subject**: `matrix.room.created`
+
+#### Payload
+
+```go
+type RoomCreatedEvent struct {
+    AlkemioRoomID  AlkemioRoomID  `json:"alkemio_room_id"`
+    CreatorActorID AlkemioActorID `json:"creator_actor_id"`
+    RoomType       string         `json:"room_type"` // "room", "space"
+    Name           string         `json:"name,omitempty"`
+    Topic          string         `json:"topic,omitempty"`
+    Timestamp      int64          `json:"timestamp"` // Unix milliseconds
+}
+```
+
+---
+
+### 27e. Room Member Updated (Outgoing Event)
+
+Published when a user's membership status changes (join, invite, leave, ban, knock).
+
+*   **Event Subject**: `matrix.room.member.updated`
+
+#### Payload
+
+```go
+type RoomMemberUpdatedEvent struct {
+    AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+    MemberActorID AlkemioActorID `json:"member_actor_id"` // Actor whose membership changed
+    SenderActorID AlkemioActorID `json:"sender_actor_id"` // Actor who performed the action
+    Membership    string         `json:"membership"`      // join, leave, invite, ban, knock
+    Timestamp     int64          `json:"timestamp"`       // Unix milliseconds
+}
+```
+
+---
+
 ### 28. Get Room Members
 
 Retrieves the list of joined members in a room.
@@ -900,6 +1005,69 @@ type GetThreadMessagesResponse struct {
     Messages      []MessageDto  `json:"messages"` // Root message first, then replies
 }
 ```
+
+---
+
+### 30. Mark Message Read
+
+Marks a message as read for a user. Supports both room-level and thread-level read receipts.
+
+*   **Event Subject**: `communication.message.read`
+
+#### Request Payload
+
+```go
+type MarkMessageReadRequest struct {
+    ActorID       AlkemioActorID `json:"actor_id"`
+    AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+    MessageID     string         `json:"message_id"`      // Matrix event ID to mark as read
+    ThreadRootID  *string        `json:"thread_root_id,omitempty"` // Optional: for thread-specific receipts
+}
+```
+
+#### Response Payload
+
+Returns `BaseResponse` directly.
+
+**Adapter Actions**:
+1.  Resolve `ActorID` to Matrix User.
+2.  Resolve `AlkemioRoomID` to Matrix Room ID.
+3.  Send `m.read` receipt (room-level) or `m.read.thread` receipt (if `ThreadRootID` provided).
+4.  Matrix homeserver handles multiple client synchronization.
+
+---
+
+### 31. Get Unread Counts
+
+Retrieves unread message counts for a user in a room, optionally including thread-level counts.
+
+*   **Event Subject**: `communication.room.unread_counts.get`
+
+#### Request Payload
+
+```go
+type GetUnreadCountsRequest struct {
+    ActorID       AlkemioActorID `json:"actor_id"`
+    AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+    ThreadRootIDs []string       `json:"thread_root_ids,omitempty"` // Optional: specific threads to query
+}
+```
+
+#### Response Payload
+
+```go
+type GetUnreadCountsResponse struct {
+    BaseResponse
+    RoomUnreadCount    int            `json:"room_unread_count"`
+    ThreadUnreadCounts map[string]int `json:"thread_unread_counts,omitempty"` // Map[ThreadID]Count
+}
+```
+
+**Adapter Actions**:
+1.  Resolve `ActorID` to Matrix User.
+2.  Resolve `AlkemioRoomID` to Matrix Room ID.
+3.  Query room state for unread counts.
+4.  If `ThreadRootIDs` provided, also query thread-level unread counts.
 
 ---
 

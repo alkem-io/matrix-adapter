@@ -4,6 +4,7 @@ export enum MatrixAdapterEventType {
   COMMUNICATION_HIERARCHY_SET_PARENT = 'communication.hierarchy.set_parent',
   COMMUNICATION_MESSAGE_DELETE = 'communication.message.delete',
   COMMUNICATION_MESSAGE_GET = 'communication.message.get',
+  COMMUNICATION_MESSAGE_READ = 'communication.message.read',
   COMMUNICATION_MESSAGE_RECEIVED = 'communication.message.received',
   COMMUNICATION_MESSAGE_SEND = 'communication.message.send',
   COMMUNICATION_REACTION_ADD = 'communication.reaction.add',
@@ -20,6 +21,7 @@ export enum MatrixAdapterEventType {
   COMMUNICATION_ROOM_MEMBER_BATCH_ADD = 'communication.room.member.batch.add',
   COMMUNICATION_ROOM_MEMBER_BATCH_REMOVE = 'communication.room.member.batch.remove',
   COMMUNICATION_ROOM_MEMBER_LEFT = 'communication.room.member.left',
+  COMMUNICATION_ROOM_UNREAD_COUNTS_GET = 'communication.room.unread_counts.get',
   COMMUNICATION_ROOM_UPDATE = 'communication.room.update',
   COMMUNICATION_SPACE_CREATE = 'communication.space.create',
   COMMUNICATION_SPACE_DELETE = 'communication.space.delete',
@@ -29,5 +31,10 @@ export enum MatrixAdapterEventType {
   COMMUNICATION_SPACE_MEMBER_BATCH_REMOVE = 'communication.space.member.batch.remove',
   COMMUNICATION_SPACE_UPDATE = 'communication.space.update',
   COMMUNICATION_THREAD_MESSAGES_GET = 'communication.thread.messages.get',
+  MATRIX_ROOM_CREATED = 'matrix.room.created',
+  MATRIX_ROOM_MEMBER_UPDATED = 'matrix.room.member.updated',
+  MATRIX_ROOM_MESSAGE_EDITED = 'matrix.room.message.edited',
+  MATRIX_ROOM_MESSAGE_REDACTED = 'matrix.room.message.redacted',
+  MATRIX_ROOM_RECEIPT_UPDATED = 'matrix.room.receipt.updated',
 
 }

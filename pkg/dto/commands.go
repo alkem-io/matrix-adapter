@@ -76,6 +76,28 @@ const (
 	TopicThreadMessagesGet = "communication.thread.messages.get"
 )
 
+// Read Receipt Command Topics (Server → Adapter)
+const (
+	// TopicMessageRead is the topic for marking a message as read.
+	TopicMessageRead = "communication.message.read"
+	// TopicUnreadCountsGet is the topic for getting unread counts.
+	TopicUnreadCountsGet = "communication.room.unread_counts.get"
+)
+
+// Read Receipt & Message Event Topics (Adapter → Server)
+const (
+	// TopicReadReceiptUpdated is the topic for read receipt update events.
+	TopicReadReceiptUpdated = "matrix.room.receipt.updated"
+	// TopicMessageEdited is the topic for message edited events.
+	TopicMessageEdited = "matrix.room.message.edited"
+	// TopicMessageRedacted is the topic for message redacted events.
+	TopicMessageRedacted = "matrix.room.message.redacted"
+	// TopicRoomCreated is the topic for room created events.
+	TopicRoomCreated = "matrix.room.created"
+	// TopicRoomMemberUpdated is the topic for room member updated events.
+	TopicRoomMemberUpdated = "matrix.room.member.updated"
+)
+
 // ============================================================================
 // Command Registry - Topic/Request/Response Mapping for Code Generation
 // ============================================================================
@@ -136,6 +158,10 @@ var CommandRegistry = []CommandDef{
 
 	// Thread messages query (V4)
 	{Topic: TopicThreadMessagesGet, RequestType: "GetThreadMessagesRequest", ResponseType: "GetThreadMessagesResponse"},
+
+	// Read Receipt commands
+	{Topic: TopicMessageRead, RequestType: "MarkMessageReadRequest", ResponseType: "BaseResponse"},
+	{Topic: TopicUnreadCountsGet, RequestType: "GetUnreadCountsRequest", ResponseType: "GetUnreadCountsResponse"},
 }
 
 // OutgoingEventRegistry defines events emitted by the adapter (not commands).
@@ -148,4 +174,10 @@ var OutgoingEventRegistry = []CommandDef{
 	{Topic: TopicReactionAdded, RequestType: "", ResponseType: "ReactionAddedEvent"},
 	{Topic: TopicReactionRemoved, RequestType: "", ResponseType: "ReactionRemovedEvent"},
 	{Topic: TopicRoomMemberLeft, RequestType: "", ResponseType: "RoomMemberLeftEvent"},
+	// Read Receipt & Message Events (008-read-receipts)
+	{Topic: TopicReadReceiptUpdated, RequestType: "", ResponseType: "ReadReceiptUpdatedEvent"},
+	{Topic: TopicMessageEdited, RequestType: "", ResponseType: "MessageEditedEvent"},
+	{Topic: TopicMessageRedacted, RequestType: "", ResponseType: "MessageRedactedEvent"},
+	{Topic: TopicRoomCreated, RequestType: "", ResponseType: "RoomCreatedEvent"},
+	{Topic: TopicRoomMemberUpdated, RequestType: "", ResponseType: "RoomMemberUpdatedEvent"},
 }

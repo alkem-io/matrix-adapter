@@ -30,15 +30,23 @@ import type {
   GetSpaceResponse,
   GetThreadMessagesRequest,
   GetThreadMessagesResponse,
+  GetUnreadCountsRequest,
+  GetUnreadCountsResponse,
   ListRoomsRequest,
   ListRoomsResponse,
   ListSpacesRequest,
   ListSpacesResponse,
+  MarkMessageReadRequest,
+  MessageEditedEvent,
   MessageReceivedPayload,
+  MessageRedactedEvent,
   ReactionAddedEvent,
   ReactionRemovedEvent,
+  ReadReceiptUpdatedEvent,
   RemoveReactionRequest,
+  RoomCreatedEvent,
   RoomMemberLeftEvent,
+  RoomMemberUpdatedEvent,
   SendMessageRequest,
   SendMessageResponse,
   SetParentRequest,
@@ -67,6 +75,10 @@ export const Commands = {
   'communication.message.get': {
     request: {} as GetMessageRequest,
     response: {} as GetMessageResponse,
+  },
+  'communication.message.read': {
+    request: {} as MarkMessageReadRequest,
+    response: {} as BaseResponse,
   },
   'communication.message.send': {
     request: {} as SendMessageRequest,
@@ -111,6 +123,10 @@ export const Commands = {
   'communication.room.members.get': {
     request: {} as GetRoomMembersRequest,
     response: {} as GetRoomMembersResponse,
+  },
+  'communication.room.unread_counts.get': {
+    request: {} as GetUnreadCountsRequest,
+    response: {} as GetUnreadCountsResponse,
   },
   'communication.room.update': {
     request: {} as UpdateRoomRequest,
@@ -168,6 +184,21 @@ export const OutgoingEvents = {
   },
   'communication.room.member.left': {
     payload: {} as RoomMemberLeftEvent,
+  },
+  'matrix.room.created': {
+    payload: {} as RoomCreatedEvent,
+  },
+  'matrix.room.member.updated': {
+    payload: {} as RoomMemberUpdatedEvent,
+  },
+  'matrix.room.message.edited': {
+    payload: {} as MessageEditedEvent,
+  },
+  'matrix.room.message.redacted': {
+    payload: {} as MessageRedactedEvent,
+  },
+  'matrix.room.receipt.updated': {
+    payload: {} as ReadReceiptUpdatedEvent,
   },
 } as const;
 
