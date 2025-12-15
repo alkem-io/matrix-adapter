@@ -8,13 +8,12 @@ import (
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
 
 // ReadReceiptHandler handles queue messages related to read receipt operations.
 type ReadReceiptHandler struct {
-	service  *service.ReadReceiptService
+	service  ports.ReadReceiptServicePort
 	matrix   ports.MatrixPort
 	idMapper *domain.IDMapper
 	logger   ports.Logger
@@ -22,7 +21,7 @@ type ReadReceiptHandler struct {
 
 // NewReadReceiptHandler creates a new instance of ReadReceiptHandler.
 func NewReadReceiptHandler(
-	svc *service.ReadReceiptService,
+	svc ports.ReadReceiptServicePort,
 	matrix ports.MatrixPort,
 	logger ports.Logger,
 ) *ReadReceiptHandler {
@@ -58,11 +57,11 @@ func (h *ReadReceiptHandler) HandleMarkMessageRead(ctx context.Context, payload 
 		return *errResp, nil
 	}
 
-	// Convert thread root ID if provided
-	var threadRootID *id.EventID
-	if req.ThreadRootID != nil && *req.ThreadRootID != "" {
-		eventID := id.EventID(*req.ThreadRootID)
-		threadRootID = &eventID
+	// Convert thread ID if provided
+	var threadID *id.EventID
+	if req.ThreadID != nil && *req.ThreadID != "" {
+		eventID := id.EventID(*req.ThreadID)
+		threadID = &eventID
 	}
 
 	// Mark message as read
@@ -71,7 +70,7 @@ func (h *ReadReceiptHandler) HandleMarkMessageRead(ctx context.Context, payload 
 		req.ActorID.UUID(),
 		roomID,
 		id.EventID(req.MessageID),
-		threadRootID,
+		threadID,
 	)
 	if err != nil {
 		return MapServiceError(err), nil
@@ -101,11 +100,11 @@ func (h *ReadReceiptHandler) HandleGetUnreadCounts(ctx context.Context, payload 
 		return *errResp, nil
 	}
 
-	// Convert thread root IDs
-	var threadRootIDs []id.EventID
-	for _, threadID := range req.ThreadRootIDs {
-		if threadID != "" {
-			threadRootIDs = append(threadRootIDs, id.EventID(threadID))
+	// Convert thread IDs
+	var threadIDs []id.EventID
+	for _, tid := range req.ThreadIDs {
+		if tid != "" {
+			threadIDs = append(threadIDs, id.EventID(tid))
 		}
 	}
 
@@ -114,7 +113,7 @@ func (h *ReadReceiptHandler) HandleGetUnreadCounts(ctx context.Context, payload 
 		ctx,
 		req.ActorID.UUID(),
 		roomID,
-		threadRootIDs,
+		threadIDs,
 	)
 	if err != nil {
 		return MapServiceError(err), nil

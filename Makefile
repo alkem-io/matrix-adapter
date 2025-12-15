@@ -53,6 +53,12 @@ lint:
 		echo "golangci-lint not found, skipping advanced linting"; \
 	fi
 
+# Lint markdown files
+.PHONY: lint-md
+lint-md:
+	@echo "Linting Markdown files..."
+	@npx markdownlint-cli "**/*.md" --ignore node_modules --ignore lib/node_modules
+
 # Format the code
 .PHONY: fmt
 fmt:
@@ -112,6 +118,7 @@ help:
 	@echo "  test           - Run unit tests"
 	@echo "  test-coverage  - Run tests with coverage report"
 	@echo "  lint           - Run linters (go vet, golangci-lint)"
+	@echo "  lint-md        - Lint Markdown files (uses markdownlint-cli)"
 	@echo "  fmt            - Format code"
 	@echo "  generate       - Run go generate"
 	@echo "  doc            - Serve documentation (using go doc -http)"

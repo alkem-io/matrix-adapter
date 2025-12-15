@@ -10,7 +10,7 @@ type MarkMessageReadRequest struct {
 	ActorID       AlkemioActorID `json:"actor_id"`
 	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
 	MessageID     MessageID      `json:"message_id"`
-	ThreadRootID  *MessageID     `json:"thread_root_id,omitempty"` // Optional: for thread-specific receipts
+	ThreadID      *MessageID     `json:"thread_id,omitempty"` // Optional: for thread-specific receipts
 }
 
 // GetUnreadCountsRequest is the command to get unread counts for a user in a room.
@@ -18,7 +18,7 @@ type MarkMessageReadRequest struct {
 type GetUnreadCountsRequest struct {
 	ActorID       AlkemioActorID `json:"actor_id"`
 	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
-	ThreadRootIDs []MessageID    `json:"thread_root_ids,omitempty"` // Optional: specific threads to query
+	ThreadIDs     []MessageID    `json:"thread_ids,omitempty"` // Optional: specific threads to query
 }
 
 // GetUnreadCountsResponse is the response for GetUnreadCountsRequest.
@@ -35,11 +35,11 @@ type GetUnreadCountsResponse struct {
 // ReadReceiptUpdatedEvent is published when a user's read receipt is updated.
 // Topic: matrix.room.receipt.updated
 type ReadReceiptUpdatedEvent struct {
-	AlkemioRoomID  AlkemioRoomID  `json:"alkemio_room_id"`
-	ActorID        AlkemioActorID `json:"actor_id"`
-	MatrixEventID  MessageID      `json:"matrix_event_id"`            // Matrix event ID that was marked as read
-	MatrixThreadID *MessageID     `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if thread-level)
-	Timestamp      int64          `json:"timestamp"`
+	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+	ActorID       AlkemioActorID `json:"actor_id"`
+	EventID       MessageID      `json:"event_id"`            // Event ID that was marked as read
+	ThreadID      *MessageID     `json:"thread_id,omitempty"` // Thread root event ID (if thread-level)
+	Timestamp     int64          `json:"timestamp"`
 }
 
 // ============================================================================
@@ -49,25 +49,25 @@ type ReadReceiptUpdatedEvent struct {
 // MessageEditedEvent is published when a message is edited (m.replace).
 // Topic: matrix.room.message.edited
 type MessageEditedEvent struct {
-	AlkemioRoomID       AlkemioRoomID  `json:"alkemio_room_id"`
-	SenderActorID       AlkemioActorID `json:"sender_actor_id"`
-	OriginalMatrixMsgID MessageID      `json:"original_matrix_msg_id"` // Matrix event ID of original message
-	NewMatrixMsgID      MessageID      `json:"new_matrix_msg_id"`      // Matrix event ID of the edit event
-	NewContent          string         `json:"new_content"`
-	MatrixThreadID      *MessageID     `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if in thread)
-	Timestamp           int64          `json:"timestamp"`
+	AlkemioRoomID     AlkemioRoomID  `json:"alkemio_room_id"`
+	SenderActorID     AlkemioActorID `json:"sender_actor_id"`
+	OriginalMessageID MessageID      `json:"original_message_id"` // Event ID of original message
+	NewMessageID      MessageID      `json:"new_message_id"`      // Event ID of the edit event
+	NewContent        string         `json:"new_content"`
+	ThreadID          *MessageID     `json:"thread_id,omitempty"` // Thread root event ID (if in thread)
+	Timestamp         int64          `json:"timestamp"`
 }
 
 // MessageRedactedEvent is published when a message is redacted.
 // Topic: matrix.room.message.redacted
 type MessageRedactedEvent struct {
-	AlkemioRoomID        AlkemioRoomID  `json:"alkemio_room_id"`
-	RedactorActorID      AlkemioActorID `json:"redactor_actor_id"`
-	RedactedMatrixMsgID  MessageID      `json:"redacted_matrix_msg_id"`  // Matrix event ID of the redacted message
-	RedactionMatrixMsgID MessageID      `json:"redaction_matrix_msg_id"` // Matrix event ID of the redaction event
-	Reason               string         `json:"reason,omitempty"`
-	MatrixThreadID       *MessageID     `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if in thread)
-	Timestamp            int64          `json:"timestamp"`
+	AlkemioRoomID      AlkemioRoomID  `json:"alkemio_room_id"`
+	RedactorActorID    AlkemioActorID `json:"redactor_actor_id"`
+	RedactedMessageID  MessageID      `json:"redacted_message_id"`  // Event ID of the redacted message
+	RedactionMessageID MessageID      `json:"redaction_message_id"` // Event ID of the redaction event
+	Reason             string         `json:"reason,omitempty"`
+	ThreadID           *MessageID     `json:"thread_id,omitempty"` // Thread root event ID (if in thread)
+	Timestamp          int64          `json:"timestamp"`
 }
 
 // RoomCreatedEvent is published when a room is created.

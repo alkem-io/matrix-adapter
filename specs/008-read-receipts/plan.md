@@ -17,7 +17,7 @@ Implemented comprehensive read receipt tracking and message event notifications.
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Alkemio Server                              │
 └─────────────────────────────────────────────────────────────────┘

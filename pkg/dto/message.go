@@ -62,13 +62,13 @@ type DeleteMessageRequest struct {
 // Topic: communication.thread.messages.get
 type GetThreadMessagesRequest struct {
 	AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
-	ThreadRootID  MessageID     `json:"thread_root_id"`
+	ThreadID      MessageID     `json:"thread_id"`
 }
 
 // GetThreadMessagesResponse returns thread messages.
 type GetThreadMessagesResponse struct {
 	BaseResponse  `tstype:",extends"`
 	AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
-	ThreadRootID  MessageID     `json:"thread_root_id"`
+	ThreadID      MessageID     `json:"thread_id"`
 	Messages      []MessageDto  `json:"messages"`
 }

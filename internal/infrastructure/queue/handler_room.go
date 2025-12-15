@@ -609,7 +609,7 @@ func (h *RoomHandler) HandleGetThreadMessages(ctx context.Context, payload []byt
 	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
 		return *errResp, nil
 	}
-	if errResp := RequireNonEmpty(string(req.ThreadRootID), "thread_root_id"); errResp != nil {
+	if errResp := RequireNonEmpty(string(req.ThreadID), "thread_id"); errResp != nil {
 		return *errResp, nil
 	}
 
@@ -620,7 +620,7 @@ func (h *RoomHandler) HandleGetThreadMessages(ctx context.Context, payload []byt
 	}
 
 	// Get thread messages from Matrix
-	messages, err := h.matrix.GetThreadMessages(ctx, roomID, id.EventID(req.ThreadRootID))
+	messages, err := h.matrix.GetThreadMessages(ctx, roomID, id.EventID(req.ThreadID))
 	if err != nil {
 		return MapServiceError(err), nil
 	}
@@ -655,7 +655,7 @@ func (h *RoomHandler) HandleGetThreadMessages(ctx context.Context, payload []byt
 	return dto.GetThreadMessagesResponse{
 		BaseResponse:  dto.NewSuccessResponse(),
 		AlkemioRoomID: req.AlkemioRoomID,
-		ThreadRootID:  req.ThreadRootID,
+		ThreadID:      req.ThreadID,
 		Messages:      messageDTOs,
 	}, nil
 }

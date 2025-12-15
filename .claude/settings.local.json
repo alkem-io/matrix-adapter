@@ -38,7 +38,8 @@
       "Bash(pkg/dto/read_receipt.go )",
       "Bash(specs/008-read-receipts/ )",
       "Bash(tests/)",
-      "mcp__context7__*"
+      "mcp__context7__*",
+      "Bash(make lint-md:*)"
     ]
   }
 }

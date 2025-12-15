@@ -128,15 +128,15 @@ Retrieve all messages in a thread.
 // GetThreadMessagesRequest retrieves messages in a thread.
 // Topic: communication.thread.messages.get
 type GetThreadMessagesRequest struct {
-    AlkemioRoomID   AlkemioRoomID `json:"alkemio_room_id"`
-    ThreadRootID    MessageID     `json:"thread_root_id"`
+    AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
+    ThreadID      MessageID     `json:"thread_id"`
 }
 
 // GetThreadMessagesResponse returns thread messages.
 type GetThreadMessagesResponse struct {
     BaseResponse  `tstype:",extends"`
     AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
-    ThreadRootID  MessageID     `json:"thread_root_id"`
+    ThreadID      MessageID     `json:"thread_id"`
     Messages      []MessageDto  `json:"messages"`
 }
 ```
@@ -144,12 +144,12 @@ type GetThreadMessagesResponse struct {
 | Request Field | Type | Description |
 |---------------|------|-------------|
 | alkemio_room_id | UUID | Alkemio room identifier |
-| thread_root_id | string | Matrix event ID of the thread root message |
+| thread_id | string | Matrix event ID of the thread root message |
 
 | Response Field | Type | Description |
 |----------------|------|-------------|
 | alkemio_room_id | UUID | Echo of request room ID |
-| thread_root_id | string | Echo of thread root ID |
+| thread_id | string | Echo of thread ID |
 | messages | MessageDto[] | All messages in the thread (root message first, then replies in chronological order) |
 
 ---
@@ -200,7 +200,7 @@ Room
 
 ### GetThreadMessagesRequest
 - `alkemio_room_id`: Required, valid UUID
-- `thread_root_id`: Required, non-empty string (Matrix event ID format)
+- `thread_id`: Required, non-empty string (Matrix event ID format)
 
 ### Outgoing Events
 - All `AlkemioRoomID` fields: Derived from Matrix room alias

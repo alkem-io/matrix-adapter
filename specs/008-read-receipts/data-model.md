@@ -43,7 +43,7 @@ type MarkMessageReadRequest struct {
     ActorID       uuid.UUID `json:"actor_id"`
     AlkemioRoomID uuid.UUID `json:"alkemio_room_id"`
     MessageID     string    `json:"message_id"`
-    ThreadRootID  *string   `json:"thread_root_id,omitempty"` // Optional: if marking a thread message
+    ThreadID      *string   `json:"thread_id,omitempty"` // Optional: if marking a thread message
 }
 ```
 
@@ -55,7 +55,7 @@ Command to get unread counts for a user in a room.
 type GetUnreadCountsRequest struct {
     ActorID       uuid.UUID `json:"actor_id"`
     AlkemioRoomID uuid.UUID `json:"alkemio_room_id"`
-    ThreadRootIDs []string  `json:"thread_root_ids,omitempty"` // Optional: specific threads to query
+    ThreadIDs     []string  `json:"thread_ids,omitempty"` // Optional: specific threads to query
 }
 ```
 

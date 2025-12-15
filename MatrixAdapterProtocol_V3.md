@@ -859,11 +859,11 @@ Published when a user's read receipt is updated (message marked as read).
 
 ```go
 type ReadReceiptUpdatedEvent struct {
-    AlkemioRoomID  AlkemioRoomID  `json:"alkemio_room_id"`
-    ActorID        AlkemioActorID `json:"actor_id"`
-    MatrixEventID  MessageID      `json:"matrix_event_id"`            // Matrix event ID that was marked as read
-    MatrixThreadID *MessageID     `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if thread-level)
-    Timestamp      int64          `json:"timestamp"`                  // Unix milliseconds
+    AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+    ActorID       AlkemioActorID `json:"actor_id"`
+    EventID       MessageID      `json:"event_id"`             // Event ID that was marked as read
+    ThreadID      *MessageID     `json:"thread_id,omitempty"`  // Thread root event ID (if thread-level)
+    Timestamp     int64          `json:"timestamp"`            // Unix milliseconds
 }
 ```
 
@@ -879,13 +879,13 @@ Published when a message is edited (via Matrix `m.replace` relation).
 
 ```go
 type MessageEditedEvent struct {
-    AlkemioRoomID       AlkemioRoomID  `json:"alkemio_room_id"`
-    SenderActorID       AlkemioActorID `json:"sender_actor_id"`
-    OriginalMatrixMsgID MessageID      `json:"original_matrix_msg_id"`     // Matrix event ID of original message
-    NewMatrixMsgID      MessageID      `json:"new_matrix_msg_id"`          // Matrix event ID of the edit event
-    NewContent          string         `json:"new_content"`
-    MatrixThreadID      *MessageID     `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if in thread)
-    Timestamp           int64          `json:"timestamp"`                  // Unix milliseconds
+    AlkemioRoomID     AlkemioRoomID  `json:"alkemio_room_id"`
+    SenderActorID     AlkemioActorID `json:"sender_actor_id"`
+    OriginalMessageID MessageID      `json:"original_message_id"` // Event ID of original message
+    NewMessageID      MessageID      `json:"new_message_id"`      // Event ID of the edit event
+    NewContent        string         `json:"new_content"`
+    ThreadID          *MessageID     `json:"thread_id,omitempty"` // Thread root event ID (if in thread)
+    Timestamp         int64          `json:"timestamp"`           // Unix milliseconds
 }
 ```
 
@@ -901,13 +901,13 @@ Published when a message is redacted (deleted).
 
 ```go
 type MessageRedactedEvent struct {
-    AlkemioRoomID        AlkemioRoomID  `json:"alkemio_room_id"`
-    RedactorActorID      AlkemioActorID `json:"redactor_actor_id"`
-    RedactedMatrixMsgID  MessageID      `json:"redacted_matrix_msg_id"`     // Matrix event ID of the redacted message
-    RedactionMatrixMsgID MessageID      `json:"redaction_matrix_msg_id"`    // Matrix event ID of the redaction event
-    Reason               string         `json:"reason,omitempty"`
-    MatrixThreadID       *MessageID     `json:"matrix_thread_id,omitempty"` // Matrix thread root event ID (if in thread)
-    Timestamp            int64          `json:"timestamp"`                  // Unix milliseconds
+    AlkemioRoomID      AlkemioRoomID  `json:"alkemio_room_id"`
+    RedactorActorID    AlkemioActorID `json:"redactor_actor_id"`
+    RedactedMessageID  MessageID      `json:"redacted_message_id"`  // Event ID of the redacted message
+    RedactionMessageID MessageID      `json:"redaction_message_id"` // Event ID of the redaction event
+    Reason             string         `json:"reason,omitempty"`
+    ThreadID           *MessageID     `json:"thread_id,omitempty"`  // Thread root event ID (if in thread)
+    Timestamp          int64          `json:"timestamp"`            // Unix milliseconds
 }
 ```
 
@@ -991,7 +991,7 @@ Retrieves all messages in a thread, including the thread root message.
 ```go
 type GetThreadMessagesRequest struct {
     AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
-    ThreadRootID  MessageID     `json:"thread_root_id"`
+    ThreadID      MessageID     `json:"thread_id"`
 }
 ```
 
@@ -1001,7 +1001,7 @@ type GetThreadMessagesRequest struct {
 type GetThreadMessagesResponse struct {
     BaseResponse
     AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
-    ThreadRootID  MessageID     `json:"thread_root_id"`
+    ThreadID      MessageID     `json:"thread_id"`
     Messages      []MessageDto  `json:"messages"` // Root message first, then replies
 }
 ```
@@ -1020,8 +1020,8 @@ Marks a message as read for a user. Supports both room-level and thread-level re
 type MarkMessageReadRequest struct {
     ActorID       AlkemioActorID `json:"actor_id"`
     AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
-    MessageID     MessageID      `json:"message_id"`               // Matrix event ID to mark as read
-    ThreadRootID  *MessageID     `json:"thread_root_id,omitempty"` // Optional: for thread-specific receipts
+    MessageID     MessageID      `json:"message_id"`            // Event ID to mark as read
+    ThreadID      *MessageID     `json:"thread_id,omitempty"`   // Optional: for thread-specific receipts
 }
 ```
 
@@ -1032,7 +1032,7 @@ Returns `BaseResponse` directly.
 **Adapter Actions**:
 1.  Resolve `ActorID` to Matrix User.
 2.  Resolve `AlkemioRoomID` to Matrix Room ID.
-3.  Send `m.read` receipt (room-level) or `m.read.thread` receipt (if `ThreadRootID` provided).
+3.  Send `m.read` receipt (room-level) or `m.read.thread` receipt (if `ThreadID` provided).
 4.  Matrix homeserver handles multiple client synchronization.
 
 ---
@@ -1049,7 +1049,7 @@ Retrieves unread message counts for a user in a room, optionally including threa
 type GetUnreadCountsRequest struct {
     ActorID       AlkemioActorID `json:"actor_id"`
     AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
-    ThreadRootIDs []MessageID    `json:"thread_root_ids,omitempty"` // Optional: specific threads to query
+    ThreadIDs     []MessageID    `json:"thread_ids,omitempty"` // Optional: specific threads to query
 }
 ```
 
@@ -1067,7 +1067,7 @@ type GetUnreadCountsResponse struct {
 1.  Resolve `ActorID` to Matrix User.
 2.  Resolve `AlkemioRoomID` to Matrix Room ID.
 3.  Query room state for unread counts.
-4.  If `ThreadRootIDs` provided, also query thread-level unread counts.
+4.  If `ThreadIDs` provided, also query thread-level unread counts.
 
 ---
 

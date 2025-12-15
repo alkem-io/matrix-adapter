@@ -135,26 +135,26 @@ func (s *EventService) HandleMemberLeft(evt domain.MembershipEvent) error {
 
 // HandleReadReceiptUpdated processes a read receipt update event and publishes it to the queue.
 func (s *EventService) HandleReadReceiptUpdated(evt domain.ReadReceiptEvent) error {
-	var matrixThreadID *dto.MessageID
+	var threadID *dto.MessageID
 	if evt.ThreadID != nil {
 		tid := dto.MessageID(evt.ThreadID.String())
-		matrixThreadID = &tid
+		threadID = &tid
 	}
 
 	payload := dto.ReadReceiptUpdatedEvent{
-		AlkemioRoomID:  dto.AlkemioRoomID(evt.AlkemioRoomID),
-		ActorID:        dto.AlkemioActorID(evt.UserID),
-		MatrixEventID:  dto.MessageID(evt.EventID.String()),
-		MatrixThreadID: matrixThreadID,
-		Timestamp:      evt.Timestamp.UnixMilli(),
+		AlkemioRoomID: dto.AlkemioRoomID(evt.AlkemioRoomID),
+		ActorID:       dto.AlkemioActorID(evt.UserID),
+		EventID:       dto.MessageID(evt.EventID.String()),
+		ThreadID:      threadID,
+		Timestamp:     evt.Timestamp.UnixMilli(),
 	}
 
 	s.logger.Debug(
 		"Publishing read receipt updated event",
 		"alkemio_room_id", evt.AlkemioRoomID,
 		"actor_id", evt.UserID,
-		"matrix_event_id", evt.EventID,
-		"matrix_thread_id", matrixThreadID,
+		"event_id", evt.EventID,
+		"thread_id", threadID,
 	)
 
 	if err := s.queue.Publish(dto.TopicReadReceiptUpdated, payload); err != nil {
@@ -166,26 +166,26 @@ func (s *EventService) HandleReadReceiptUpdated(evt domain.ReadReceiptEvent) err
 
 // HandleMessageEdited processes a message edited event and publishes it to the queue.
 func (s *EventService) HandleMessageEdited(evt domain.MessageEditedEvent) error {
-	var matrixThreadID *dto.MessageID
+	var threadID *dto.MessageID
 	if evt.ThreadID != nil {
 		tid := dto.MessageID(evt.ThreadID.String())
-		matrixThreadID = &tid
+		threadID = &tid
 	}
 
 	payload := dto.MessageEditedEvent{
-		AlkemioRoomID:       dto.AlkemioRoomID(evt.AlkemioRoomID),
-		SenderActorID:       dto.AlkemioActorID(evt.SenderID),
-		OriginalMatrixMsgID: dto.MessageID(evt.OriginalEventID.String()),
-		NewMatrixMsgID:      dto.MessageID(evt.NewEventID.String()),
-		NewContent:          evt.NewContent,
-		MatrixThreadID:      matrixThreadID,
-		Timestamp:           evt.Timestamp.UnixMilli(),
+		AlkemioRoomID:     dto.AlkemioRoomID(evt.AlkemioRoomID),
+		SenderActorID:     dto.AlkemioActorID(evt.SenderID),
+		OriginalMessageID: dto.MessageID(evt.OriginalEventID.String()),
+		NewMessageID:      dto.MessageID(evt.NewEventID.String()),
+		NewContent:        evt.NewContent,
+		ThreadID:          threadID,
+		Timestamp:         evt.Timestamp.UnixMilli(),
 	}
 
 	s.logger.Debug(
 		"Publishing message edited event",
 		"alkemio_room_id", evt.AlkemioRoomID,
-		"original_matrix_msg_id", evt.OriginalEventID,
+		"original_message_id", evt.OriginalEventID,
 		"sender_actor_id", evt.SenderID,
 	)
 
@@ -198,26 +198,26 @@ func (s *EventService) HandleMessageEdited(evt domain.MessageEditedEvent) error 
 
 // HandleMessageRedacted processes a message redacted event and publishes it to the queue.
 func (s *EventService) HandleMessageRedacted(evt domain.MessageRedactedEvent) error {
-	var matrixThreadID *dto.MessageID
+	var threadID *dto.MessageID
 	if evt.ThreadID != nil {
 		tid := dto.MessageID(evt.ThreadID.String())
-		matrixThreadID = &tid
+		threadID = &tid
 	}
 
 	payload := dto.MessageRedactedEvent{
-		AlkemioRoomID:        dto.AlkemioRoomID(evt.AlkemioRoomID),
-		RedactorActorID:      dto.AlkemioActorID(evt.RedactorID),
-		RedactedMatrixMsgID:  dto.MessageID(evt.RedactedEventID.String()),
-		RedactionMatrixMsgID: dto.MessageID(evt.RedactionEventID.String()),
-		Reason:               evt.Reason,
-		MatrixThreadID:       matrixThreadID,
-		Timestamp:            evt.Timestamp.UnixMilli(),
+		AlkemioRoomID:      dto.AlkemioRoomID(evt.AlkemioRoomID),
+		RedactorActorID:    dto.AlkemioActorID(evt.RedactorID),
+		RedactedMessageID:  dto.MessageID(evt.RedactedEventID.String()),
+		RedactionMessageID: dto.MessageID(evt.RedactionEventID.String()),
+		Reason:             evt.Reason,
+		ThreadID:           threadID,
+		Timestamp:          evt.Timestamp.UnixMilli(),
 	}
 
 	s.logger.Debug(
 		"Publishing message redacted event",
 		"alkemio_room_id", evt.AlkemioRoomID,
-		"redacted_matrix_msg_id", evt.RedactedEventID,
+		"redacted_message_id", evt.RedactedEventID,
 		"redactor_actor_id", evt.RedactorID,
 	)
 

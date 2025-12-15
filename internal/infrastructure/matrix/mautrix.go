@@ -46,8 +46,10 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 	if homeserverDomain == "" {
 		// Fallback to URL hostname if not configured (not recommended)
 		homeserverDomain = hsURL.Hostname()
-		logger.Warn("SYNAPSE_HOMESERVER_NAME not set, falling back to URL hostname",
-			"hostname", homeserverDomain)
+		logger.Warn(
+			"SYNAPSE_HOMESERVER_NAME not set, falling back to URL hostname",
+			"hostname", homeserverDomain,
+		)
 	}
 
 	// Create a proper MemoryStateStore with all maps initialized
@@ -98,16 +100,18 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 	}
 
 	// Create AppService using CreateFull to ensure StateStore is set from the start
-	as, err := appservice.CreateFull(appservice.CreateOpts{
-		Registration:     registration,
-		HomeserverDomain: homeserverDomain,
-		HomeserverURL:    cfg.Matrix.HomeserverURL,
-		HostConfig: appservice.HostConfig{
-			Hostname: "0.0.0.0",
-			Port:     8280,
+	as, err := appservice.CreateFull(
+		appservice.CreateOpts{
+			Registration:     registration,
+			HomeserverDomain: homeserverDomain,
+			HomeserverURL:    cfg.Matrix.HomeserverURL,
+			HostConfig: appservice.HostConfig{
+				Hostname: "0.0.0.0",
+				Port:     8280,
+			},
+			StateStore: stateStore.(appservice.StateStore),
 		},
-		StateStore: stateStore.(appservice.StateStore),
-	})
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create appservice: %w", err)
 	}
@@ -535,7 +539,10 @@ type RespRelations struct {
 const relationsURLFormat = "%s/_matrix/client/v1/rooms/%s/relations/%s/%s/%s"
 
 // buildRelationsURL constructs a URL for the Matrix relations API.
-func (m *MautrixAdapter) buildRelationsURL(intent *appservice.IntentAPI, roomID id.RoomID, eventID id.EventID, relType event.RelationType, eventType event.Type) string {
+func (m *MautrixAdapter) buildRelationsURL(
+	intent *appservice.IntentAPI, roomID id.RoomID, eventID id.EventID, relType event.RelationType,
+	eventType event.Type,
+) string {
 	hsURL := strings.TrimSuffix(intent.HomeserverURL.String(), "/")
 	return fmt.Sprintf(relationsURLFormat, hsURL, roomID, eventID, relType, eventType)
 }
@@ -579,7 +586,9 @@ func (m *MautrixAdapter) GetReactionEventID(
 }
 
 // findReactionByEmojiAndSender searches for a specific reaction in a list of events.
-func (m *MautrixAdapter) findReactionByEmojiAndSender(events []event.Event, senderUserID id.UserID, emoji string) (id.EventID, error) {
+func (m *MautrixAdapter) findReactionByEmojiAndSender(
+	events []event.Event, senderUserID id.UserID, emoji string,
+) (id.EventID, error) {
 	for _, evt := range events {
 		if evt.Sender != senderUserID || evt.Type != event.EventReaction {
 			continue
@@ -654,10 +663,12 @@ func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
 // KickUser kicks a user from a room.
 func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
 	intent := m.as.BotIntent()
-	_, err := intent.KickUser(ctx, roomID, &mautrix.ReqKickUser{
-		UserID: userID,
-		Reason: reason,
-	})
+	_, err := intent.KickUser(
+		ctx, roomID, &mautrix.ReqKickUser{
+			UserID: userID,
+			Reason: reason,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("failed to kick user %s from room %s: %w", userID, roomID, err)
 	}
@@ -711,7 +722,9 @@ func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) 
 
 	// Log warning if message count exceeds 1000 for future pagination tracking
 	if len(messages) >= 1000 {
-		m.logger.Warn("Room has 1000+ messages, pagination may be needed in future", "room_id", roomID, "count", len(messages))
+		m.logger.Warn(
+			"Room has 1000+ messages, pagination may be needed in future", "room_id", roomID, "count", len(messages),
+		)
 	}
 
 	return messages, nil
@@ -775,7 +788,9 @@ func (m *MautrixAdapter) extractMessageBody(evt *event.Event) string {
 }
 
 // GetReaction retrieves details of a specific reaction.
-func (m *MautrixAdapter) GetReaction(ctx context.Context, roomID id.RoomID, reactionID id.EventID) (*domain.Reaction, error) {
+func (m *MautrixAdapter) GetReaction(ctx context.Context, roomID id.RoomID, reactionID id.EventID) (
+	*domain.Reaction, error,
+) {
 	intent := m.as.BotIntent()
 
 	evt, err := intent.GetEvent(ctx, roomID, reactionID)
@@ -803,7 +818,9 @@ func (m *MautrixAdapter) GetReaction(ctx context.Context, roomID id.RoomID, reac
 }
 
 // GetThreadMessages retrieves all messages in a thread, including the thread root.
-func (m *MautrixAdapter) GetThreadMessages(ctx context.Context, roomID id.RoomID, threadRootID id.EventID) ([]domain.Message, error) {
+func (m *MautrixAdapter) GetThreadMessages(
+	ctx context.Context, roomID id.RoomID, threadRootID id.EventID,
+) ([]domain.Message, error) {
 	intent := m.as.BotIntent()
 
 	// First, get the thread root message
@@ -895,10 +912,12 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		return "", fmt.Errorf("failed to create room with alias: %w", err)
 	}
 
-	m.logger.Info("Room created with alias",
+	m.logger.Info(
+		"Room created with alias",
 		"room_id", resp.RoomID,
 		"alias", m.idMapper.RoomAlias(alkemioRoomID),
-		"alkemio_room_id", alkemioRoomID)
+		"alkemio_room_id", alkemioRoomID,
+	)
 
 	return resp.RoomID, nil
 }
@@ -952,10 +971,12 @@ func (m *MautrixAdapter) findRoomWithBothUsers(
 		roomID := id.RoomID(roomIDStr)
 
 		if m.roomContainsBothUsers(ctx, roomID, user1ID, user2ID) {
-			m.logger.Info("Found existing direct room between users",
+			m.logger.Info(
+				"Found existing direct room between users",
 				"room_id", roomID,
 				"user1", user1ID,
-				"user2", user2ID)
+				"user2", user2ID,
+			)
 			return roomID, nil
 		}
 	}
@@ -970,8 +991,10 @@ func (m *MautrixAdapter) roomContainsBothUsers(
 ) bool {
 	members, err := m.GetRoomMembers(ctx, roomID)
 	if err != nil {
-		m.logger.Debug("Failed to get members for direct room, skipping",
-			"room_id", roomID, "error", err)
+		m.logger.Debug(
+			"Failed to get members for direct room, skipping",
+			"room_id", roomID, "error", err,
+		)
 		return false
 	}
 
@@ -1006,8 +1029,10 @@ func (m *MautrixAdapter) SetRoomAlias(ctx context.Context, roomID id.RoomID, ali
 	}
 	_, err = intent.SendStateEvent(ctx, roomID, event.StateCanonicalAlias, "", &content)
 	if err != nil {
-		m.logger.Warn("Failed to set canonical alias, alias was still created",
-			"room_id", roomID, "alias", alias, "error", err)
+		m.logger.Warn(
+			"Failed to set canonical alias, alias was still created",
+			"room_id", roomID, "alias", alias, "error", err,
+		)
 	}
 
 	m.logger.Info("Room alias set", "room_id", roomID, "alias", alias)
@@ -1068,10 +1093,12 @@ func (m *MautrixAdapter) CreateSpace(
 		joinRuleContent := &event.JoinRulesEventContent{
 			JoinRule: event.JoinRule(joinRule),
 		}
-		initialState = append(initialState, &event.Event{
-			Type:    event.StateJoinRules,
-			Content: event.Content{Parsed: joinRuleContent},
-		})
+		initialState = append(
+			initialState, &event.Event{
+				Type:    event.StateJoinRules,
+				Content: event.Content{Parsed: joinRuleContent},
+			},
+		)
 	}
 
 	// Add avatar state event if provided
@@ -1079,10 +1106,12 @@ func (m *MautrixAdapter) CreateSpace(
 		avatarContent := &event.RoomAvatarEventContent{
 			URL: id.ContentURIString(avatarURL),
 		}
-		initialState = append(initialState, &event.Event{
-			Type:    event.StateRoomAvatar,
-			Content: event.Content{Parsed: avatarContent},
-		})
+		initialState = append(
+			initialState, &event.Event{
+				Type:    event.StateRoomAvatar,
+				Content: event.Content{Parsed: avatarContent},
+			},
+		)
 	}
 
 	if len(initialState) > 0 {
@@ -1094,10 +1123,12 @@ func (m *MautrixAdapter) CreateSpace(
 		return "", fmt.Errorf("failed to create space: %w", err)
 	}
 
-	m.logger.Info("Space created",
+	m.logger.Info(
+		"Space created",
 		"room_id", resp.RoomID,
 		"alias", m.idMapper.SpaceAlias(alkemioContextID),
-		"alkemio_context_id", alkemioContextID)
+		"alkemio_context_id", alkemioContextID,
+	)
 
 	return resp.RoomID, nil
 }
@@ -1149,7 +1180,9 @@ func (m *MautrixAdapter) GetSpaceMembers(ctx context.Context, roomID id.RoomID) 
 }
 
 // UpdateSpaceState updates space name, topic, avatar, or join rule.
-func (m *MautrixAdapter) UpdateSpaceState(ctx context.Context, roomID id.RoomID, name, topic, avatarURL, joinRule string) error {
+func (m *MautrixAdapter) UpdateSpaceState(
+	ctx context.Context, roomID id.RoomID, name, topic, avatarURL, joinRule string,
+) error {
 	intent := m.as.BotIntent()
 
 	if name != "" {
@@ -1229,7 +1262,9 @@ func (m *MautrixAdapter) GetSpaceChildren(ctx context.Context, roomID id.RoomID)
 }
 
 // AddSpaceChild adds a room or subspace as a child of a space.
-func (m *MautrixAdapter) AddSpaceChild(ctx context.Context, spaceID id.RoomID, childID id.RoomID, order string, suggested bool) error {
+func (m *MautrixAdapter) AddSpaceChild(
+	ctx context.Context, spaceID id.RoomID, childID id.RoomID, order string, suggested bool,
+) error {
 	intent := m.as.BotIntent()
 
 	content := &event.SpaceChildEventContent{
@@ -1271,9 +1306,11 @@ func (m *MautrixAdapter) InviteToSpace(ctx context.Context, spaceID id.RoomID, i
 	}
 
 	intent := m.as.BotIntent()
-	_, err = intent.InviteUser(ctx, spaceID, &mautrix.ReqInviteUser{
-		UserID: inviteeUserID,
-	})
+	_, err = intent.InviteUser(
+		ctx, spaceID, &mautrix.ReqInviteUser{
+			UserID: inviteeUserID,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("failed to invite user to space: %w", err)
 	}
@@ -1293,7 +1330,9 @@ func (m *MautrixAdapter) KickFromSpace(ctx context.Context, spaceID id.RoomID, u
 // SendReadReceipt sends a read receipt for a message in a room.
 // If threadRootID is provided, sends an m.read receipt with thread_id for thread-level tracking.
 // Otherwise, sends a standard m.read receipt for room-level tracking.
-func (m *MautrixAdapter) SendReadReceipt(ctx context.Context, actor domain.Actor, roomID id.RoomID, eventID id.EventID, threadRootID *id.EventID) error {
+func (m *MautrixAdapter) SendReadReceipt(
+	ctx context.Context, actor domain.Actor, roomID id.RoomID, eventID id.EventID, threadRootID *id.EventID,
+) error {
 	// Use centralized IDMapper for user ID
 	userID := m.idMapper.UserID(actor.ID)
 	intent := m.as.Intent(userID)
@@ -1309,14 +1348,16 @@ func (m *MautrixAdapter) SendReadReceipt(ctx context.Context, actor domain.Actor
 		content = &mautrix.ReqSendReceipt{
 			ThreadID: threadRootID.String(),
 		}
-		m.logger.Debug("Sending thread-level read receipt",
+		m.logger.Debug(
+			"Sending thread-level read receipt",
 			"room_id", roomID,
 			"event_id", eventID,
 			"thread_root_id", *threadRootID,
 			"user_id", userID,
 		)
 	} else {
-		m.logger.Debug("Sending room-level read receipt",
+		m.logger.Debug(
+			"Sending room-level read receipt",
 			"room_id", roomID,
 			"event_id", eventID,
 			"user_id", userID,
@@ -1338,10 +1379,23 @@ func (m *MautrixAdapter) SendReadReceipt(ctx context.Context, actor domain.Actor
 // Note: Thread-level unread counts require MSC3773 support which may not be available
 // on all homeservers. If thread counts are requested but not available, the thread
 // map will be empty (not an error).
-func (m *MautrixAdapter) GetUnreadCounts(ctx context.Context, actor domain.Actor, roomID id.RoomID, threadRootIDs []id.EventID) (*domain.UnreadCountSummary, error) {
+func (m *MautrixAdapter) GetUnreadCounts(
+	ctx context.Context, actor domain.Actor, roomID id.RoomID, threadRootIDs []id.EventID,
+) (*domain.UnreadCountSummary, error) {
 	// Get the user's intent to make API calls as that user
 	userID := m.idMapper.UserID(actor.ID)
 	intent := m.as.Intent(userID)
+
+	// Ensure the user is registered before making sync requests
+	if err := intent.EnsureRegistered(ctx); err != nil {
+		m.logger.Error(
+			"Failed to ensure user is registered",
+			"error", err,
+			"user_id", userID,
+			"actor_id", actor.ID,
+		)
+		return nil, fmt.Errorf("failed to ensure user registered: %w", err)
+	}
 
 	// Create a filter that only includes the specific room to minimize data transfer.
 	// We only need the unread notification counts, not timeline events.
@@ -1366,7 +1420,8 @@ func (m *MautrixAdapter) GetUnreadCounts(ctx context.Context, actor domain.Actor
 	// Create the filter on the server
 	filterResp, err := intent.CreateFilter(ctx, filter)
 	if err != nil {
-		m.logger.Error("Failed to create sync filter",
+		m.logger.Error(
+			"Failed to create sync filter",
 			"error", err,
 			"room_id", roomID,
 			"actor_id", actor.ID,
@@ -1378,7 +1433,8 @@ func (m *MautrixAdapter) GetUnreadCounts(ctx context.Context, actor domain.Actor
 	// Using empty "since" token to get a fresh snapshot.
 	syncResp, err := intent.SyncRequest(ctx, 0, "", filterResp.FilterID, false, "")
 	if err != nil {
-		m.logger.Error("Failed to sync for unread counts",
+		m.logger.Error(
+			"Failed to sync for unread counts",
 			"error", err,
 			"room_id", roomID,
 			"actor_id", actor.ID,
@@ -1404,13 +1460,21 @@ func (m *MautrixAdapter) GetUnreadCounts(ctx context.Context, actor domain.Actor
 		if joinedRoom.MSC2654UnreadCount != nil {
 			summary.RoomUnreadCount = *joinedRoom.MSC2654UnreadCount
 		}
+	} else {
+		// Room not present in sync response - user may not be joined or sync issue
+		m.logger.Warn(
+			"Room not present in sync response for unread counts",
+			"room_id", roomID,
+			"actor_id", actor.ID,
+		)
 	}
 
 	// Thread-level unread counts: Currently not available in standard /sync response.
 	// MSC3773 (thread notifications) would provide this, but implementation varies by homeserver.
 	// For now, we log a debug message if threads were requested but return empty map.
 	if len(threadRootIDs) > 0 {
-		m.logger.Debug("Thread-level unread counts requested but not yet supported by homeserver",
+		m.logger.Debug(
+			"Thread-level unread counts requested but not yet supported by homeserver",
 			"room_id", roomID,
 			"actor_id", actor.ID,
 			"requested_threads", len(threadRootIDs),
@@ -1418,7 +1482,8 @@ func (m *MautrixAdapter) GetUnreadCounts(ctx context.Context, actor domain.Actor
 		// Future: When MSC3773 is widely supported, extract thread notification counts here
 	}
 
-	m.logger.Debug("Retrieved unread counts",
+	m.logger.Debug(
+		"Retrieved unread counts",
 		"room_id", roomID,
 		"actor_id", actor.ID,
 		"room_unread", summary.RoomUnreadCount,

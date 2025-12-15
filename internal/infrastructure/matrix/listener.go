@@ -176,12 +176,23 @@ func (m *MautrixAdapter) handleMessageEditEvent(evt *event.Event) {
 	}
 
 	// Extract thread ID if present
+	// Check for explicit m.thread relation first (preferred), then fall back to m.in_reply_to
 	var threadID *id.EventID
 	if relatesTo != nil {
-		if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
-			if threadEventID, ok := inReplyTo["event_id"].(string); ok {
+		// Check for explicit thread relation first (MSC3440)
+		if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
+			if threadEventID, ok := relatesTo["event_id"].(string); ok {
 				tid := id.EventID(threadEventID)
 				threadID = &tid
+			}
+		}
+		// Fallback to m.in_reply_to if no explicit thread relation
+		if threadID == nil {
+			if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
+				if threadEventID, ok := inReplyTo["event_id"].(string); ok {
+					tid := id.EventID(threadEventID)
+					threadID = &tid
+				}
 			}
 		}
 	}
@@ -345,12 +356,22 @@ func (m *MautrixAdapter) handleReactionRedaction(e *event.Event, s uuid.UUID, re
 }
 
 // extractThreadIDFromMessage extracts the thread ID from a message event if present.
+// Checks for explicit m.thread relation first (MSC3440), then falls back to m.in_reply_to.
 func (m *MautrixAdapter) extractThreadIDFromMessage(originalEvt *event.Event) *id.EventID {
 	content, ok := originalEvt.Content.Parsed.(*event.MessageEventContent)
 	if !ok {
 		return nil
 	}
-	if content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
+	if content.RelatesTo == nil {
+		return nil
+	}
+	// Check for explicit thread relation first (MSC3440)
+	if content.RelatesTo.Type == event.RelThread && content.RelatesTo.EventID != "" {
+		eventID := content.RelatesTo.EventID
+		return &eventID
+	}
+	// Fallback to m.in_reply_to
+	if content.RelatesTo.InReplyTo != nil {
 		return &content.RelatesTo.InReplyTo.EventID
 	}
 	return nil

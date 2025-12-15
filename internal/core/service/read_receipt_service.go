@@ -14,17 +14,15 @@ import (
 
 // ReadReceiptService handles read receipt operations.
 type ReadReceiptService struct {
-	matrix   ports.MatrixPort
-	logger   ports.Logger
-	idMapper *domain.IDMapper
+	matrix ports.MatrixPort
+	logger ports.Logger
 }
 
 // NewReadReceiptService creates a new instance of ReadReceiptService.
 func NewReadReceiptService(matrix ports.MatrixPort, logger ports.Logger) *ReadReceiptService {
 	return &ReadReceiptService{
-		matrix:   matrix,
-		logger:   logger,
-		idMapper: domain.NewIDMapper(matrix.HomeserverDomain()),
+		matrix: matrix,
+		logger: logger,
 	}
 }
 

@@ -17,7 +17,7 @@ Marks a message as read for a specific user.
   "actor_id": "uuid-string",
   "alkemio_room_id": "uuid-string",
   "message_id": "matrix-event-id",
-  "thread_root_id": "matrix-event-id" // Optional
+  "thread_id": "matrix-event-id" // Optional
 }
 ```
 
@@ -53,7 +53,7 @@ Retrieves unread message counts for a user in a room.
 {
   "actor_id": "uuid-string",
   "alkemio_room_id": "uuid-string",
-  "thread_root_ids": ["thread-id-1", "thread-id-2"] // Optional
+  "thread_ids": ["thread-id-1", "thread-id-2"] // Optional
 }
 ```
 

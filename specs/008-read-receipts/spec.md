@@ -47,7 +47,7 @@ This feature adds comprehensive message event tracking and read receipt manageme
 ## Thread Context
 
 All message-related events include thread context when applicable:
-- `MatrixThreadID` field contains the thread root event ID
+- `ThreadID` field contains the thread root event ID
 - `nil` indicates room-level (main timeline) activity
 
 ## Files Modified/Created

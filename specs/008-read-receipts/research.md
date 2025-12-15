@@ -74,7 +74,7 @@ _, err := intent.SendReceipt(ctx, roomID, messageID, event.ReceiptTypeRead, thre
 
 ### Code References
 
-- Implementation: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go) (lines 2294-2315)
+- Implementation: [internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go) (lines 2294-2315)
 - Request Type: mautrix-go `ReqSendReceipt` struct (added in v0.12.4)
 - Matrix Spec: `PUT /_matrix/client/v3/rooms/{roomId}/receipt/{receiptType}/{eventId}`
 
@@ -126,7 +126,7 @@ messages, err := matrix.GetThreadMessages(ctx, roomID, threadRootID)
 // Filter messages by timestamp after last thread-specific receipt
 ```
 
-**Existing Implementation Reference**: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L808-L850)
+**Existing Implementation Reference**: [internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L808-L850)
 
 ### Rationale
 
@@ -149,8 +149,8 @@ messages, err := matrix.GetThreadMessages(ctx, roomID, threadRootID)
 
 ### Code References
 
-- Messages Query: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L670-L713) (`GetRoomMessages`)
-- Thread Messages: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L808-L850) (`GetThreadMessages`)
+- Messages Query: [internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L670-L713) (`GetRoomMessages`)
+- Thread Messages: [internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L808-L850) (`GetThreadMessages`)
 - mautrix-go API: `Client.Messages()` - pagination with direction and limit
 
 ---
@@ -163,7 +163,7 @@ Follow existing **`EventHandlers` callback pattern** used for message/reaction e
 
 ### Implementation Pattern
 
-Based on existing code in [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go):
+Based on existing code in [internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go):
 
 ```go
 // Extend EventHandlers struct
@@ -222,7 +222,7 @@ func (m *MautrixAdapter) handleReceiptEvent(evt *event.Event) {
 
 ### Event Loop Pattern
 
-**Existing Implementation**: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go#L27-L56)
+**Existing Implementation**: [internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go#L27-L56)
 
 - Events arrive via `m.as.Events` channel from appservice transaction push
 - `startEventLoop()` processes events in dedicated goroutine
@@ -231,9 +231,9 @@ func (m *MautrixAdapter) handleReceiptEvent(evt *event.Event) {
 
 ### Code References
 
-- Event Handlers: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go#L13-L21)
-- Event Processing: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go#L42-56)
-- Service Registration: [/Users/antst/work/alkemio/matrix-adapter-go/internal/app/app.go](../../internal/app/app.go#L85-88)
+- Event Handlers: [internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go#L13-L21)
+- Event Processing: [internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go#L42-56)
+- Service Registration: [internal/app/app.go](../../internal/app/app.go#L85-88)
 
 ---
 
@@ -250,7 +250,7 @@ Threads use the **`m.thread` relation type** defined in MSC3440:
 
 **Built-in Thread Support**: YES ✅
 
-1. **Thread Relations API** ([/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L808-850)):
+1. **Thread Relations API** ([internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L808-850)):
 ```go
 func (m *MautrixAdapter) GetThreadMessages(
     ctx context.Context, roomID id.RoomID, threadRootID id.EventID,
@@ -262,7 +262,7 @@ Implementation uses:
 url := buildRelationsURL(intent, roomID, threadRootID, event.RelThread, event.EventMessage)
 ```
 
-2. **Thread Reply Sending** ([/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L396-419)):
+2. **Thread Reply Sending** ([internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L396-419)):
 ```go
 msgContent := event.MessageEventContent{
     MsgType: event.MsgText,
@@ -290,9 +290,9 @@ msgContent := event.MessageEventContent{
 
 ### Code References
 
-- Thread Messages: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L808-850)
+- Thread Messages: [internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L808-850)
 - Relations API: mautrix-go `buildRelationsURL()` with `event.RelThread`
-- DTO Support: [/Users/antst/work/alkemio/matrix-adapter-go/pkg/dto/message.go](../../pkg/dto/message.go#L16) (`ThreadID *MessageID`)
+- DTO Support: [pkg/dto/message.go](../../pkg/dto/message.go#L16) (`ThreadID *MessageID`)
 
 ---
 
@@ -300,7 +300,7 @@ msgContent := event.MessageEventContent{
 
 ### Error Response Construction
 
-**Existing Pattern** from [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/queue/errors.go](../../internal/infrastructure/queue/errors.go):
+**Existing Pattern** from [internal/infrastructure/queue/errors.go](../../internal/infrastructure/queue/errors.go):
 
 ```go
 // Typed error creators
@@ -364,7 +364,7 @@ case domain.IsForbiddenError(err):
 
 ### Domain Error Types
 
-From [/Users/antst/work/alkemio/matrix-adapter-go/internal/core/domain/errors.go](../../internal/core/domain/errors.go):
+From [internal/core/domain/errors.go](../../internal/core/domain/errors.go):
 
 ```go
 // Sentinel errors for typed error checking
@@ -385,7 +385,7 @@ func IsForbiddenError(err error) bool {
 
 ### Validation Patterns
 
-From [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/queue/handler_room.go](../../internal/infrastructure/queue/handler_room.go):
+From [internal/infrastructure/queue/handler_room.go](../../internal/infrastructure/queue/handler_room.go):
 
 ```go
 // UUID validation
@@ -428,8 +428,8 @@ func (h *RoomHandler) HandleMarkMessageRead(ctx context.Context, payload []byte)
     }
     
     // Optional thread_id validation (only if provided)
-    if req.ThreadRootID != nil && *req.ThreadRootID == "" {
-        return NewInvalidParamError("thread_root_id cannot be empty if provided"), nil
+    if req.ThreadID != nil && *req.ThreadID == "" {
+        return NewInvalidParamError("thread_id cannot be empty if provided"), nil
     }
     
     // Resolve room alias
@@ -451,7 +451,7 @@ func (h *RoomHandler) HandleMarkMessageRead(ctx context.Context, payload []byte)
 
 ### Logging Patterns
 
-From [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go):
+From [internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go):
 
 ```go
 // Info level for successful operations
@@ -477,9 +477,9 @@ m.logger.Error("Error handling message", "error", err)
 
 ### Code References
 
-- Error Definitions: [/Users/antst/work/alkemio/matrix-adapter-go/internal/core/domain/errors.go](../../internal/core/domain/errors.go)
-- Error Mapping: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/queue/errors.go](../../internal/infrastructure/queue/errors.go)
-- Validation Examples: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/queue/handler_room.go](../../internal/infrastructure/queue/handler_room.go)
+- Error Definitions: [internal/core/domain/errors.go](../../internal/core/domain/errors.go)
+- Error Mapping: [internal/infrastructure/queue/errors.go](../../internal/infrastructure/queue/errors.go)
+- Validation Examples: [internal/infrastructure/queue/handler_room.go](../../internal/infrastructure/queue/handler_room.go)
 
 ---
 
@@ -549,16 +549,16 @@ m.logger.Error("Error handling message", "error", err)
 - **Receipt Endpoint**: `PUT /_matrix/client/v3/rooms/{roomId}/receipt/{receiptType}/{eventId}`
 
 ### mautrix-go Documentation
-- **Package Docs**: https://pkg.go.dev/maunium.net/go/mautrix@v0.26.0
+- **Package Docs**: [mautrix-go v0.26.0](https://pkg.go.dev/maunium.net/go/mautrix@v0.26.0)
 - **SendReceipt**: Added in v0.12.4, supports thread_id parameter
 - **ReqSendReceipt**: Thread-aware receipt request struct
 - **Messages API**: `Client.Messages()` for pagination with direction and limit
 
 ### Existing Codebase Patterns
-- **Event Handlers**: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go)
-- **Command Handlers**: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/queue/handler_room.go](../../internal/infrastructure/queue/handler_room.go)
-- **Error Handling**: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/queue/errors.go](../../internal/infrastructure/queue/errors.go)
-- **Thread Support**: [/Users/antst/work/alkemio/matrix-adapter-go/internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L808-850)
+- **Event Handlers**: [internal/infrastructure/matrix/listener.go](../../internal/infrastructure/matrix/listener.go)
+- **Command Handlers**: [internal/infrastructure/queue/handler_room.go](../../internal/infrastructure/queue/handler_room.go)
+- **Error Handling**: [internal/infrastructure/queue/errors.go](../../internal/infrastructure/queue/errors.go)
+- **Thread Support**: [internal/infrastructure/matrix/mautrix.go](../../internal/infrastructure/matrix/mautrix.go#L808-850)
 
 ### SDK Version
 - **mautrix-go**: v0.26.0 (confirmed in [go.mod](../../go.mod#L15))
