@@ -32,4 +32,14 @@ Go 1.25: Follow standard conventions
 
 
 <!-- MANUAL ADDITIONS START -->
+
+## Architectural Decision: mautrix Types
+
+Services use mautrix-go types (`id.RoomID`, `id.EventID`, `id.UserID`) directly - this is intentional, not technical debt.
+
+**Rules**:
+- Services MAY import `maunium.net/go/mautrix/id` for type definitions
+- Services MUST NOT import other mautrix packages or make direct SDK calls
+- All Matrix operations MUST go through `ports.MatrixPort` interface
+
 <!-- MANUAL ADDITIONS END -->
