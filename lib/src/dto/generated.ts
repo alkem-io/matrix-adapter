@@ -181,23 +181,23 @@ export const TopicUnreadCountsGet = "communication.room.unread_counts.get";
 /**
  * TopicReadReceiptUpdated is the topic for read receipt update events.
  */
-export const TopicReadReceiptUpdated = "matrix.room.receipt.updated";
+export const TopicReadReceiptUpdated = "communication.room.receipt.updated";
 /**
  * TopicMessageEdited is the topic for message edited events.
  */
-export const TopicMessageEdited = "matrix.room.message.edited";
+export const TopicMessageEdited = "communication.message.edited";
 /**
  * TopicMessageRedacted is the topic for message redacted events.
  */
-export const TopicMessageRedacted = "matrix.room.message.redacted";
+export const TopicMessageRedacted = "communication.message.redacted";
 /**
  * TopicRoomCreated is the topic for room created events.
  */
-export const TopicRoomCreated = "matrix.room.created";
+export const TopicRoomCreated = "communication.room.created";
 /**
  * TopicRoomMemberUpdated is the topic for room member updated events.
  */
-export const TopicRoomMemberUpdated = "matrix.room.member.updated";
+export const TopicRoomMemberUpdated = "communication.room.member.updated";
 /**
  * CommandDef defines a command with its topic, request type name, and response type name.
  * This is used by the TypeScript generator to create type-safe command definitions.
@@ -324,7 +324,7 @@ export interface MessageReceivedPayload {
 export interface Message {
   id: string;
   message: string;
-  threadID?: string;
+  threadID?: MessageID;
   sender: string;
   timestamp: number /* int64 */;
   reactions: Reaction[];
@@ -547,7 +547,7 @@ export interface GetUnreadCountsResponse extends BaseResponse {
 }
 /**
  * ReadReceiptUpdatedEvent is published when a user's read receipt is updated.
- * Topic: matrix.room.receipt.updated
+ * Topic: communication.room.receipt.updated
  */
 export interface ReadReceiptUpdatedEvent {
   alkemio_room_id: AlkemioRoomID;
@@ -558,7 +558,7 @@ export interface ReadReceiptUpdatedEvent {
 }
 /**
  * MessageEditedEvent is published when a message is edited (m.replace).
- * Topic: matrix.room.message.edited
+ * Topic: communication.message.edited
  */
 export interface MessageEditedEvent {
   alkemio_room_id: AlkemioRoomID;
@@ -571,7 +571,7 @@ export interface MessageEditedEvent {
 }
 /**
  * MessageRedactedEvent is published when a message is redacted.
- * Topic: matrix.room.message.redacted
+ * Topic: communication.message.redacted
  */
 export interface MessageRedactedEvent {
   alkemio_room_id: AlkemioRoomID;
@@ -584,7 +584,7 @@ export interface MessageRedactedEvent {
 }
 /**
  * RoomCreatedEvent is published when a room is created.
- * Topic: matrix.room.created
+ * Topic: communication.room.created
  */
 export interface RoomCreatedEvent {
   alkemio_room_id: AlkemioRoomID;
@@ -596,7 +596,7 @@ export interface RoomCreatedEvent {
 }
 /**
  * RoomMemberUpdatedEvent is published when a user's membership status changes.
- * Topic: matrix.room.member.updated
+ * Topic: communication.room.member.updated
  */
 export interface RoomMemberUpdatedEvent {
   alkemio_room_id: AlkemioRoomID;

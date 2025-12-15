@@ -7,7 +7,7 @@
 
 Emitted when a user's read receipt is updated in Matrix.
 
-**Topic**: `matrix.room.receipt.updated`
+**Topic**: `communication.room.receipt.updated`
 
 ### Payload
 
@@ -27,7 +27,7 @@ Emitted when a user's read receipt is updated in Matrix.
 
 Emitted when a message is edited (`m.replace`).
 
-**Topic**: `matrix.room.message.edited`
+**Topic**: `communication.message.edited`
 
 ### Payload
 
@@ -48,7 +48,7 @@ Emitted when a message is edited (`m.replace`).
 
 Emitted when a message is redacted.
 
-**Topic**: `matrix.room.message.redacted`
+**Topic**: `communication.message.redacted`
 
 ### Payload
 
@@ -69,7 +69,7 @@ Emitted when a message is redacted.
 
 Emitted when a room is created.
 
-**Topic**: `matrix.room.created`
+**Topic**: `communication.room.created`
 
 ### Payload
 
@@ -87,7 +87,7 @@ Emitted when a room is created.
 
 Emitted when a user's membership status changes.
 
-**Topic**: `matrix.room.member.updated`
+**Topic**: `communication.room.member.updated`
 
 ### Payload
 

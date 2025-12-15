@@ -13,7 +13,7 @@ type MessageReceivedPayload struct {
 type Message struct {
 	ID        string     `json:"id"`
 	Message   string     `json:"message"`
-	ThreadID  *string    `json:"threadID,omitempty"`
+	ThreadID  *MessageID `json:"threadID,omitempty"`
 	Sender    string     `json:"sender"`
 	Timestamp int64      `json:"timestamp"`
 	Reactions []Reaction `json:"reactions"`

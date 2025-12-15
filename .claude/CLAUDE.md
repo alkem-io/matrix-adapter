@@ -64,7 +64,7 @@
 
 ## Operational Tips
 
-- **Matrix SDK Isolation**: NEVER import `mautrix-go` directly in `internal/core/service`. Always use `internal/core/ports` interfaces.
+- **Matrix SDK Isolation**: Services MUST NOT make direct mautrix-go SDK calls (e.g., `client.SendMessage()`). Always use `internal/core/ports.MatrixPort` interface methods. Note: Using mautrix *types* (`id.RoomID`, `id.EventID`, `id.UserID`) in services is acceptable since ports expose these types - see "Architectural Decision: mautrix Types" below.
 - **Event Streams**: Use Watermill for all event publishing/subscribing. Ensure topics match `pkg/dto` definitions.
 - **RabbitMQ**: The service listens for commands defined in `pkg/dto`.
 - **Debugging**:
@@ -109,6 +109,29 @@ Currently, read operations (`GetRoomMessages`, `GetMessage`, `GetThreadMessages`
 3. Handling Matrix permission errors appropriately
 
 This ensures the adapter respects Matrix's access control rather than relying solely on Alkemio Server authorization.
+
+## Architectural Decision: mautrix Types
+
+The domain, ports, and service layers use mautrix-go types directly (`id.RoomID`, `id.EventID`, `id.UserID`). This is an **intentional design decision**, not technical debt.
+
+**Rationale**:
+- This adapter's sole purpose is Matrix integration - abstracting Matrix types adds complexity without practical benefit
+- The ports interface (`MatrixPort`) exposes 35+ methods using mautrix types; services must use these types to call port methods
+- Consistent throughout: domain models, ports interfaces, and services all use mautrix types
+
+**What this means**:
+- Services MAY import `maunium.net/go/mautrix/id` for type definitions
+- Services MUST NOT import other mautrix packages or make direct SDK calls
+- All Matrix operations MUST go through `ports.MatrixPort` interface
+
+**Current usage** (as of 2025-12):
+| Layer | Files with mautrix imports | Purpose |
+|-------|---------------------------|---------|
+| `domain/` | 3 files | Value objects storing Matrix IDs |
+| `ports/` | 2 files | Interface definitions |
+| `service/` | 3 files | Type usage for port method calls |
+
+**Alternative considered**: Creating domain type aliases (`domain.MatrixRoomID` as string) and converting at boundaries. This would affect ~20+ files and provide cleaner hexagonal architecture, but was deemed unnecessary given the adapter's focused purpose. This can be revisited if SDK swapping becomes a requirement.
 
 ## Active Technologies
 

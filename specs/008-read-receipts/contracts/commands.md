@@ -7,8 +7,8 @@
 
 Marks a message as read for a specific user.
 
-**Topic**: `matrix.room.message.read` (Command)
-**Response Topic**: `matrix.room.message.read.response`
+**Topic**: `communication.message.read` (Command)
+**Response Topic**: `communication.message.read.response`
 
 ### Payload
 
@@ -44,8 +44,8 @@ Marks a message as read for a specific user.
 
 Retrieves unread message counts for a user in a room.
 
-**Topic**: `matrix.room.unread_counts.get` (Command)
-**Response Topic**: `matrix.room.unread_counts.get.response`
+**Topic**: `communication.room.unread_counts.get` (Command)
+**Response Topic**: `communication.room.unread_counts.get.response`
 
 ### Payload
 

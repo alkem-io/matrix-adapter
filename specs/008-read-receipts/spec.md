@@ -21,11 +21,11 @@ This feature adds comprehensive message event tracking and read receipt manageme
 
 | Event | Topic | Description |
 |-------|-------|-------------|
-| Read Receipt Updated | `matrix.room.receipt.updated` | User's read position changed |
-| Message Edited | `matrix.room.message.edited` | Message content modified via `m.replace` |
-| Message Redacted | `matrix.room.message.redacted` | Message permanently deleted |
-| Room Created | `matrix.room.created` | New room created in Matrix |
-| Room Member Updated | `matrix.room.member.updated` | Membership state changed (join/invite/leave/ban) |
+| Read Receipt Updated | `communication.room.receipt.updated` | User's read position changed |
+| Message Edited | `communication.message.edited` | Message content modified via `m.replace` |
+| Message Redacted | `communication.message.redacted` | Message permanently deleted |
+| Room Created | `communication.room.created` | New room created in Matrix |
+| Room Member Updated | `communication.room.member.updated` | Membership state changed (join/invite/leave/ban) |
 
 ## Key Design Decisions
 

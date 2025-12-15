@@ -87,15 +87,15 @@ const (
 // Read Receipt & Message Event Topics (Adapter → Server)
 const (
 	// TopicReadReceiptUpdated is the topic for read receipt update events.
-	TopicReadReceiptUpdated = "matrix.room.receipt.updated"
+	TopicReadReceiptUpdated = "communication.room.receipt.updated"
 	// TopicMessageEdited is the topic for message edited events.
-	TopicMessageEdited = "matrix.room.message.edited"
+	TopicMessageEdited = "communication.message.edited"
 	// TopicMessageRedacted is the topic for message redacted events.
-	TopicMessageRedacted = "matrix.room.message.redacted"
+	TopicMessageRedacted = "communication.message.redacted"
 	// TopicRoomCreated is the topic for room created events.
-	TopicRoomCreated = "matrix.room.created"
+	TopicRoomCreated = "communication.room.created"
 	// TopicRoomMemberUpdated is the topic for room member updated events.
-	TopicRoomMemberUpdated = "matrix.room.member.updated"
+	TopicRoomMemberUpdated = "communication.room.member.updated"
 )
 
 // ============================================================================

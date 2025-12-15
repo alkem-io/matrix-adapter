@@ -834,6 +834,8 @@ type ReactionRemovedEvent struct {
 
 Published when a user leaves or is kicked/banned from a room.
 
+> **Note**: This event is emitted specifically for leave/kick/ban scenarios. For comprehensive membership tracking, see also `RoomMemberUpdatedEvent` (27e) which covers all membership transitions (join, invite, leave, ban, knock). Consumers needing only departure notifications should subscribe to this event; consumers needing full membership lifecycle should use `RoomMemberUpdatedEvent`.
+
 *   **Event Subject**: `communication.room.member.left`
 
 #### Payload
@@ -853,7 +855,7 @@ type RoomMemberLeftEvent struct {
 
 Published when a user's read receipt is updated (message marked as read).
 
-*   **Event Subject**: `matrix.room.receipt.updated`
+*   **Event Subject**: `communication.room.receipt.updated`
 
 #### Payload
 
@@ -873,7 +875,7 @@ type ReadReceiptUpdatedEvent struct {
 
 Published when a message is edited (via Matrix `m.replace` relation).
 
-*   **Event Subject**: `matrix.room.message.edited`
+*   **Event Subject**: `communication.message.edited`
 
 #### Payload
 
@@ -895,7 +897,7 @@ type MessageEditedEvent struct {
 
 Published when a message is redacted (deleted).
 
-*   **Event Subject**: `matrix.room.message.redacted`
+*   **Event Subject**: `communication.message.redacted`
 
 #### Payload
 
@@ -917,7 +919,7 @@ type MessageRedactedEvent struct {
 
 Published when a room is created in Matrix.
 
-*   **Event Subject**: `matrix.room.created`
+*   **Event Subject**: `communication.room.created`
 
 #### Payload
 
@@ -938,7 +940,9 @@ type RoomCreatedEvent struct {
 
 Published when a user's membership status changes (join, invite, leave, ban, knock).
 
-*   **Event Subject**: `matrix.room.member.updated`
+> **Note**: This event provides comprehensive membership tracking for all state transitions. For leave/kick/ban scenarios, `RoomMemberLeftEvent` (27) is also emitted. Consumers can choose based on their needs: subscribe to this event for full membership lifecycle, or use `RoomMemberLeftEvent` if only departure notifications are required.
+
+*   **Event Subject**: `communication.room.member.updated`
 
 #### Payload
 

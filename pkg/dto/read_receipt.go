@@ -33,7 +33,7 @@ type GetUnreadCountsResponse struct {
 // ============================================================================
 
 // ReadReceiptUpdatedEvent is published when a user's read receipt is updated.
-// Topic: matrix.room.receipt.updated
+// Topic: communication.room.receipt.updated
 type ReadReceiptUpdatedEvent struct {
 	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
 	ActorID       AlkemioActorID `json:"actor_id"`
@@ -47,7 +47,7 @@ type ReadReceiptUpdatedEvent struct {
 // ============================================================================
 
 // MessageEditedEvent is published when a message is edited (m.replace).
-// Topic: matrix.room.message.edited
+// Topic: communication.message.edited
 type MessageEditedEvent struct {
 	AlkemioRoomID     AlkemioRoomID  `json:"alkemio_room_id"`
 	SenderActorID     AlkemioActorID `json:"sender_actor_id"`
@@ -59,7 +59,7 @@ type MessageEditedEvent struct {
 }
 
 // MessageRedactedEvent is published when a message is redacted.
-// Topic: matrix.room.message.redacted
+// Topic: communication.message.redacted
 type MessageRedactedEvent struct {
 	AlkemioRoomID      AlkemioRoomID  `json:"alkemio_room_id"`
 	RedactorActorID    AlkemioActorID `json:"redactor_actor_id"`
@@ -71,7 +71,7 @@ type MessageRedactedEvent struct {
 }
 
 // RoomCreatedEvent is published when a room is created.
-// Topic: matrix.room.created
+// Topic: communication.room.created
 type RoomCreatedEvent struct {
 	AlkemioRoomID  AlkemioRoomID  `json:"alkemio_room_id"`
 	CreatorActorID AlkemioActorID `json:"creator_actor_id"`
@@ -82,7 +82,7 @@ type RoomCreatedEvent struct {
 }
 
 // RoomMemberUpdatedEvent is published when a user's membership status changes.
-// Topic: matrix.room.member.updated
+// Topic: communication.room.member.updated
 type RoomMemberUpdatedEvent struct {
 	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
 	MemberActorID AlkemioActorID `json:"member_actor_id"` // Actor whose membership changed

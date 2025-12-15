@@ -53,9 +53,9 @@ Command to get unread counts for a user in a room.
 
 ```go
 type GetUnreadCountsRequest struct {
-    ActorID       uuid.UUID `json:"actor_id"`
-    AlkemioRoomID uuid.UUID `json:"alkemio_room_id"`
-    ThreadIDs     []string  `json:"thread_ids,omitempty"` // Optional: specific threads to query
+    ActorID       uuid.UUID   `json:"actor_id"`
+    AlkemioRoomID uuid.UUID   `json:"alkemio_room_id"`
+    ThreadIDs     []MessageID `json:"thread_ids,omitempty"` // Optional: specific threads to query
 }
 ```
 
@@ -107,24 +107,28 @@ Emitted when a message is redacted.
 
 ```go
 type MessageRedactedEvent struct {
-    RedactedEventID string    `json:"redacted_event_id"`
-    RedactionEventID string   `json:"redaction_event_id"`
-    RoomID          string    `json:"room_id"`
-    RedactorID      string    `json:"redactor_id"`
-    Reason          string    `json:"reason,omitempty"`
-    Timestamp       int64     `json:"timestamp"`
+    RedactedEventID  string     `json:"redacted_event_id"`
+    RedactionEventID string     `json:"redaction_event_id"`
+    RoomID           string     `json:"room_id"`
+    RedactorID       string     `json:"redactor_id"`
+    Reason           string     `json:"reason,omitempty"`
+    ThreadID         *MessageID `json:"thread_id,omitempty"`
+    Timestamp        int64      `json:"timestamp"`
 }
 ```
 
 #### RoomCreatedEvent
 
-Emitted when a room is created (via `m.room.create`).
+Emitted when a room is created (via `m.room.create`). Includes room metadata such as type, name, and topic.
 
 ```go
 type RoomCreatedEvent struct {
-    RoomID    string    `json:"room_id"`
-    CreatorID string    `json:"creator_id"`
-    Timestamp int64     `json:"timestamp"`
+    RoomID    string `json:"room_id"`
+    CreatorID string `json:"creator_id"`
+    RoomType  string `json:"room_type,omitempty"`  // "room", "space"
+    Name      string `json:"name,omitempty"`
+    Topic     string `json:"topic,omitempty"`
+    Timestamp int64  `json:"timestamp"`
 }
 ```
 

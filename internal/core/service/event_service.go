@@ -29,9 +29,10 @@ func NewEventService(queue ports.QueuePort, logger ports.Logger, cfg *config.Con
 // HandleMessage processes a message event from Matrix and publishes it to the queue.
 func (s *EventService) HandleMessage(msg domain.Message) error {
 	// Convert thread ID to pointer if present
-	var threadID *string
+	var threadID *dto.MessageID
 	if msg.ThreadID != "" {
-		threadID = &msg.ThreadID
+		tid := dto.MessageID(msg.ThreadID)
+		threadID = &tid
 	}
 
 	payload := dto.MessageReceivedPayload{

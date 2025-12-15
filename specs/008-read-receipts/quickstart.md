@@ -26,7 +26,7 @@ make build
 
 ### 1. Mark a Message as Read
 
-Publish a command to `matrix.room.message.read`:
+Publish a command to `communication.message.read`:
 
 ```bash
 # Example payload
@@ -39,7 +39,7 @@ Publish a command to `matrix.room.message.read`:
 
 ### 2. Get Unread Counts
 
-Publish a command to `matrix.room.unread_counts.get`:
+Publish a command to `communication.room.unread_counts.get`:
 
 ```bash
 # Example payload
@@ -51,7 +51,7 @@ Publish a command to `matrix.room.unread_counts.get`:
 
 ### 3. Verify Events
 
-Monitor the `matrix.room.receipt.updated` topic. When you mark a message as read (or use a Matrix client to do so), an event should appear:
+Monitor the `communication.room.receipt.updated` topic. When you mark a message as read (or use a Matrix client to do so), an event should appear:
 
 ```json
 {
