@@ -18,6 +18,12 @@ type EventHandlers struct {
 	OnReactionAdded   func(reaction domain.ReactionEvent) error
 	OnReactionRemoved func(reaction domain.ReactionRemovedEvent) error
 	OnMemberLeft      func(membership domain.MembershipEvent) error
+	// Read receipt and message event handlers (008-read-receipts)
+	OnReadReceiptUpdated func(receipt domain.ReadReceiptEvent) error
+	OnMessageEdited      func(edit domain.MessageEditedEvent) error
+	OnMessageRedacted    func(redaction domain.MessageRedactedEvent) error
+	OnRoomCreated        func(room domain.RoomCreatedEvent) error
+	OnMemberUpdated      func(membership domain.RoomMemberUpdatedEvent) error
 }
 
 // SetEventHandlers sets all event handlers at once.
@@ -54,10 +60,20 @@ func (m *MautrixAdapter) processEvent(evt *event.Event) {
 		m.handleRedactionEvent(evt)
 	case event.StateMember:
 		m.handleMembershipEvent(evt)
+	case event.EphemeralEventReceipt:
+		m.handleReceiptEvent(evt)
+	case event.StateCreate:
+		m.handleRoomCreateEvent(evt)
 	}
 }
 
 func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
+	// Check if this is a message edit (m.replace relation)
+	if m.isMessageEdit(evt) {
+		m.handleMessageEditEvent(evt)
+		return
+	}
+
 	if m.eventHandlers.OnMessage == nil {
 		return
 	}
@@ -76,7 +92,26 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 		return
 	}
 
-	go func(e *event.Event, c string, s uuid.UUID) {
+	// Extract thread ID from m.relates_to if present
+	var threadID string
+	if relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{}); ok {
+		// Check for thread relation (MSC3440)
+		if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
+			if eventID, ok := relatesTo["event_id"].(string); ok {
+				threadID = eventID
+			}
+		}
+		// Also check m.in_reply_to for legacy thread support
+		if threadID == "" {
+			if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
+				if eventID, ok := inReplyTo["event_id"].(string); ok {
+					threadID = eventID
+				}
+			}
+		}
+	}
+
+	go func(e *event.Event, c string, s uuid.UUID, tid string) {
 		// Resolve Alkemio room ID from Matrix room ID (HTTP call - must be async)
 		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID)
 		if alkemioRoomID == uuid.Nil {
@@ -91,11 +126,97 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 				SenderID:  s,
 				Content:   c,
 				Timestamp: time.UnixMilli(e.Timestamp),
+				ThreadID:  tid,
 			},
 		); err != nil {
 			m.logger.Error("Error handling message", "error", err)
 		}
-	}(evt, content, senderUUID)
+	}(evt, content, senderUUID, threadID)
+}
+
+// isMessageEdit checks if an event is a message edit (m.replace relation).
+func (m *MautrixAdapter) isMessageEdit(evt *event.Event) bool {
+	relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	relType, ok := relatesTo["rel_type"].(string)
+	return ok && relType == "m.replace"
+}
+
+// handleMessageEditEvent handles a message edit event (m.replace).
+func (m *MautrixAdapter) handleMessageEditEvent(evt *event.Event) {
+	if m.eventHandlers.OnMessageEdited == nil {
+		return
+	}
+
+	// Parse sender UUID
+	senderUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	if senderUUID == uuid.Nil {
+		m.logger.Debug("Ignoring edit from non-UUID user", "sender", evt.Sender)
+		return
+	}
+
+	// Extract original event ID from m.relates_to
+	relatesTo, _ := evt.Content.Raw["m.relates_to"].(map[string]interface{})
+	originalEventID, _ := relatesTo["event_id"].(string)
+	if originalEventID == "" {
+		m.logger.Warn("Edit event missing original event ID", "event_id", evt.ID)
+		return
+	}
+
+	// Extract new content from m.new_content
+	newContent := ""
+	if newContentMap, ok := evt.Content.Raw["m.new_content"].(map[string]interface{}); ok {
+		newContent, _ = newContentMap["body"].(string)
+	}
+	if newContent == "" {
+		// Fallback to main body
+		newContent, _ = evt.Content.Raw["body"].(string)
+	}
+
+	// Extract thread ID if present
+	// Check for explicit m.thread relation first (preferred), then fall back to m.in_reply_to
+	var threadID *id.EventID
+	if relatesTo != nil {
+		// Check for explicit thread relation first (MSC3440)
+		if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
+			if threadEventID, ok := relatesTo["event_id"].(string); ok {
+				tid := id.EventID(threadEventID)
+				threadID = &tid
+			}
+		}
+		// Fallback to m.in_reply_to if no explicit thread relation
+		if threadID == nil {
+			if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
+				if threadEventID, ok := inReplyTo["event_id"].(string); ok {
+					tid := id.EventID(threadEventID)
+					threadID = &tid
+				}
+			}
+		}
+	}
+
+	go func(e *event.Event, sender uuid.UUID, origID, content string, tid *id.EventID) {
+		ctx := context.Background()
+		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID)
+		if alkemioRoomID == uuid.Nil {
+			m.logger.Warn("Could not resolve Alkemio room ID for edit", "room_id", e.RoomID)
+			return
+		}
+
+		if err := m.eventHandlers.OnMessageEdited(domain.MessageEditedEvent{
+			AlkemioRoomID:   alkemioRoomID,
+			OriginalEventID: id.EventID(origID),
+			NewEventID:      e.ID,
+			SenderID:        sender,
+			NewContent:      content,
+			ThreadID:        tid,
+			Timestamp:       time.UnixMilli(e.Timestamp),
+		}); err != nil {
+			m.logger.Error("Error handling message edit", "error", err)
+		}
+	}(evt, senderUUID, originalEventID, newContent, threadID)
 }
 
 func (m *MautrixAdapter) handleReactionEvent(evt *event.Event) {
@@ -140,10 +261,6 @@ func (m *MautrixAdapter) handleReactionEvent(evt *event.Event) {
 }
 
 func (m *MautrixAdapter) handleRedactionEvent(evt *event.Event) {
-	if m.eventHandlers.OnReactionRemoved == nil {
-		return
-	}
-
 	// Parse sender UUID using IDMapper - skip if not a ghost user
 	senderUUID := m.idMapper.AlkemioActorID(evt.Sender)
 	if senderUUID == uuid.Nil {
@@ -152,74 +269,141 @@ func (m *MautrixAdapter) handleRedactionEvent(evt *event.Event) {
 	}
 
 	// Get the redacted event ID from the redaction
-	redactedEventID := evt.Redacts
-	if redactedEventID == "" {
-		// Try to get from content
-		if redacts, ok := evt.Content.Raw["redacts"].(string); ok {
-			redactedEventID = id.EventID(redacts)
-		}
-	}
-
+	redactedEventID := m.extractRedactedEventID(evt)
 	if redactedEventID == "" {
 		return
 	}
 
+	// Extract reason if present
+	reason := m.extractRedactionReason(evt)
+
 	// Move all blocking HTTP calls inside the goroutine to avoid blocking the event loop
-	go func(e *event.Event, s uuid.UUID, redactedID id.EventID) {
+	go func(e *event.Event, s uuid.UUID, redactedID id.EventID, reason string) {
 		ctx := context.Background()
-		var emoji string
-		var messageID id.EventID
 
-		// Try to get the original reaction event (HTTP call - must be async)
-		originalEvt, err := m.as.BotIntent().GetEvent(ctx, e.RoomID, redactedID)
-		if err == nil && originalEvt.Type == event.EventReaction {
-			// Parse reaction content using generic helper
-			if content, ok := parseEventContent[event.ReactionEventContent](originalEvt); ok {
-				emoji = content.RelatesTo.Key
-				messageID = content.RelatesTo.EventID
-			}
-		} else {
-			// Could not verify this was a reaction redaction - skip
-			return
-		}
-
-		// Get Alkemio room ID (HTTP call - must be async)
+		// Get Alkemio room ID first (HTTP call)
 		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID)
 		if alkemioRoomID == uuid.Nil {
 			m.logger.Warn("Could not resolve Alkemio room ID for redaction", "room_id", e.RoomID)
 			return
 		}
 
-		if err := m.eventHandlers.OnReactionRemoved(domain.ReactionRemovedEvent{
-			AlkemioRoomID: alkemioRoomID,
-			MessageID:     messageID,
-			ReactionID:    redactedID,
-			Emoji:         emoji,
-			SenderActorID: s,
-			Timestamp:     time.UnixMilli(e.Timestamp),
-		}); err != nil {
-			m.logger.Error("Error handling reaction removal", "error", err)
+		// Try to get the original event to determine its type (HTTP call)
+		originalEvt, err := m.as.BotIntent().GetEvent(ctx, e.RoomID, redactedID)
+		if err != nil {
+			// Event already redacted or not accessible - emit as message redaction
+			m.emitMessageRedaction(e, s, redactedID, alkemioRoomID, reason, nil)
+			return
 		}
-	}(evt, senderUUID, redactedEventID)
+
+		m.processRedactedEvent(e, s, redactedID, alkemioRoomID, reason, originalEvt)
+	}(evt, senderUUID, redactedEventID, reason)
 }
 
-func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
-	if m.eventHandlers.OnMemberLeft == nil {
+// extractRedactedEventID extracts the redacted event ID from a redaction event.
+func (m *MautrixAdapter) extractRedactedEventID(evt *event.Event) id.EventID {
+	if evt.Redacts != "" {
+		return evt.Redacts
+	}
+	// Try to get from content
+	if redacts, ok := evt.Content.Raw["redacts"].(string); ok {
+		return id.EventID(redacts)
+	}
+	return ""
+}
+
+// extractRedactionReason extracts the reason from a redaction event.
+func (m *MautrixAdapter) extractRedactionReason(evt *event.Event) string {
+	if r, ok := evt.Content.Raw["reason"].(string); ok {
+		return r
+	}
+	return ""
+}
+
+// processRedactedEvent handles the redaction based on the original event type.
+func (m *MautrixAdapter) processRedactedEvent(e *event.Event, s uuid.UUID, redactedID id.EventID, alkemioRoomID uuid.UUID, reason string, originalEvt *event.Event) {
+	switch originalEvt.Type {
+	case event.EventReaction:
+		m.handleReactionRedaction(e, s, redactedID, alkemioRoomID, originalEvt)
+	case event.EventMessage:
+		threadID := m.extractThreadIDFromMessage(originalEvt)
+		m.emitMessageRedaction(e, s, redactedID, alkemioRoomID, reason, threadID)
+	default:
+		// Unknown event type - emit as generic message redaction
+		m.emitMessageRedaction(e, s, redactedID, alkemioRoomID, reason, nil)
+	}
+}
+
+// handleReactionRedaction handles a redaction of a reaction event.
+func (m *MautrixAdapter) handleReactionRedaction(e *event.Event, s uuid.UUID, redactedID id.EventID, alkemioRoomID uuid.UUID, originalEvt *event.Event) {
+	if m.eventHandlers.OnReactionRemoved == nil {
+		return
+	}
+	content, ok := parseEventContent[event.ReactionEventContent](originalEvt)
+	if !ok {
+		return
+	}
+	if err := m.eventHandlers.OnReactionRemoved(domain.ReactionRemovedEvent{
+		AlkemioRoomID: alkemioRoomID,
+		MessageID:     content.RelatesTo.EventID,
+		ReactionID:    redactedID,
+		Emoji:         content.RelatesTo.Key,
+		SenderActorID: s,
+		Timestamp:     time.UnixMilli(e.Timestamp),
+	}); err != nil {
+		m.logger.Error("Error handling reaction removal", "error", err)
+	}
+}
+
+// extractThreadIDFromMessage extracts the thread ID from a message event if present.
+// Checks for explicit m.thread relation first (MSC3440), then falls back to m.in_reply_to.
+func (m *MautrixAdapter) extractThreadIDFromMessage(originalEvt *event.Event) *id.EventID {
+	content, ok := originalEvt.Content.Parsed.(*event.MessageEventContent)
+	if !ok {
+		return nil
+	}
+	if content.RelatesTo == nil {
+		return nil
+	}
+	// Check for explicit thread relation first (MSC3440)
+	if content.RelatesTo.Type == event.RelThread && content.RelatesTo.EventID != "" {
+		eventID := content.RelatesTo.EventID
+		return &eventID
+	}
+	// Fallback to m.in_reply_to
+	if content.RelatesTo.InReplyTo != nil {
+		return &content.RelatesTo.InReplyTo.EventID
+	}
+	return nil
+}
+
+// emitMessageRedaction emits a message redacted event.
+func (m *MautrixAdapter) emitMessageRedaction(e *event.Event, redactor uuid.UUID, redactedID id.EventID, alkemioRoomID uuid.UUID, reason string, threadID *id.EventID) {
+	if m.eventHandlers.OnMessageRedacted == nil {
 		return
 	}
 
+	if err := m.eventHandlers.OnMessageRedacted(domain.MessageRedactedEvent{
+		AlkemioRoomID:    alkemioRoomID,
+		RedactedEventID:  redactedID,
+		RedactionEventID: e.ID,
+		RedactorID:       redactor,
+		Reason:           reason,
+		ThreadID:         threadID,
+		Timestamp:        time.UnixMilli(e.Timestamp),
+	}); err != nil {
+		m.logger.Error("Error handling message redaction", "error", err)
+	}
+}
+
+func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 	// Parse membership content using generic helper
 	content, ok := parseEventContent[event.MemberEventContent](evt)
 	if !ok {
 		return
 	}
 
-	// Only handle leave and ban events
-	if content.Membership != event.MembershipLeave && content.Membership != event.MembershipBan {
-		return
-	}
-
-	// The state_key is the user who left/was banned
+	// The state_key is the user whose membership changed
 	if evt.StateKey == nil || *evt.StateKey == "" {
 		return
 	}
@@ -237,14 +421,20 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 		return
 	}
 
+	// Parse sender UUID (who performed the action)
+	senderUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	// Note: senderUUID may be Nil for system actions, that's OK
+
 	// Extract reason if present
 	reason := ""
 	if content.Reason != "" {
 		reason = content.Reason
 	}
 
+	membership := string(content.Membership)
+
 	// Move HTTP call inside goroutine to avoid blocking the event loop
-	go func(e *event.Event, actorID uuid.UUID, reason string) {
+	go func(e *event.Event, memberID, senderID uuid.UUID, membershipState, reason string) {
 		// Get Alkemio room ID (HTTP call - must be async)
 		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID)
 		if alkemioRoomID == uuid.Nil {
@@ -252,15 +442,33 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 			return
 		}
 
-		if err := m.eventHandlers.OnMemberLeft(domain.MembershipEvent{
-			AlkemioRoomID: alkemioRoomID,
-			ActorID:       actorID,
-			Reason:        reason,
-			Timestamp:     time.UnixMilli(e.Timestamp),
-		}); err != nil {
-			m.logger.Error("Error handling membership event", "error", err)
+		// Handle leave/ban events with the legacy OnMemberLeft handler
+		if membershipState == string(event.MembershipLeave) || membershipState == string(event.MembershipBan) {
+			if m.eventHandlers.OnMemberLeft != nil {
+				if err := m.eventHandlers.OnMemberLeft(domain.MembershipEvent{
+					AlkemioRoomID: alkemioRoomID,
+					ActorID:       memberID,
+					Reason:        reason,
+					Timestamp:     time.UnixMilli(e.Timestamp),
+				}); err != nil {
+					m.logger.Error("Error handling member left event", "error", err)
+				}
+			}
 		}
-	}(evt, targetUUID, reason)
+
+		// Emit OnMemberUpdated for all membership changes (join, invite, knock, leave, ban)
+		if m.eventHandlers.OnMemberUpdated != nil {
+			if err := m.eventHandlers.OnMemberUpdated(domain.RoomMemberUpdatedEvent{
+				AlkemioRoomID: alkemioRoomID,
+				MemberID:      memberID,
+				SenderID:      senderID,
+				Membership:    membershipState,
+				Timestamp:     time.UnixMilli(e.Timestamp),
+			}); err != nil {
+				m.logger.Error("Error handling member updated event", "error", err)
+			}
+		}
+	}(evt, targetUUID, senderUUID, membership, reason)
 }
 
 // resolveAlkemioRoomID gets the Alkemio room UUID from a Matrix room ID.
@@ -273,4 +481,136 @@ func (m *MautrixAdapter) resolveAlkemioRoomID(ctx context.Context, roomID id.Roo
 
 	// Use IDMapper to extract UUID from alias
 	return m.idMapper.AlkemioRoomID(details.Alias)
+}
+
+// handleReceiptEvent handles m.receipt ephemeral events (read receipts).
+func (m *MautrixAdapter) handleReceiptEvent(evt *event.Event) {
+	if m.eventHandlers.OnReadReceiptUpdated == nil {
+		return
+	}
+
+	// Parse receipt content
+	content, ok := evt.Content.Parsed.(*event.ReceiptEventContent)
+	if !ok || content == nil {
+		m.logger.Debug("Failed to parse receipt content", "event_id", evt.ID)
+		return
+	}
+
+	// Process each event's receipts
+	for eventID, receipts := range *content {
+		for receiptType, users := range receipts {
+			// Only process m.read and m.read.thread receipts
+			if receiptType != event.ReceiptTypeRead && receiptType != event.ReceiptTypeReadPrivate {
+				continue
+			}
+
+			for userID, receipt := range users {
+				// Skip bot's own receipts
+				if userID == m.as.BotMXID() {
+					continue
+				}
+
+				// Parse user UUID using IDMapper
+				actorUUID := m.idMapper.AlkemioActorID(userID)
+				if actorUUID == uuid.Nil {
+					continue
+				}
+
+				// Extract thread ID if present
+				var threadID *id.EventID
+				if receipt.ThreadID != "" && receipt.ThreadID != "main" {
+					tid := receipt.ThreadID
+					threadID = &tid
+				}
+
+				go func(roomID id.RoomID, evtID id.EventID, actor uuid.UUID, ts int64, tid *id.EventID) {
+					ctx := context.Background()
+					alkemioRoomID := m.resolveAlkemioRoomID(ctx, roomID)
+					if alkemioRoomID == uuid.Nil {
+						return
+					}
+
+					if err := m.eventHandlers.OnReadReceiptUpdated(domain.ReadReceiptEvent{
+						AlkemioRoomID: alkemioRoomID,
+						UserID:        actor,
+						EventID:       evtID,
+						ThreadID:      tid,
+						Timestamp:     time.UnixMilli(ts),
+					}); err != nil {
+						m.logger.Error("Error handling read receipt", "error", err)
+					}
+				}(evt.RoomID, eventID, actorUUID, receipt.Timestamp.UnixMilli(), threadID)
+			}
+		}
+	}
+}
+
+// handleRoomCreateEvent handles m.room.create state events.
+func (m *MautrixAdapter) handleRoomCreateEvent(evt *event.Event) {
+	if m.eventHandlers.OnRoomCreated == nil {
+		return
+	}
+
+	// Parse creator UUID using IDMapper
+	creatorUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	if creatorUUID == uuid.Nil {
+		m.logger.Debug("Ignoring room create from non-UUID user", "sender", evt.Sender)
+		return
+	}
+
+	// Parse room create content
+	content, ok := parseEventContent[event.CreateEventContent](evt)
+	if !ok {
+		m.logger.Debug("Failed to parse room create content", "event_id", evt.ID)
+		return
+	}
+
+	// Determine room type
+	roomType := "room"
+	if content.Type == "m.space" {
+		roomType = "space"
+	}
+
+	go func(e *event.Event, creator uuid.UUID, rType string) {
+		ctx := context.Background()
+		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID)
+		if alkemioRoomID == uuid.Nil {
+			return
+		}
+
+		// Fetch room name and topic from state (best-effort)
+		name, topic := m.getRoomNameAndTopic(ctx, e.RoomID)
+
+		if err := m.eventHandlers.OnRoomCreated(domain.RoomCreatedEvent{
+			AlkemioRoomID: alkemioRoomID,
+			MatrixRoomID:  e.RoomID,
+			CreatorID:     creator,
+			RoomType:      rType,
+			Name:          name,
+			Topic:         topic,
+			Timestamp:     time.UnixMilli(e.Timestamp),
+		}); err != nil {
+			m.logger.Error("Error handling room create", "error", err)
+		}
+	}(evt, creatorUUID, roomType)
+}
+
+// getRoomNameAndTopic fetches the room name and topic from state events.
+// Returns empty strings if the state events are absent or fetching fails.
+func (m *MautrixAdapter) getRoomNameAndTopic(ctx context.Context, roomID id.RoomID) (name, topic string) {
+	intent := m.as.BotIntent()
+
+	// Fetch room name (best-effort)
+	var nameContent event.RoomNameEventContent
+	if err := intent.StateEvent(ctx, roomID, event.StateRoomName, "", &nameContent); err == nil {
+		name = nameContent.Name
+	}
+
+	// Fetch room topic (best-effort)
+	var topicContent event.TopicEventContent
+	if err := intent.StateEvent(ctx, roomID, event.StateTopic, "", &topicContent); err == nil {
+		topic = topicContent.Topic
+	}
+
+	return name, topic
 }

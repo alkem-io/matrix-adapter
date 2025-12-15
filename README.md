@@ -186,6 +186,8 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 | | Get Reaction | `communication.reaction.get` |
 | **Thread** | Get Thread Messages | `communication.thread.messages.get` |
 | **Actor** | Sync Actor Profile | `communication.actor.sync` |
+| **Read Receipts** | Mark Message Read | `communication.message.read` |
+| | Get Unread Counts | `communication.room.unread_counts.get` |
 
 ### Outgoing Events
 
@@ -196,6 +198,11 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 | Reaction Added | `communication.reaction.added` | Emitted when a user adds a reaction to a message |
 | Reaction Removed | `communication.reaction.removed` | Emitted when a user removes a reaction from a message |
 | Room Member Left | `communication.room.member.left` | Emitted when a user leaves or is kicked from a room |
+| Read Receipt Updated | `communication.room.receipt.updated` | Emitted when a user's read position is updated |
+| Message Edited | `communication.message.edited` | Emitted when a message is edited |
+| Message Redacted | `communication.message.redacted` | Emitted when a message is deleted/redacted |
+| Room Created | `communication.room.created` | Emitted when a room is created in Matrix |
+| Room Member Updated | `communication.room.member.updated` | Emitted when a user's membership status changes (join, invite, etc.) |
 
 ## DM Room Creation Flow
 

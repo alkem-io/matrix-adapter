@@ -7,7 +7,7 @@ import (
 )
 
 // RegisterRoutes registers all queue subscribers to their respective topics.
-func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, space *SpaceHandler, log ports.Logger) {
+func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, space *SpaceHandler, readReceipt *ReadReceiptHandler, log ports.Logger) {
 	routes := map[string]func(ctx context.Context, payload []byte) (interface{}, error){
 		// Room Routes (communication.room.*)
 		TopicRoomCreate: room.HandleCreateRoom,
@@ -52,6 +52,10 @@ func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, s
 		// Batch Space Member Routes (communication.space.member.batch.*)
 		TopicSpaceMemberBatchAdd:    space.HandleBatchAddSpaceMember,
 		TopicSpaceMemberBatchRemove: space.HandleBatchRemoveSpaceMember,
+
+		// Read Receipt Routes (communication.message.read, communication.room.unread_counts.get)
+		TopicMessageRead:     readReceipt.HandleMarkMessageRead,
+		TopicUnreadCountsGet: readReceipt.HandleGetUnreadCounts,
 	}
 
 	for topic, handler := range routes {

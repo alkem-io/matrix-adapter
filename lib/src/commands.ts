@@ -30,15 +30,23 @@ import type {
   GetSpaceResponse,
   GetThreadMessagesRequest,
   GetThreadMessagesResponse,
+  GetUnreadCountsRequest,
+  GetUnreadCountsResponse,
   ListRoomsRequest,
   ListRoomsResponse,
   ListSpacesRequest,
   ListSpacesResponse,
+  MarkMessageReadRequest,
+  MessageEditedEvent,
   MessageReceivedPayload,
+  MessageRedactedEvent,
   ReactionAddedEvent,
   ReactionRemovedEvent,
+  ReadReceiptUpdatedEvent,
   RemoveReactionRequest,
+  RoomCreatedEvent,
   RoomMemberLeftEvent,
+  RoomMemberUpdatedEvent,
   SendMessageRequest,
   SendMessageResponse,
   SetParentRequest,
@@ -67,6 +75,10 @@ export const Commands = {
   'communication.message.get': {
     request: {} as GetMessageRequest,
     response: {} as GetMessageResponse,
+  },
+  'communication.message.read': {
+    request: {} as MarkMessageReadRequest,
+    response: {} as BaseResponse,
   },
   'communication.message.send': {
     request: {} as SendMessageRequest,
@@ -112,6 +124,10 @@ export const Commands = {
     request: {} as GetRoomMembersRequest,
     response: {} as GetRoomMembersResponse,
   },
+  'communication.room.unread_counts.get': {
+    request: {} as GetUnreadCountsRequest,
+    response: {} as GetUnreadCountsResponse,
+  },
   'communication.room.update': {
     request: {} as UpdateRoomRequest,
     response: {} as BaseResponse,
@@ -154,8 +170,14 @@ export const Commands = {
  * Outgoing events emitted by the adapter (no request, only payload).
  */
 export const OutgoingEvents = {
+  'communication.message.edited': {
+    payload: {} as MessageEditedEvent,
+  },
   'communication.message.received': {
     payload: {} as MessageReceivedPayload,
+  },
+  'communication.message.redacted': {
+    payload: {} as MessageRedactedEvent,
   },
   'communication.reaction.added': {
     payload: {} as ReactionAddedEvent,
@@ -163,11 +185,20 @@ export const OutgoingEvents = {
   'communication.reaction.removed': {
     payload: {} as ReactionRemovedEvent,
   },
+  'communication.room.created': {
+    payload: {} as RoomCreatedEvent,
+  },
   'communication.room.dm.requested': {
     payload: {} as DMRequestedEvent,
   },
   'communication.room.member.left': {
     payload: {} as RoomMemberLeftEvent,
+  },
+  'communication.room.member.updated': {
+    payload: {} as RoomMemberUpdatedEvent,
+  },
+  'communication.room.receipt.updated': {
+    payload: {} as ReadReceiptUpdatedEvent,
   },
 } as const;
 

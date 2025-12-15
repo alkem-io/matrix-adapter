@@ -24,9 +24,10 @@ type App struct {
 	queueAdapter  ports.QueuePort
 
 	// Handlers
-	roomHandler  *queue.RoomHandler
-	actorHandler *queue.ActorHandler
-	spaceHandler *queue.SpaceHandler
+	roomHandler        *queue.RoomHandler
+	actorHandler       *queue.ActorHandler
+	spaceHandler       *queue.SpaceHandler
+	readReceiptHandler *queue.ReadReceiptHandler
 }
 
 // NewApp initializes a new instance of the App with the given configuration.
@@ -56,11 +57,13 @@ func NewApp(cfg *config.Config) (*App, error) {
 	eventService := service.NewEventService(queueAdapter, log, cfg)
 	spaceService := service.NewSpaceService(matrixAdapter, log)
 	dmService := service.NewDMService(queueAdapter, log)
+	readReceiptService := service.NewReadReceiptService(matrixAdapter, log)
 
 	// 4. Initialize Handlers
 	roomHandler := queue.NewRoomHandler(roomService, matrixAdapter)
 	actorHandler := queue.NewActorHandler(actorService)
 	spaceHandler := queue.NewSpaceHandler(spaceService)
+	readReceiptHandler := queue.NewReadReceiptHandler(readReceiptService, matrixAdapter, log)
 
 	// 5. Register all HTTP endpoints on AppService router (single port 8280)
 	router := matrixAdapter.Router()
@@ -82,20 +85,26 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 	// 6. Wire up Event Listeners (Matrix -> Queue)
 	matrixAdapter.SetEventHandlers(matrix.EventHandlers{
-		OnMessage:         eventService.HandleMessage,
-		OnReactionAdded:   eventService.HandleReactionAdded,
-		OnReactionRemoved: eventService.HandleReactionRemoved,
-		OnMemberLeft:      eventService.HandleMemberLeft,
+		OnMessage:            eventService.HandleMessage,
+		OnReactionAdded:      eventService.HandleReactionAdded,
+		OnReactionRemoved:    eventService.HandleReactionRemoved,
+		OnMemberLeft:         eventService.HandleMemberLeft,
+		OnReadReceiptUpdated: eventService.HandleReadReceiptUpdated,
+		OnMessageEdited:      eventService.HandleMessageEdited,
+		OnMessageRedacted:    eventService.HandleMessageRedacted,
+		OnRoomCreated:        eventService.HandleRoomCreated,
+		OnMemberUpdated:      eventService.HandleMemberUpdated,
 	})
 
 	return &App{
-		cfg:           cfg,
-		logger:        log,
-		matrixAdapter: matrixAdapter,
-		queueAdapter:  queueAdapter,
-		roomHandler:   roomHandler,
-		actorHandler:  actorHandler,
-		spaceHandler:  spaceHandler,
+		cfg:                cfg,
+		logger:             log,
+		matrixAdapter:      matrixAdapter,
+		queueAdapter:       queueAdapter,
+		roomHandler:        roomHandler,
+		actorHandler:       actorHandler,
+		spaceHandler:       spaceHandler,
+		readReceiptHandler: readReceiptHandler,
 	}, nil
 }
 
@@ -112,7 +121,7 @@ func (a *App) Start(ctx context.Context) error {
 	}
 
 	// Wire up Queue Subscribers
-	queue.RegisterRoutes(a.queueAdapter, a.roomHandler, a.actorHandler, a.spaceHandler, a.logger)
+	queue.RegisterRoutes(a.queueAdapter, a.roomHandler, a.actorHandler, a.spaceHandler, a.readReceiptHandler, a.logger)
 
 	return nil
 }

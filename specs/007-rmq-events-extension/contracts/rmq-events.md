@@ -135,7 +135,7 @@ All topics follow the existing `communication.*` namespace pattern.
 ```json
 {
   "alkemio_room_id": "uuid",
-  "thread_root_id": "$eventId"
+  "thread_id": "$eventId"
 }
 ```
 
@@ -145,7 +145,7 @@ All topics follow the existing `communication.*` namespace pattern.
 {
   "success": true,
   "alkemio_room_id": "uuid",
-  "thread_root_id": "$eventId",
+  "thread_id": "$eventId",
   "messages": [
     {
       "id": "$reply1",

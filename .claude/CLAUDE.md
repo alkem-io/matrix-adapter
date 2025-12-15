@@ -1,6 +1,4 @@
-<!-- Implements constitution & agents.md. Does not introduce new governance. -->
-
-# Copilot Onboarding Guide
+# Claude Code Onboarding Guide
 
 ## Repository Snapshot
 
@@ -17,8 +15,8 @@
 
 ## Governance & Workflow
 
-- **Constitution**: Read `[.specify/memory/constitution.md](../.specify/memory/constitution.md)` first. It defines strict rules for Adapter isolation, Event-driven state, and Client lifecycle.
-- **Agents**: Follow `[agents.md](../agents.md)` for operational roles and workflow phases (`/spec` → `/plan` → `/implement` → `/done`).
+- **Constitution**: Read `.specify/memory/constitution.md` first. It defines strict rules for Adapter isolation, Event-driven state, and Client lifecycle.
+- **Agents**: Follow `agents.md` for operational roles and workflow phases (`/spec` → `/plan` → `/implement` → `/done`).
 - **Specs**: Feature work should be defined in `specs/<NNN-slug>/` (create if missing) following the standard lifecycle.
 - **Shared Contract**: The `pkg/dto` package is the source of truth. TypeScript definitions in `lib/` are GENERATED from Go structs.
 
@@ -71,24 +69,21 @@
 - **RabbitMQ**: The service listens for commands defined in `pkg/dto`.
 - **Debugging**:
   - Use `dlv debug` or VS Code launch configurations for Go.
-- **MCP Usage**:
-  - Use **GitHub MCP** for repo context.
-  - Use **Context7** or **Tavily** for Matrix Spec or Mautrix documentation queries.
 
 ## ID Mapping (CRITICAL)
 
-**All Alkemio ↔ Matrix ID conversions MUST use `internal/core/domain.IDMapper`.**
+**All Alkemio <-> Matrix ID conversions MUST use `internal/core/domain.IDMapper`.**
 
 DO NOT create duplicate ID conversion utilities. The IDMapper is the **single source of truth** for:
 
 | Conversion | Method |
 |------------|--------|
-| Alkemio Room UUID → Matrix Alias | `IDMapper.RoomAlias(uuid)` |
-| Alkemio Context UUID → Matrix Space Alias | `IDMapper.SpaceAlias(uuid)` |
-| Alkemio Actor UUID → Matrix User ID | `IDMapper.UserID(uuid)` |
-| Matrix Room Alias → Alkemio UUID | `IDMapper.AlkemioRoomID(alias)` |
-| Matrix Space Alias → Alkemio UUID | `IDMapper.AlkemioContextID(alias)` |
-| Matrix User ID → Alkemio Actor UUID | `IDMapper.AlkemioActorID(userID)` |
+| Alkemio Room UUID -> Matrix Alias | `IDMapper.RoomAlias(uuid)` |
+| Alkemio Context UUID -> Matrix Space Alias | `IDMapper.SpaceAlias(uuid)` |
+| Alkemio Actor UUID -> Matrix User ID | `IDMapper.UserID(uuid)` |
+| Matrix Room Alias -> Alkemio UUID | `IDMapper.AlkemioRoomID(alias)` |
+| Matrix Space Alias -> Alkemio UUID | `IDMapper.AlkemioContextID(alias)` |
+| Matrix User ID -> Alkemio Actor UUID | `IDMapper.AlkemioActorID(userID)` |
 
 **Usage patterns:**
 - Handlers/Services: Create `idMapper := domain.NewIDMapper(matrix.HomeserverDomain())`
@@ -104,6 +99,17 @@ This helper exists ONLY in `internal/infrastructure/matrix/listener.go` because 
 
 **NEVER duplicate these conversions inline or create new utility functions.**
 
+## Future Improvement: User-Scoped Read Operations
+
+Currently, read operations (`GetRoomMessages`, `GetMessage`, `GetThreadMessages`, `GetRoomDetails`, `GetRoomMembers`, `GetReaction`, `GetSpaceDetails`, `GetSpaceChildren`) use `as.BotIntent()` which bypasses Matrix's permission model.
+
+**Future change**: These operations should use `as.Intent(userID)` to ensure users only read what Matrix authorizes them to see. This requires:
+1. Adding `actor_id` parameter to all read request DTOs
+2. Changing implementations to use user-specific intents
+3. Handling Matrix permission errors appropriately
+
+This ensures the adapter respects Matrix's access control rather than relying solely on Alkemio Server authorization.
+
 ## Architectural Decision: mautrix Types
 
 The domain, ports, and service layers use mautrix-go types directly (`id.RoomID`, `id.EventID`, `id.UserID`). This is an **intentional design decision**, not technical debt.
@@ -118,6 +124,19 @@ The domain, ports, and service layers use mautrix-go types directly (`id.RoomID`
 - Services MUST NOT import other mautrix packages or make direct SDK calls
 - All Matrix operations MUST go through `ports.MatrixPort` interface
 
+**Current usage** (as of 2025-12):
+| Layer | Files with mautrix imports | Purpose |
+|-------|---------------------------|---------|
+| `domain/` | 3 files | Value objects storing Matrix IDs |
+| `ports/` | 2 files | Interface definitions |
+| `service/` | 3 files | Type usage for port method calls |
+
+**Alternative considered**: Creating domain type aliases (`domain.MatrixRoomID` as string) and converting at boundaries. This would affect ~20+ files and provide cleaner hexagonal architecture, but was deemed unnecessary given the adapter's focused purpose. This can be revisited if SDK swapping becomes a requirement.
+
 ## Active Technologies
 
-See **Stack** in Repository Snapshot. Testing uses the standard Go `testing` package.
+- **Runtime**: Go 1.25.
+- **Matrix**: `mautrix-go`.
+- **Messaging**: Watermill (RabbitMQ).
+- **Logging**: Zap.
+- **Testing**: Go `testing` package, `testify`.

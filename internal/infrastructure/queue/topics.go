@@ -68,4 +68,22 @@ const (
 	TopicReactionRemoved = dto.TopicReactionRemoved
 	// TopicRoomMemberLeft is the topic for room member left events (V4 outgoing).
 	TopicRoomMemberLeft = dto.TopicRoomMemberLeft
+
+	// Read Receipt Command Topics (008-read-receipts)
+	// TopicMessageRead is the topic for marking a message as read.
+	TopicMessageRead = dto.TopicMessageRead
+	// TopicUnreadCountsGet is the topic for getting unread counts.
+	TopicUnreadCountsGet = dto.TopicUnreadCountsGet
+
+	// Read Receipt & Message Event Topics (008-read-receipts outgoing)
+	// TopicReadReceiptUpdated is the topic for read receipt update events.
+	TopicReadReceiptUpdated = dto.TopicReadReceiptUpdated
+	// TopicMessageEdited is the topic for message edited events.
+	TopicMessageEdited = dto.TopicMessageEdited
+	// TopicMessageRedacted is the topic for message redacted events.
+	TopicMessageRedacted = dto.TopicMessageRedacted
+	// TopicRoomCreated is the topic for room created events.
+	TopicRoomCreated = dto.TopicRoomCreated
+	// TopicRoomMemberUpdated is the topic for room member updated events.
+	TopicRoomMemberUpdated = dto.TopicRoomMemberUpdated
 )

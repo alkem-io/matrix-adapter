@@ -3,15 +3,12 @@
 Auto-generated from all feature plans. Last updated: 2025-11-28
 
 ## Active Technologies
-- Go 1.25 + mautrix-go (Matrix SDK), Watermill (RabbitMQ), Zap (logging) (004-rmq-protocol-update)
-- Matrix room aliases (no external DB) (004-rmq-protocol-update)
-- Go 1.25 + `mautrix-go` (Matrix SDK), `Watermill` (RabbitMQ), `zap` (Logging), `tygo` (TS generation) (005-protocol-v3)
-- Room/Space aliases for ID mapping (no external DB) (005-protocol-v3)
-- Go 1.25, Python 3.11+ (Synapse module) + mautrix-go, Watermill (RabbitMQ), aiohttp (Python), net/http (Go) (006-room-creation-control)
-- N/A (stateless adapter) (006-room-creation-control)
-- Matrix room state (no external DB) (007-rmq-events-extension)
-
-- Go 1.25 + Watermill (RabbitMQ), mautrix-go, zap (logging) (002-rmq-error-handling)
+- **Runtime**: Go 1.25
+- **Matrix SDK**: mautrix-go v0.26.0
+- **Messaging**: Watermill (RabbitMQ)
+- **Logging**: Zap
+- **TS Generation**: tygo
+- **Storage**: Stateless - uses Matrix room/space aliases for ID mapping (no external DB)
 
 ## Project Structure
 
@@ -29,9 +26,20 @@ tests/
 Go 1.25: Follow standard conventions
 
 ## Recent Changes
+- 008-read-receipts: Added Go 1.25 + mautrix-go v0.26.0, watermill (RabbitMQ), zap (logging)
 - 007-rmq-events-extension: Added Go 1.25 + mautrix-go (Matrix SDK), Watermill (RabbitMQ), Zap (logging)
 - 006-room-creation-control: Added Go 1.25, Python 3.11+ (Synapse module) + mautrix-go, Watermill (RabbitMQ), aiohttp (Python), net/http (Go)
 
 
 <!-- MANUAL ADDITIONS START -->
+
+## Architectural Decision: mautrix Types
+
+Services use mautrix-go types (`id.RoomID`, `id.EventID`, `id.UserID`) directly - this is intentional, not technical debt.
+
+**Rules**:
+- Services MAY import `maunium.net/go/mautrix/id` for type definitions
+- Services MUST NOT import other mautrix packages or make direct SDK calls
+- All Matrix operations MUST go through `ports.MatrixPort` interface
+
 <!-- MANUAL ADDITIONS END -->

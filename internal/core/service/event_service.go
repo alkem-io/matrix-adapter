@@ -28,6 +28,13 @@ func NewEventService(queue ports.QueuePort, logger ports.Logger, cfg *config.Con
 
 // HandleMessage processes a message event from Matrix and publishes it to the queue.
 func (s *EventService) HandleMessage(msg domain.Message) error {
+	// Convert thread ID to pointer if present
+	var threadID *dto.MessageID
+	if msg.ThreadID != "" {
+		tid := dto.MessageID(msg.ThreadID)
+		threadID = &tid
+	}
+
 	payload := dto.MessageReceivedPayload{
 		RoomID:   msg.RoomID,
 		RoomName: msg.RoomName,
@@ -35,12 +42,15 @@ func (s *EventService) HandleMessage(msg domain.Message) error {
 		Message: dto.Message{
 			ID:        msg.ID,
 			Message:   msg.Content,
+			ThreadID:  threadID,
 			Sender:    msg.SenderID.String(),
 			Timestamp: msg.Timestamp.UnixMilli(),
 		},
 	}
 
-	s.logger.Debug("Publishing message received event", "event_id", msg.ID, "sender_id", msg.SenderID)
+	s.logger.Debug(
+		"Publishing message received event", "event_id", msg.ID, "sender_id", msg.SenderID, "thread_id", threadID,
+	)
 
 	if err := s.queue.Publish(dto.TopicMessageReceived, payload); err != nil {
 		return fmt.Errorf("failed to publish message received event: %w", err)
@@ -119,6 +129,150 @@ func (s *EventService) HandleMemberLeft(evt domain.MembershipEvent) error {
 
 	if err := s.queue.Publish(dto.TopicRoomMemberLeft, payload); err != nil {
 		return fmt.Errorf("failed to publish room member left event: %w", err)
+	}
+
+	return nil
+}
+
+// HandleReadReceiptUpdated processes a read receipt update event and publishes it to the queue.
+func (s *EventService) HandleReadReceiptUpdated(evt domain.ReadReceiptEvent) error {
+	var threadID *dto.MessageID
+	if evt.ThreadID != nil {
+		tid := dto.MessageID(evt.ThreadID.String())
+		threadID = &tid
+	}
+
+	payload := dto.ReadReceiptUpdatedEvent{
+		AlkemioRoomID: dto.AlkemioRoomID(evt.AlkemioRoomID),
+		ActorID:       dto.AlkemioActorID(evt.UserID),
+		EventID:       dto.MessageID(evt.EventID.String()),
+		ThreadID:      threadID,
+		Timestamp:     evt.Timestamp.UnixMilli(),
+	}
+
+	s.logger.Debug(
+		"Publishing read receipt updated event",
+		"alkemio_room_id", evt.AlkemioRoomID,
+		"actor_id", evt.UserID,
+		"event_id", evt.EventID,
+		"thread_id", threadID,
+	)
+
+	if err := s.queue.Publish(dto.TopicReadReceiptUpdated, payload); err != nil {
+		return fmt.Errorf("failed to publish read receipt updated event: %w", err)
+	}
+
+	return nil
+}
+
+// HandleMessageEdited processes a message edited event and publishes it to the queue.
+func (s *EventService) HandleMessageEdited(evt domain.MessageEditedEvent) error {
+	var threadID *dto.MessageID
+	if evt.ThreadID != nil {
+		tid := dto.MessageID(evt.ThreadID.String())
+		threadID = &tid
+	}
+
+	payload := dto.MessageEditedEvent{
+		AlkemioRoomID:     dto.AlkemioRoomID(evt.AlkemioRoomID),
+		SenderActorID:     dto.AlkemioActorID(evt.SenderID),
+		OriginalMessageID: dto.MessageID(evt.OriginalEventID.String()),
+		NewMessageID:      dto.MessageID(evt.NewEventID.String()),
+		NewContent:        evt.NewContent,
+		ThreadID:          threadID,
+		Timestamp:         evt.Timestamp.UnixMilli(),
+	}
+
+	s.logger.Debug(
+		"Publishing message edited event",
+		"alkemio_room_id", evt.AlkemioRoomID,
+		"original_message_id", evt.OriginalEventID,
+		"sender_actor_id", evt.SenderID,
+	)
+
+	if err := s.queue.Publish(dto.TopicMessageEdited, payload); err != nil {
+		return fmt.Errorf("failed to publish message edited event: %w", err)
+	}
+
+	return nil
+}
+
+// HandleMessageRedacted processes a message redacted event and publishes it to the queue.
+func (s *EventService) HandleMessageRedacted(evt domain.MessageRedactedEvent) error {
+	var threadID *dto.MessageID
+	if evt.ThreadID != nil {
+		tid := dto.MessageID(evt.ThreadID.String())
+		threadID = &tid
+	}
+
+	payload := dto.MessageRedactedEvent{
+		AlkemioRoomID:      dto.AlkemioRoomID(evt.AlkemioRoomID),
+		RedactorActorID:    dto.AlkemioActorID(evt.RedactorID),
+		RedactedMessageID:  dto.MessageID(evt.RedactedEventID.String()),
+		RedactionMessageID: dto.MessageID(evt.RedactionEventID.String()),
+		Reason:             evt.Reason,
+		ThreadID:           threadID,
+		Timestamp:          evt.Timestamp.UnixMilli(),
+	}
+
+	s.logger.Debug(
+		"Publishing message redacted event",
+		"alkemio_room_id", evt.AlkemioRoomID,
+		"redacted_message_id", evt.RedactedEventID,
+		"redactor_actor_id", evt.RedactorID,
+	)
+
+	if err := s.queue.Publish(dto.TopicMessageRedacted, payload); err != nil {
+		return fmt.Errorf("failed to publish message redacted event: %w", err)
+	}
+
+	return nil
+}
+
+// HandleRoomCreated processes a room created event and publishes it to the queue.
+func (s *EventService) HandleRoomCreated(evt domain.RoomCreatedEvent) error {
+	payload := dto.RoomCreatedEvent{
+		AlkemioRoomID:  dto.AlkemioRoomID(evt.AlkemioRoomID),
+		CreatorActorID: dto.AlkemioActorID(evt.CreatorID),
+		RoomType:       evt.RoomType,
+		Name:           evt.Name,
+		Topic:          evt.Topic,
+		Timestamp:      evt.Timestamp.UnixMilli(),
+	}
+
+	s.logger.Debug(
+		"Publishing room created event",
+		"alkemio_room_id", evt.AlkemioRoomID,
+		"creator_actor_id", evt.CreatorID,
+		"room_type", evt.RoomType,
+	)
+
+	if err := s.queue.Publish(dto.TopicRoomCreated, payload); err != nil {
+		return fmt.Errorf("failed to publish room created event: %w", err)
+	}
+
+	return nil
+}
+
+// HandleMemberUpdated processes a membership updated event and publishes it to the queue.
+func (s *EventService) HandleMemberUpdated(evt domain.RoomMemberUpdatedEvent) error {
+	payload := dto.RoomMemberUpdatedEvent{
+		AlkemioRoomID: dto.AlkemioRoomID(evt.AlkemioRoomID),
+		MemberActorID: dto.AlkemioActorID(evt.MemberID),
+		SenderActorID: dto.AlkemioActorID(evt.SenderID),
+		Membership:    evt.Membership,
+		Timestamp:     evt.Timestamp.UnixMilli(),
+	}
+
+	s.logger.Debug(
+		"Publishing room member updated event",
+		"alkemio_room_id", evt.AlkemioRoomID,
+		"member_actor_id", evt.MemberID,
+		"membership", evt.Membership,
+	)
+
+	if err := s.queue.Publish(dto.TopicRoomMemberUpdated, payload); err != nil {
+		return fmt.Errorf("failed to publish room member updated event: %w", err)
 	}
 
 	return nil
