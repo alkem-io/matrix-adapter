@@ -38,8 +38,7 @@
       "Bash(pkg/dto/read_receipt.go )",
       "Bash(specs/008-read-receipts/ )",
       "Bash(tests/)",
-      "mcp__context7__resolve-library-id",
-      "mcp__context7__get-library-docs"
+      "mcp__context7__*"
     ]
   }
 }
