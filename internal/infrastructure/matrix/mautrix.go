@@ -1332,23 +1332,97 @@ func (m *MautrixAdapter) SendReadReceipt(ctx context.Context, actor domain.Actor
 	return nil
 }
 
-// ErrUnreadCountsNotSupported is returned when unread count calculation is not available.
-// Matrix read receipts are ephemeral events that require sync state tracking,
-// which is not available in the appservice context.
-var ErrUnreadCountsNotSupported = fmt.Errorf("unread counts not supported: read receipt position tracking requires sync state")
-
 // GetUnreadCounts retrieves unread message counts for a room and optionally specific threads.
-// Returns ErrUnreadCountsNotSupported because accurate unread counting requires access to
-// the user's read receipt position, which is stored as ephemeral sync state not accessible
-// via the appservice API.
-func (m *MautrixAdapter) GetUnreadCounts(_ context.Context, actor domain.Actor, roomID id.RoomID, threadRootIDs []id.EventID) (*domain.UnreadCountSummary, error) {
-	m.logger.Warn("GetUnreadCounts called but feature is not fully implemented",
+// Uses the Matrix /sync API with a room filter to get notification counts.
+//
+// Note: Thread-level unread counts require MSC3773 support which may not be available
+// on all homeservers. If thread counts are requested but not available, the thread
+// map will be empty (not an error).
+func (m *MautrixAdapter) GetUnreadCounts(ctx context.Context, actor domain.Actor, roomID id.RoomID, threadRootIDs []id.EventID) (*domain.UnreadCountSummary, error) {
+	// Get the user's intent to make API calls as that user
+	userID := m.idMapper.UserID(actor.ID)
+	intent := m.as.Intent(userID)
+
+	// Create a filter that only includes the specific room to minimize data transfer.
+	// We only need the unread notification counts, not timeline events.
+	filter := &mautrix.Filter{
+		Room: &mautrix.RoomFilter{
+			Rooms: []id.RoomID{roomID},
+			Timeline: &mautrix.FilterPart{
+				Limit: 0, // Don't fetch timeline events
+			},
+			State: &mautrix.FilterPart{
+				Limit: 0, // Don't fetch state events
+			},
+			Ephemeral: &mautrix.FilterPart{
+				Limit: 0, // Don't fetch ephemeral events
+			},
+		},
+		Presence: &mautrix.FilterPart{
+			Limit: 0, // Don't fetch presence
+		},
+	}
+
+	// Create the filter on the server
+	filterResp, err := intent.CreateFilter(ctx, filter)
+	if err != nil {
+		m.logger.Error("Failed to create sync filter",
+			"error", err,
+			"room_id", roomID,
+			"actor_id", actor.ID,
+		)
+		return nil, fmt.Errorf("failed to create sync filter: %w", err)
+	}
+
+	// Perform an initial sync (timeout=0) to get current state without blocking.
+	// Using empty "since" token to get a fresh snapshot.
+	syncResp, err := intent.SyncRequest(ctx, 0, "", filterResp.FilterID, false, "")
+	if err != nil {
+		m.logger.Error("Failed to sync for unread counts",
+			"error", err,
+			"room_id", roomID,
+			"actor_id", actor.ID,
+		)
+		return nil, fmt.Errorf("failed to sync: %w", err)
+	}
+
+	// Extract unread counts from the sync response
+	summary := &domain.UnreadCountSummary{
+		RoomUnreadCount:    0,
+		ThreadUnreadCounts: make(map[id.EventID]int),
+	}
+
+	// Check if the room is in the joined rooms response
+	if joinedRoom, ok := syncResp.Rooms.Join[roomID]; ok {
+		// Get standard notification count
+		if joinedRoom.UnreadNotifications != nil {
+			summary.RoomUnreadCount = joinedRoom.UnreadNotifications.NotificationCount
+		}
+
+		// MSC2654 provides actual unread message count (not just notifications)
+		// Prefer this if available as it's more accurate for "unread messages"
+		if joinedRoom.MSC2654UnreadCount != nil {
+			summary.RoomUnreadCount = *joinedRoom.MSC2654UnreadCount
+		}
+	}
+
+	// Thread-level unread counts: Currently not available in standard /sync response.
+	// MSC3773 (thread notifications) would provide this, but implementation varies by homeserver.
+	// For now, we log a debug message if threads were requested but return empty map.
+	if len(threadRootIDs) > 0 {
+		m.logger.Debug("Thread-level unread counts requested but not yet supported by homeserver",
+			"room_id", roomID,
+			"actor_id", actor.ID,
+			"requested_threads", len(threadRootIDs),
+		)
+		// Future: When MSC3773 is widely supported, extract thread notification counts here
+	}
+
+	m.logger.Debug("Retrieved unread counts",
 		"room_id", roomID,
 		"actor_id", actor.ID,
-		"thread_count", len(threadRootIDs),
+		"room_unread", summary.RoomUnreadCount,
 	)
 
-	// Return error to signal that unread counts are not available.
-	// Callers should not treat zero counts as authoritative.
-	return nil, ErrUnreadCountsNotSupported
+	return summary, nil
 }
