@@ -117,6 +117,11 @@ func (h *RoomHandler) HandleGetRoom(ctx context.Context, payload []byte) (interf
 			SenderActorID: dto.AlkemioActorID(msg.SenderID),
 			Timestamp:     msg.Timestamp,
 		}
+		// Set ThreadID if present
+		if msg.ThreadID != "" {
+			tid := dto.MessageID(msg.ThreadID)
+			msgDTO.ThreadID = &tid
+		}
 		// Convert reactions
 		for _, r := range msg.Reactions {
 			reactionDTO := dto.ReactionDto{
@@ -303,6 +308,11 @@ func (h *RoomHandler) HandleGetMessage(ctx context.Context, payload []byte) (int
 		Content:       msg.Content,
 		SenderActorID: dto.AlkemioActorID(msg.SenderID),
 		Timestamp:     msg.Timestamp,
+	}
+	// Set ThreadID if present
+	if msg.ThreadID != "" {
+		tid := dto.MessageID(msg.ThreadID)
+		msgDTO.ThreadID = &tid
 	}
 
 	return dto.GetMessageResponse{

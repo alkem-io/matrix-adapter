@@ -762,9 +762,13 @@ func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *
 		Timestamp:      time.UnixMilli(evt.Timestamp),
 	}
 
-	// Check for thread/reply from parsed content
-	if content, ok := evt.Content.Parsed.(*event.MessageEventContent); ok {
-		if content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
+	// Check for thread relation (MSC3440) first, then fallback to m.in_reply_to
+	if content, ok := evt.Content.Parsed.(*event.MessageEventContent); ok && content.RelatesTo != nil {
+		// Check for explicit m.thread relation first
+		if content.RelatesTo.Type == "m.thread" && content.RelatesTo.EventID != "" {
+			msg.ThreadID = content.RelatesTo.EventID.String()
+		} else if content.RelatesTo.InReplyTo != nil {
+			// Fallback to m.in_reply_to for older clients
 			msg.ThreadID = content.RelatesTo.InReplyTo.EventID.String()
 		}
 	}
