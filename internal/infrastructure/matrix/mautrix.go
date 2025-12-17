@@ -82,7 +82,12 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		Namespaces: appservice.Namespaces{
 			UserIDs: []appservice.Namespace{
 				{
-					// All UUID users (including bot) - NOT exclusive so they can login via OIDC/Element
+					// Bot user - exclusive, only AS can control (security: prevents impersonation)
+					Exclusive: true,
+					Regex:     fmt.Sprintf("@%s:.*", botLocalpart),
+				},
+				{
+					// Regular UUID users - NOT exclusive so they can login via OIDC/Element
 					// Events received via room alias registration instead
 					Exclusive: false,
 					Regex:     "@[0-9a-fA-F-]{36}:.*",
