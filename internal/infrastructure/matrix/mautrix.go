@@ -68,22 +68,26 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		memStore.JoinRules = make(map[id.RoomID]*event.JoinRulesEventContent)
 	}
 
+	// Bot sender localpart is derived from BotActorID (UUID)
+	// This ensures bot follows the same ID pattern as all other actors
+	botLocalpart := cfg.Matrix.BotActorID
+
 	// Build registration
 	registration := &appservice.Registration{
 		ID:              "alkemio-matrix-adapter",
 		URL:             "http://localhost:8280",
 		AppToken:        cfg.Matrix.AppServiceToken,
 		ServerToken:     cfg.Matrix.HomeserverToken,
-		SenderLocalpart: cfg.Matrix.SenderLocalpart,
+		SenderLocalpart: botLocalpart,
 		Namespaces: appservice.Namespaces{
 			UserIDs: []appservice.Namespace{
 				{
-					// Bot user - exclusive, only AS can control
+					// Bot user - exclusive, only AS can control (security: prevents impersonation)
 					Exclusive: true,
-					Regex:     "@matrix-adapter:.*",
+					Regex:     fmt.Sprintf("@%s:.*", botLocalpart),
 				},
 				{
-					// UUID users - NOT exclusive so they can login via OIDC/Element
+					// Regular UUID users - NOT exclusive so they can login via OIDC/Element
 					// Events received via room alias registration instead
 					Exclusive: false,
 					Regex:     "@[0-9a-fA-F-]{36}:.*",

@@ -2,13 +2,14 @@ id: alkemio-matrix-adapter
 url: http://host.docker.internal:8280
 as_token: secret_as_token
 hs_token: secret_hs_token
-sender_localpart: matrix-adapter
+# Bot localpart must match MATRIX_BOT_ACTOR_ID (UUID format)
+sender_localpart: "00000000-0000-0000-0000-000000000000"
 namespaces:
   users:
-    # Bot user - exclusive, only AS can control this
+    # Bot user - exclusive, only AS can control (security: prevents impersonation)
     - exclusive: true
-      regex: "@matrix-adapter:.*"
-    # UUID users - NOT exclusive so they can login via OIDC/Element
+      regex: "@00000000-0000-0000-0000-000000000000:.*"
+    # Regular UUID users - NOT exclusive so they can login via OIDC/Element
     # Events are received via room alias registration instead
     - exclusive: false
       regex: "@[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:.*"
