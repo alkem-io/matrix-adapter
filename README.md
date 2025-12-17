@@ -40,8 +40,7 @@ The service is configured via environment variables or a `config.yaml` file. The
 | `SYNAPSE_HOMESERVER_NAME` | Matrix Homeserver Name | - |
 | `MATRIX_AS_TOKEN` | AppService Token (as_token) | - |
 | `MATRIX_HS_TOKEN` | Homeserver Token (hs_token) | - |
-| `MATRIX_BOT_ACTOR_ID` | Bot Actor ID (UUID) | `00000000-0000-0000-0000-000000000000` |
-| `MATRIX_SENDER_LOCALPART` | AppService sender localpart (bot username) | `matrix-adapter` |
+| `MATRIX_BOT_ACTOR_ID` | Bot Actor ID (UUID), also used as Matrix localpart | `00000000-0000-0000-0000-000000000000` |
 | `RABBITMQ_URL` | Full AMQP Connection URL | - |
 | `RABBITMQ_HOST` | RabbitMQ Host (if URL not set) | - |
 | `RABBITMQ_PORT` | RabbitMQ Port (if URL not set) | `5672` |
