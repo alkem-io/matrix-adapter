@@ -305,3 +305,33 @@ Error responses include structured error information:
 | `MATRIX_ERROR` | Matrix SDK/homeserver error |
 | `INTERNAL_ERROR` | Unexpected system error |
 | `NOT_ALLOWED` | Operation not permitted |
+
+## Synapse AppService Registration
+
+The adapter requires an AppService registration file on Synapse. The bot uses `MATRIX_BOT_ACTOR_ID` as its Matrix localpart, following the same UUID pattern as all other actors.
+
+### Example Registration (registration.yaml)
+
+```yaml
+id: alkemio-matrix-adapter
+url: "http://matrix-adapter:8280"
+as_token: <your-as-token>
+hs_token: <your-hs-token>
+sender_localpart: "00000000-0000-0000-0000-000000000000"  # Must match MATRIX_BOT_ACTOR_ID
+namespaces:
+  users:
+    # Bot user - exclusive (security: prevents impersonation)
+    - exclusive: true
+      regex: "@00000000-0000-0000-0000-000000000000:.*"
+    # Regular UUID users - NOT exclusive so they can login via OIDC/Element
+    - exclusive: false
+      regex: "@[0-9a-fA-F-]{36}:.*"
+  aliases:
+    - exclusive: true
+      regex: "#[0-9a-fA-F-]{36}:.*"  # Room aliases
+rate_limited: false
+```
+
+**Important**:
+- The `sender_localpart` must match the `MATRIX_BOT_ACTOR_ID` environment variable
+- The bot user namespace should be `exclusive: true` to prevent impersonation attacks

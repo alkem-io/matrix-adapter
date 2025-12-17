@@ -60,9 +60,9 @@ class AlkemioRoomControl:
         # Find and configure from registered AppService
         detected = self._detect_appservice_config()
         
-        # Use detected values
-        self.appservice_sender = detected.get("sender", "matrix-adapter")
-        self.adapter_url = detected.get("url", "http://localhost:8080")
+        # Use detected values (fallback to default UUID if not found)
+        self.appservice_sender = detected.get("sender", "00000000-0000-0000-0000-000000000000")
+        self.adapter_url = detected.get("url", "http://localhost:8280")
         self.hs_token = detected.get("hs_token")
         
         # Register third-party rules callback for room creation control
