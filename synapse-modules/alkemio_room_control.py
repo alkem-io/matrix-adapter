@@ -1,5 +1,5 @@
 # Copyright 2025 Alkemio Foundation
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: EUPL-1.2
 
 """
 Alkemio Room Control Module for Synapse
