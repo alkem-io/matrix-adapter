@@ -47,6 +47,26 @@ The service is configured via environment variables or a `config.yaml` file. The
 | `RABBITMQ_USER` | RabbitMQ User (if URL not set) | - |
 | `RABBITMQ_PASSWORD` | RabbitMQ Password (if URL not set) | - |
 
+### Actor ID Mapper (Optional)
+
+During migration, the adapter can optionally map between Alkemio actor IDs (agent.id) and entity IDs (user.id or virtual_contributor.id) using the Alkemio database. This is a temporary feature for the migration period.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ACTOR_ID_MAPPER_ENABLED` | Enable DB-based actor ID mapping | `false` |
+| `ACTOR_ID_MAPPER_DB_HOST` | PostgreSQL host for Alkemio database | - |
+| `ACTOR_ID_MAPPER_DB_PORT` | PostgreSQL port | `5432` |
+| `ACTOR_ID_MAPPER_DB_DATABASE` | Database name | - |
+| `ACTOR_ID_MAPPER_DB_USERNAME` | Database username (read-only) | - |
+| `ACTOR_ID_MAPPER_DB_PASSWORD` | Database password | - |
+
+**Behavior:**
+- When **disabled** (default): Actor IDs are used directly as Matrix localparts (`@actor-uuid:server`)
+- When **enabled**: Actor IDs are resolved to entity IDs via the Alkemio database (`@entity-uuid:server`)
+- **Reserved UUIDs** (`00000000-...` and `ffffffff-...-fff0`) bypass resolution and are used directly
+- The adapter caches mappings permanently (they never change)
+- Startup **fails** if enabled but the database is unreachable
+
 ## Running Locally
 
 1. **Install Dependencies**:

@@ -19,11 +19,11 @@ type RoomService struct {
 }
 
 // NewRoomService creates a new instance of RoomService.
-func NewRoomService(matrix ports.MatrixPort, logger ports.Logger) *RoomService {
+func NewRoomService(matrix ports.MatrixPort, logger ports.Logger, idMapper *domain.IDMapper) *RoomService {
 	return &RoomService{
 		matrix:   matrix,
 		logger:   logger,
-		idMapper: domain.NewIDMapper(matrix.HomeserverDomain()),
+		idMapper: idMapper,
 	}
 }
 
@@ -41,10 +41,12 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	name, topic string,
 	initialMembers []domain.Actor,
 ) error {
-	s.logger.Info("Creating room with Alkemio ID",
+	s.logger.Info(
+		"Creating room with Alkemio ID",
 		"alkemio_room_id", alkemioRoomID,
 		"type", roomType,
-		"name", name)
+		"name", name,
+	)
 
 	// Build alias for idempotency check
 	alias := s.idMapper.RoomAlias(alkemioRoomID)
@@ -53,9 +55,11 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	existingRoomID, err := s.matrix.ResolveAlias(ctx, alias)
 	if err == nil {
 		// Room already exists - idempotent success
-		s.logger.Info("Room already exists (idempotent)",
+		s.logger.Info(
+			"Room already exists (idempotent)",
 			"alkemio_room_id", alkemioRoomID,
-			"existing_room_id", existingRoomID)
+			"existing_room_id", existingRoomID,
+		)
 		return nil
 	}
 
@@ -68,18 +72,24 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	if roomType == "direct" && len(initialMembers) == 2 {
 		existingDMRoom, err := s.matrix.FindExistingDirectRoom(ctx, initialMembers[0], initialMembers[1])
 		if err != nil {
-			s.logger.Warn("Failed to check for existing direct room, proceeding with creation",
-				"error", err)
+			s.logger.Warn(
+				"Failed to check for existing direct room, proceeding with creation",
+				"error", err,
+			)
 		} else if existingDMRoom != "" {
 			// Direct room already exists - set alias on it
-			s.logger.Info("Found existing direct room, setting alias",
+			s.logger.Info(
+				"Found existing direct room, setting alias",
 				"alkemio_room_id", alkemioRoomID,
-				"existing_room_id", existingDMRoom)
+				"existing_room_id", existingDMRoom,
+			)
 
 			if err := s.matrix.SetRoomAlias(ctx, existingDMRoom, alias); err != nil {
-				s.logger.Warn("Failed to set alias on existing direct room",
+				s.logger.Warn(
+					"Failed to set alias on existing direct room",
 					"error", err,
-					"existing_room_id", existingDMRoom)
+					"existing_room_id", existingDMRoom,
+				)
 				// Continue - alias setting failure is non-fatal
 			}
 			return nil
@@ -125,8 +135,8 @@ func (s *RoomService) GetRoomWithMessages(
 
 	room.MemberIDs = make([]uuid.UUID, 0, len(members))
 	for _, memberID := range members {
-		// Extract UUID from Matrix user ID (@uuid:domain)
-		if actorUUID := s.idMapper.AlkemioActorID(memberID); actorUUID != uuid.Nil {
+		// Extract UUID from Matrix user ID (@uuid:domain) using context-aware method
+		if actorUUID, err := s.idMapper.AlkemioActorIDWithContext(ctx, memberID.String()); err == nil && actorUUID != uuid.Nil {
 			room.MemberIDs = append(room.MemberIDs, actorUUID)
 		}
 	}
@@ -138,15 +148,19 @@ func (s *RoomService) GetRoomWithMessages(
 		messages = []domain.Message{}
 	}
 
-	// Convert SenderMatrixID to SenderID (Alkemio actor UUID) for messages and reactions
+	// Convert SenderMatrixID to SenderID (Alkemio actor UUID) for messages and reactions using context-aware method
 	for i := range messages {
 		if messages[i].SenderMatrixID != "" {
-			messages[i].SenderID = s.idMapper.AlkemioActorID(id.UserID(messages[i].SenderMatrixID))
+			if actorID, err := s.idMapper.AlkemioActorIDWithContext(ctx, messages[i].SenderMatrixID); err == nil {
+				messages[i].SenderID = actorID
+			}
 		}
 		// Convert reaction sender IDs
 		for j := range messages[i].Reactions {
 			if messages[i].Reactions[j].SenderMatrixID != "" {
-				messages[i].Reactions[j].SenderID = s.idMapper.AlkemioActorID(id.UserID(messages[i].Reactions[j].SenderMatrixID))
+				if actorID, err := s.idMapper.AlkemioActorIDWithContext(ctx, messages[i].Reactions[j].SenderMatrixID); err == nil {
+					messages[i].Reactions[j].SenderID = actorID
+				}
 			}
 		}
 	}
@@ -311,9 +325,11 @@ func (s *RoomService) GetMessage(ctx context.Context, roomID id.RoomID, eventID 
 		return nil, err
 	}
 
-	// Convert SenderMatrixID to SenderID (Alkemio actor UUID)
+	// Convert SenderMatrixID to SenderID (Alkemio actor UUID) using context-aware method
 	if msg != nil && msg.SenderMatrixID != "" {
-		msg.SenderID = s.idMapper.AlkemioActorID(id.UserID(msg.SenderMatrixID))
+		if actorID, err := s.idMapper.AlkemioActorIDWithContext(ctx, msg.SenderMatrixID); err == nil {
+			msg.SenderID = actorID
+		}
 	}
 
 	return msg, nil

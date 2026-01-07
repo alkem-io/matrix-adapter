@@ -85,8 +85,8 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse Sender UUID using IDMapper
-	senderUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	// Parse Sender UUID using resolveActorID (context-aware, supports ActorResolver)
+	senderUUID := m.resolveActorID(context.Background(), evt.Sender)
 	if senderUUID == uuid.Nil {
 		m.logger.Debug("Ignoring message from non-UUID user", "sender", evt.Sender)
 		return
@@ -150,8 +150,8 @@ func (m *MautrixAdapter) handleMessageEditEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse sender UUID
-	senderUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	// Parse sender UUID using resolveActorID (context-aware, supports ActorResolver)
+	senderUUID := m.resolveActorID(context.Background(), evt.Sender)
 	if senderUUID == uuid.Nil {
 		m.logger.Debug("Ignoring edit from non-UUID user", "sender", evt.Sender)
 		return
@@ -224,8 +224,8 @@ func (m *MautrixAdapter) handleReactionEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse sender UUID using IDMapper - skip if not a ghost user
-	senderUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	// Parse sender UUID using resolveActorID (context-aware, supports ActorResolver)
+	senderUUID := m.resolveActorID(context.Background(), evt.Sender)
 	if senderUUID == uuid.Nil {
 		m.logger.Debug("Ignoring reaction from non-UUID user", "sender", evt.Sender)
 		return
@@ -261,8 +261,8 @@ func (m *MautrixAdapter) handleReactionEvent(evt *event.Event) {
 }
 
 func (m *MautrixAdapter) handleRedactionEvent(evt *event.Event) {
-	// Parse sender UUID using IDMapper - skip if not a ghost user
-	senderUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	// Parse sender UUID using resolveActorID (context-aware, supports ActorResolver)
+	senderUUID := m.resolveActorID(context.Background(), evt.Sender)
 	if senderUUID == uuid.Nil {
 		m.logger.Debug("Ignoring redaction from non-UUID user", "sender", evt.Sender)
 		return
@@ -414,15 +414,15 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse target user UUID using IDMapper - skip if not a ghost user
-	targetUUID := m.idMapper.AlkemioActorID(targetUserID)
+	// Parse target user UUID using resolveActorID (context-aware, supports ActorResolver)
+	targetUUID := m.resolveActorID(context.Background(), targetUserID)
 	if targetUUID == uuid.Nil {
 		m.logger.Debug("Ignoring membership event for non-UUID user", "target", targetUserID)
 		return
 	}
 
 	// Parse sender UUID (who performed the action)
-	senderUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	senderUUID := m.resolveActorID(context.Background(), evt.Sender)
 	// Note: senderUUID may be Nil for system actions, that's OK
 
 	// Extract reason if present
@@ -483,6 +483,18 @@ func (m *MautrixAdapter) resolveAlkemioRoomID(ctx context.Context, roomID id.Roo
 	return m.idMapper.AlkemioRoomID(details.Alias)
 }
 
+// resolveActorID converts a Matrix user ID to an Alkemio actor UUID.
+// Uses the context-aware method to support ActorResolver when enabled.
+// Returns uuid.Nil if the user ID is not a valid ghost user or resolution fails.
+func (m *MautrixAdapter) resolveActorID(ctx context.Context, userID id.UserID) uuid.UUID {
+	actorID, err := m.idMapper.AlkemioActorIDWithContext(ctx, userID.String())
+	if err != nil {
+		m.logger.Debug("Failed to resolve actor ID", "user_id", userID, "error", err)
+		return uuid.Nil
+	}
+	return actorID
+}
+
 // handleReceiptEvent handles m.receipt ephemeral events (read receipts).
 func (m *MautrixAdapter) handleReceiptEvent(evt *event.Event) {
 	if m.eventHandlers.OnReadReceiptUpdated == nil {
@@ -510,8 +522,8 @@ func (m *MautrixAdapter) handleReceiptEvent(evt *event.Event) {
 					continue
 				}
 
-				// Parse user UUID using IDMapper
-				actorUUID := m.idMapper.AlkemioActorID(userID)
+				// Parse user UUID using resolveActorID (context-aware, supports ActorResolver)
+				actorUUID := m.resolveActorID(context.Background(), userID)
 				if actorUUID == uuid.Nil {
 					continue
 				}
@@ -551,8 +563,8 @@ func (m *MautrixAdapter) handleRoomCreateEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse creator UUID using IDMapper
-	creatorUUID := m.idMapper.AlkemioActorID(evt.Sender)
+	// Parse creator UUID using resolveActorID (context-aware, supports ActorResolver)
+	creatorUUID := m.resolveActorID(context.Background(), evt.Sender)
 	if creatorUUID == uuid.Nil {
 		m.logger.Debug("Ignoring room create from non-UUID user", "sender", evt.Sender)
 		return

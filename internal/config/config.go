@@ -26,6 +26,15 @@ type Config struct {
 	RabbitMQ struct {
 		URL string `yaml:"url"`
 	} `yaml:"rabbitmq"`
+
+	ActorResolver struct {
+		Enabled  bool   `yaml:"enabled"`
+		Host     string `yaml:"host"`
+		Port     string `yaml:"port"`
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
+		Database string `yaml:"database"`
+	} `yaml:"actor_resolver"`
 }
 
 // Load reads the configuration from config.yaml and overrides it with environment variables.
@@ -36,6 +45,14 @@ func Load() (*Config, error) {
 	cfg.App.Environment = "development"
 	cfg.App.LogLevel = "info"
 	cfg.Matrix.BotActorID = "00000000-0000-0000-0000-000000000000"
+
+	// ActorResolver defaults (disabled by default)
+	cfg.ActorResolver.Enabled = false
+	cfg.ActorResolver.Host = "postgres"
+	cfg.ActorResolver.Port = "5432"
+	cfg.ActorResolver.Username = "synapse"
+	cfg.ActorResolver.Password = "synapse"
+	cfg.ActorResolver.Database = "alkemio"
 
 	// Load from file if exists
 	configPath := os.Getenv("CONFIG_PATH")
@@ -75,6 +92,7 @@ func loadEnvVars(cfg *Config) {
 
 	loadMatrixEnv(cfg)
 	loadRabbitMQEnv(cfg)
+	loadActorResolverEnv(cfg)
 }
 
 func loadMatrixEnv(cfg *Config) {
@@ -119,5 +137,29 @@ func loadRabbitMQEnv(cfg *Config) {
 				cfg.RabbitMQ.URL = fmt.Sprintf("amqp://%s:%s/", host, port)
 			}
 		}
+	}
+}
+
+func loadActorResolverEnv(cfg *Config) {
+	// Master toggle - ACTOR_ID_MAPPER_ENABLED
+	if v := os.Getenv("ACTOR_ID_MAPPER_ENABLED"); v != "" {
+		cfg.ActorResolver.Enabled = v == "true" || v == "1"
+	}
+
+	// Database connection settings
+	if v := os.Getenv("DATABASE_HOST"); v != "" {
+		cfg.ActorResolver.Host = v
+	}
+	if v := os.Getenv("DATABASE_PORT"); v != "" {
+		cfg.ActorResolver.Port = v
+	}
+	if v := os.Getenv("DATABASE_USERNAME"); v != "" {
+		cfg.ActorResolver.Username = v
+	}
+	if v := os.Getenv("DATABASE_PASSWORD"); v != "" {
+		cfg.ActorResolver.Password = v
+	}
+	if v := os.Getenv("DATABASE_NAME"); v != "" {
+		cfg.ActorResolver.Database = v
 	}
 }
