@@ -79,3 +79,31 @@ type GetRoomMembersResponse struct {
 	AlkemioRoomID  AlkemioRoomID    `json:"alkemio_room_id"`
 	MemberActorIDs []AlkemioActorID `json:"member_actor_ids"`
 }
+
+// ============================================================================
+// User-Scoped Room Query (communication.room.get.as_user)
+// ============================================================================
+
+// GetRoomAsUserRequest retrieves room state from a specific user's perspective.
+// Topic: communication.room.get.as_user
+type GetRoomAsUserRequest struct {
+	AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+	ActorID       AlkemioActorID `json:"actor_id"`
+}
+
+// GetRoomAsUserResponse returns room details with user-specific read state.
+type GetRoomAsUserResponse struct {
+	BaseResponse    `tstype:",extends"`
+	AlkemioRoomID   AlkemioRoomID             `json:"alkemio_room_id"`
+	DisplayName     string                    `json:"display_name"`
+	MemberActorIDs  []AlkemioActorID          `json:"member_actor_ids"`
+	Messages        []MessageWithReadStateDto `json:"messages"`
+	LastReadEventID *MessageID                `json:"last_read_event_id,omitempty"`
+	UnreadCount     int                       `json:"unread_count"`
+}
+
+// MessageWithReadStateDto extends MessageDto with read receipt info for a specific user.
+type MessageWithReadStateDto struct {
+	MessageDto `tstype:",extends"`
+	IsRead     bool `json:"is_read"` // Has the requesting user read this message?
+}

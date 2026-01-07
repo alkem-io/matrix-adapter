@@ -9,6 +9,8 @@ const (
 	TopicRoomCreate = dto.TopicRoomCreate
 	// TopicRoomGet is the topic for room retrieval commands.
 	TopicRoomGet = dto.TopicRoomGet
+	// TopicRoomGetAsUser is the topic for user-scoped room retrieval commands.
+	TopicRoomGetAsUser = dto.TopicRoomGetAsUser
 	// TopicRoomUpdate is the topic for room update commands.
 	TopicRoomUpdate = dto.TopicRoomUpdate
 	// TopicRoomDelete is the topic for room deletion commands.
