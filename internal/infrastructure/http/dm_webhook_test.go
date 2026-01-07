@@ -289,7 +289,7 @@ func TestExtractActorID(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := handler.extractActorID(tc.matrixID)
+			result := handler.extractActorID(context.Background(), tc.matrixID)
 			if result != tc.expectedID {
 				t.Errorf("expected %v, got %v", tc.expectedID, result)
 			}

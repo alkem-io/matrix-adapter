@@ -2,13 +2,13 @@
 package httpinfra
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strings"
 
 	"github.com/google/uuid"
-	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
@@ -72,14 +72,15 @@ func (h *DMWebhookHandler) handleDMRequest(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Extract actor IDs from Matrix user IDs
-	initiatorID := h.extractActorID(payload.Inviter)
+	ctx := r.Context()
+	initiatorID := h.extractActorID(ctx, payload.Inviter)
 	if initiatorID == uuid.Nil {
 		h.logger.Warn("DM webhook: invalid inviter format", "inviter", payload.Inviter)
 		http.Error(w, `{"error":"invalid_inviter_format"}`, http.StatusBadRequest)
 		return
 	}
 
-	targetID := h.extractActorID(payload.Invitee)
+	targetID := h.extractActorID(ctx, payload.Invitee)
 	if targetID == uuid.Nil {
 		h.logger.Warn("DM webhook: invalid invitee format", "invitee", payload.Invitee)
 		http.Error(w, `{"error":"invalid_invitee_format"}`, http.StatusBadRequest)
@@ -126,6 +127,11 @@ func (h *DMWebhookHandler) validateAuth(r *http.Request) bool {
 
 // extractActorID extracts the Alkemio actor UUID from a Matrix user ID.
 // Matrix user ID format: @{uuid}:{domain}
-func (h *DMWebhookHandler) extractActorID(matrixUserID string) uuid.UUID {
-	return h.idMapper.AlkemioActorID(id.UserID(matrixUserID))
+// Uses context-aware method to support ActorResolver when enabled.
+func (h *DMWebhookHandler) extractActorID(ctx context.Context, matrixUserID string) uuid.UUID {
+	actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, matrixUserID)
+	if err != nil {
+		return uuid.Nil
+	}
+	return actorID
 }
