@@ -64,3 +64,8 @@ func (l *ZapLogger) With(fields ...interface{}) ports.Logger {
 		logger: l.logger.With(fields...),
 	}
 }
+
+// Underlying returns the underlying *zap.Logger for direct access when needed.
+func (l *ZapLogger) Underlying() *zap.Logger {
+	return l.logger.Desugar()
+}

@@ -47,6 +47,26 @@ The service is configured via environment variables or a `config.yaml` file. The
 | `RABBITMQ_USER` | RabbitMQ User (if URL not set) | - |
 | `RABBITMQ_PASSWORD` | RabbitMQ Password (if URL not set) | - |
 
+### Actor ID Mapper (Optional)
+
+During migration, the adapter can optionally map between Alkemio actor IDs (agent.id) and entity IDs (user.id or virtual_contributor.id) using the Alkemio database. This is a temporary feature for the migration period.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ACTOR_ID_MAPPER_ENABLED` | Enable DB-based actor ID mapping | `false` |
+| `DATABASE_HOST` | PostgreSQL host for Alkemio database | `postgres` |
+| `DATABASE_PORT` | PostgreSQL port | `5432` |
+| `DATABASE_NAME` | Database name | `alkemio` |
+| `DATABASE_USERNAME` | Database username (read-only access) | `synapse` |
+| `DATABASE_PASSWORD` | Database password | `synapse` |
+
+**Behavior:**
+- When **disabled** (default): Actor IDs are used directly as Matrix localparts (`@actor-uuid:server`)
+- When **enabled**: Actor IDs are resolved to entity IDs via the Alkemio database (`@entity-uuid:server`)
+- **Reserved UUIDs** (`00000000-...` and `ffffffff-...-fff0`) bypass resolution and are used directly
+- The adapter caches mappings permanently (they never change)
+- Startup **fails** if enabled but the database is unreachable
+
 ## Running Locally
 
 1. **Install Dependencies**:
@@ -146,12 +166,24 @@ The project follows a Hexagonal (Ports & Adapters) architecture:
 
 ## Actor ID Usage
 
-The Matrix Adapter uses Actor IDs (UUIDs) to identify users.
-- **Actor ID**: The unique identifier of the user in the Alkemio platform (UUID).
-- **Matrix ID**: The identifier of the user in the Matrix homeserver (e.g., `@uuid:server`).
+The Matrix Adapter uses Actor IDs (UUIDs) to identify users in external APIs.
 
-The adapter automatically handles the mapping between Actor IDs and Matrix IDs.
-All external APIs (RabbitMQ commands and events) use Actor IDs.
+- **Actor ID**: The Alkemio agent ID (`agent.id`) - used in all RabbitMQ commands and events
+- **Entity ID**: The Alkemio user/VC ID (`user.id` or `virtual_contributor.id`)
+- **Matrix ID**: The Matrix user identifier (e.g., `@uuid:server`)
+
+### ID Mapping Modes
+
+| Mode | Matrix Localpart | Use Case |
+|------|------------------|----------|
+| **Direct** (default) | Actor ID | Simple deployments, actor ID = entity ID |
+| **DB-Mapped** | Entity ID | Migration period, actor ID ≠ entity ID |
+
+When `ACTOR_ID_MAPPER_ENABLED=true`, the adapter queries the Alkemio database to resolve:
+- **Forward**: Actor ID → Entity ID (for Matrix user creation)
+- **Reverse**: Entity ID → Actor ID (for outbound events)
+
+All external APIs (RabbitMQ commands and events) always use Actor IDs regardless of mapping mode.
 
 ## Protocol
 

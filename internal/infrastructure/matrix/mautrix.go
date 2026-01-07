@@ -232,6 +232,12 @@ func (m *MautrixAdapter) Disconnect() error {
 	return nil
 }
 
+// SetActorResolver configures the IDMapper to use DB-based actor ID resolution.
+// This is a temporary feature for the migration period.
+func (m *MautrixAdapter) SetActorResolver(resolver domain.ActorResolver) {
+	m.idMapper.SetActorResolver(resolver)
+}
+
 // ============================================================================
 // User Operations
 // ============================================================================
@@ -239,14 +245,16 @@ func (m *MautrixAdapter) Disconnect() error {
 // EnsureUser provisions a user on the homeserver if it doesn't exist
 func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id.UserID, error) {
 	// Use centralized IDMapper for consistent user ID construction
-	userID := m.idMapper.UserID(actor.ID)
+	userID, err := m.idMapper.UserID(ctx, actor.ID)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve actor ID: %w", err)
+	}
 
 	// Check if user exists (intent)
 	intent := m.as.Intent(userID)
 
 	// Register if needed
-	err := intent.EnsureRegistered(ctx)
-	if err != nil {
+	if err = intent.EnsureRegistered(ctx); err != nil {
 		return "", fmt.Errorf("failed to ensure user registered: %w", err)
 	}
 
@@ -1342,7 +1350,10 @@ func (m *MautrixAdapter) SendReadReceipt(
 	ctx context.Context, actor domain.Actor, roomID id.RoomID, eventID id.EventID, threadRootID *id.EventID,
 ) error {
 	// Use centralized IDMapper for user ID
-	userID := m.idMapper.UserID(actor.ID)
+	userID, err := m.idMapper.UserID(ctx, actor.ID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve actor ID: %w", err)
+	}
 	intent := m.as.Intent(userID)
 
 	// Ensure user is registered
@@ -1373,7 +1384,7 @@ func (m *MautrixAdapter) SendReadReceipt(
 	}
 
 	// Send the read receipt with optional thread context
-	err := intent.SendReceipt(ctx, roomID, eventID, event.ReceiptTypeRead, content)
+	err = intent.SendReceipt(ctx, roomID, eventID, event.ReceiptTypeRead, content)
 	if err != nil {
 		return fmt.Errorf("failed to send read receipt: %w", err)
 	}
@@ -1391,7 +1402,11 @@ func (m *MautrixAdapter) GetUnreadCounts(
 	ctx context.Context, actor domain.Actor, roomID id.RoomID, threadRootIDs []id.EventID,
 ) (*domain.UnreadCountSummary, error) {
 	// Get the user's intent to make API calls as that user
-	userID := m.idMapper.UserID(actor.ID)
+	userID, err := m.idMapper.UserID(ctx, actor.ID)
+	if err != nil {
+		m.logger.Error("Failed to resolve actor ID", "error", err, "actor_id", actor.ID)
+		return nil, fmt.Errorf("failed to resolve actor ID: %w", err)
+	}
 	intent := m.as.Intent(userID)
 
 	// Ensure the user is registered before making sync requests

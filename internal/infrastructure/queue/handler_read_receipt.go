@@ -23,12 +23,13 @@ type ReadReceiptHandler struct {
 func NewReadReceiptHandler(
 	svc ports.ReadReceiptServicePort,
 	matrix ports.MatrixPort,
+	idMapper *domain.IDMapper,
 	logger ports.Logger,
 ) *ReadReceiptHandler {
 	return &ReadReceiptHandler{
 		service:  svc,
 		matrix:   matrix,
-		idMapper: domain.NewIDMapper(matrix.HomeserverDomain()),
+		idMapper: idMapper,
 		logger:   logger,
 	}
 }

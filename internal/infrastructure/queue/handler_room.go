@@ -22,11 +22,11 @@ type RoomHandler struct {
 }
 
 // NewRoomHandler creates a new instance of RoomHandler.
-func NewRoomHandler(service *service.RoomService, matrix ports.MatrixPort) *RoomHandler {
+func NewRoomHandler(service *service.RoomService, matrix ports.MatrixPort, idMapper *domain.IDMapper) *RoomHandler {
 	return &RoomHandler{
 		service:  service,
 		matrix:   matrix,
-		idMapper: domain.NewIDMapper(matrix.HomeserverDomain()),
+		idMapper: idMapper,
 	}
 }
 
@@ -468,9 +468,11 @@ func (h *RoomHandler) HandleGetReaction(ctx context.Context, payload []byte) (in
 		return NewReactionNotFoundError(string(req.ReactionID)), nil
 	}
 
-	// Convert SenderMatrixID to SenderID (Alkemio actor UUID)
+	// Convert SenderMatrixID to SenderID (Alkemio actor UUID) using context-aware method
 	if reaction.SenderMatrixID != "" {
-		reaction.SenderID = h.idMapper.AlkemioActorID(id.UserID(reaction.SenderMatrixID))
+		if actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, reaction.SenderMatrixID); err == nil {
+			reaction.SenderID = actorID
+		}
 	}
 
 	reactionDTO := dto.ReactionDto{
@@ -540,7 +542,10 @@ func (h *RoomHandler) HandleBatchRemoveMember(ctx context.Context, payload []byt
 	}
 
 	results := make(map[string]dto.BaseResponse)
-	actorMatrixID := h.idMapper.UserID(req.ActorID.UUID())
+	actorMatrixID, err := h.idMapper.UserID(ctx, req.ActorID.UUID())
+	if err != nil {
+		return MapServiceError(err), nil
+	}
 
 	for _, alkemioRoomID := range req.AlkemioRoomIDs {
 		roomID, err := h.resolveRoomAliasForBatch(ctx, alkemioRoomID)
@@ -587,12 +592,12 @@ func (h *RoomHandler) HandleGetRoomMembers(ctx context.Context, payload []byte) 
 		return MapServiceError(err), nil
 	}
 
-	// Convert Matrix user IDs to Alkemio actor IDs
+	// Convert Matrix user IDs to Alkemio actor IDs using context-aware method
 	memberActorIDs := make([]dto.AlkemioActorID, 0, len(members))
 	for _, memberUserID := range members {
-		actorID := h.idMapper.AlkemioActorID(memberUserID)
-		// Skip non-ghost users (uuid.Nil indicates not a valid ghost user)
-		if actorID == uuid.Nil {
+		actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, memberUserID.String())
+		// Skip non-ghost users (error or uuid.Nil indicates not a valid ghost user)
+		if err != nil || actorID == uuid.Nil {
 			continue
 		}
 		memberActorIDs = append(memberActorIDs, dto.AlkemioActorID(actorID))
@@ -638,10 +643,12 @@ func (h *RoomHandler) HandleGetThreadMessages(ctx context.Context, payload []byt
 	// Convert domain messages to DTOs
 	messageDTOs := make([]dto.MessageDto, 0, len(messages))
 	for _, msg := range messages {
-		// Convert sender Matrix ID to Alkemio actor ID
+		// Convert sender Matrix ID to Alkemio actor ID using context-aware method
 		senderActorID := uuid.Nil
 		if msg.SenderMatrixID != "" {
-			senderActorID = h.idMapper.AlkemioActorID(id.UserID(msg.SenderMatrixID))
+			if actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, msg.SenderMatrixID); err == nil {
+				senderActorID = actorID
+			}
 		} else if msg.SenderID != uuid.Nil {
 			senderActorID = msg.SenderID
 		}
