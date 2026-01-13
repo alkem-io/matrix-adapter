@@ -3,6 +3,7 @@ package service
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -40,6 +41,7 @@ func (s *DMService) PublishDMRequest(initiatorActorID, targetActorID uuid.UUID) 
 	event := dto.DMRequestedEvent{
 		InitiatorActorID: initiatorActorID.String(),
 		TargetActorID:    targetActorID.String(),
+		Timestamp:        time.Now().UnixMilli(),
 	}
 
 	s.logger.Info("Publishing DM requested event",

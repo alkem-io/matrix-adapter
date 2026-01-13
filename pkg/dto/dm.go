@@ -13,6 +13,9 @@ type DMRequestedEvent struct {
 	InitiatorActorID string `json:"initiator_actor_id"`
 	// TargetActorID is the Alkemio UUID of the user who is being invited to the DM.
 	TargetActorID string `json:"target_actor_id"`
+	// Timestamp is when the adapter received the DM request webhook (Unix milliseconds).
+	// This is set locally by the adapter, representing when the request was processed.
+	Timestamp int64 `json:"timestamp"`
 }
 
 // DMWebhookPayload represents the payload received from Synapse's DM request webhook.
