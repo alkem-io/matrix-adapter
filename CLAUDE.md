@@ -9,13 +9,21 @@ Auto-generated from all feature plans. Last updated: 2026-01-06
 ## Project Structure
 
 ```text
-src/
-tests/
+cmd/       # Application entry points (adapter, gen-events)
+internal/  # Private application code (core, infrastructure)
+pkg/       # Public packages / DTOs
+lib/       # TypeScript library (generated from pkg/dto)
 ```
 
 ## Commands
 
-# Add commands for Go 1.25
+```bash
+make build      # Build the adapter binary
+make test       # Run unit tests
+make lint       # Run go vet and golangci-lint
+make generate   # Generate TypeScript library from Go DTOs
+make run        # Run the service locally
+```
 
 ## Code Style
 

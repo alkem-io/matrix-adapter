@@ -370,21 +370,9 @@ func (h *RoomHandler) HandleGetMessage(ctx context.Context, payload []byte) (int
 		return NewMessageNotFoundError(string(req.MessageID)), nil
 	}
 
-	msgDTO := dto.MessageDto{
-		ID:            dto.MessageID(msg.ID),
-		Content:       msg.Content,
-		SenderActorID: dto.AlkemioActorID(msg.SenderID),
-		Timestamp:     msg.Timestamp,
-	}
-	// Set ThreadID if present
-	if msg.ThreadID != "" {
-		tid := dto.MessageID(msg.ThreadID)
-		msgDTO.ThreadID = &tid
-	}
-
 	return dto.GetMessageResponse{
 		BaseResponse: dto.NewSuccessResponse(),
-		Message:      msgDTO,
+		Message:      convertMessageToDTO(*msg),
 	}, nil
 }
 
