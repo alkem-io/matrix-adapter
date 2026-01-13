@@ -91,10 +91,7 @@ func (h *SpaceHandler) HandleGetSpace(ctx context.Context, payload []byte) (inte
 	}
 
 	// Convert domain members to DTO
-	memberActorIDs := make([]dto.AlkemioActorID, 0, len(space.MemberIDs))
-	for _, memberID := range space.MemberIDs {
-		memberActorIDs = append(memberActorIDs, dto.AlkemioActorID(memberID))
-	}
+	memberActorIDs := convertMemberIDsToDTO(space.MemberIDs)
 
 	// Convert domain children to DTO
 	children := make([]dto.SpaceChildDto, 0, len(space.Children))
