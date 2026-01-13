@@ -1,7 +1,5 @@
 package dto
 
-import "time"
-
 // ============================================================================
 // New Protocol DTOs (communication.message.*)
 // ============================================================================
@@ -11,7 +9,7 @@ type MessageDto struct {
 	ID            MessageID      `json:"id"`
 	Content       string         `json:"content"`
 	SenderActorID AlkemioActorID `json:"sender_actor_id"`
-	Timestamp     time.Time      `json:"timestamp"`
+	Timestamp     int64          `json:"timestamp"` // Unix milliseconds
 	Reactions     []ReactionDto  `json:"reactions"`
 	ThreadID      *MessageID     `json:"thread_id,omitempty"`
 }
@@ -29,7 +27,11 @@ type SendMessageRequest struct {
 type SendMessageResponse struct {
 	BaseResponse `tstype:",extends"`
 	MessageID    MessageID `json:"message_id"`
-	Timestamp    time.Time `json:"timestamp"` // UTC time from Matrix
+	// Timestamp is the approximate creation time (Unix milliseconds).
+	// Note: This is set locally when the adapter receives confirmation from Matrix,
+	// not the exact server timestamp. The difference should be negligible (<100ms)
+	// assuming synchronized clocks (NTP).
+	Timestamp int64 `json:"timestamp"`
 }
 
 // GetMessageRequest retrieves details of a specific message.

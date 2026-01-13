@@ -232,6 +232,11 @@ export interface DMRequestedEvent {
    * TargetActorID is the Alkemio UUID of the user who is being invited to the DM.
    */
   target_actor_id: string;
+  /**
+   * Timestamp is when the adapter received the DM request webhook (Unix milliseconds).
+   * This is set locally by the adapter, representing when the request was processed.
+   */
+  timestamp: number /* int64 */;
 }
 /**
  * DMWebhookPayload represents the payload received from Synapse's DM request webhook.
@@ -406,7 +411,7 @@ export interface MessageDto {
   id: MessageID;
   content: string;
   sender_actor_id: AlkemioActorID;
-  timestamp: string;
+  timestamp: number /* int64 */; // Unix milliseconds
   reactions: ReactionDto[];
   thread_id?: MessageID;
 }
@@ -425,7 +430,13 @@ export interface SendMessageRequest {
  */
 export interface SendMessageResponse extends BaseResponse {
   message_id: MessageID;
-  timestamp: string; // UTC time from Matrix
+  /**
+   * Timestamp is the approximate creation time (Unix milliseconds).
+   * Note: This is set locally when the adapter receives confirmation from Matrix,
+   * not the exact server timestamp. The difference should be negligible (<100ms)
+   * assuming synchronized clocks (NTP).
+   */
+  timestamp: number /* int64 */;
 }
 /**
  * GetMessageRequest retrieves details of a specific message.
@@ -478,7 +489,7 @@ export interface ReactionDto {
   id: ReactionID;
   emoji: string;
   sender_actor_id: AlkemioActorID;
-  timestamp: string;
+  timestamp: number /* int64 */; // Unix milliseconds
 }
 /**
  * AddReactionRequest adds an emoji reaction to a message.
@@ -491,10 +502,17 @@ export interface AddReactionRequest {
   emoji: string;
 }
 /**
- * AddReactionResponse returns the reaction ID.
+ * AddReactionResponse returns the reaction ID and timestamp.
  */
 export interface AddReactionResponse extends BaseResponse {
   reaction_id: ReactionID;
+  /**
+   * Timestamp is the approximate creation time (Unix milliseconds).
+   * Note: This is set locally when the adapter receives confirmation from Matrix,
+   * not the exact server timestamp. The difference should be negligible (<100ms)
+   * assuming synchronized clocks (NTP).
+   */
+  timestamp: number /* int64 */;
 }
 /**
  * RemoveReactionRequest removes a previously added reaction.

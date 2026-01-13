@@ -57,13 +57,23 @@ func (h *RoomHandler) resolveRoomAliasForBatch(ctx context.Context, alkemioRoomI
 // DTO Conversion Helpers (DRY principle - single source of truth)
 // ============================================================================
 
+// convertReactionToDTO converts a domain.Reaction to dto.ReactionDto.
+func convertReactionToDTO(r domain.Reaction) dto.ReactionDto {
+	return dto.ReactionDto{
+		ID:            dto.ReactionID(r.ID.String()),
+		Emoji:         r.Emoji,
+		SenderActorID: dto.AlkemioActorID(r.SenderID),
+		Timestamp:     r.Timestamp.UnixMilli(),
+	}
+}
+
 // convertMessageToDTO converts a domain.Message to dto.MessageDto.
 func convertMessageToDTO(msg domain.Message) dto.MessageDto {
 	msgDTO := dto.MessageDto{
 		ID:            dto.MessageID(msg.ID),
 		Content:       msg.Content,
 		SenderActorID: dto.AlkemioActorID(msg.SenderID),
-		Timestamp:     msg.Timestamp,
+		Timestamp:     msg.Timestamp.UnixMilli(),
 	}
 	// Set ThreadID if present
 	if msg.ThreadID != "" {
@@ -72,13 +82,7 @@ func convertMessageToDTO(msg domain.Message) dto.MessageDto {
 	}
 	// Convert reactions
 	for _, r := range msg.Reactions {
-		reactionDTO := dto.ReactionDto{
-			ID:            dto.ReactionID(r.ID.String()),
-			Emoji:         r.Emoji,
-			SenderActorID: dto.AlkemioActorID(r.SenderID),
-			Timestamp:     r.Timestamp,
-		}
-		msgDTO.Reactions = append(msgDTO.Reactions, reactionDTO)
+		msgDTO.Reactions = append(msgDTO.Reactions, convertReactionToDTO(r))
 	}
 	return msgDTO
 }
@@ -338,7 +342,7 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 	return dto.SendMessageResponse{
 		BaseResponse: dto.NewSuccessResponse(),
 		MessageID:    dto.MessageID(eventID.String()),
-		Timestamp:    time.Now().UTC(),
+		Timestamp:    time.Now().UnixMilli(),
 	}, nil
 }
 
@@ -453,6 +457,7 @@ func (h *RoomHandler) HandleAddReaction(ctx context.Context, payload []byte) (in
 	return dto.AddReactionResponse{
 		BaseResponse: dto.NewSuccessResponse(),
 		ReactionID:   dto.ReactionID(eventID.String()),
+		Timestamp:    time.Now().UnixMilli(),
 	}, nil
 }
 
@@ -523,23 +528,16 @@ func (h *RoomHandler) HandleGetReaction(ctx context.Context, payload []byte) (in
 		return NewReactionNotFoundError(string(req.ReactionID)), nil
 	}
 
-	// Convert SenderMatrixID to SenderID (Alkemio actor UUID) using context-aware method
-	if reaction.SenderMatrixID != "" {
+	// Resolve SenderMatrixID to SenderID (Alkemio actor UUID) if needed
+	if reaction.SenderMatrixID != "" && reaction.SenderID == uuid.Nil {
 		if actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, reaction.SenderMatrixID); err == nil {
 			reaction.SenderID = actorID
 		}
 	}
 
-	reactionDTO := dto.ReactionDto{
-		ID:            dto.ReactionID(reaction.ID.String()),
-		Emoji:         reaction.Emoji,
-		SenderActorID: dto.AlkemioActorID(reaction.SenderID),
-		Timestamp:     reaction.Timestamp,
-	}
-
 	return dto.GetReactionResponse{
 		BaseResponse: dto.NewSuccessResponse(),
-		Reaction:     reactionDTO,
+		Reaction:     convertReactionToDTO(*reaction),
 	}, nil
 }
 
@@ -697,31 +695,14 @@ func (h *RoomHandler) HandleGetThreadMessages(ctx context.Context, payload []byt
 
 	// Convert domain messages to DTOs
 	messageDTOs := make([]dto.MessageDto, 0, len(messages))
-	for _, msg := range messages {
-		// Convert sender Matrix ID to Alkemio actor ID using context-aware method
-		senderActorID := uuid.Nil
-		if msg.SenderMatrixID != "" {
-			if actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, msg.SenderMatrixID); err == nil {
-				senderActorID = actorID
+	for i := range messages {
+		// Resolve sender Matrix ID to Alkemio actor ID if needed
+		if messages[i].SenderMatrixID != "" && messages[i].SenderID == uuid.Nil {
+			if actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, messages[i].SenderMatrixID); err == nil {
+				messages[i].SenderID = actorID
 			}
-		} else if msg.SenderID != uuid.Nil {
-			senderActorID = msg.SenderID
 		}
-
-		msgDTO := dto.MessageDto{
-			ID:            dto.MessageID(msg.ID),
-			Content:       msg.Content,
-			SenderActorID: dto.AlkemioActorID(senderActorID),
-			Timestamp:     msg.Timestamp,
-		}
-
-		// Set thread ID if present (for replies within the thread)
-		if msg.ThreadID != "" {
-			threadID := dto.MessageID(msg.ThreadID)
-			msgDTO.ThreadID = &threadID
-		}
-
-		messageDTOs = append(messageDTOs, msgDTO)
+		messageDTOs = append(messageDTOs, convertMessageToDTO(messages[i]))
 	}
 
 	return dto.GetThreadMessagesResponse{
