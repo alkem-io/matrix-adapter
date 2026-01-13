@@ -1,13 +1,80 @@
 # Matrix Adapter Protocol Specification (V3)
 
-> **Status**: ✅ **Current** (v3.2.0)
-> **Last Updated**: 2025-12-15
+> **Status**: ✅ **Current** (v3.3.0)
+> **Last Updated**: 2026-01-13
+
+---
+
+## Table of Contents
+
+- [Implementation Reference](#implementation-reference)
+- [Design Principles](#design-principles)
+- [Data Types (Go)](#data-types-go)
+- [Response Envelope](#response-envelope)
+  - [Error Handling](#error-handling)
+  - [Base Response](#base-response)
+- [Commands & Events](#commands--events)
+  - **Room Commands**
+    - [1. Create Room](#1-create-room) - `communication.room.create`
+    - [7. Get Room Details](#7-get-room-details) - `communication.room.get`
+    - [32. Get Room As User](#32-get-room-as-user) - `communication.room.get.as_user`
+    - [8. Update Room](#8-update-room) - `communication.room.update`
+    - [9. Delete Room](#9-delete-room) - `communication.room.delete`
+    - [12. List All Rooms (Admin)](#12-list-all-rooms-admin) - `communication.room.list`
+  - **Message Commands**
+    - [2. Send Message](#2-send-message) - `communication.message.send`
+    - [5. Delete Message](#5-delete-message) - `communication.message.delete`
+    - [13. Get Message Details](#13-get-message-details) - `communication.message.get`
+  - **Reaction Commands**
+    - [3. Add Reaction](#3-add-reaction) - `communication.reaction.add`
+    - [4. Remove Reaction](#4-remove-reaction) - `communication.reaction.remove`
+    - [14. Get Reaction Details](#14-get-reaction-details) - `communication.reaction.get`
+  - **Room Membership Commands**
+    - [6. Batch Room Membership (Add)](#6-batch-room-membership-add) - `communication.room.member.batch.add`
+    - [10. Batch Room Membership (Remove)](#10-batch-room-membership-remove) - `communication.room.member.batch.remove`
+    - [28. Get Room Members](#28-get-room-members) - `communication.room.members.get`
+  - **Actor Commands**
+    - [11. Sync Actor Profile](#11-sync-actor-profile) - `communication.actor.sync`
+  - **Space Commands**
+    - [15. Create Space](#15-create-space) - `communication.space.create`
+    - [16. Update Space](#16-update-space) - `communication.space.update`
+    - [17. Delete Space](#17-delete-space) - `communication.space.delete`
+    - [21. Get Space Details](#21-get-space-details) - `communication.space.get`
+    - [22. List All Spaces (Admin)](#22-list-all-spaces-admin) - `communication.space.list`
+  - **Space Membership Commands**
+    - [19. Batch Space Membership (Add)](#19-batch-space-membership-add) - `communication.space.member.batch.add`
+    - [20. Batch Space Membership (Remove)](#20-batch-space-membership-remove) - `communication.space.member.batch.remove`
+  - **Hierarchy Commands**
+    - [18. Set Parent (Hierarchy)](#18-set-parent-hierarchy) - `communication.hierarchy.set_parent`
+  - **Thread Commands**
+    - [29. Get Thread Messages](#29-get-thread-messages) - `communication.thread.messages.get`
+  - **Read Receipt Commands**
+    - [30. Mark Message Read](#30-mark-message-read) - `communication.message.read`
+    - [31. Get Unread Counts](#31-get-unread-counts) - `communication.room.unread_counts.get`
+- [Outgoing Events](#outgoing-events)
+  - [23. Message Received](#23-message-received-outgoing-event) - `communication.message.received`
+  - [24. DM Requested](#24-dm-requested-outgoing-event) - `communication.room.dm.requested`
+  - [25. Reaction Added](#25-reaction-added-outgoing-event) - `communication.reaction.added`
+  - [26. Reaction Removed](#26-reaction-removed-outgoing-event) - `communication.reaction.removed`
+  - [27. Room Member Left](#27-room-member-left-outgoing-event) - `communication.room.member.left`
+  - [27a. Read Receipt Updated](#27a-read-receipt-updated-outgoing-event) - `communication.room.receipt.updated`
+  - [27b. Message Edited](#27b-message-edited-outgoing-event) - `communication.message.edited`
+  - [27c. Message Redacted](#27c-message-redacted-outgoing-event) - `communication.message.redacted`
+  - [27d. Room Created](#27d-room-created-outgoing-event) - `communication.room.created`
+  - [27e. Room Member Updated](#27e-room-member-updated-outgoing-event) - `communication.room.member.updated`
+- [HTTP Endpoints](#http-endpoints)
+  - [Health Check](#health-check)
+  - [DM Request Webhook](#dm-request-webhook)
+- [Error Handling Strategy](#error-handling-strategy)
+- [TS Library Export](#ts-library-export)
+
+---
 
 ## Implementation Reference
 
 - **Go DTOs**: `pkg/dto/` - Source of truth for all data structures
 - **TypeScript Library**: `lib/src/dto/generated.ts` - Auto-generated from Go
-- **Event Types**: `lib/src/matrix.adapter.event.type.ts` - Enum of all 36 topics
+- **Event Types**: `lib/src/matrix.adapter.event.type.ts` - Enum of all 37 topics
 - **Topic Constants**: `internal/infrastructure/queue/topics.go` - Single source of truth
 
 This document defines the communication protocol between the Alkemio Server and the Matrix Adapter service. The protocol is designed to be transport-agnostic but is currently implemented over RabbitMQ.
@@ -56,13 +123,15 @@ All responses from the Adapter MUST follow this structure.
 type ErrorCode string
 
 const (
-    ErrCodeInvalidParam    ErrorCode = "INVALID_PARAM"
-    ErrCodeRoomNotFound    ErrorCode = "ROOM_NOT_FOUND"
-    ErrCodeSpaceNotFound   ErrorCode = "SPACE_NOT_FOUND"
-    ErrCodeActorNotFound   ErrorCode = "ACTOR_NOT_FOUND"
-    ErrCodeMatrixError     ErrorCode = "MATRIX_ERROR"
-    ErrCodeInternalError   ErrorCode = "INTERNAL_ERROR"
-    ErrCodeNotAllowed      ErrorCode = "NOT_ALLOWED"
+    ErrCodeInvalidParam     ErrorCode = "INVALID_PARAM"
+    ErrCodeRoomNotFound     ErrorCode = "ROOM_NOT_FOUND"
+    ErrCodeSpaceNotFound    ErrorCode = "SPACE_NOT_FOUND"
+    ErrCodeActorNotFound    ErrorCode = "ACTOR_NOT_FOUND"
+    ErrCodeMessageNotFound  ErrorCode = "MESSAGE_NOT_FOUND"
+    ErrCodeReactionNotFound ErrorCode = "REACTION_NOT_FOUND"
+    ErrCodeMatrixError      ErrorCode = "MATRIX_ERROR"
+    ErrCodeInternalError    ErrorCode = "INTERNAL_ERROR"
+    ErrCodeNotAllowed       ErrorCode = "NOT_ALLOWED"
 )
 
 // ErrorResponse contains structured error information.
@@ -756,12 +825,31 @@ Published when the Adapter receives a message in a room from a user.
 #### Payload
 
 ```go
+// Message represents a Matrix message event (used in outgoing events).
+type Message struct {
+    ID        string     `json:"id"`
+    Message   string     `json:"message"`
+    ThreadID  *MessageID `json:"threadID,omitempty"`
+    Sender    string     `json:"sender"`
+    Timestamp int64      `json:"timestamp"`
+    Reactions []Reaction `json:"reactions"`
+}
+
+// Reaction represents a reaction to a message (used in outgoing events).
+type Reaction struct {
+    ID        string `json:"id"`
+    Emoji     string `json:"emoji"`
+    Sender    string `json:"sender"`
+    Timestamp int64  `json:"timestamp"`
+    MessageID string `json:"messageId"`
+}
+
 type MessageReceivedPayload struct {
     RoomID      string  `json:"roomId"`
     RoomName    string  `json:"roomName"`
     Message     Message `json:"message"`
     ActorID     string  `json:"actorID"`
-    CommunityID string  `json:"communityId,omitempty"`
+    CommunityID *string `json:"communityId,omitempty"`
 }
 ```
 
@@ -1072,6 +1160,53 @@ type GetUnreadCountsResponse struct {
 2.  Resolve `AlkemioRoomID` to Matrix Room ID.
 3.  Query room state for unread counts.
 4.  If `ThreadIDs` provided, also query thread-level unread counts.
+
+---
+
+### 32. Get Room As User
+
+Retrieves room details from a specific user's perspective, including read state information for each message. This enables efficient UI rendering with read/unread indicators without additional API calls.
+
+*   **Event Subject**: `communication.room.get.as_user`
+
+#### Request Payload
+
+```go
+type GetRoomAsUserRequest struct {
+    AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+    ActorID       AlkemioActorID `json:"actor_id"`
+}
+```
+
+#### Response Payload
+
+```go
+// MessageWithReadStateDto extends MessageDto with read receipt info.
+type MessageWithReadStateDto struct {
+    MessageDto
+    IsRead bool `json:"is_read"` // Has the requesting user read this message?
+}
+
+type GetRoomAsUserResponse struct {
+    BaseResponse
+    AlkemioRoomID   AlkemioRoomID             `json:"alkemio_room_id"`
+    DisplayName     string                    `json:"display_name"`
+    MemberActorIDs  []AlkemioActorID          `json:"member_actor_ids"`
+    Messages        []MessageWithReadStateDto `json:"messages"`
+    LastReadEventID *MessageID                `json:"last_read_event_id,omitempty"`
+    UnreadCount     int                       `json:"unread_count"`
+}
+```
+
+**Adapter Actions**:
+1.  Resolve `AlkemioRoomID` to Matrix Room ID.
+2.  Fetch room details (name, members, messages).
+3.  Resolve `ActorID` to Matrix User ID.
+4.  Query unread count for the user via Matrix `/sync` API.
+5.  Mark messages as read/unread based on the unread count (last N messages are unread).
+6.  Return enriched response with `is_read` flag per message.
+
+**Note**: Read state uses the "high water mark" model - when a user reads message N, all messages before N are also considered read.
 
 ---
 

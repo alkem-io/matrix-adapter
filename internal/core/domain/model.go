@@ -33,6 +33,15 @@ type Room struct {
 	Messages  []Message   // For room.get operations
 }
 
+// RoomWithReadState extends Room with user-specific read receipt information.
+// Used by GetRoomAsUser to return room details from a specific user's perspective.
+type RoomWithReadState struct {
+	Room            *Room
+	LastReadEventID string // The last message ID the user has read
+	LastReadTS      int64  // Timestamp of last read (Unix millis) for comparison
+	UnreadCount     int    // Number of unread messages
+}
+
 // Space represents a Matrix Space (MSC1772) mapped to an Alkemio context.
 type Space struct {
 	ID               id.RoomID

@@ -65,6 +65,10 @@ export const TopicRoomGet = "communication.room.get";
 /**
  * Room command topics
  */
+export const TopicRoomGetAsUser = "communication.room.get.as_user";
+/**
+ * Room command topics
+ */
 export const TopicRoomUpdate = "communication.room.update";
 /**
  * Room command topics
@@ -686,6 +690,31 @@ export interface GetRoomMembersRequest {
 export interface GetRoomMembersResponse extends BaseResponse {
   alkemio_room_id: AlkemioRoomID;
   member_actor_ids: AlkemioActorID[];
+}
+/**
+ * GetRoomAsUserRequest retrieves room state from a specific user's perspective.
+ * Topic: communication.room.get.as_user
+ */
+export interface GetRoomAsUserRequest {
+  alkemio_room_id: AlkemioRoomID;
+  actor_id: AlkemioActorID;
+}
+/**
+ * GetRoomAsUserResponse returns room details with user-specific read state.
+ */
+export interface GetRoomAsUserResponse extends BaseResponse {
+  alkemio_room_id: AlkemioRoomID;
+  display_name: string;
+  member_actor_ids: AlkemioActorID[];
+  messages: MessageWithReadStateDto[];
+  last_read_event_id?: MessageID;
+  unread_count: number /* int */;
+}
+/**
+ * MessageWithReadStateDto extends MessageDto with read receipt info for a specific user.
+ */
+export interface MessageWithReadStateDto extends MessageDto {
+  is_read: boolean; // Has the requesting user read this message?
 }
 
 //////////

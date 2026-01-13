@@ -22,6 +22,8 @@ import type {
   GetMessageResponse,
   GetReactionRequest,
   GetReactionResponse,
+  GetRoomAsUserRequest,
+  GetRoomAsUserResponse,
   GetRoomMembersRequest,
   GetRoomMembersResponse,
   GetRoomRequest,
@@ -107,6 +109,10 @@ export const Commands = {
   'communication.room.get': {
     request: {} as GetRoomRequest,
     response: {} as GetRoomResponse,
+  },
+  'communication.room.get.as_user': {
+    request: {} as GetRoomAsUserRequest,
+    response: {} as GetRoomAsUserResponse,
   },
   'communication.room.list': {
     request: {} as ListRoomsRequest,

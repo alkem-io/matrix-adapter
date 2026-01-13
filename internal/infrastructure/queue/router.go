@@ -10,11 +10,12 @@ import (
 func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, space *SpaceHandler, readReceipt *ReadReceiptHandler, log ports.Logger) {
 	routes := map[string]func(ctx context.Context, payload []byte) (interface{}, error){
 		// Room Routes (communication.room.*)
-		TopicRoomCreate: room.HandleCreateRoom,
-		TopicRoomGet:    room.HandleGetRoom,
-		TopicRoomUpdate: room.HandleUpdateRoom,
-		TopicRoomDelete: room.HandleDeleteRoom,
-		TopicRoomList:   room.HandleListRooms,
+		TopicRoomCreate:    room.HandleCreateRoom,
+		TopicRoomGet:       room.HandleGetRoom,
+		TopicRoomGetAsUser: room.HandleGetRoomAsUser,
+		TopicRoomUpdate:    room.HandleUpdateRoom,
+		TopicRoomDelete:    room.HandleDeleteRoom,
+		TopicRoomList:      room.HandleListRooms,
 
 		// Room Members Query (communication.room.members.*)
 		TopicRoomMembersGet: room.HandleGetRoomMembers,

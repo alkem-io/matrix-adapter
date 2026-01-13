@@ -6,11 +6,12 @@ package dto
 
 // Room command topics
 const (
-	TopicRoomCreate = "communication.room.create"
-	TopicRoomGet    = "communication.room.get"
-	TopicRoomUpdate = "communication.room.update"
-	TopicRoomDelete = "communication.room.delete"
-	TopicRoomList   = "communication.room.list"
+	TopicRoomCreate    = "communication.room.create"
+	TopicRoomGet       = "communication.room.get"
+	TopicRoomGetAsUser = "communication.room.get.as_user"
+	TopicRoomUpdate    = "communication.room.update"
+	TopicRoomDelete    = "communication.room.delete"
+	TopicRoomList      = "communication.room.list"
 )
 
 // Message command topics
@@ -118,6 +119,7 @@ var CommandRegistry = []CommandDef{
 	// Room commands
 	{Topic: TopicRoomCreate, RequestType: "CreateRoomRequest", ResponseType: "BaseResponse"},
 	{Topic: TopicRoomGet, RequestType: "GetRoomRequest", ResponseType: "GetRoomResponse"},
+	{Topic: TopicRoomGetAsUser, RequestType: "GetRoomAsUserRequest", ResponseType: "GetRoomAsUserResponse"},
 	{Topic: TopicRoomUpdate, RequestType: "UpdateRoomRequest", ResponseType: "BaseResponse"},
 	{Topic: TopicRoomDelete, RequestType: "DeleteRoomRequest", ResponseType: "BaseResponse"},
 	{Topic: TopicRoomList, RequestType: "ListRoomsRequest", ResponseType: "ListRoomsResponse"},

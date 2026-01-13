@@ -54,6 +54,54 @@ func (h *RoomHandler) resolveRoomAliasForBatch(ctx context.Context, alkemioRoomI
 }
 
 // ============================================================================
+// DTO Conversion Helpers (DRY principle - single source of truth)
+// ============================================================================
+
+// convertMessageToDTO converts a domain.Message to dto.MessageDto.
+func convertMessageToDTO(msg domain.Message) dto.MessageDto {
+	msgDTO := dto.MessageDto{
+		ID:            dto.MessageID(msg.ID),
+		Content:       msg.Content,
+		SenderActorID: dto.AlkemioActorID(msg.SenderID),
+		Timestamp:     msg.Timestamp,
+	}
+	// Set ThreadID if present
+	if msg.ThreadID != "" {
+		tid := dto.MessageID(msg.ThreadID)
+		msgDTO.ThreadID = &tid
+	}
+	// Convert reactions
+	for _, r := range msg.Reactions {
+		reactionDTO := dto.ReactionDto{
+			ID:            dto.ReactionID(r.ID.String()),
+			Emoji:         r.Emoji,
+			SenderActorID: dto.AlkemioActorID(r.SenderID),
+			Timestamp:     r.Timestamp,
+		}
+		msgDTO.Reactions = append(msgDTO.Reactions, reactionDTO)
+	}
+	return msgDTO
+}
+
+// convertMessagesToDTO converts a slice of domain.Message to []dto.MessageDto.
+func convertMessagesToDTO(messages []domain.Message) []dto.MessageDto {
+	result := make([]dto.MessageDto, 0, len(messages))
+	for _, msg := range messages {
+		result = append(result, convertMessageToDTO(msg))
+	}
+	return result
+}
+
+// convertMemberIDsToDTO converts a slice of uuid.UUID to []dto.AlkemioActorID.
+func convertMemberIDsToDTO(memberIDs []uuid.UUID) []dto.AlkemioActorID {
+	result := make([]dto.AlkemioActorID, 0, len(memberIDs))
+	for _, memberID := range memberIDs {
+		result = append(result, dto.AlkemioActorID(memberID))
+	}
+	return result
+}
+
+// ============================================================================
 // Room Handlers (communication.room.*)
 // ============================================================================
 
@@ -108,45 +156,64 @@ func (h *RoomHandler) HandleGetRoom(ctx context.Context, payload []byte) (interf
 		return MapServiceError(err), nil
 	}
 
-	// Convert domain messages to DTOs
-	messages := make([]dto.MessageDto, 0, len(room.Messages))
-	for _, msg := range room.Messages {
-		msgDTO := dto.MessageDto{
-			ID:            dto.MessageID(msg.ID),
-			Content:       msg.Content,
-			SenderActorID: dto.AlkemioActorID(msg.SenderID),
-			Timestamp:     msg.Timestamp,
-		}
-		// Set ThreadID if present
-		if msg.ThreadID != "" {
-			tid := dto.MessageID(msg.ThreadID)
-			msgDTO.ThreadID = &tid
-		}
-		// Convert reactions
-		for _, r := range msg.Reactions {
-			reactionDTO := dto.ReactionDto{
-				ID:            dto.ReactionID(r.ID.String()),
-				Emoji:         r.Emoji,
-				SenderActorID: dto.AlkemioActorID(r.SenderID),
-				Timestamp:     r.Timestamp,
-			}
-			msgDTO.Reactions = append(msgDTO.Reactions, reactionDTO)
-		}
-		messages = append(messages, msgDTO)
-	}
-
-	// Convert member UUIDs to AlkemioActorID
-	memberActorIDs := make([]dto.AlkemioActorID, 0, len(room.MemberIDs))
-	for _, memberID := range room.MemberIDs {
-		memberActorIDs = append(memberActorIDs, dto.AlkemioActorID(memberID))
-	}
-
 	return dto.GetRoomResponse{
 		BaseResponse:   dto.NewSuccessResponse(),
 		AlkemioRoomID:  dto.AlkemioRoomID(room.AlkemioID),
 		DisplayName:    room.Name,
-		MemberActorIDs: memberActorIDs,
-		Messages:       messages,
+		MemberActorIDs: convertMemberIDsToDTO(room.MemberIDs),
+		Messages:       convertMessagesToDTO(room.Messages),
+	}, nil
+}
+
+// HandleGetRoomAsUser handles communication.room.get.as_user topic.
+// Returns room details from a specific user's perspective with read state information.
+func (h *RoomHandler) HandleGetRoomAsUser(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.GetRoomAsUserRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if errResp := RequireUUID(req.ActorID, "actor_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	roomWithState, err := h.service.GetRoomAsUser(ctx, req.AlkemioRoomID.UUID(), req.ActorID.UUID())
+	if err != nil {
+		return MapServiceError(err), nil
+	}
+
+	room := roomWithState.Room
+
+	// Convert messages to DTOs with read state using shared helper
+	totalMessages := len(room.Messages)
+	unreadStartIdx := totalMessages - roomWithState.UnreadCount
+	messages := make([]dto.MessageWithReadStateDto, 0, totalMessages)
+
+	for i, msg := range room.Messages {
+		messages = append(messages, dto.MessageWithReadStateDto{
+			MessageDto: convertMessageToDTO(msg),
+			IsRead:     i < unreadStartIdx, // Messages before unreadStartIdx are read
+		})
+	}
+
+	// Build response
+	var lastReadEventID *dto.MessageID
+	if roomWithState.LastReadEventID != "" {
+		eventID := dto.MessageID(roomWithState.LastReadEventID)
+		lastReadEventID = &eventID
+	}
+
+	return dto.GetRoomAsUserResponse{
+		BaseResponse:    dto.NewSuccessResponse(),
+		AlkemioRoomID:   dto.AlkemioRoomID(room.AlkemioID),
+		DisplayName:     room.Name,
+		MemberActorIDs:  convertMemberIDsToDTO(room.MemberIDs),
+		Messages:        messages,
+		LastReadEventID: lastReadEventID,
+		UnreadCount:     roomWithState.UnreadCount,
 	}, nil
 }
 
@@ -303,21 +370,9 @@ func (h *RoomHandler) HandleGetMessage(ctx context.Context, payload []byte) (int
 		return NewMessageNotFoundError(string(req.MessageID)), nil
 	}
 
-	msgDTO := dto.MessageDto{
-		ID:            dto.MessageID(msg.ID),
-		Content:       msg.Content,
-		SenderActorID: dto.AlkemioActorID(msg.SenderID),
-		Timestamp:     msg.Timestamp,
-	}
-	// Set ThreadID if present
-	if msg.ThreadID != "" {
-		tid := dto.MessageID(msg.ThreadID)
-		msgDTO.ThreadID = &tid
-	}
-
 	return dto.GetMessageResponse{
 		BaseResponse: dto.NewSuccessResponse(),
-		Message:      msgDTO,
+		Message:      convertMessageToDTO(*msg),
 	}, nil
 }
 

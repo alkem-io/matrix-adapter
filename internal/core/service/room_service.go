@@ -170,6 +170,62 @@ func (s *RoomService) GetRoomWithMessages(
 	return room, nil
 }
 
+// GetRoomAsUser retrieves room details from a specific user's perspective,
+// including read state information for messages.
+func (s *RoomService) GetRoomAsUser(
+	ctx context.Context,
+	alkemioRoomID uuid.UUID,
+	actorID uuid.UUID,
+) (*domain.RoomWithReadState, error) {
+	s.logger.Info("Getting room as user", "alkemio_room_id", alkemioRoomID, "actor_id", actorID)
+
+	// Get base room data with messages
+	room, err := s.GetRoomWithMessages(ctx, alkemioRoomID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create actor for Matrix operations
+	actor := domain.NewActor(actorID)
+
+	// Get unread counts for this user
+	unreadSummary, err := s.matrix.GetUnreadCounts(ctx, actor, room.ID, nil)
+	if err != nil {
+		s.logger.Warn("Failed to get unread counts, assuming all read",
+			"room_id", room.ID, "actor_id", actorID, "error", err)
+		// Default to all messages read if we can't get unread counts
+		return &domain.RoomWithReadState{
+			Room:        room,
+			UnreadCount: 0,
+		}, nil
+	}
+
+	// Determine which messages are read/unread based on unread count
+	// Messages are sorted oldest first from GetRoomMessages
+	// The last `unreadCount` messages are unread
+	unreadCount := unreadSummary.RoomUnreadCount
+	totalMessages := len(room.Messages)
+
+	// Find the last read event ID (the message just before unread messages start)
+	var lastReadEventID string
+	var lastReadTS int64
+	if totalMessages > 0 && unreadCount < totalMessages {
+		// The last read message is at index (totalMessages - unreadCount - 1)
+		lastReadIdx := totalMessages - unreadCount - 1
+		if lastReadIdx >= 0 {
+			lastReadEventID = room.Messages[lastReadIdx].ID
+			lastReadTS = room.Messages[lastReadIdx].Timestamp.UnixMilli()
+		}
+	}
+
+	return &domain.RoomWithReadState{
+		Room:            room,
+		LastReadEventID: lastReadEventID,
+		LastReadTS:      lastReadTS,
+		UnreadCount:     unreadCount,
+	}, nil
+}
+
 // UpdateRoomMetadata updates room name, topic, and visibility.
 // Note: isPublic is accepted but not yet implemented (reserved for future use).
 func (s *RoomService) UpdateRoomMetadata(
