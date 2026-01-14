@@ -764,6 +764,7 @@ func (h *RoomHandler) HandleGetLastMessage(ctx context.Context, payload []byte) 
 }
 
 // HandleBatchGetLastMessages handles communication.room.batch.last_messages.get topic.
+// Uses parallel goroutines for efficient fetching from multiple rooms.
 func (h *RoomHandler) HandleBatchGetLastMessages(ctx context.Context, payload []byte) (interface{}, error) {
 	var req dto.BatchGetLastMessagesRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
@@ -774,7 +775,9 @@ func (h *RoomHandler) HandleBatchGetLastMessages(ctx context.Context, payload []
 		return NewInvalidParamError("alkemio_room_ids is required"), nil
 	}
 
-	messages := make(map[string]*dto.MessageDto)
+	// First, resolve all room aliases to Matrix room IDs
+	matrixRoomIDs := make([]id.RoomID, 0, len(req.AlkemioRoomIDs))
+	alkemioToMatrix := make(map[id.RoomID]dto.AlkemioRoomID) // Reverse mapping
 	errors := make(map[string]dto.BaseResponse)
 
 	for _, alkemioRoomID := range req.AlkemioRoomIDs {
@@ -783,13 +786,17 @@ func (h *RoomHandler) HandleBatchGetLastMessages(ctx context.Context, payload []
 			errors[alkemioRoomID.String()] = MapToBatchResult(err)
 			continue
 		}
+		matrixRoomIDs = append(matrixRoomIDs, roomID)
+		alkemioToMatrix[roomID] = alkemioRoomID
+	}
 
-		msg, err := h.matrix.GetLastMessage(ctx, roomID)
-		if err != nil {
-			errors[alkemioRoomID.String()] = MapToBatchResult(err)
-			continue
-		}
+	// Use efficient batch method - parallel goroutines for all rooms
+	batchResults, batchErrors := h.matrix.GetBatchLastMessages(ctx, matrixRoomIDs)
 
+	// Convert results back to Alkemio room IDs
+	messages := make(map[string]*dto.MessageDto)
+	for matrixRoomID, msg := range batchResults {
+		alkemioRoomID := alkemioToMatrix[matrixRoomID]
 		var msgDTO *dto.MessageDto
 		if msg != nil {
 			// Resolve sender Matrix ID to Alkemio actor ID if needed
@@ -800,6 +807,10 @@ func (h *RoomHandler) HandleBatchGetLastMessages(ctx context.Context, payload []
 			msgDTO = &converted
 		}
 		messages[alkemioRoomID.String()] = msgDTO
+	}
+	for matrixRoomID, err := range batchErrors {
+		alkemioRoomID := alkemioToMatrix[matrixRoomID]
+		errors[alkemioRoomID.String()] = MapToBatchResult(err)
 	}
 
 	resp := dto.BatchGetLastMessagesResponse{

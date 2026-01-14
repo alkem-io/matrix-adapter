@@ -61,6 +61,9 @@ type MatrixPort interface {
 	// GetLastMessage retrieves the most recent message in a room.
 	// Returns nil if the room has no messages.
 	GetLastMessage(ctx context.Context, roomID id.RoomID) (*domain.Message, error)
+	// GetBatchLastMessages retrieves the most recent message for multiple rooms in parallel.
+	// Returns a map of roomID to message (nil if no messages), and a map of roomIDs that had errors.
+	GetBatchLastMessages(ctx context.Context, roomIDs []id.RoomID) (map[id.RoomID]*domain.Message, map[id.RoomID]error)
 	// GetReactionEventID finds the event ID of a specific reaction by a user.
 	GetReactionEventID(
 		ctx context.Context, roomID id.RoomID, eventID id.EventID, emoji string, senderID domain.Actor,
@@ -124,4 +127,8 @@ type MatrixPort interface {
 	// GetUnreadCounts retrieves unread message counts for a room and optionally specific threads.
 	// Returns room-level unread count and per-thread unread counts for any specified threadRootIDs.
 	GetUnreadCounts(ctx context.Context, actorID domain.Actor, roomID id.RoomID, threadRootIDs []id.EventID) (*domain.UnreadCountSummary, error)
+
+	// GetBatchUnreadCounts retrieves unread counts for multiple rooms in a single sync call.
+	// Returns a map of roomID to unread count, and a map of roomIDs that had errors.
+	GetBatchUnreadCounts(ctx context.Context, actorID domain.Actor, roomIDs []id.RoomID) (map[id.RoomID]int, map[id.RoomID]error)
 }
