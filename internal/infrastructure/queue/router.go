@@ -57,6 +57,11 @@ func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, s
 		// Read Receipt Routes (communication.message.read, communication.room.unread_counts.get)
 		TopicMessageRead:     readReceipt.HandleMarkMessageRead,
 		TopicUnreadCountsGet: readReceipt.HandleGetUnreadCounts,
+
+		// Batch Query Routes (communication.room.batch.*, communication.room.last_message.*)
+		TopicBatchUnreadCountsGet: readReceipt.HandleBatchGetUnreadCounts,
+		TopicLastMessageGet:       room.HandleGetLastMessage,
+		TopicBatchLastMessagesGet: room.HandleBatchGetLastMessages,
 	}
 
 	for topic, handler := range routes {

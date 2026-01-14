@@ -79,6 +79,7 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		AppToken:        cfg.Matrix.AppServiceToken,
 		ServerToken:     cfg.Matrix.HomeserverToken,
 		SenderLocalpart: botLocalpart,
+		EphemeralEvents: true, // Enable receiving ephemeral events (m.receipt for read receipts)
 		Namespaces: appservice.Namespaces{
 			UserIDs: []appservice.Namespace{
 				{
@@ -740,6 +741,132 @@ func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) 
 	}
 
 	return messages, nil
+}
+
+// lastMessageStats tracks how many events were needed to find the last message.
+// Used for observability and future optimization of batch sizes.
+type lastMessageStats struct {
+	sync.Mutex
+	// Histogram buckets: events needed to find message (0-5, 6-10, 11-20, 21-50, 51-200, not found)
+	bucket5     int64
+	bucket10    int64
+	bucket20    int64
+	bucket50    int64
+	bucket200   int64
+	notFound    int64
+	totalCalls  int64
+	logInterval int64
+}
+
+var lastMsgStats = &lastMessageStats{logInterval: 100}
+
+func (s *lastMessageStats) record(eventsNeeded int, found bool, logger ports.Logger) {
+	s.Lock()
+	defer s.Unlock()
+
+	s.totalCalls++
+
+	switch {
+	case !found:
+		s.notFound++
+	case eventsNeeded <= 5:
+		s.bucket5++
+	case eventsNeeded <= 10:
+		s.bucket10++
+	case eventsNeeded <= 20:
+		s.bucket20++
+	case eventsNeeded <= 50:
+		s.bucket50++
+	default:
+		s.bucket200++
+	}
+
+	// Log stats periodically
+	if s.totalCalls%s.logInterval == 0 {
+		logger.Info("GetLastMessage stats",
+			"total_calls", s.totalCalls,
+			"bucket_0-5", s.bucket5,
+			"bucket_6-10", s.bucket10,
+			"bucket_11-20", s.bucket20,
+			"bucket_21-50", s.bucket50,
+			"bucket_51-200", s.bucket200,
+			"not_found", s.notFound,
+		)
+	}
+}
+
+// GetLastMessage retrieves the most recent message in a room.
+// Returns nil if the room has no messages.
+func (m *MautrixAdapter) GetLastMessage(ctx context.Context, roomID id.RoomID) (*domain.Message, error) {
+	intent := m.as.BotIntent()
+
+	// Progressive fetch: start small, expand if needed
+	// In most cases, the last message is within the first few events
+	batchSizes := []int{5, 10, 20, 50, 200}
+	var allEvents []*event.Event
+	var from string
+
+	for _, batchSize := range batchSizes {
+		resp, err := intent.Messages(ctx, roomID, from, "", mautrix.DirectionBackward, nil, batchSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get last message: %w", err)
+		}
+
+		allEvents = append(allEvents, resp.Chunk...)
+
+		// Check if we found a message in this batch
+		for i, evt := range resp.Chunk {
+			if evt.Type == event.EventMessage {
+				// Record stats: total events scanned = previous batches + position in current batch
+				eventsScanned := len(allEvents) - len(resp.Chunk) + i + 1
+				lastMsgStats.record(eventsScanned, true, m.logger)
+				// Found a message - collect reactions from all fetched events and return
+				return m.buildLastMessageWithReactions(allEvents, roomID)
+			}
+		}
+
+		// No message found yet - continue with next batch if there are more events
+		if resp.End == "" || len(resp.Chunk) < batchSize {
+			break // No more events to fetch
+		}
+		from = resp.End
+	}
+
+	lastMsgStats.record(len(allEvents), false, m.logger)
+	return nil, nil // No messages in room
+}
+
+// buildLastMessageWithReactions finds the last message and attaches its reactions.
+func (m *MautrixAdapter) buildLastMessageWithReactions(events []*event.Event, roomID id.RoomID) (*domain.Message, error) {
+	// Find the first m.room.message event
+	var msg *domain.Message
+	for _, evt := range events {
+		if evt.Type == event.EventMessage {
+			msg = m.parseMessageEvent(evt, roomID)
+			if msg != nil {
+				msg.Reactions = []domain.Reaction{}
+				break
+			}
+		}
+	}
+
+	if msg == nil {
+		return nil, nil
+	}
+
+	// Collect reactions for this message
+	for _, evt := range events {
+		if evt.Type != event.EventReaction {
+			continue
+		}
+
+		reaction := m.parseReactionEvent(evt, roomID)
+		if reaction != nil && reaction.MessageID.String() == msg.ID {
+			msg.Reactions = append(msg.Reactions, *reaction)
+		}
+	}
+
+	return msg, nil
 }
 
 // parseReactionEvent extracts a domain.Reaction from a Matrix reaction event.

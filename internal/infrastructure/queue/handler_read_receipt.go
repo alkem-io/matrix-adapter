@@ -133,6 +133,50 @@ func (h *ReadReceiptHandler) HandleGetUnreadCounts(ctx context.Context, payload 
 	}, nil
 }
 
+// HandleBatchGetUnreadCounts handles the communication.room.batch.unread_counts.get topic.
+func (h *ReadReceiptHandler) HandleBatchGetUnreadCounts(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.BatchGetUnreadCountsRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	// Validate required fields
+	if errResp := RequireUUID(req.ActorID, "actor_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if len(req.AlkemioRoomIDs) == 0 {
+		return NewInvalidParamError("alkemio_room_ids is required"), nil
+	}
+
+	unreadCounts := make(map[string]int)
+	errors := make(map[string]dto.BaseResponse)
+
+	for _, alkemioRoomID := range req.AlkemioRoomIDs {
+		roomID, errResp := h.resolveRoomAlias(ctx, alkemioRoomID)
+		if errResp != nil {
+			errors[alkemioRoomID.String()] = *errResp
+			continue
+		}
+
+		summary, err := h.service.GetUnreadCounts(ctx, req.ActorID.UUID(), roomID, nil)
+		if err != nil {
+			errors[alkemioRoomID.String()] = MapServiceError(err)
+			continue
+		}
+
+		unreadCounts[alkemioRoomID.String()] = summary.RoomUnreadCount
+	}
+
+	resp := dto.BatchGetUnreadCountsResponse{
+		BaseResponse: dto.NewSuccessResponse(),
+		UnreadCounts: unreadCounts,
+	}
+	if len(errors) > 0 {
+		resp.Errors = errors
+	}
+	return resp, nil
+}
+
 // resolveRoomAlias resolves an Alkemio room ID to a Matrix room ID.
 func (h *ReadReceiptHandler) resolveRoomAlias(ctx context.Context, alkemioRoomID dto.AlkemioRoomID) (id.RoomID, *dto.BaseResponse) {
 	alias := h.idMapper.RoomAlias(alkemioRoomID.UUID())

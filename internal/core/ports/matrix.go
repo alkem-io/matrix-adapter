@@ -58,6 +58,9 @@ type MatrixPort interface {
 	GetMessage(ctx context.Context, roomID id.RoomID, eventID id.EventID) (*domain.Message, error)
 	// GetRoomMessages retrieves all messages from a room.
 	GetRoomMessages(ctx context.Context, roomID id.RoomID) ([]domain.Message, error)
+	// GetLastMessage retrieves the most recent message in a room.
+	// Returns nil if the room has no messages.
+	GetLastMessage(ctx context.Context, roomID id.RoomID) (*domain.Message, error)
 	// GetReactionEventID finds the event ID of a specific reaction by a user.
 	GetReactionEventID(
 		ctx context.Context, roomID id.RoomID, eventID id.EventID, emoji string, senderID domain.Actor,

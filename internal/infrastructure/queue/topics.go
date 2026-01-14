@@ -77,6 +77,14 @@ const (
 	// TopicUnreadCountsGet is the topic for getting unread counts.
 	TopicUnreadCountsGet = dto.TopicUnreadCountsGet
 
+	// Batch Query Command Topics
+	// TopicBatchUnreadCountsGet is the topic for getting unread counts for multiple rooms.
+	TopicBatchUnreadCountsGet = dto.TopicBatchUnreadCountsGet
+	// TopicLastMessageGet is the topic for getting the last message in a room.
+	TopicLastMessageGet = dto.TopicLastMessageGet
+	// TopicBatchLastMessagesGet is the topic for getting last messages for multiple rooms.
+	TopicBatchLastMessagesGet = dto.TopicBatchLastMessagesGet
+
 	// Read Receipt & Message Event Topics (008-read-receipts outgoing)
 	// TopicReadReceiptUpdated is the topic for read receipt update events.
 	TopicReadReceiptUpdated = dto.TopicReadReceiptUpdated
