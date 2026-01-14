@@ -85,6 +85,16 @@ const (
 	TopicUnreadCountsGet = "communication.room.unread_counts.get"
 )
 
+// Batch Query Command Topics (Server → Adapter)
+const (
+	// TopicBatchUnreadCountsGet is the topic for getting unread counts for multiple rooms.
+	TopicBatchUnreadCountsGet = "communication.room.batch.unread_counts.get"
+	// TopicLastMessageGet is the topic for getting the last message in a room.
+	TopicLastMessageGet = "communication.room.last_message.get"
+	// TopicBatchLastMessagesGet is the topic for getting last messages for multiple rooms.
+	TopicBatchLastMessagesGet = "communication.room.batch.last_messages.get"
+)
+
 // Read Receipt & Message Event Topics (Adapter → Server)
 const (
 	// TopicReadReceiptUpdated is the topic for read receipt update events.
@@ -164,6 +174,11 @@ var CommandRegistry = []CommandDef{
 	// Read Receipt commands
 	{Topic: TopicMessageRead, RequestType: "MarkMessageReadRequest", ResponseType: "BaseResponse"},
 	{Topic: TopicUnreadCountsGet, RequestType: "GetUnreadCountsRequest", ResponseType: "GetUnreadCountsResponse"},
+
+	// Batch query commands
+	{Topic: TopicBatchUnreadCountsGet, RequestType: "BatchGetUnreadCountsRequest", ResponseType: "BatchGetUnreadCountsResponse"},
+	{Topic: TopicLastMessageGet, RequestType: "GetLastMessageRequest", ResponseType: "GetLastMessageResponse"},
+	{Topic: TopicBatchLastMessagesGet, RequestType: "BatchGetLastMessagesRequest", ResponseType: "BatchGetLastMessagesResponse"},
 }
 
 // OutgoingEventRegistry defines events emitted by the adapter (not commands).

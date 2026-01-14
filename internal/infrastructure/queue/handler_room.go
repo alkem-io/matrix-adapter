@@ -53,6 +53,19 @@ func (h *RoomHandler) resolveRoomAliasForBatch(ctx context.Context, alkemioRoomI
 	return roomID, nil
 }
 
+// resolveSenderID resolves a Matrix user ID to an Alkemio actor UUID.
+// Returns uuid.Nil if the matrix ID is empty or resolution fails.
+func (h *RoomHandler) resolveSenderID(ctx context.Context, matrixID string) uuid.UUID {
+	if matrixID == "" {
+		return uuid.Nil
+	}
+	actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, matrixID)
+	if err != nil {
+		return uuid.Nil
+	}
+	return actorID
+}
+
 // ============================================================================
 // DTO Conversion Helpers (DRY principle - single source of truth)
 // ============================================================================
@@ -529,10 +542,8 @@ func (h *RoomHandler) HandleGetReaction(ctx context.Context, payload []byte) (in
 	}
 
 	// Resolve SenderMatrixID to SenderID (Alkemio actor UUID) if needed
-	if reaction.SenderMatrixID != "" && reaction.SenderID == uuid.Nil {
-		if actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, reaction.SenderMatrixID); err == nil {
-			reaction.SenderID = actorID
-		}
+	if reaction.SenderID == uuid.Nil {
+		reaction.SenderID = h.resolveSenderID(ctx, reaction.SenderMatrixID)
 	}
 
 	return dto.GetReactionResponse{
@@ -697,10 +708,8 @@ func (h *RoomHandler) HandleGetThreadMessages(ctx context.Context, payload []byt
 	messageDTOs := make([]dto.MessageDto, 0, len(messages))
 	for i := range messages {
 		// Resolve sender Matrix ID to Alkemio actor ID if needed
-		if messages[i].SenderMatrixID != "" && messages[i].SenderID == uuid.Nil {
-			if actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, messages[i].SenderMatrixID); err == nil {
-				messages[i].SenderID = actorID
-			}
+		if messages[i].SenderID == uuid.Nil {
+			messages[i].SenderID = h.resolveSenderID(ctx, messages[i].SenderMatrixID)
 		}
 		messageDTOs = append(messageDTOs, convertMessageToDTO(messages[i]))
 	}
@@ -711,4 +720,94 @@ func (h *RoomHandler) HandleGetThreadMessages(ctx context.Context, payload []byt
 		ThreadID:      req.ThreadID,
 		Messages:      messageDTOs,
 	}, nil
+}
+
+// ============================================================================
+// Last Message Handlers (communication.room.last_message.*, communication.room.batch.last_messages.*)
+// ============================================================================
+
+// HandleGetLastMessage handles communication.room.last_message.get topic.
+func (h *RoomHandler) HandleGetLastMessage(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.GetLastMessageRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	msg, err := h.matrix.GetLastMessage(ctx, roomID)
+	if err != nil {
+		return MapServiceError(err), nil
+	}
+
+	var msgDTO *dto.MessageDto
+	if msg != nil {
+		// Resolve sender Matrix ID to Alkemio actor ID if needed
+		if msg.SenderID == uuid.Nil {
+			msg.SenderID = h.resolveSenderID(ctx, msg.SenderMatrixID)
+		}
+		converted := convertMessageToDTO(*msg)
+		msgDTO = &converted
+	}
+
+	return dto.GetLastMessageResponse{
+		BaseResponse: dto.NewSuccessResponse(),
+		Message:      msgDTO,
+	}, nil
+}
+
+// HandleBatchGetLastMessages handles communication.room.batch.last_messages.get topic.
+func (h *RoomHandler) HandleBatchGetLastMessages(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.BatchGetLastMessagesRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if len(req.AlkemioRoomIDs) == 0 {
+		return NewInvalidParamError("alkemio_room_ids is required"), nil
+	}
+
+	messages := make(map[string]*dto.MessageDto)
+	errors := make(map[string]dto.BaseResponse)
+
+	for _, alkemioRoomID := range req.AlkemioRoomIDs {
+		roomID, err := h.resolveRoomAliasForBatch(ctx, alkemioRoomID)
+		if err != nil {
+			errors[alkemioRoomID.String()] = MapToBatchResult(err)
+			continue
+		}
+
+		msg, err := h.matrix.GetLastMessage(ctx, roomID)
+		if err != nil {
+			errors[alkemioRoomID.String()] = MapToBatchResult(err)
+			continue
+		}
+
+		var msgDTO *dto.MessageDto
+		if msg != nil {
+			// Resolve sender Matrix ID to Alkemio actor ID if needed
+			if msg.SenderID == uuid.Nil {
+				msg.SenderID = h.resolveSenderID(ctx, msg.SenderMatrixID)
+			}
+			converted := convertMessageToDTO(*msg)
+			msgDTO = &converted
+		}
+		messages[alkemioRoomID.String()] = msgDTO
+	}
+
+	resp := dto.BatchGetLastMessagesResponse{
+		BaseResponse: dto.NewSuccessResponse(),
+		Messages:     messages,
+	}
+	if len(errors) > 0 {
+		resp.Errors = errors
+	}
+	return resp, nil
 }

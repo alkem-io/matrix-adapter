@@ -4,6 +4,8 @@ as_token: secret_as_token
 hs_token: secret_hs_token
 # Bot localpart must match MATRIX_BOT_ACTOR_ID (UUID format)
 sender_localpart: "00000000-0000-0000-0000-000000000000"
+# Enable receiving ephemeral events (m.receipt for read receipts)
+receive_ephemeral: true
 namespaces:
   users:
     # Bot user - exclusive, only AS can control (security: prevents impersonation)
