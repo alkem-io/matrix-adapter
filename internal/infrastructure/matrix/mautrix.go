@@ -869,8 +869,11 @@ func (m *MautrixAdapter) buildLastMessageWithReactions(events []*event.Event, ro
 	return msg, nil
 }
 
+// maxConcurrentLastMessageFetches limits parallel requests to avoid overwhelming the homeserver.
+const maxConcurrentLastMessageFetches = 10
+
 // GetBatchLastMessages retrieves the most recent message for multiple rooms in parallel.
-// This is more efficient than sequential calls as HTTP requests run concurrently.
+// Limits concurrency to avoid overwhelming the homeserver with too many simultaneous requests.
 func (m *MautrixAdapter) GetBatchLastMessages(
 	ctx context.Context, roomIDs []id.RoomID,
 ) (map[id.RoomID]*domain.Message, map[id.RoomID]error) {
@@ -889,12 +892,17 @@ func (m *MautrixAdapter) GetBatchLastMessages(
 	}
 	resultCh := make(chan result, len(roomIDs))
 
-	// Launch parallel goroutines for each room
+	// Semaphore to limit concurrent requests
+	sem := make(chan struct{}, maxConcurrentLastMessageFetches)
+
+	// Launch parallel goroutines for each room (bounded by semaphore)
 	var wg sync.WaitGroup
 	for _, roomID := range roomIDs {
 		wg.Add(1)
 		go func(rid id.RoomID) {
 			defer wg.Done()
+			sem <- struct{}{}        // Acquire semaphore
+			defer func() { <-sem }() // Release semaphore
 			msg, err := m.GetLastMessage(ctx, rid)
 			resultCh <- result{roomID: rid, msg: msg, err: err}
 		}(roomID)
