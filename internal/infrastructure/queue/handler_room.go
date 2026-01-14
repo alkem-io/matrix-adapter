@@ -53,6 +53,19 @@ func (h *RoomHandler) resolveRoomAliasForBatch(ctx context.Context, alkemioRoomI
 	return roomID, nil
 }
 
+// resolveSenderID resolves a Matrix user ID to an Alkemio actor UUID.
+// Returns uuid.Nil if the matrix ID is empty or resolution fails.
+func (h *RoomHandler) resolveSenderID(ctx context.Context, matrixID string) uuid.UUID {
+	if matrixID == "" {
+		return uuid.Nil
+	}
+	actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, matrixID)
+	if err != nil {
+		return uuid.Nil
+	}
+	return actorID
+}
+
 // ============================================================================
 // DTO Conversion Helpers (DRY principle - single source of truth)
 // ============================================================================
@@ -529,10 +542,8 @@ func (h *RoomHandler) HandleGetReaction(ctx context.Context, payload []byte) (in
 	}
 
 	// Resolve SenderMatrixID to SenderID (Alkemio actor UUID) if needed
-	if reaction.SenderMatrixID != "" && reaction.SenderID == uuid.Nil {
-		if actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, reaction.SenderMatrixID); err == nil {
-			reaction.SenderID = actorID
-		}
+	if reaction.SenderID == uuid.Nil {
+		reaction.SenderID = h.resolveSenderID(ctx, reaction.SenderMatrixID)
 	}
 
 	return dto.GetReactionResponse{
@@ -697,10 +708,8 @@ func (h *RoomHandler) HandleGetThreadMessages(ctx context.Context, payload []byt
 	messageDTOs := make([]dto.MessageDto, 0, len(messages))
 	for i := range messages {
 		// Resolve sender Matrix ID to Alkemio actor ID if needed
-		if messages[i].SenderMatrixID != "" && messages[i].SenderID == uuid.Nil {
-			if actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, messages[i].SenderMatrixID); err == nil {
-				messages[i].SenderID = actorID
-			}
+		if messages[i].SenderID == uuid.Nil {
+			messages[i].SenderID = h.resolveSenderID(ctx, messages[i].SenderMatrixID)
 		}
 		messageDTOs = append(messageDTOs, convertMessageToDTO(messages[i]))
 	}
@@ -740,11 +749,9 @@ func (h *RoomHandler) HandleGetLastMessage(ctx context.Context, payload []byte) 
 
 	var msgDTO *dto.MessageDto
 	if msg != nil {
-		// Resolve sender Matrix ID to Alkemio actor ID
-		if msg.SenderMatrixID != "" && msg.SenderID == uuid.Nil {
-			if actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, msg.SenderMatrixID); err == nil {
-				msg.SenderID = actorID
-			}
+		// Resolve sender Matrix ID to Alkemio actor ID if needed
+		if msg.SenderID == uuid.Nil {
+			msg.SenderID = h.resolveSenderID(ctx, msg.SenderMatrixID)
 		}
 		converted := convertMessageToDTO(*msg)
 		msgDTO = &converted
@@ -785,11 +792,9 @@ func (h *RoomHandler) HandleBatchGetLastMessages(ctx context.Context, payload []
 
 		var msgDTO *dto.MessageDto
 		if msg != nil {
-			// Resolve sender Matrix ID to Alkemio actor ID
-			if msg.SenderMatrixID != "" && msg.SenderID == uuid.Nil {
-				if actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, msg.SenderMatrixID); err == nil {
-					msg.SenderID = actorID
-				}
+			// Resolve sender Matrix ID to Alkemio actor ID if needed
+			if msg.SenderID == uuid.Nil {
+				msg.SenderID = h.resolveSenderID(ctx, msg.SenderMatrixID)
 			}
 			converted := convertMessageToDTO(*msg)
 			msgDTO = &converted
