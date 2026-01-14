@@ -134,6 +134,7 @@ func (h *ReadReceiptHandler) HandleGetUnreadCounts(ctx context.Context, payload 
 }
 
 // HandleBatchGetUnreadCounts handles the communication.room.batch.unread_counts.get topic.
+// Uses a single Matrix sync call for all rooms for efficiency.
 func (h *ReadReceiptHandler) HandleBatchGetUnreadCounts(ctx context.Context, payload []byte) (interface{}, error) {
 	var req dto.BatchGetUnreadCountsRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
@@ -148,7 +149,9 @@ func (h *ReadReceiptHandler) HandleBatchGetUnreadCounts(ctx context.Context, pay
 		return NewInvalidParamError("alkemio_room_ids is required"), nil
 	}
 
-	unreadCounts := make(map[string]int)
+	// First, resolve all room aliases to Matrix room IDs
+	matrixRoomIDs := make([]id.RoomID, 0, len(req.AlkemioRoomIDs))
+	alkemioToMatrix := make(map[id.RoomID]dto.AlkemioRoomID) // Reverse mapping
 	errors := make(map[string]dto.BaseResponse)
 
 	for _, alkemioRoomID := range req.AlkemioRoomIDs {
@@ -157,14 +160,23 @@ func (h *ReadReceiptHandler) HandleBatchGetUnreadCounts(ctx context.Context, pay
 			errors[alkemioRoomID.String()] = *errResp
 			continue
 		}
+		matrixRoomIDs = append(matrixRoomIDs, roomID)
+		alkemioToMatrix[roomID] = alkemioRoomID
+	}
 
-		summary, err := h.service.GetUnreadCounts(ctx, req.ActorID.UUID(), roomID, nil)
-		if err != nil {
-			errors[alkemioRoomID.String()] = MapServiceError(err)
-			continue
-		}
+	// Use efficient batch method - single sync for all rooms
+	actor := domain.Actor{ID: req.ActorID.UUID()}
+	batchResults, batchErrors := h.matrix.GetBatchUnreadCounts(ctx, actor, matrixRoomIDs)
 
-		unreadCounts[alkemioRoomID.String()] = summary.RoomUnreadCount
+	// Convert results back to Alkemio room IDs
+	unreadCounts := make(map[string]int)
+	for matrixRoomID, count := range batchResults {
+		alkemioRoomID := alkemioToMatrix[matrixRoomID]
+		unreadCounts[alkemioRoomID.String()] = count
+	}
+	for matrixRoomID, err := range batchErrors {
+		alkemioRoomID := alkemioToMatrix[matrixRoomID]
+		errors[alkemioRoomID.String()] = MapToBatchResult(err)
 	}
 
 	resp := dto.BatchGetUnreadCountsResponse{

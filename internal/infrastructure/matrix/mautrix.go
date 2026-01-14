@@ -869,6 +869,76 @@ func (m *MautrixAdapter) buildLastMessageWithReactions(events []*event.Event, ro
 	return msg, nil
 }
 
+// maxConcurrentLastMessageFetches limits parallel requests to avoid overwhelming the homeserver.
+const maxConcurrentLastMessageFetches = 10
+
+// GetBatchLastMessages retrieves the most recent message for multiple rooms in parallel.
+// Limits concurrency to avoid overwhelming the homeserver with too many simultaneous requests.
+func (m *MautrixAdapter) GetBatchLastMessages(
+	ctx context.Context, roomIDs []id.RoomID,
+) (map[id.RoomID]*domain.Message, map[id.RoomID]error) {
+	results := make(map[id.RoomID]*domain.Message)
+	errors := make(map[id.RoomID]error)
+
+	if len(roomIDs) == 0 {
+		return results, errors
+	}
+
+	// Use channels to collect results from goroutines
+	type result struct {
+		roomID id.RoomID
+		msg    *domain.Message
+		err    error
+	}
+	resultCh := make(chan result, len(roomIDs))
+
+	// Semaphore to limit concurrent requests
+	sem := make(chan struct{}, maxConcurrentLastMessageFetches)
+
+	// Launch parallel goroutines for each room (bounded by semaphore)
+	var wg sync.WaitGroup
+	for _, roomID := range roomIDs {
+		wg.Add(1)
+		go func(rid id.RoomID) {
+			defer wg.Done()
+			// Acquire semaphore with context awareness
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				resultCh <- result{roomID: rid, err: ctx.Err()}
+				return
+			}
+			msg, err := m.GetLastMessage(ctx, rid)
+			resultCh <- result{roomID: rid, msg: msg, err: err}
+		}(roomID)
+	}
+
+	// Close channel when all goroutines complete
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	// Collect results
+	for r := range resultCh {
+		if r.err != nil {
+			errors[r.roomID] = r.err
+		} else {
+			results[r.roomID] = r.msg
+		}
+	}
+
+	m.logger.Debug(
+		"Retrieved batch last messages",
+		"rooms_requested", len(roomIDs),
+		"rooms_found", len(results),
+		"rooms_failed", len(errors),
+	)
+
+	return results, errors
+}
+
 // parseReactionEvent extracts a domain.Reaction from a Matrix reaction event.
 func (m *MautrixAdapter) parseReactionEvent(evt *event.Event, roomID id.RoomID) *domain.Reaction {
 	content, ok := parseEventContent[event.ReactionEventContent](evt)
@@ -1640,4 +1710,108 @@ func (m *MautrixAdapter) GetUnreadCounts(
 	)
 
 	return summary, nil
+}
+
+// GetBatchUnreadCounts retrieves unread counts for multiple rooms in a single sync call.
+// This is more efficient than calling GetUnreadCounts for each room individually.
+func (m *MautrixAdapter) GetBatchUnreadCounts(
+	ctx context.Context, actor domain.Actor, roomIDs []id.RoomID,
+) (map[id.RoomID]int, map[id.RoomID]error) {
+	results := make(map[id.RoomID]int)
+	errors := make(map[id.RoomID]error)
+
+	if len(roomIDs) == 0 {
+		return results, errors
+	}
+
+	// Get the user's intent to make API calls as that user
+	userID, err := m.idMapper.UserID(ctx, actor.ID)
+	if err != nil {
+		m.logger.Error("Failed to resolve actor ID for batch unread", "error", err, "actor_id", actor.ID)
+		// Return error for all rooms
+		for _, roomID := range roomIDs {
+			errors[roomID] = fmt.Errorf("failed to resolve actor ID: %w", err)
+		}
+		return results, errors
+	}
+	intent := m.as.Intent(userID)
+
+	// Ensure the user is registered before making sync requests
+	if err := intent.EnsureRegistered(ctx); err != nil {
+		m.logger.Error("Failed to ensure user registered for batch unread", "error", err, "user_id", userID)
+		for _, roomID := range roomIDs {
+			errors[roomID] = fmt.Errorf("failed to ensure user registered: %w", err)
+		}
+		return results, errors
+	}
+
+	// Create a filter that includes ALL requested rooms to minimize HTTP calls.
+	// We only need the unread notification counts, not timeline events.
+	filter := &mautrix.Filter{
+		Room: &mautrix.RoomFilter{
+			Rooms: roomIDs, // All rooms in single filter
+			Timeline: &mautrix.FilterPart{
+				Limit: 0, // Don't fetch timeline events
+			},
+			State: &mautrix.FilterPart{
+				Limit: 0, // Don't fetch state events
+			},
+			Ephemeral: &mautrix.FilterPart{
+				Limit: 0, // Don't fetch ephemeral events
+			},
+		},
+		Presence: &mautrix.FilterPart{
+			Limit: 0, // Don't fetch presence
+		},
+	}
+
+	// Create the filter on the server
+	filterResp, err := intent.CreateFilter(ctx, filter)
+	if err != nil {
+		m.logger.Error("Failed to create batch sync filter", "error", err, "actor_id", actor.ID, "room_count", len(roomIDs))
+		for _, roomID := range roomIDs {
+			errors[roomID] = fmt.Errorf("failed to create sync filter: %w", err)
+		}
+		return results, errors
+	}
+
+	// Perform an initial sync (timeout=0) to get current state without blocking.
+	syncResp, err := intent.SyncRequest(ctx, 0, "", filterResp.FilterID, false, "")
+	if err != nil {
+		m.logger.Error("Failed to sync for batch unread counts", "error", err, "actor_id", actor.ID)
+		for _, roomID := range roomIDs {
+			errors[roomID] = fmt.Errorf("failed to sync: %w", err)
+		}
+		return results, errors
+	}
+
+	// Extract unread counts from the sync response for each room
+	for _, roomID := range roomIDs {
+		if joinedRoom, ok := syncResp.Rooms.Join[roomID]; ok {
+			count := 0
+			// Get standard notification count
+			if joinedRoom.UnreadNotifications != nil {
+				count = joinedRoom.UnreadNotifications.NotificationCount
+			}
+			// MSC2654 provides actual unread message count (prefer if available)
+			if joinedRoom.MSC2654UnreadCount != nil {
+				count = *joinedRoom.MSC2654UnreadCount
+			}
+			results[roomID] = count
+		} else {
+			// Room not present in sync response - user may not be joined
+			m.logger.Warn("Room not in sync response for batch unread", "room_id", roomID, "actor_id", actor.ID)
+			errors[roomID] = fmt.Errorf("room not found in sync response")
+		}
+	}
+
+	m.logger.Debug(
+		"Retrieved batch unread counts",
+		"actor_id", actor.ID,
+		"rooms_requested", len(roomIDs),
+		"rooms_found", len(results),
+		"rooms_failed", len(errors),
+	)
+
+	return results, errors
 }
