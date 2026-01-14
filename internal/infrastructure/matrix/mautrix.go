@@ -901,8 +901,14 @@ func (m *MautrixAdapter) GetBatchLastMessages(
 		wg.Add(1)
 		go func(rid id.RoomID) {
 			defer wg.Done()
-			sem <- struct{}{}        // Acquire semaphore
-			defer func() { <-sem }() // Release semaphore
+			// Acquire semaphore with context awareness
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				resultCh <- result{roomID: rid, err: ctx.Err()}
+				return
+			}
 			msg, err := m.GetLastMessage(ctx, rid)
 			resultCh <- result{roomID: rid, msg: msg, err: err}
 		}(roomID)
