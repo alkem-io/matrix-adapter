@@ -1134,6 +1134,7 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 	}
 
 	// Auto-join initial members (they were only invited, need to accept)
+	successfulJoins := 0
 	for _, memberUserID := range invites {
 		memberIntent := m.as.Intent(memberUserID)
 		if err := memberIntent.EnsureJoined(ctx, resp.RoomID); err != nil {
@@ -1143,6 +1144,8 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 				"error", err,
 			)
 			// Continue with other members, don't fail the whole operation
+		} else {
+			successfulJoins++
 		}
 	}
 
@@ -1151,7 +1154,7 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		"room_id", resp.RoomID,
 		"alias", m.idMapper.RoomAlias(alkemioRoomID),
 		"alkemio_room_id", alkemioRoomID,
-		"members_joined", len(invites),
+		"members_joined", successfulJoins,
 	)
 
 	return resp.RoomID, nil
@@ -1359,6 +1362,7 @@ func (m *MautrixAdapter) CreateSpace(
 	}
 
 	// Auto-join initial members (they were only invited, need to accept)
+	successfulJoins := 0
 	for _, memberUserID := range invites {
 		memberIntent := m.as.Intent(memberUserID)
 		if err := memberIntent.EnsureJoined(ctx, resp.RoomID); err != nil {
@@ -1368,6 +1372,8 @@ func (m *MautrixAdapter) CreateSpace(
 				"error", err,
 			)
 			// Continue with other members, don't fail the whole operation
+		} else {
+			successfulJoins++
 		}
 	}
 
@@ -1376,7 +1382,7 @@ func (m *MautrixAdapter) CreateSpace(
 		"room_id", resp.RoomID,
 		"alias", m.idMapper.SpaceAlias(alkemioContextID),
 		"alkemio_context_id", alkemioContextID,
-		"members_joined", len(invites),
+		"members_joined", successfulJoins,
 	)
 
 	return resp.RoomID, nil
