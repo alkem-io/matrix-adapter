@@ -350,10 +350,8 @@ func (m *MautrixAdapter) GetRoomDetails(ctx context.Context, roomID id.RoomID) (
 		topic = topicContent.Topic
 	}
 
-	var aliasContent event.CanonicalAliasEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateCanonicalAlias, "", &aliasContent); err == nil {
-		alias = string(aliasContent.Alias)
-	}
+	// Get alias (uses room_aliases table - same source as ResolveAlias)
+	alias, _ = m.GetRoomAlias(ctx, roomID)
 
 	return &domain.Room{
 		ID:    roomID,
@@ -662,6 +660,7 @@ func (m *MautrixAdapter) SetUserProfile(ctx context.Context, actor domain.Actor)
 }
 
 // ResolveAlias resolves a room alias to a room ID.
+// Direction: Alias -> Room ID (uses room_aliases table)
 func (m *MautrixAdapter) ResolveAlias(ctx context.Context, alias string) (id.RoomID, error) {
 	intent := m.as.BotIntent()
 	resp, err := intent.ResolveAlias(ctx, id.RoomAlias(alias))
@@ -669,6 +668,21 @@ func (m *MautrixAdapter) ResolveAlias(ctx context.Context, alias string) (id.Roo
 		return "", fmt.Errorf("failed to resolve alias %s: %w", alias, err)
 	}
 	return resp.RoomID, nil
+}
+
+// GetRoomAlias gets the first alias for a room ID.
+// Direction: Room ID -> Alias (uses room_aliases table)
+// This is the reverse of ResolveAlias and uses the same underlying data source.
+func (m *MautrixAdapter) GetRoomAlias(ctx context.Context, roomID id.RoomID) (string, error) {
+	intent := m.as.BotIntent()
+	aliasResp, err := intent.GetAliases(ctx, roomID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get aliases for room %s: %w", roomID, err)
+	}
+	if len(aliasResp.Aliases) == 0 {
+		return "", nil
+	}
+	return string(aliasResp.Aliases[0]), nil
 }
 
 // DeleteAlias removes a room alias.
@@ -1404,10 +1418,8 @@ func (m *MautrixAdapter) GetSpaceDetails(ctx context.Context, roomID id.RoomID) 
 		topic = topicContent.Topic
 	}
 
-	var aliasContent event.CanonicalAliasEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateCanonicalAlias, "", &aliasContent); err == nil {
-		alias = string(aliasContent.Alias)
-	}
+	// Get alias (uses room_aliases table - same source as ResolveAlias)
+	alias, _ = m.GetRoomAlias(ctx, roomID)
 
 	var avatarContent event.RoomAvatarEventContent
 	if err := intent.StateEvent(ctx, roomID, event.StateRoomAvatar, "", &avatarContent); err == nil {
