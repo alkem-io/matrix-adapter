@@ -472,15 +472,20 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 }
 
 // resolveAlkemioRoomID gets the Alkemio room UUID from a Matrix room ID.
+// Uses GetRoomAliases() which queries room_aliases table - same source as ResolveAlias().
+// Prefers aliases matching the Alkemio UUID pattern, falls back to first alias if none match.
 func (m *MautrixAdapter) resolveAlkemioRoomID(ctx context.Context, roomID id.RoomID) uuid.UUID {
-	// Try to get room details to find the alias
-	details, err := m.GetRoomDetails(ctx, roomID)
-	if err != nil || details.Alias == "" {
+	aliases, err := m.GetRoomAliases(ctx, roomID)
+	if err != nil || len(aliases) == 0 {
 		return uuid.Nil
 	}
 
-	// Use IDMapper to extract UUID from alias
-	return m.idMapper.AlkemioRoomID(details.Alias)
+	alias := m.selectPreferredAlias(aliases)
+	if alias == "" {
+		return uuid.Nil
+	}
+
+	return m.idMapper.AlkemioRoomID(alias)
 }
 
 // resolveActorID converts a Matrix user ID to an Alkemio actor UUID.
