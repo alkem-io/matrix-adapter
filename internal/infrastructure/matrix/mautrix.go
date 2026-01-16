@@ -270,7 +270,8 @@ func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id
 	return userID, nil
 }
 
-// InviteUser invites a user to a room.
+// InviteUser invites a user to a room and auto-joins them.
+// Since all users are appservice ghosts, they are automatically joined after invitation.
 func (m *MautrixAdapter) InviteUser(
 	ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID domain.Actor,
 ) error {
@@ -283,8 +284,8 @@ func (m *MautrixAdapter) InviteUser(
 		return err
 	}
 
-	intent := m.as.Intent(inviterUserID)
-	_, err = intent.InviteUser(
+	inviterIntent := m.as.Intent(inviterUserID)
+	_, err = inviterIntent.InviteUser(
 		ctx, roomID, &mautrix.ReqInviteUser{
 			UserID: inviteeUserID,
 		},
@@ -292,6 +293,13 @@ func (m *MautrixAdapter) InviteUser(
 	if err != nil {
 		return fmt.Errorf("failed to invite user: %w", err)
 	}
+
+	// Auto-join the invitee since they are an appservice ghost user
+	inviteeIntent := m.as.Intent(inviteeUserID)
+	if err := inviteeIntent.EnsureJoined(ctx, roomID); err != nil {
+		return fmt.Errorf("failed to join room after invite: %w", err)
+	}
+
 	return nil
 }
 
@@ -1125,11 +1133,28 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		return "", fmt.Errorf("failed to create room with alias: %w", err)
 	}
 
+	// Auto-join initial members (they were only invited, need to accept)
+	successfulJoins := 0
+	for _, memberUserID := range invites {
+		memberIntent := m.as.Intent(memberUserID)
+		if err := memberIntent.EnsureJoined(ctx, resp.RoomID); err != nil {
+			m.logger.Warn("Failed to auto-join member to room",
+				"room_id", resp.RoomID,
+				"user_id", memberUserID,
+				"error", err,
+			)
+			// Continue with other members, don't fail the whole operation
+		} else {
+			successfulJoins++
+		}
+	}
+
 	m.logger.Info(
 		"Room created with alias",
 		"room_id", resp.RoomID,
 		"alias", m.idMapper.RoomAlias(alkemioRoomID),
 		"alkemio_room_id", alkemioRoomID,
+		"members_joined", successfulJoins,
 	)
 
 	return resp.RoomID, nil
@@ -1336,11 +1361,28 @@ func (m *MautrixAdapter) CreateSpace(
 		return "", fmt.Errorf("failed to create space: %w", err)
 	}
 
+	// Auto-join initial members (they were only invited, need to accept)
+	successfulJoins := 0
+	for _, memberUserID := range invites {
+		memberIntent := m.as.Intent(memberUserID)
+		if err := memberIntent.EnsureJoined(ctx, resp.RoomID); err != nil {
+			m.logger.Warn("Failed to auto-join member to space",
+				"room_id", resp.RoomID,
+				"user_id", memberUserID,
+				"error", err,
+			)
+			// Continue with other members, don't fail the whole operation
+		} else {
+			successfulJoins++
+		}
+	}
+
 	m.logger.Info(
 		"Space created",
 		"room_id", resp.RoomID,
 		"alias", m.idMapper.SpaceAlias(alkemioContextID),
 		"alkemio_context_id", alkemioContextID,
+		"members_joined", successfulJoins,
 	)
 
 	return resp.RoomID, nil
@@ -1518,14 +1560,20 @@ func (m *MautrixAdapter) InviteToSpace(ctx context.Context, spaceID id.RoomID, i
 		return fmt.Errorf("failed to ensure invitee user: %w", err)
 	}
 
-	intent := m.as.BotIntent()
-	_, err = intent.InviteUser(
+	botIntent := m.as.BotIntent()
+	_, err = botIntent.InviteUser(
 		ctx, spaceID, &mautrix.ReqInviteUser{
 			UserID: inviteeUserID,
 		},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to invite user to space: %w", err)
+	}
+
+	// Auto-join the invitee since they are an appservice ghost user
+	inviteeIntent := m.as.Intent(inviteeUserID)
+	if err := inviteeIntent.EnsureJoined(ctx, spaceID); err != nil {
+		return fmt.Errorf("failed to join space after invite: %w", err)
 	}
 
 	return nil
