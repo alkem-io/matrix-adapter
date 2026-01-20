@@ -28,3 +28,6 @@ go.work
 bin/
 
 synapse-modules/__pycache__/
+/cmd/fix-canonical-aliases/
+/fix-canonical-aliases
+.claude/settings.local.json

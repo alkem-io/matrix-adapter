@@ -300,7 +300,66 @@ func (m *MautrixAdapter) InviteUser(
 		return fmt.Errorf("failed to join room after invite: %w", err)
 	}
 
+	// Mark room as read to clear invite notification from unread count
+	// Get latest event once, then send receipt for this user
+	if latestEventID, err := m.getLatestEventID(ctx, roomID); err != nil {
+		m.logger.Warn("Failed to get latest event for read receipt",
+			"room_id", roomID,
+			"error", err,
+		)
+	} else {
+		m.markRoomAsReadForUsers(ctx, roomID, []id.UserID{inviteeUserID}, latestEventID)
+	}
+
 	return nil
+}
+
+// getLatestEventID retrieves the latest event ID in a room.
+// Used to mark rooms as read after joining.
+func (m *MautrixAdapter) getLatestEventID(
+	ctx context.Context, roomID id.RoomID,
+) (id.EventID, error) {
+	// Use bot intent to get latest event (any user can read room state)
+	intent := m.as.BotIntent()
+	resp, err := intent.Messages(ctx, roomID, "", "", mautrix.DirectionBackward, nil, 1)
+	if err != nil {
+		return "", fmt.Errorf("failed to get latest event: %w", err)
+	}
+
+	if len(resp.Chunk) == 0 {
+		return "", nil // No events in room yet
+	}
+
+	return resp.Chunk[0].ID, nil
+}
+
+// markRoomAsReadForUsers sends read receipts for multiple users using a single event ID.
+// This is optimized for room creation where we need to clear invite notifications for all members.
+func (m *MautrixAdapter) markRoomAsReadForUsers(
+	ctx context.Context, roomID id.RoomID, userIDs []id.UserID, eventID id.EventID,
+) {
+	if eventID == "" {
+		return // No event to mark as read
+	}
+
+	for _, userID := range userIDs {
+		intent := m.as.Intent(userID)
+		if err := intent.SendReceipt(ctx, roomID, eventID, event.ReceiptTypeRead, nil); err != nil {
+			m.logger.Warn("Failed to mark room as read for user",
+				"room_id", roomID,
+				"user_id", userID,
+				"event_id", eventID,
+				"error", err,
+			)
+			// Continue with other users
+		}
+	}
+
+	m.logger.Debug("Marked room as read for users after join",
+		"room_id", roomID,
+		"event_id", eventID,
+		"user_count", len(userIDs),
+	)
 }
 
 // SendMessage sends a message to a room.
@@ -1169,7 +1228,7 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 	}
 
 	// Auto-join initial members (they were only invited, need to accept)
-	successfulJoins := 0
+	joinedUsers := make([]id.UserID, 0, len(invites))
 	for _, memberUserID := range invites {
 		memberIntent := m.as.Intent(memberUserID)
 		if err := memberIntent.EnsureJoined(ctx, resp.RoomID); err != nil {
@@ -1180,7 +1239,20 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 			)
 			// Continue with other members, don't fail the whole operation
 		} else {
-			successfulJoins++
+			joinedUsers = append(joinedUsers, memberUserID)
+		}
+	}
+
+	// Mark room as read for all joined users to clear invite notifications
+	// Optimized: get latest event once, send receipts for all users
+	if len(joinedUsers) > 0 {
+		if latestEventID, err := m.getLatestEventID(ctx, resp.RoomID); err != nil {
+			m.logger.Warn("Failed to get latest event for read receipts",
+				"room_id", resp.RoomID,
+				"error", err,
+			)
+		} else {
+			m.markRoomAsReadForUsers(ctx, resp.RoomID, joinedUsers, latestEventID)
 		}
 	}
 
@@ -1189,7 +1261,7 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		"room_id", resp.RoomID,
 		"alias", m.idMapper.RoomAlias(alkemioRoomID),
 		"alkemio_room_id", alkemioRoomID,
-		"members_joined", successfulJoins,
+		"members_joined", len(joinedUsers),
 	)
 
 	return resp.RoomID, nil
@@ -1397,7 +1469,7 @@ func (m *MautrixAdapter) CreateSpace(
 	}
 
 	// Auto-join initial members (they were only invited, need to accept)
-	successfulJoins := 0
+	joinedUsers := make([]id.UserID, 0, len(invites))
 	for _, memberUserID := range invites {
 		memberIntent := m.as.Intent(memberUserID)
 		if err := memberIntent.EnsureJoined(ctx, resp.RoomID); err != nil {
@@ -1408,7 +1480,20 @@ func (m *MautrixAdapter) CreateSpace(
 			)
 			// Continue with other members, don't fail the whole operation
 		} else {
-			successfulJoins++
+			joinedUsers = append(joinedUsers, memberUserID)
+		}
+	}
+
+	// Mark space as read for all joined users to clear invite notifications
+	// Optimized: get latest event once, send receipts for all users
+	if len(joinedUsers) > 0 {
+		if latestEventID, err := m.getLatestEventID(ctx, resp.RoomID); err != nil {
+			m.logger.Warn("Failed to get latest event for read receipts",
+				"room_id", resp.RoomID,
+				"error", err,
+			)
+		} else {
+			m.markRoomAsReadForUsers(ctx, resp.RoomID, joinedUsers, latestEventID)
 		}
 	}
 
@@ -1417,7 +1502,7 @@ func (m *MautrixAdapter) CreateSpace(
 		"room_id", resp.RoomID,
 		"alias", m.idMapper.SpaceAlias(alkemioContextID),
 		"alkemio_context_id", alkemioContextID,
-		"members_joined", successfulJoins,
+		"members_joined", len(joinedUsers),
 	)
 
 	return resp.RoomID, nil
@@ -1609,6 +1694,16 @@ func (m *MautrixAdapter) InviteToSpace(ctx context.Context, spaceID id.RoomID, i
 	inviteeIntent := m.as.Intent(inviteeUserID)
 	if err := inviteeIntent.EnsureJoined(ctx, spaceID); err != nil {
 		return fmt.Errorf("failed to join space after invite: %w", err)
+	}
+
+	// Mark space as read to clear invite notification from unread count
+	if latestEventID, err := m.getLatestEventID(ctx, spaceID); err != nil {
+		m.logger.Warn("Failed to get latest event for read receipt",
+			"room_id", spaceID,
+			"error", err,
+		)
+	} else {
+		m.markRoomAsReadForUsers(ctx, spaceID, []id.UserID{inviteeUserID}, latestEventID)
 	}
 
 	return nil
