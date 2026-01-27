@@ -29,9 +29,11 @@ ARG TARGETARCH
 ## Custom deployments override CMD to use /wait for startup sequencing
 RUN apk add --no-cache wget && \
     if [ "$TARGETARCH" = "arm64" ]; then \
-      wget -O /wait https://github.com/ufoscout/docker-compose-wait/releases/download/2.7.3/wait_arm64; \
+      wget -O /wait https://github.com/ufoscout/docker-compose-wait/releases/download/2.12.1/wait_aarch64; \
+    elif [ "$TARGETARCH" = "amd64" ]; then \
+      wget -O /wait https://github.com/ufoscout/docker-compose-wait/releases/download/2.12.1/wait; \
     else \
-      wget -O /wait https://github.com/ufoscout/docker-compose-wait/releases/download/2.7.3/wait; \
+      echo "Unsupported architecture: $TARGETARCH" && exit 1; \
     fi && \
     chmod +x /wait && \
     apk del wget
