@@ -10,6 +10,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Login to registry
         uses: azure/docker-login@v2
         with:
@@ -17,14 +23,13 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Build container image
+      - name: Build and push container image
         run: |
           IMAGE="${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go"
-          docker build -f Dockerfile . -t ${IMAGE}:${{ github.sha }}
-
-      - name: Push container image
-        run: |
-          IMAGE="${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go"
-          docker push ${IMAGE}:${{ github.sha }}
-          docker tag ${IMAGE}:${{ github.sha }} ${IMAGE}:latest
-          docker push ${IMAGE}:latest
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            -t ${IMAGE}:${{ github.sha }} \
+            -t ${IMAGE}:latest \
+            -f Dockerfile \
+            .

@@ -1,6 +1,8 @@
 # Build Stage
 FROM golang:1.25-alpine AS builder
 
+ARG TARGETARCH
+
 WORKDIR /app
 
 # Install build dependencies
@@ -15,16 +17,24 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o matrix-adapter ./cmd/adapter
+# Build the application for target architecture
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o matrix-adapter ./cmd/adapter
 
 # Final Stage
 FROM alpine:3.19
 
+ARG TARGETARCH
+
 ## Add the wait script to the image for production use
 ## Custom deployments override CMD to use /wait for startup sequencing
-ADD https://github.com/ufoscout/docker-compose-wait/releases/download/2.7.3/wait /wait
-RUN chmod +x /wait
+RUN apk add --no-cache wget && \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+      wget -O /wait https://github.com/ufoscout/docker-compose-wait/releases/download/2.7.3/wait_arm64; \
+    else \
+      wget -O /wait https://github.com/ufoscout/docker-compose-wait/releases/download/2.7.3/wait; \
+    fi && \
+    chmod +x /wait && \
+    apk del wget
 
 WORKDIR /app
 
