@@ -24,12 +24,12 @@ jobs:
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
       - name: Build and push container image
-        run: |
-          IMAGE="${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go"
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --push \
-            -t ${IMAGE}:${{ github.sha }} \
-            -t ${IMAGE}:latest \
-            -f Dockerfile \
-            .
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go:${{ github.sha }}
+            ${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go:latest
