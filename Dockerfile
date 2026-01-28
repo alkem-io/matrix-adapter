@@ -6,7 +6,16 @@ ARG TARGETARCH
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache git
+RUN apk add --no-cache git wget ca-certificates tzdata
+
+# Download the wait script (architecture-specific)
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+      wget -O /wait https://github.com/ufoscout/docker-compose-wait/releases/download/2.12.1/wait_aarch64; \
+    elif [ "$TARGETARCH" = "amd64" ]; then \
+      wget -O /wait https://github.com/ufoscout/docker-compose-wait/releases/download/2.12.1/wait; \
+    else \
+      echo "Unsupported architecture: $TARGETARCH" && exit 1; \
+    fi && chmod +x /wait
 
 # Copy go mod and sum files
 COPY go.mod go.sum ./
@@ -20,38 +29,16 @@ COPY . .
 # Build the application for target architecture
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o matrix-adapter ./cmd/adapter
 
-# Final Stage
-FROM alpine:3.19
-
-ARG TARGETARCH
-
-## Add the wait script to the image for production use
-## Custom deployments override CMD to use /wait for startup sequencing
-RUN apk add --no-cache wget && \
-    if [ "$TARGETARCH" = "arm64" ]; then \
-      wget -O /wait https://github.com/ufoscout/docker-compose-wait/releases/download/2.12.1/wait_aarch64; \
-    elif [ "$TARGETARCH" = "amd64" ]; then \
-      wget -O /wait https://github.com/ufoscout/docker-compose-wait/releases/download/2.12.1/wait; \
-    else \
-      echo "Unsupported architecture: $TARGETARCH" && exit 1; \
-    fi && \
-    chmod +x /wait && \
-    apk del wget
-
+# Final Stage - Distroless
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 WORKDIR /app
-
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
-
+# Copy CA certificates and timezone data from builder
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+# Copy wait script from builder
+COPY --from=builder /wait /wait
 # Copy binary from builder
 COPY --from=builder /app/matrix-adapter .
-
-# Create non-root user
-RUN adduser -D -g '' appuser
-USER appuser
-
 # Expose AppService port (Matrix transactions, health checks, webhooks)
 EXPOSE 8280
-
-# Run the binary
-CMD ["./matrix-adapter"]
+ENTRYPOINT ["/app/matrix-adapter"]
