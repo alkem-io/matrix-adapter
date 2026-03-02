@@ -50,6 +50,11 @@ jobs:
             --docker-password=${{ secrets.REGISTRY_PASSWORD }} \
             --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Attach image pull secret to deployment
+        run: |
+          kubectl patch deployment alkemio-matrix-adapter-deployment -p \
+            '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"matrix-adapter-go-registry"}]}}}}'
+
       - name: Update deployment image
         run: |
           kubectl set image deployment/alkemio-matrix-adapter-deployment \
