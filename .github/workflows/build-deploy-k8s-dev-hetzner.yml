@@ -1,7 +1,8 @@
 name: Build & Deploy Matrix Adapter to Dev on Hetzner
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [develop]
 
 jobs:
   build:
