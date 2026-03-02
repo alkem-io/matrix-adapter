@@ -52,5 +52,5 @@ jobs:
 
       - name: Update deployment image
         run: |
-          kubectl set image deployment/matrix-adapter-go \
-            matrix-adapter-go=${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go:${{ github.sha }}
+          kubectl set image deployment/alkemio-matrix-adapter-deployment \
+            alkemio-matrix-adapter=${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-deployment:${{ github.sha }}
