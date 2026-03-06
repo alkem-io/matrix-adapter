@@ -50,6 +50,61 @@ export interface BatchRemoveMemberRequest {
 export interface BatchRemoveMemberResponse extends BaseResponse {
   results?: { [key: string]: BaseResponse};
 }
+/**
+ * BatchGetUnreadCountsRequest gets unread counts for multiple rooms.
+ * Topic: communication.room.batch.unread_counts.get
+ */
+export interface BatchGetUnreadCountsRequest {
+  actor_id: AlkemioActorID;
+  alkemio_room_ids: AlkemioRoomID[];
+}
+/**
+ * BatchGetUnreadCountsResponse returns per-room unread counts.
+ */
+export interface BatchGetUnreadCountsResponse extends BaseResponse {
+  /**
+   * UnreadCounts maps AlkemioRoomID (string) to unread count.
+   * Rooms with errors will not be included in the map.
+   */
+  unread_counts: { [key: string]: number /* int */};
+  /**
+   * Errors maps AlkemioRoomID (string) to error response for failed rooms.
+   */
+  errors?: { [key: string]: BaseResponse};
+}
+/**
+ * GetLastMessageRequest gets the most recent message in a room.
+ * Topic: communication.room.last_message.get
+ */
+export interface GetLastMessageRequest {
+  alkemio_room_id: AlkemioRoomID;
+}
+/**
+ * GetLastMessageResponse returns the last message or null if room is empty.
+ */
+export interface GetLastMessageResponse extends BaseResponse {
+  message?: MessageDto; // nil if no messages
+}
+/**
+ * BatchGetLastMessagesRequest gets the most recent message for multiple rooms.
+ * Topic: communication.room.batch.last_messages.get
+ */
+export interface BatchGetLastMessagesRequest {
+  alkemio_room_ids: AlkemioRoomID[];
+}
+/**
+ * BatchGetLastMessagesResponse returns per-room last messages.
+ */
+export interface BatchGetLastMessagesResponse extends BaseResponse {
+  /**
+   * Messages maps AlkemioRoomID (string) to last message (null if empty room).
+   */
+  messages: { [key: string]: MessageDto | undefined};
+  /**
+   * Errors maps AlkemioRoomID (string) to error response for failed rooms.
+   */
+  errors?: { [key: string]: BaseResponse};
+}
 
 //////////
 // source: commands.go
@@ -183,6 +238,18 @@ export const TopicMessageRead = "communication.message.read";
  */
 export const TopicUnreadCountsGet = "communication.room.unread_counts.get";
 /**
+ * TopicBatchUnreadCountsGet is the topic for getting unread counts for multiple rooms.
+ */
+export const TopicBatchUnreadCountsGet = "communication.room.batch.unread_counts.get";
+/**
+ * TopicLastMessageGet is the topic for getting the last message in a room.
+ */
+export const TopicLastMessageGet = "communication.room.last_message.get";
+/**
+ * TopicBatchLastMessagesGet is the topic for getting last messages for multiple rooms.
+ */
+export const TopicBatchLastMessagesGet = "communication.room.batch.last_messages.get";
+/**
  * TopicReadReceiptUpdated is the topic for read receipt update events.
  */
 export const TopicReadReceiptUpdated = "communication.room.receipt.updated";
@@ -202,6 +269,10 @@ export const TopicRoomCreated = "communication.room.created";
  * TopicRoomMemberUpdated is the topic for room member updated events.
  */
 export const TopicRoomMemberUpdated = "communication.room.member.updated";
+/**
+ * TopicRoomUpdated is the topic for room property updated events.
+ */
+export const TopicRoomUpdated = "communication.room.updated";
 /**
  * CommandDef defines a command with its topic, request type name, and response type name.
  * This is used by the TypeScript generator to create type-safe command definitions.
@@ -380,6 +451,18 @@ export interface RoomMemberLeftEvent {
   alkemio_room_id: AlkemioRoomID;
   actor_id: AlkemioActorID;
   reason?: string;
+  timestamp: number /* int64 */;
+}
+/**
+ * RoomUpdatedEvent is published when a room's properties change in Matrix.
+ * Only populated fields represent changes; omitted fields are unchanged.
+ * Topic: communication.room.updated
+ */
+export interface RoomUpdatedEvent {
+  alkemio_room_id: AlkemioRoomID;
+  display_name?: string;
+  avatar_url?: string;
+  topic?: string;
   timestamp: number /* int64 */;
 }
 
@@ -658,6 +741,7 @@ export interface GetRoomRequest {
 export interface GetRoomResponse extends BaseResponse {
   alkemio_room_id: AlkemioRoomID;
   display_name: string;
+  avatar_url?: string;
   member_actor_ids: AlkemioActorID[];
   messages: MessageDto[];
 }
@@ -723,6 +807,7 @@ export interface GetRoomAsUserRequest {
 export interface GetRoomAsUserResponse extends BaseResponse {
   alkemio_room_id: AlkemioRoomID;
   display_name: string;
+  avatar_url?: string;
   member_actor_ids: AlkemioActorID[];
   messages: MessageWithReadStateDto[];
   last_read_event_id?: MessageID;

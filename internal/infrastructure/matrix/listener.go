@@ -24,6 +24,7 @@ type EventHandlers struct {
 	OnMessageRedacted    func(redaction domain.MessageRedactedEvent) error
 	OnRoomCreated        func(room domain.RoomCreatedEvent) error
 	OnMemberUpdated      func(membership domain.RoomMemberUpdatedEvent) error
+	OnRoomUpdated        func(evt domain.RoomUpdatedEvent) error
 }
 
 // SetEventHandlers sets all event handlers at once.
@@ -64,6 +65,8 @@ func (m *MautrixAdapter) processEvent(evt *event.Event) {
 		m.handleReceiptEvent(evt)
 	case event.StateCreate:
 		m.handleRoomCreateEvent(evt)
+	case event.StateRoomName, event.StateRoomAvatar, event.StateTopic:
+		m.handleRoomStateEvent(evt)
 	}
 }
 
@@ -610,6 +613,61 @@ func (m *MautrixAdapter) handleRoomCreateEvent(evt *event.Event) {
 			m.logger.Error("Error handling room create", "error", err)
 		}
 	}(evt, creatorUUID, roomType)
+}
+
+// handleRoomStateEvent handles m.room.name, m.room.avatar, and m.room.topic state events.
+// Each state event produces a RoomUpdatedEvent with only the changed property populated.
+func (m *MautrixAdapter) handleRoomStateEvent(evt *event.Event) {
+	if m.eventHandlers.OnRoomUpdated == nil {
+		return
+	}
+
+	go func(e *event.Event) {
+		ctx := context.Background()
+		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID)
+		if alkemioRoomID == uuid.Nil {
+			m.logger.Warn("Could not resolve Alkemio room ID for state event",
+				"room_id", e.RoomID, "event_type", e.Type.Type)
+			return
+		}
+
+		domainEvt := domain.RoomUpdatedEvent{
+			AlkemioRoomID: alkemioRoomID,
+			Timestamp:     time.UnixMilli(e.Timestamp),
+		}
+
+		switch e.Type {
+		case event.StateRoomName:
+			content, ok := parseEventContent[event.RoomNameEventContent](e)
+			if !ok {
+				m.logger.Debug("Failed to parse room name content", "event_id", e.ID)
+				return
+			}
+			domainEvt.DisplayName = &content.Name
+
+		case event.StateRoomAvatar:
+			content, ok := parseEventContent[event.RoomAvatarEventContent](e)
+			if !ok {
+				m.logger.Debug("Failed to parse room avatar content", "event_id", e.ID)
+				return
+			}
+			avatarURL := string(content.URL)
+			domainEvt.AvatarURL = &avatarURL
+
+		case event.StateTopic:
+			content, ok := parseEventContent[event.TopicEventContent](e)
+			if !ok {
+				m.logger.Debug("Failed to parse room topic content", "event_id", e.ID)
+				return
+			}
+			domainEvt.Topic = &content.Topic
+		}
+
+		if err := m.eventHandlers.OnRoomUpdated(domainEvt); err != nil {
+			m.logger.Error("Error handling room state event",
+				"error", err, "event_type", e.Type.Type, "room_id", e.RoomID)
+		}
+	}(evt)
 }
 
 // getRoomNameAndTopic fetches the room name and topic from state events.

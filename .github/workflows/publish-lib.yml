@@ -15,8 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-      id-token: write  # Required for npm provenance / trusted publishing
+      packages: write       # Required for npmjs provenance
+      id-token: write       # Required for npm provenance / trusted publishing
 
     steps:
       - name: Checkout code
@@ -27,20 +27,11 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Setup Node.js (GitHub Packages)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+      - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '22'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@alkem-io'
-
-      - name: Setup Node.js (npmjs)
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://registry.npmjs.org' || '' }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -73,33 +64,11 @@ jobs:
           # Update publishConfig for npmjs
           npm pkg set publishConfig.registry="https://registry.npmjs.org/"
 
-      - name: Set Version (PR)
-        if: github.event_name == 'pull_request'
-        working-directory: lib
-        run: |
-          PR_NUMBER=${{ github.event.number }}
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          VERSION="0.0.0-pr-${PR_NUMBER}-${SHORT_SHA}"
-          echo "Setting version to $VERSION"
-          npm version $VERSION --no-git-tag-version
-
-      - name: Set Version (Manual)
-        if: github.event_name == 'workflow_dispatch'
-        working-directory: lib
-        run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          VERSION="0.0.0-manual-${SHORT_SHA}"
-          echo "Setting version to $VERSION"
-          npm version $VERSION --no-git-tag-version
-
       - name: Publish to npmjs (Tag)
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         working-directory: lib
         run: pnpm publish --no-git-checks --tag latest --access public --provenance
 
-      - name: Publish to GitHub Packages (PR/Manual)
+      - name: Publish preview to pkg.pr.new (PR/Manual)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        working-directory: lib
-        run: pnpm publish --no-git-checks --tag canary
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpx pkg-pr-new publish './lib'

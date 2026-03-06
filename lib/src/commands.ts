@@ -8,6 +8,10 @@ import type {
   BatchAddMemberResponse,
   BatchAddSpaceMemberRequest,
   BatchAddSpaceMemberResponse,
+  BatchGetLastMessagesRequest,
+  BatchGetLastMessagesResponse,
+  BatchGetUnreadCountsRequest,
+  BatchGetUnreadCountsResponse,
   BatchRemoveMemberRequest,
   BatchRemoveMemberResponse,
   BatchRemoveSpaceMemberRequest,
@@ -18,6 +22,8 @@ import type {
   DeleteMessageRequest,
   DeleteRoomRequest,
   DeleteSpaceRequest,
+  GetLastMessageRequest,
+  GetLastMessageResponse,
   GetMessageRequest,
   GetMessageResponse,
   GetReactionRequest,
@@ -49,6 +55,7 @@ import type {
   RoomCreatedEvent,
   RoomMemberLeftEvent,
   RoomMemberUpdatedEvent,
+  RoomUpdatedEvent,
   SendMessageRequest,
   SendMessageResponse,
   SetParentRequest,
@@ -98,6 +105,14 @@ export const Commands = {
     request: {} as RemoveReactionRequest,
     response: {} as BaseResponse,
   },
+  'communication.room.batch.last_messages.get': {
+    request: {} as BatchGetLastMessagesRequest,
+    response: {} as BatchGetLastMessagesResponse,
+  },
+  'communication.room.batch.unread_counts.get': {
+    request: {} as BatchGetUnreadCountsRequest,
+    response: {} as BatchGetUnreadCountsResponse,
+  },
   'communication.room.create': {
     request: {} as CreateRoomRequest,
     response: {} as BaseResponse,
@@ -113,6 +128,10 @@ export const Commands = {
   'communication.room.get.as_user': {
     request: {} as GetRoomAsUserRequest,
     response: {} as GetRoomAsUserResponse,
+  },
+  'communication.room.last_message.get': {
+    request: {} as GetLastMessageRequest,
+    response: {} as GetLastMessageResponse,
   },
   'communication.room.list': {
     request: {} as ListRoomsRequest,
@@ -205,6 +224,9 @@ export const OutgoingEvents = {
   },
   'communication.room.receipt.updated': {
     payload: {} as ReadReceiptUpdatedEvent,
+  },
+  'communication.room.updated': {
+    payload: {} as RoomUpdatedEvent,
   },
 } as const;
 

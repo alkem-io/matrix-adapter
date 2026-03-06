@@ -177,6 +177,7 @@ func (h *RoomHandler) HandleGetRoom(ctx context.Context, payload []byte) (interf
 		BaseResponse:   dto.NewSuccessResponse(),
 		AlkemioRoomID:  dto.AlkemioRoomID(room.AlkemioID),
 		DisplayName:    room.Name,
+		AvatarURL:      room.AvatarURL,
 		MemberActorIDs: convertMemberIDsToDTO(room.MemberIDs),
 		Messages:       convertMessagesToDTO(room.Messages),
 	}, nil
@@ -227,6 +228,7 @@ func (h *RoomHandler) HandleGetRoomAsUser(ctx context.Context, payload []byte) (
 		BaseResponse:    dto.NewSuccessResponse(),
 		AlkemioRoomID:   dto.AlkemioRoomID(room.AlkemioID),
 		DisplayName:     room.Name,
+		AvatarURL:       room.AvatarURL,
 		MemberActorIDs:  convertMemberIDsToDTO(room.MemberIDs),
 		Messages:        messages,
 		LastReadEventID: lastReadEventID,

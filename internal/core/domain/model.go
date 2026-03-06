@@ -28,6 +28,7 @@ type Room struct {
 	Alias     string
 	Name      string
 	Topic     string
+	AvatarURL string
 	Type      string      // "community" or "direct"
 	MemberIDs []uuid.UUID // Alkemio actor IDs
 	Messages  []Message   // For room.get operations
@@ -105,6 +106,16 @@ type ReactionRemovedEvent struct {
 	ReactionID    id.EventID
 	Emoji         string
 	SenderActorID uuid.UUID
+	Timestamp     time.Time
+}
+
+// RoomUpdatedEvent represents a room property change event from Matrix.
+// Only populated fields represent changes; nil means "property unchanged".
+type RoomUpdatedEvent struct {
+	AlkemioRoomID uuid.UUID
+	DisplayName   *string
+	AvatarURL     *string
+	Topic         *string
 	Timestamp     time.Time
 }
 

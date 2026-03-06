@@ -397,7 +397,7 @@ func (m *MautrixAdapter) GetAllJoinedRooms(ctx context.Context) ([]id.RoomID, er
 func (m *MautrixAdapter) GetRoomDetails(ctx context.Context, roomID id.RoomID) (*domain.Room, error) {
 	intent := m.as.BotIntent()
 
-	var name, topic, alias string
+	var name, topic, alias, avatarURL string
 
 	var nameContent event.RoomNameEventContent
 	if err := intent.StateEvent(ctx, roomID, event.StateRoomName, "", &nameContent); err == nil {
@@ -409,16 +409,22 @@ func (m *MautrixAdapter) GetRoomDetails(ctx context.Context, roomID id.RoomID) (
 		topic = topicContent.Topic
 	}
 
+	var avatarContent event.RoomAvatarEventContent
+	if err := intent.StateEvent(ctx, roomID, event.StateRoomAvatar, "", &avatarContent); err == nil {
+		avatarURL = string(avatarContent.URL)
+	}
+
 	// Get alias (uses room_aliases table - same source as ResolveAlias)
 	if aliases, err := m.GetRoomAliases(ctx, roomID); err == nil {
 		alias = m.selectPreferredAlias(aliases)
 	}
 
 	return &domain.Room{
-		ID:    roomID,
-		Name:  name,
-		Topic: topic,
-		Alias: alias,
+		ID:        roomID,
+		Name:      name,
+		Topic:     topic,
+		AvatarURL: avatarURL,
+		Alias:     alias,
 	}, nil
 }
 
