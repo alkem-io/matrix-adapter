@@ -52,17 +52,13 @@ jobs:
         working-directory: lib
         run: pnpm build
 
-      - name: Set Version and Package Name (Tag - npmjs)
+      - name: Set Version (Tag - npmjs)
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         working-directory: lib
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "Setting version to $VERSION for npmjs"
-          # Update package name for npmjs
-          npm pkg set name="@alkemio/matrix-adapter-lib"
           npm version $VERSION --no-git-tag-version
-          # Update publishConfig for npmjs
-          npm pkg set publishConfig.registry="https://registry.npmjs.org/"
 
       - name: Publish to npmjs (Tag)
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
