@@ -13,7 +13,7 @@ When the Alkemio Server queries room details, it needs the room's avatar URL to 
 
 **Why this priority**: This is the simpler change with immediate value — the server already consumes room details responses and simply needs the additional field to display room avatars. No new event infrastructure is needed.
 
-**Independent Test**: Can be fully tested by sending a `communication.room.get` command for a room that has an avatar set, and verifying the response includes the `avatar_url` field.
+**Independent Test**: Can be fully tested by sending a `communication.room.get` or `communication.room.get.as_user` command for a room that has an avatar set, and verifying the response includes the `avatar_url` field.
 
 **Acceptance Scenarios**:
 
@@ -52,7 +52,7 @@ When room properties (display name, avatar, topic) change in Matrix — whether 
 
 ### Functional Requirements
 
-- **FR-001**: The room details query response MUST include an `avatar_url` field containing the room's current avatar content URI from Matrix.
+- **FR-001**: The room details query response (`communication.room.get` and `communication.room.get.as_user`) MUST include an `avatar_url` field containing the room's current avatar content URI from Matrix.
 - **FR-002**: When a room has no avatar set, the `avatar_url` field MUST be omitted or empty in the response.
 - **FR-003**: The adapter MUST listen for `m.room.name` state events on managed rooms and publish a room updated event when the display name changes.
 - **FR-004**: The adapter MUST listen for `m.room.avatar` state events on managed rooms and publish a room updated event when the avatar changes.
