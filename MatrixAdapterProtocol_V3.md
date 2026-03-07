@@ -1062,7 +1062,12 @@ type RoomUpdatedEvent struct {
 }
 ```
 
-**Note**: Only the changed property is populated (non-nil). Omitted fields indicate no change. This event fires for all state changes, including those triggered by the adapter itself (e.g., via `communication.room.update`).
+**Pointer semantics**:
+- `nil` (omitted in JSON) — property was not changed by this state event.
+- Non-nil empty string (`""`) — property was explicitly cleared (e.g., avatar removed).
+- Non-nil non-empty string — property was set to that value.
+
+**Note**: This event fires for all state changes, including those triggered by the adapter itself (e.g., via `communication.room.update`). Room state events intentionally bypass the bot-sender filter so the server receives confirmation of changes it requested.
 
 ---
 
