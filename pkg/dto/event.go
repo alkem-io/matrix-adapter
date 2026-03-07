@@ -62,3 +62,14 @@ type RoomMemberLeftEvent struct {
 	Reason        string         `json:"reason,omitempty"`
 	Timestamp     int64          `json:"timestamp"`
 }
+
+// RoomUpdatedEvent is published when a room's properties change in Matrix.
+// Only populated fields represent changes; omitted fields are unchanged.
+// Topic: communication.room.updated
+type RoomUpdatedEvent struct {
+	AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
+	DisplayName   *string       `json:"display_name,omitempty"`
+	AvatarURL     *string       `json:"avatar_url,omitempty"`
+	Topic         *string       `json:"topic,omitempty"`
+	Timestamp     int64         `json:"timestamp"`
+}

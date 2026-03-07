@@ -148,6 +148,7 @@ func (h *RoomHandler) HandleCreateRoom(ctx context.Context, payload []byte) (int
 		string(req.Type),
 		req.Name,
 		req.Topic,
+		req.AvatarURL,
 		initialMembers,
 	)
 	if err != nil {
@@ -177,6 +178,7 @@ func (h *RoomHandler) HandleGetRoom(ctx context.Context, payload []byte) (interf
 		BaseResponse:   dto.NewSuccessResponse(),
 		AlkemioRoomID:  dto.AlkemioRoomID(room.AlkemioID),
 		DisplayName:    room.Name,
+		AvatarURL:      room.AvatarURL,
 		MemberActorIDs: convertMemberIDsToDTO(room.MemberIDs),
 		Messages:       convertMessagesToDTO(room.Messages),
 	}, nil
@@ -227,6 +229,7 @@ func (h *RoomHandler) HandleGetRoomAsUser(ctx context.Context, payload []byte) (
 		BaseResponse:    dto.NewSuccessResponse(),
 		AlkemioRoomID:   dto.AlkemioRoomID(room.AlkemioID),
 		DisplayName:     room.Name,
+		AvatarURL:       room.AvatarURL,
 		MemberActorIDs:  convertMemberIDsToDTO(room.MemberIDs),
 		Messages:        messages,
 		LastReadEventID: lastReadEventID,
@@ -250,6 +253,7 @@ func (h *RoomHandler) HandleUpdateRoom(ctx context.Context, payload []byte) (int
 		req.AlkemioRoomID.UUID(),
 		req.Name,
 		req.Topic,
+		req.AvatarURL,
 		req.IsPublic,
 	)
 	if err != nil {

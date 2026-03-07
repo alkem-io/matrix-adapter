@@ -1,4 +1,4 @@
-# @alkem-io/matrix-adapter-go-lib
+# @alkemio/matrix-adapter-lib
 
 TypeScript library providing type-safe DTOs and event types for interacting with the Alkemio Matrix Adapter service.
 
@@ -6,13 +6,13 @@ TypeScript library providing type-safe DTOs and event types for interacting with
 
 ```bash
 # npm
-npm install @alkem-io/matrix-adapter-go-lib
+npm install @alkemio/matrix-adapter-lib
 
 # pnpm
-pnpm add @alkem-io/matrix-adapter-go-lib
+pnpm add @alkemio/matrix-adapter-lib
 
 # yarn
-yarn add @alkem-io/matrix-adapter-go-lib
+yarn add @alkemio/matrix-adapter-lib
 ```
 
 ## Usage
@@ -22,7 +22,7 @@ yarn add @alkem-io/matrix-adapter-go-lib
 Use `MatrixAdapterEventType` enum for RabbitMQ topic routing:
 
 ```typescript
-import { MatrixAdapterEventType } from '@alkem-io/matrix-adapter-go-lib';
+import { MatrixAdapterEventType } from '@alkemio/matrix-adapter-lib';
 
 // Subscribe to commands
 consumer.subscribe(MatrixAdapterEventType.COMMUNICATION_ROOM_CREATE);
@@ -44,7 +44,7 @@ import {
   JoinRuleInvite,
   BaseResponse,
   ErrCodeRoomNotFound,
-} from '@alkem-io/matrix-adapter-go-lib';
+} from '@alkemio/matrix-adapter-lib';
 
 // Build a request
 const request: CreateRoomRequest = {
@@ -77,7 +77,7 @@ import {
   SetParentRequest,
   BatchAddSpaceMemberRequest,
   JoinRuleRestricted,
-} from '@alkem-io/matrix-adapter-go-lib';
+} from '@alkemio/matrix-adapter-lib';
 
 // Create a space with hierarchy
 const spaceRequest: CreateSpaceRequest = {

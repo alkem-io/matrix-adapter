@@ -254,6 +254,31 @@ func (s *EventService) HandleRoomCreated(evt domain.RoomCreatedEvent) error {
 	return nil
 }
 
+// HandleRoomUpdated processes a room property change event and publishes it to the queue.
+func (s *EventService) HandleRoomUpdated(evt domain.RoomUpdatedEvent) error {
+	payload := dto.RoomUpdatedEvent{
+		AlkemioRoomID: dto.AlkemioRoomID(evt.AlkemioRoomID),
+		DisplayName:   evt.DisplayName,
+		AvatarURL:     evt.AvatarURL,
+		Topic:         evt.Topic,
+		Timestamp:     evt.Timestamp.UnixMilli(),
+	}
+
+	s.logger.Debug(
+		"Publishing room updated event",
+		"alkemio_room_id", evt.AlkemioRoomID,
+		"has_display_name", evt.DisplayName != nil,
+		"has_avatar_url", evt.AvatarURL != nil,
+		"has_topic", evt.Topic != nil,
+	)
+
+	if err := s.queue.Publish(dto.TopicRoomUpdated, payload); err != nil {
+		return fmt.Errorf("failed to publish room updated event: %w", err)
+	}
+
+	return nil
+}
+
 // HandleMemberUpdated processes a membership updated event and publishes it to the queue.
 func (s *EventService) HandleMemberUpdated(evt domain.RoomMemberUpdatedEvent) error {
 	payload := dto.RoomMemberUpdatedEvent{

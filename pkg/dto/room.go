@@ -28,6 +28,7 @@ type GetRoomResponse struct {
 	BaseResponse   `tstype:",extends"`
 	AlkemioRoomID  AlkemioRoomID    `json:"alkemio_room_id"`
 	DisplayName    string           `json:"display_name"`
+	AvatarURL      string           `json:"avatar_url,omitempty"`
 	MemberActorIDs []AlkemioActorID `json:"member_actor_ids"`
 	Messages       []MessageDto     `json:"messages"`
 }
@@ -96,6 +97,7 @@ type GetRoomAsUserResponse struct {
 	BaseResponse    `tstype:",extends"`
 	AlkemioRoomID   AlkemioRoomID             `json:"alkemio_room_id"`
 	DisplayName     string                    `json:"display_name"`
+	AvatarURL       string                    `json:"avatar_url,omitempty"`
 	MemberActorIDs  []AlkemioActorID          `json:"member_actor_ids"`
 	Messages        []MessageWithReadStateDto `json:"messages"`
 	LastReadEventID *MessageID                `json:"last_read_event_id,omitempty"`

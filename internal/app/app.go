@@ -121,12 +121,12 @@ func NewApp(cfg *config.Config) (*App, error) {
 		OnMessage:            eventService.HandleMessage,
 		OnReactionAdded:      eventService.HandleReactionAdded,
 		OnReactionRemoved:    eventService.HandleReactionRemoved,
-		OnMemberLeft:         eventService.HandleMemberLeft,
 		OnReadReceiptUpdated: eventService.HandleReadReceiptUpdated,
 		OnMessageEdited:      eventService.HandleMessageEdited,
 		OnMessageRedacted:    eventService.HandleMessageRedacted,
 		OnRoomCreated:        eventService.HandleRoomCreated,
 		OnMemberUpdated:      eventService.HandleMemberUpdated,
+		OnRoomUpdated:        eventService.HandleRoomUpdated,
 	})
 
 	return &App{

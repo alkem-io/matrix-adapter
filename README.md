@@ -122,12 +122,12 @@ The shared TypeScript library (`lib/`) is automatically published via GitHub Act
 | Trigger | Registry | Package Name | Version | Tag |
 |---------|----------|--------------|---------|-----|
 | Git tag (`v*`) | **npmjs** | `@alkemio/matrix-adapter-lib` | From tag (e.g., `v1.2.3` → `1.2.3`) | `latest` |
-| Pull Request | GitHub Packages | `@alkem-io/matrix-adapter-go-lib` | `0.0.0-pr-{number}-{sha}` | `canary` |
-| Manual dispatch | GitHub Packages | `@alkem-io/matrix-adapter-go-lib` | `0.0.0-manual-{sha}` | `canary` |
+| Pull Request | **pkg.pr.new** | `@alkemio/matrix-adapter-lib` | Commit-based preview URL | — |
+| Manual dispatch | **pkg.pr.new** | `@alkemio/matrix-adapter-lib` | Commit-based preview URL | — |
 
 ### Release Process
 
-1. **Development**: PRs that modify `lib/` or `pkg/dto/` automatically publish canary versions to GitHub Packages for testing.
+1. **Development**: PRs that modify `lib/` or `pkg/dto/` automatically publish preview versions via [pkg.pr.new](https://pkg.pr.new) for testing.
 
 2. **Production Release**: Create a git tag to publish to npmjs:
    ```bash
@@ -140,15 +140,15 @@ The shared TypeScript library (`lib/`) is automatically published via GitHub Act
    npm install @alkemio/matrix-adapter-lib
    ```
 
-4. **Install from GitHub Packages** (development/testing):
+4. **Install preview** (development/testing):
    ```bash
-   npm install @alkem-io/matrix-adapter-go-lib@canary --registry=https://npm.pkg.github.com
+   npm install https://pkg.pr.new/alkem-io/matrix-adapter-go/@alkemio/matrix-adapter-lib@{commit-sha}
    ```
 
 ### Authentication
 
 - **npmjs**: Uses OIDC trusted publishing (no token required) with provenance attestation.
-- **GitHub Packages**: Uses `GITHUB_TOKEN` automatically provided by Actions.
+- **pkg.pr.new**: No authentication required — uses the [pkg.pr.new GitHub App](https://github.com/apps/pkg-pr-new).
 
 ## Architecture
 
