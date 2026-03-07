@@ -57,8 +57,8 @@ jobs:
         working-directory: lib
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          echo "Setting version to $VERSION for npmjs"
-          npm version $VERSION --no-git-tag-version
+          echo "Setting version to ${VERSION} for npmjs"
+          npm version "${VERSION}" --no-git-tag-version
 
       - name: Publish to npmjs (Tag)
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}

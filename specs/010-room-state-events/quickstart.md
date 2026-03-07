@@ -48,7 +48,7 @@ make generate   # Regenerate TypeScript library
 
 ## Patterns to Follow
 
-- **Avatar fetch**: Same as `GetSpaceDetails` in `mautrix.go:1511-1550`
-- **Event handler**: Same as `handleRoomCreateEvent` in `listener.go:565-613`
-- **Event service**: Same as `HandleRoomCreated` in `event_service.go:232-255`
-- **Self-event filter**: Already handled by `processEvent()` at `listener.go:50`
+- **Avatar fetch**: Same as `GetSpaceDetails()` in `mautrix.go`
+- **Event handler**: Same as `handleRoomCreateEvent()` in `listener.go`
+- **Event service**: Same as `HandleRoomCreated()` in `event_service.go`
+- **Self-event filter**: Already handled by `processEvent()` in `listener.go`

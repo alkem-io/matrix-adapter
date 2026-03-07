@@ -1,6 +1,6 @@
 # matrix-adapter-go Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-01-06
+Auto-generated from all feature plans. Last updated: 2026-03-07
 
 ## Active Technologies
 - Go 1.25 + mautrix-go (Matrix SDK), Watermill (RabbitMQ), Zap (logging) (010-room-state-events)
