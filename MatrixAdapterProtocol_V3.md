@@ -1,7 +1,7 @@
 # Matrix Adapter Protocol Specification (V3)
 
-> **Status**: ✅ **Current** (v3.3.0)
-> **Last Updated**: 2026-01-13
+> **Status**: ✅ **Current** (v3.4.0)
+> **Last Updated**: 2026-03-07
 
 ---
 
@@ -62,6 +62,7 @@
   - [27c. Message Redacted](#27c-message-redacted-outgoing-event) - `communication.message.redacted`
   - [27d. Room Created](#27d-room-created-outgoing-event) - `communication.room.created`
   - [27e. Room Member Updated](#27e-room-member-updated-outgoing-event) - `communication.room.member.updated`
+  - [27f. Room Updated](#27f-room-updated-outgoing-event) - `communication.room.updated`
 - [HTTP Endpoints](#http-endpoints)
   - [Health Check](#health-check)
   - [DM Request Webhook](#dm-request-webhook)
@@ -399,6 +400,7 @@ type GetRoomResponse struct {
     BaseResponse
     AlkemioRoomID  AlkemioRoomID    `json:"alkemio_room_id"`
     DisplayName    string           `json:"display_name"`
+    AvatarURL      string           `json:"avatar_url,omitempty"`
     MemberActorIDs []AlkemioActorID `json:"member_actor_ids"`
     Messages       []MessageDto     `json:"messages"`
 }
@@ -920,9 +922,7 @@ type ReactionRemovedEvent struct {
 
 ### 27. Room Member Left (Outgoing Event)
 
-Published when a user leaves or is kicked/banned from a room.
-
-> **Note**: This event is emitted specifically for leave/kick/ban scenarios. For comprehensive membership tracking, see also `RoomMemberUpdatedEvent` (27e) which covers all membership transitions (join, invite, leave, ban, knock). Consumers needing only departure notifications should subscribe to this event; consumers needing full membership lifecycle should use `RoomMemberUpdatedEvent`.
+> **Deprecated**: This event is no longer emitted by the adapter. Use `RoomMemberUpdatedEvent` (27e) with `membership=leave` instead, which covers all membership transitions including leave/kick/ban. The DTO and topic constant remain in the codebase for backward compatibility but no events are published to this topic.
 
 *   **Event Subject**: `communication.room.member.left`
 
@@ -1026,9 +1026,7 @@ type RoomCreatedEvent struct {
 
 ### 27e. Room Member Updated (Outgoing Event)
 
-Published when a user's membership status changes (join, invite, leave, ban, knock).
-
-> **Note**: This event provides comprehensive membership tracking for all state transitions. For leave/kick/ban scenarios, `RoomMemberLeftEvent` (27) is also emitted. Consumers can choose based on their needs: subscribe to this event for full membership lifecycle, or use `RoomMemberLeftEvent` if only departure notifications are required.
+Published when a user's membership status changes (join, invite, leave, ban, knock). This is the single source of truth for all membership transitions — `RoomMemberLeftEvent` (27) is deprecated.
 
 *   **Event Subject**: `communication.room.member.updated`
 
@@ -1043,6 +1041,28 @@ type RoomMemberUpdatedEvent struct {
     Timestamp     int64          `json:"timestamp"`       // Unix milliseconds
 }
 ```
+
+---
+
+### 27f. Room Updated (Outgoing Event)
+
+Published when a room's properties change in Matrix (`m.room.name`, `m.room.avatar`, `m.room.topic` state events). Each state event produces one event with only the changed property populated.
+
+*   **Event Subject**: `communication.room.updated`
+
+#### Payload
+
+```go
+type RoomUpdatedEvent struct {
+    AlkemioRoomID AlkemioRoomID  `json:"alkemio_room_id"`
+    DisplayName   *string        `json:"display_name,omitempty"`
+    AvatarURL     *string        `json:"avatar_url,omitempty"`
+    Topic         *string        `json:"topic,omitempty"`
+    Timestamp     int64          `json:"timestamp"` // Unix milliseconds
+}
+```
+
+**Note**: Only the changed property is populated (non-nil). Omitted fields indicate no change. This event fires for all state changes, including those triggered by the adapter itself (e.g., via `communication.room.update`).
 
 ---
 
@@ -1191,6 +1211,7 @@ type GetRoomAsUserResponse struct {
     BaseResponse
     AlkemioRoomID   AlkemioRoomID             `json:"alkemio_room_id"`
     DisplayName     string                    `json:"display_name"`
+    AvatarURL       string                    `json:"avatar_url,omitempty"`
     MemberActorIDs  []AlkemioActorID          `json:"member_actor_ids"`
     Messages        []MessageWithReadStateDto `json:"messages"`
     LastReadEventID *MessageID                `json:"last_read_event_id,omitempty"`
