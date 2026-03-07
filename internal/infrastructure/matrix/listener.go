@@ -95,7 +95,7 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse Sender UUID using resolveActorID (context-aware, supports ActorResolver)
+	// Parse sender UUID from Matrix user ID
 	senderUUID := m.resolveActorID(context.Background(), evt.Sender)
 	if senderUUID == uuid.Nil {
 		m.logger.Debug("Ignoring message from non-UUID user", "sender", evt.Sender)
@@ -160,7 +160,7 @@ func (m *MautrixAdapter) handleMessageEditEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse sender UUID using resolveActorID (context-aware, supports ActorResolver)
+	// Parse sender UUID from Matrix user ID
 	senderUUID := m.resolveActorID(context.Background(), evt.Sender)
 	if senderUUID == uuid.Nil {
 		m.logger.Debug("Ignoring edit from non-UUID user", "sender", evt.Sender)
@@ -234,7 +234,7 @@ func (m *MautrixAdapter) handleReactionEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse sender UUID using resolveActorID (context-aware, supports ActorResolver)
+	// Parse sender UUID from Matrix user ID
 	senderUUID := m.resolveActorID(context.Background(), evt.Sender)
 	if senderUUID == uuid.Nil {
 		m.logger.Debug("Ignoring reaction from non-UUID user", "sender", evt.Sender)
@@ -271,7 +271,7 @@ func (m *MautrixAdapter) handleReactionEvent(evt *event.Event) {
 }
 
 func (m *MautrixAdapter) handleRedactionEvent(evt *event.Event) {
-	// Parse sender UUID using resolveActorID (context-aware, supports ActorResolver)
+	// Parse sender UUID from Matrix user ID
 	senderUUID := m.resolveActorID(context.Background(), evt.Sender)
 	if senderUUID == uuid.Nil {
 		m.logger.Debug("Ignoring redaction from non-UUID user", "sender", evt.Sender)
@@ -424,7 +424,7 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse target user UUID using resolveActorID (context-aware, supports ActorResolver)
+	// Parse target user UUID from Matrix user ID
 	targetUUID := m.resolveActorID(context.Background(), targetUserID)
 	if targetUUID == uuid.Nil {
 		m.logger.Debug("Ignoring membership event for non-UUID user", "target", targetUserID)
@@ -517,7 +517,7 @@ func (m *MautrixAdapter) handleReceiptEvent(evt *event.Event) {
 					continue
 				}
 
-				// Parse user UUID using resolveActorID (context-aware, supports ActorResolver)
+				// Parse user UUID from Matrix user ID
 				actorUUID := m.resolveActorID(context.Background(), userID)
 				if actorUUID == uuid.Nil {
 					continue
@@ -558,7 +558,7 @@ func (m *MautrixAdapter) handleRoomCreateEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse creator UUID using resolveActorID (context-aware, supports ActorResolver)
+	// Parse creator UUID from Matrix user ID
 	creatorUUID := m.resolveActorID(context.Background(), evt.Sender)
 	if creatorUUID == uuid.Nil {
 		m.logger.Debug("Ignoring room create from non-UUID user", "sender", evt.Sender)
