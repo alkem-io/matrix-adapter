@@ -47,7 +47,15 @@ func (m *MautrixAdapter) startEventLoop() {
 }
 
 func (m *MautrixAdapter) processEvent(evt *event.Event) {
-	// Ignore own events
+	// Room state events are always processed, even from the bot itself,
+	// because the server needs to know about state changes it triggered.
+	switch evt.Type {
+	case event.StateRoomName, event.StateRoomAvatar, event.StateTopic:
+		m.handleRoomStateEvent(evt)
+		return
+	}
+
+	// Ignore own events for messages, reactions, and other interactive events
 	if evt.Sender == m.as.BotMXID() {
 		return
 	}
@@ -65,8 +73,6 @@ func (m *MautrixAdapter) processEvent(evt *event.Event) {
 		m.handleReceiptEvent(evt)
 	case event.StateCreate:
 		m.handleRoomCreateEvent(evt)
-	case event.StateRoomName, event.StateRoomAvatar, event.StateTopic:
-		m.handleRoomStateEvent(evt)
 	}
 }
 
