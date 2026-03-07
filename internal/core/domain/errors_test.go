@@ -16,7 +16,6 @@ func TestIsNotFoundError(t *testing.T) {
 		{"ErrNotFound", ErrNotFound, true},
 		{"ErrRoomNotFound", ErrRoomNotFound, true},
 		{"ErrSpaceNotFound", ErrSpaceNotFound, true},
-		{"ErrActorNotFound", ErrActorNotFound, true},
 		{"wrapped ErrNotFound", fmt.Errorf("wrapped: %w", ErrNotFound), true},
 		{"Matrix M_NOT_FOUND", errors.New("M_NOT_FOUND: room not registered"), true},
 		{"lowercase not found", errors.New("resource not found"), true},
@@ -95,11 +94,6 @@ func TestErrorConstructors(t *testing.T) {
 		t.Error("NewSpaceNotFoundError should wrap ErrSpaceNotFound")
 	}
 
-	actorErr := NewActorNotFoundError("actor-789")
-	if !errors.Is(actorErr, ErrActorNotFound) {
-		t.Error("NewActorNotFoundError should wrap ErrActorNotFound")
-	}
-
 	parentErr := NewParentNotFoundError("parent-abc")
 	if !errors.Is(parentErr, ErrParentNotFound) {
 		t.Error("NewParentNotFoundError should wrap ErrParentNotFound")
@@ -115,7 +109,6 @@ func TestErrorHierarchy(t *testing.T) {
 	specificErrors := []error{
 		ErrRoomNotFound,
 		ErrSpaceNotFound,
-		ErrActorNotFound,
 		ErrParentNotFound,
 		ErrChildNotFound,
 	}

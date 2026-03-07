@@ -135,8 +135,8 @@ func (s *SpaceService) GetSpace(
 
 	space.MemberIDs = make([]uuid.UUID, 0, len(members))
 	for _, memberID := range members {
-		// Extract UUID from Matrix user ID (@uuid:domain) using context-aware method
-		if actorUUID, err := s.idMapper.AlkemioActorIDWithContext(ctx, memberID.String()); err == nil && actorUUID != uuid.Nil {
+		// Extract UUID from Matrix user ID (@uuid:domain)
+		if actorUUID := s.idMapper.AlkemioActorID(memberID); actorUUID != uuid.Nil {
 			space.MemberIDs = append(space.MemberIDs, actorUUID)
 		}
 	}
@@ -373,14 +373,7 @@ func (s *SpaceService) BatchRemoveMember(
 	reason string,
 ) map[string]error {
 	results := make(map[string]error)
-	userMatrixID, err := s.idMapper.UserID(ctx, actorID)
-	if err != nil {
-		// If we can't resolve the actor, mark all results as errors
-		for _, contextID := range contextIDs {
-			results[contextID.String()] = err
-		}
-		return results
-	}
+	userMatrixID := s.idMapper.UserID(actorID)
 
 	for _, contextID := range contextIDs {
 		alias := s.idMapper.SpaceAlias(contextID)

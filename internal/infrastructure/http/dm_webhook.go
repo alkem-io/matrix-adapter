@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
@@ -127,11 +128,6 @@ func (h *DMWebhookHandler) validateAuth(r *http.Request) bool {
 
 // extractActorID extracts the Alkemio actor UUID from a Matrix user ID.
 // Matrix user ID format: @{uuid}:{domain}
-// Uses context-aware method to support ActorResolver when enabled.
-func (h *DMWebhookHandler) extractActorID(ctx context.Context, matrixUserID string) uuid.UUID {
-	actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, matrixUserID)
-	if err != nil {
-		return uuid.Nil
-	}
-	return actorID
+func (h *DMWebhookHandler) extractActorID(_ context.Context, matrixUserID string) uuid.UUID {
+	return h.idMapper.AlkemioActorID(id.UserID(matrixUserID))
 }

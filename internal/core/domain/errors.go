@@ -19,12 +19,6 @@ var ErrRoomNotFound = fmt.Errorf("room %w", ErrNotFound)
 // ErrSpaceNotFound indicates a space does not exist.
 var ErrSpaceNotFound = fmt.Errorf("space %w", ErrNotFound)
 
-// ErrActorNotFound indicates an actor/user does not exist.
-var ErrActorNotFound = fmt.Errorf("actor %w", ErrNotFound)
-
-// ErrEntityNotFound indicates an entity (user.id or virtual_contributor.id) does not exist.
-var ErrEntityNotFound = fmt.Errorf("entity %w", ErrNotFound)
-
 // ErrParentNotFound indicates a parent space does not exist.
 var ErrParentNotFound = fmt.Errorf("parent space %w", ErrNotFound)
 
@@ -100,16 +94,6 @@ func NewRoomNotFoundError(roomID string) error {
 // NewSpaceNotFoundError creates a space not found error with context.
 func NewSpaceNotFoundError(contextID string) error {
 	return wrapError(ErrSpaceNotFound, contextID)
-}
-
-// NewActorNotFoundError creates an actor not found error with context.
-func NewActorNotFoundError(actorID string) error {
-	return wrapError(ErrActorNotFound, actorID)
-}
-
-// NewEntityNotFoundError creates an entity not found error with context.
-func NewEntityNotFoundError(entityID string) error {
-	return wrapError(ErrEntityNotFound, entityID)
 }
 
 // NewParentNotFoundError creates a parent not found error with context.

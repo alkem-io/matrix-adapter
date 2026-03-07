@@ -91,8 +91,6 @@ func MapServiceError(err error) dto.BaseResponse {
 		return dto.NewErrorResponse(dto.ErrCodeRoomNotFound, "Child room or space not found")
 	case errors.Is(err, domain.ErrRoomNotFound):
 		return dto.NewErrorResponse(dto.ErrCodeRoomNotFound, "Room not found")
-	case errors.Is(err, domain.ErrActorNotFound):
-		return dto.NewErrorResponse(dto.ErrCodeActorNotFound, "Actor not found")
 	case errors.Is(err, domain.ErrForbidden):
 		return dto.NewErrorResponse(dto.ErrCodeNotAllowed, err.Error())
 	case errors.Is(err, domain.ErrInvalidParam):

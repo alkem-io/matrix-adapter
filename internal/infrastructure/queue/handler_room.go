@@ -54,16 +54,12 @@ func (h *RoomHandler) resolveRoomAliasForBatch(ctx context.Context, alkemioRoomI
 }
 
 // resolveSenderID resolves a Matrix user ID to an Alkemio actor UUID.
-// Returns uuid.Nil if the matrix ID is empty or resolution fails.
-func (h *RoomHandler) resolveSenderID(ctx context.Context, matrixID string) uuid.UUID {
+// Returns uuid.Nil if the matrix ID is empty or invalid.
+func (h *RoomHandler) resolveSenderID(_ context.Context, matrixID string) uuid.UUID {
 	if matrixID == "" {
 		return uuid.Nil
 	}
-	actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, matrixID)
-	if err != nil {
-		return uuid.Nil
-	}
-	return actorID
+	return h.idMapper.AlkemioActorID(id.UserID(matrixID))
 }
 
 // ============================================================================
@@ -610,10 +606,7 @@ func (h *RoomHandler) HandleBatchRemoveMember(ctx context.Context, payload []byt
 	}
 
 	results := make(map[string]dto.BaseResponse)
-	actorMatrixID, err := h.idMapper.UserID(ctx, req.ActorID.UUID())
-	if err != nil {
-		return MapServiceError(err), nil
-	}
+	actorMatrixID := h.idMapper.UserID(req.ActorID.UUID())
 
 	for _, alkemioRoomID := range req.AlkemioRoomIDs {
 		roomID, err := h.resolveRoomAliasForBatch(ctx, alkemioRoomID)
@@ -660,12 +653,12 @@ func (h *RoomHandler) HandleGetRoomMembers(ctx context.Context, payload []byte) 
 		return MapServiceError(err), nil
 	}
 
-	// Convert Matrix user IDs to Alkemio actor IDs using context-aware method
+	// Convert Matrix user IDs to Alkemio actor IDs
 	memberActorIDs := make([]dto.AlkemioActorID, 0, len(members))
 	for _, memberUserID := range members {
-		actorID, err := h.idMapper.AlkemioActorIDWithContext(ctx, memberUserID.String())
-		// Skip non-ghost users (error or uuid.Nil indicates not a valid ghost user)
-		if err != nil || actorID == uuid.Nil {
+		actorID := h.idMapper.AlkemioActorID(memberUserID)
+		// Skip non-ghost users (uuid.Nil indicates not a valid ghost user)
+		if actorID == uuid.Nil {
 			continue
 		}
 		memberActorIDs = append(memberActorIDs, dto.AlkemioActorID(actorID))

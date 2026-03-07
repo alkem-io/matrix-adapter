@@ -41,11 +41,6 @@ func TestMapServiceError(t *testing.T) {
 			expectedCode: dto.ErrCodeRoomNotFound,
 		},
 		{
-			name:         "ErrActorNotFound maps to ACTOR_NOT_FOUND",
-			err:          domain.ErrActorNotFound,
-			expectedCode: dto.ErrCodeActorNotFound,
-		},
-		{
 			name:         "ErrForbidden maps to NOT_ALLOWED",
 			err:          domain.ErrForbidden,
 			expectedCode: dto.ErrCodeNotAllowed,
