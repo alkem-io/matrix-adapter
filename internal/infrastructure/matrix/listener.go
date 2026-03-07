@@ -17,7 +17,6 @@ type EventHandlers struct {
 	OnMessage         func(msg domain.Message) error
 	OnReactionAdded   func(reaction domain.ReactionEvent) error
 	OnReactionRemoved func(reaction domain.ReactionRemovedEvent) error
-	OnMemberLeft      func(membership domain.MembershipEvent) error
 	// Read receipt and message event handlers (008-read-receipts)
 	OnReadReceiptUpdated func(receipt domain.ReadReceiptEvent) error
 	OnMessageEdited      func(edit domain.MessageEditedEvent) error
@@ -47,11 +46,15 @@ func (m *MautrixAdapter) startEventLoop() {
 }
 
 func (m *MautrixAdapter) processEvent(evt *event.Event) {
-	// Room state events are always processed, even from the bot itself,
-	// because the server needs to know about state changes it triggered.
+	// State events are always processed, even from the bot itself,
+	// because the server needs to know about state changes it triggered
+	// (e.g. room property updates, member kicks via batch remove).
 	switch evt.Type {
 	case event.StateRoomName, event.StateRoomAvatar, event.StateTopic:
 		m.handleRoomStateEvent(evt)
+		return
+	case event.StateMember:
+		m.handleMembershipEvent(evt)
 		return
 	}
 
@@ -67,8 +70,6 @@ func (m *MautrixAdapter) processEvent(evt *event.Event) {
 		m.handleReactionEvent(evt)
 	case event.EventRedaction:
 		m.handleRedactionEvent(evt)
-	case event.StateMember:
-		m.handleMembershipEvent(evt)
 	case event.EphemeralEventReceipt:
 		m.handleReceiptEvent(evt)
 	case event.StateCreate:
@@ -449,20 +450,6 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 		if alkemioRoomID == uuid.Nil {
 			m.logger.Warn("Could not resolve Alkemio room ID for membership event", "room_id", e.RoomID)
 			return
-		}
-
-		// Handle leave/ban events with the legacy OnMemberLeft handler
-		if membershipState == string(event.MembershipLeave) || membershipState == string(event.MembershipBan) {
-			if m.eventHandlers.OnMemberLeft != nil {
-				if err := m.eventHandlers.OnMemberLeft(domain.MembershipEvent{
-					AlkemioRoomID: alkemioRoomID,
-					ActorID:       memberID,
-					Reason:        reason,
-					Timestamp:     time.UnixMilli(e.Timestamp),
-				}); err != nil {
-					m.logger.Error("Error handling member left event", "error", err)
-				}
-			}
 		}
 
 		// Emit OnMemberUpdated for all membership changes (join, invite, knock, leave, ban)
