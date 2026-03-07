@@ -135,8 +135,8 @@ func (s *RoomService) GetRoomWithMessages(
 
 	room.MemberIDs = make([]uuid.UUID, 0, len(members))
 	for _, memberID := range members {
-		// Extract UUID from Matrix user ID (@uuid:domain) using context-aware method
-		if actorUUID, err := s.idMapper.AlkemioActorIDWithContext(ctx, memberID.String()); err == nil && actorUUID != uuid.Nil {
+		// Extract UUID from Matrix user ID (@uuid:domain)
+		if actorUUID := s.idMapper.AlkemioActorID(memberID); actorUUID != uuid.Nil {
 			room.MemberIDs = append(room.MemberIDs, actorUUID)
 		}
 	}
@@ -148,19 +148,15 @@ func (s *RoomService) GetRoomWithMessages(
 		messages = []domain.Message{}
 	}
 
-	// Convert SenderMatrixID to SenderID (Alkemio actor UUID) for messages and reactions using context-aware method
+	// Convert SenderMatrixID to SenderID (Alkemio actor UUID) for messages and reactions
 	for i := range messages {
 		if messages[i].SenderMatrixID != "" {
-			if actorID, err := s.idMapper.AlkemioActorIDWithContext(ctx, messages[i].SenderMatrixID); err == nil {
-				messages[i].SenderID = actorID
-			}
+			messages[i].SenderID = s.idMapper.AlkemioActorID(id.UserID(messages[i].SenderMatrixID))
 		}
 		// Convert reaction sender IDs
 		for j := range messages[i].Reactions {
 			if messages[i].Reactions[j].SenderMatrixID != "" {
-				if actorID, err := s.idMapper.AlkemioActorIDWithContext(ctx, messages[i].Reactions[j].SenderMatrixID); err == nil {
-					messages[i].Reactions[j].SenderID = actorID
-				}
+				messages[i].Reactions[j].SenderID = s.idMapper.AlkemioActorID(id.UserID(messages[i].Reactions[j].SenderMatrixID))
 			}
 		}
 	}
@@ -384,11 +380,9 @@ func (s *RoomService) GetMessage(ctx context.Context, roomID id.RoomID, eventID 
 		return nil, err
 	}
 
-	// Convert SenderMatrixID to SenderID (Alkemio actor UUID) using context-aware method
+	// Convert SenderMatrixID to SenderID (Alkemio actor UUID)
 	if msg != nil && msg.SenderMatrixID != "" {
-		if actorID, err := s.idMapper.AlkemioActorIDWithContext(ctx, msg.SenderMatrixID); err == nil {
-			msg.SenderID = actorID
-		}
+		msg.SenderID = s.idMapper.AlkemioActorID(id.UserID(msg.SenderMatrixID))
 	}
 
 	return msg, nil

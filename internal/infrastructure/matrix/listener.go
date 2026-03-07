@@ -444,7 +444,7 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 	membership := string(content.Membership)
 
 	// Move HTTP call inside goroutine to avoid blocking the event loop
-	go func(e *event.Event, memberID, senderID uuid.UUID, membershipState, reason string) {
+	go func(e *event.Event, memberID, senderID uuid.UUID, membershipState, _ string) {
 		// Get Alkemio room ID (HTTP call - must be async)
 		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID)
 		if alkemioRoomID == uuid.Nil {
@@ -485,15 +485,9 @@ func (m *MautrixAdapter) resolveAlkemioRoomID(ctx context.Context, roomID id.Roo
 }
 
 // resolveActorID converts a Matrix user ID to an Alkemio actor UUID.
-// Uses the context-aware method to support ActorResolver when enabled.
-// Returns uuid.Nil if the user ID is not a valid ghost user or resolution fails.
-func (m *MautrixAdapter) resolveActorID(ctx context.Context, userID id.UserID) uuid.UUID {
-	actorID, err := m.idMapper.AlkemioActorIDWithContext(ctx, userID.String())
-	if err != nil {
-		m.logger.Debug("Failed to resolve actor ID", "user_id", userID, "error", err)
-		return uuid.Nil
-	}
-	return actorID
+// Returns uuid.Nil if the user ID is not a valid ghost user.
+func (m *MautrixAdapter) resolveActorID(_ context.Context, userID id.UserID) uuid.UUID {
+	return m.idMapper.AlkemioActorID(userID)
 }
 
 // handleReceiptEvent handles m.receipt ephemeral events (read receipts).

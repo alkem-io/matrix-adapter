@@ -10,7 +10,6 @@ import (
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
-	"github.com/alkem-io/matrix-adapter-go/internal/infrastructure/alkemiodb"
 	httpinfra "github.com/alkem-io/matrix-adapter-go/internal/infrastructure/http"
 	"github.com/alkem-io/matrix-adapter-go/internal/infrastructure/logger"
 	"github.com/alkem-io/matrix-adapter-go/internal/infrastructure/matrix"
@@ -23,9 +22,6 @@ type App struct {
 	logger        ports.Logger
 	matrixAdapter *matrix.MautrixAdapter
 	queueAdapter  ports.QueuePort
-
-	// ActorResolver for DB-based actor ID mapping (optional, temporary)
-	actorResolver *alkemiodb.Adapter
 
 	// Handlers
 	roomHandler        *queue.RoomHandler
@@ -55,35 +51,8 @@ func NewApp(cfg *config.Config) (*App, error) {
 		return nil, fmt.Errorf("failed to create Queue adapter: %w", err)
 	}
 
-	// 3. Initialize IDMapper and optional ActorResolver (must be done BEFORE creating services/handlers)
-	// Create the single shared IDMapper
+	// 3. Initialize IDMapper
 	idMapper := domain.NewIDMapper(cfg.Matrix.HomeserverName)
-
-	// Initialize ActorResolver if enabled (temporary feature for migration period)
-	var actorResolverAdapter *alkemiodb.Adapter
-	if cfg.ActorResolver.Enabled {
-		log.Info("ActorResolver enabled, connecting to Alkemio database...")
-		connString := fmt.Sprintf(
-			"postgres://%s:%s@%s:%s/%s?sslmode=disable",
-			cfg.ActorResolver.Username,
-			cfg.ActorResolver.Password,
-			cfg.ActorResolver.Host,
-			cfg.ActorResolver.Port,
-			cfg.ActorResolver.Database,
-		)
-		actorResolverAdapter, err = alkemiodb.NewAdapter(context.Background(), connString, log.(*logger.ZapLogger).Underlying())
-		if err != nil {
-			return nil, fmt.Errorf("failed to create ActorResolver (ACTOR_ID_MAPPER_ENABLED=true but database unreachable): %w", err)
-		}
-		log.Info("ActorResolver connected to Alkemio database")
-
-		// Wire ActorResolver to IDMapper and MatrixAdapter
-		idMapper.SetActorResolver(actorResolverAdapter)
-		matrixAdapter.SetActorResolver(actorResolverAdapter)
-		log.Info("ActorResolver wired to IDMapper and MatrixAdapter for DB-based actor ID mapping")
-	} else {
-		log.Info("ActorResolver disabled, using direct ID mapping")
-	}
 
 	// 4. Initialize Services (using shared IDMapper)
 	roomService := service.NewRoomService(matrixAdapter, log, idMapper)
@@ -134,7 +103,6 @@ func NewApp(cfg *config.Config) (*App, error) {
 		logger:             log,
 		matrixAdapter:      matrixAdapter,
 		queueAdapter:       queueAdapter,
-		actorResolver:      actorResolverAdapter,
 		roomHandler:        roomHandler,
 		actorHandler:       actorHandler,
 		spaceHandler:       spaceHandler,
@@ -170,11 +138,6 @@ func (a *App) Stop(_ context.Context) {
 
 	if err := a.queueAdapter.Close(); err != nil {
 		a.logger.Error("Failed to close Queue", "error", err)
-	}
-
-	// Close ActorResolver database connection if enabled
-	if a.actorResolver != nil {
-		a.actorResolver.Close()
 	}
 
 	a.logger.Info("Application stopped")
