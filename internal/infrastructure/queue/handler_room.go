@@ -148,6 +148,7 @@ func (h *RoomHandler) HandleCreateRoom(ctx context.Context, payload []byte) (int
 		string(req.Type),
 		req.Name,
 		req.Topic,
+		req.AvatarURL,
 		initialMembers,
 	)
 	if err != nil {
@@ -252,6 +253,7 @@ func (h *RoomHandler) HandleUpdateRoom(ctx context.Context, payload []byte) (int
 		req.AlkemioRoomID.UUID(),
 		req.Name,
 		req.Topic,
+		req.AvatarURL,
 		req.IsPublic,
 	)
 	if err != nil {

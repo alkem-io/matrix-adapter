@@ -38,7 +38,7 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	ctx context.Context,
 	alkemioRoomID uuid.UUID,
 	roomType string,
-	name, topic string,
+	name, topic, avatarURL string,
 	initialMembers []domain.Actor,
 ) error {
 	s.logger.Info(
@@ -97,7 +97,7 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	}
 
 	// Create the room with alias
-	_, err = s.matrix.CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, initialMembers)
+	_, err = s.matrix.CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, initialMembers)
 	if err != nil {
 		return fmt.Errorf("failed to create room: %w", err)
 	}
@@ -226,12 +226,12 @@ func (s *RoomService) GetRoomAsUser(
 	}, nil
 }
 
-// UpdateRoomMetadata updates room name, topic, and visibility.
+// UpdateRoomMetadata updates room name, topic, avatar, and visibility.
 // Note: isPublic is accepted but not yet implemented (reserved for future use).
 func (s *RoomService) UpdateRoomMetadata(
 	ctx context.Context,
 	alkemioRoomID uuid.UUID,
-	name, topic *string,
+	name, topic, avatarURL *string,
 	_ *bool, // isPublic - reserved for future visibility control
 ) error {
 	s.logger.Info("Updating room metadata", "alkemio_room_id", alkemioRoomID)
@@ -244,18 +244,21 @@ func (s *RoomService) UpdateRoomMetadata(
 	}
 
 	// Use bot to update room state
-	var nameVal, topicVal string
+	var nameVal, topicVal, avatarVal string
 	if name != nil {
 		nameVal = *name
 	}
 	if topic != nil {
 		topicVal = *topic
 	}
+	if avatarURL != nil {
+		avatarVal = *avatarURL
+	}
 
 	// We need a dummy actor for the update - use the bot
 	botActor := domain.Actor{}
 
-	err = s.matrix.UpdateRoomState(ctx, roomID, botActor, nameVal, topicVal, "")
+	err = s.matrix.UpdateRoomState(ctx, roomID, botActor, nameVal, topicVal, avatarVal, "")
 	if err != nil {
 		return fmt.Errorf("failed to update room: %w", err)
 	}

@@ -445,7 +445,7 @@ func (m *MautrixAdapter) GetRoomMembers(ctx context.Context, roomID id.RoomID) (
 
 // UpdateRoomState updates the state of a room.
 func (m *MautrixAdapter) UpdateRoomState(
-	ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, alias string,
+	ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, alias string,
 ) error {
 	userID, err := m.EnsureUser(ctx, actorID)
 	if err != nil {
@@ -461,6 +461,14 @@ func (m *MautrixAdapter) UpdateRoomState(
 	if topic != "" {
 		if _, err := intent.SetRoomTopic(ctx, roomID, topic); err != nil {
 			return err
+		}
+	}
+	if avatarURL != "" {
+		avatarContent := &event.RoomAvatarEventContent{
+			URL: id.ContentURIString(avatarURL),
+		}
+		if _, err := intent.SendStateEvent(ctx, roomID, event.StateRoomAvatar, "", avatarContent); err != nil {
+			return fmt.Errorf("failed to set room avatar: %w", err)
 		}
 	}
 	if alias != "" {
@@ -1192,7 +1200,7 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 	ctx context.Context,
 	alkemioRoomID uuid.UUID,
 	roomType string,
-	name, topic string,
+	name, topic, avatarURL string,
 	initialMembers []domain.Actor,
 ) (id.RoomID, error) {
 	// Use IDMapper for consistent alias construction
@@ -1226,6 +1234,17 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		IsDirect:      isDirect,
 		RoomAliasName: aliasLocalpart,
 		Invite:        invites,
+	}
+
+	// Add avatar state event if provided
+	if avatarURL != "" {
+		avatarContent := &event.RoomAvatarEventContent{
+			URL: id.ContentURIString(avatarURL),
+		}
+		req.InitialState = append(req.InitialState, &event.Event{
+			Type:    event.StateRoomAvatar,
+			Content: event.Content{Parsed: avatarContent},
+		})
 	}
 
 	resp, err := intent.CreateRoom(ctx, req)

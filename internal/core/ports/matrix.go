@@ -25,15 +25,15 @@ type MatrixPort interface {
 	SetUserProfile(ctx context.Context, actorID domain.Actor) error
 
 	// CreateRoomWithAlias creates a new Matrix room with the specified alias and initial members.
-	CreateRoomWithAlias(ctx context.Context, alkemioRoomID uuid.UUID, roomType string, name, topic string, initialMembers []domain.Actor) (id.RoomID, error)
+	CreateRoomWithAlias(ctx context.Context, alkemioRoomID uuid.UUID, roomType string, name, topic, avatarURL string, initialMembers []domain.Actor) (id.RoomID, error)
 	// InviteUser invites a user to a Matrix room on behalf of another user.
 	InviteUser(ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID domain.Actor) error
 	// GetRoomDetails retrieves room metadata including name, topic, and state.
 	GetRoomDetails(ctx context.Context, roomID id.RoomID) (*domain.Room, error)
 	// GetRoomMembers returns the list of member user IDs in a room.
 	GetRoomMembers(ctx context.Context, roomID id.RoomID) ([]id.UserID, error)
-	// UpdateRoomState updates a room's name, topic, and canonical alias.
-	UpdateRoomState(ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, alias string) error
+	// UpdateRoomState updates a room's name, topic, avatar, and canonical alias.
+	UpdateRoomState(ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, alias string) error
 
 	// ResolveAlias resolves a room alias to a room ID.
 	ResolveAlias(ctx context.Context, alias string) (id.RoomID, error)
