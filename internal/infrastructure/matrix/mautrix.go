@@ -324,26 +324,34 @@ func (m *MautrixAdapter) getLatestEventID(
 	return resp.Chunk[0].ID, nil
 }
 
-// markRoomAsReadForUsers sends read receipts for multiple users using a single event ID.
-// This is optimized for room creation where we need to clear invite notifications for all members.
+// markAsRead sends m.read receipt (triggers EDU) and sets m.fully_read marker (queryable)
+// for a single user in a room. This is the single source of truth for marking messages as read.
+func (m *MautrixAdapter) markAsRead(
+	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID, eventID id.EventID,
+) {
+	if err := intent.SendReceipt(ctx, roomID, eventID, event.ReceiptTypeRead, nil); err != nil {
+		m.logger.Warn("Failed to send m.read receipt",
+			"room_id", roomID, "event_id", eventID, "error", err)
+	}
+	if err := intent.SetReadMarkers(ctx, roomID, &mautrix.ReqSetReadMarkers{
+		FullyRead: eventID,
+	}); err != nil {
+		m.logger.Warn("Failed to set m.fully_read marker",
+			"room_id", roomID, "event_id", eventID, "error", err)
+	}
+}
+
+// markRoomAsReadForUsers marks a room as read for multiple users using a single event ID.
+// Used for room/space creation to clear invite notifications for all members.
 func (m *MautrixAdapter) markRoomAsReadForUsers(
 	ctx context.Context, roomID id.RoomID, userIDs []id.UserID, eventID id.EventID,
 ) {
 	if eventID == "" {
-		return // No event to mark as read
+		return
 	}
 
 	for _, userID := range userIDs {
-		intent := m.as.Intent(userID)
-		if err := intent.SendReceipt(ctx, roomID, eventID, event.ReceiptTypeRead, nil); err != nil {
-			m.logger.Warn("Failed to mark room as read for user",
-				"room_id", roomID,
-				"user_id", userID,
-				"event_id", eventID,
-				"error", err,
-			)
-			// Continue with other users
-		}
+		m.markAsRead(ctx, m.as.Intent(userID), roomID, eventID)
 	}
 
 	m.logger.Debug("Marked room as read for users after join",
@@ -1749,38 +1757,218 @@ func (m *MautrixAdapter) SendReadReceipt(
 		return fmt.Errorf("failed to ensure user registered: %w", err)
 	}
 
-	// Prepare receipt content - use ReqSendReceipt for thread-level receipts (MSC3771)
-	var content interface{}
 	if threadRootID != nil {
-		content = &mautrix.ReqSendReceipt{
+		// Thread-level: use SendReceipt with thread context (MSC3771)
+		m.logger.Debug("Sending thread-level read receipt",
+			"room_id", roomID, "event_id", eventID,
+			"thread_root_id", *threadRootID, "user_id", userID)
+		content := &mautrix.ReqSendReceipt{
 			ThreadID: threadRootID.String(),
 		}
-		m.logger.Debug(
-			"Sending thread-level read receipt",
-			"room_id", roomID,
-			"event_id", eventID,
-			"thread_root_id", *threadRootID,
-			"user_id", userID,
-		)
+		if err := intent.SendReceipt(ctx, roomID, eventID, event.ReceiptTypeRead, content); err != nil {
+			return fmt.Errorf("failed to send thread read receipt: %w", err)
+		}
 	} else {
-		m.logger.Debug(
-			"Sending room-level read receipt",
-			"room_id", roomID,
-			"event_id", eventID,
-			"user_id", userID,
-		)
-	}
-
-	// Send the read receipt with optional thread context
-	if err := intent.SendReceipt(ctx, roomID, eventID, event.ReceiptTypeRead, content); err != nil {
-		return fmt.Errorf("failed to send read receipt: %w", err)
+		// Room-level: send m.read receipt (triggers EDU) + set m.fully_read (queryable)
+		m.logger.Debug("Sending room-level read receipt with read marker",
+			"room_id", roomID, "event_id", eventID, "user_id", userID)
+		m.markAsRead(ctx, intent, roomID, eventID)
 	}
 
 	return nil
 }
 
+// getFullyReadMarker queries the m.fully_read room account data for a user in a room.
+// Returns nil if no marker is set (user has never marked anything as read in this room).
+func (m *MautrixAdapter) getFullyReadMarker(
+	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID,
+) *id.EventID {
+	var result struct {
+		EventID id.EventID `json:"event_id"`
+	}
+	err := intent.GetRoomAccountData(ctx, roomID, "m.fully_read", &result)
+	if err != nil {
+		m.logger.Debug("No m.fully_read marker found for room",
+			"room_id", roomID, "error", err)
+		return nil
+	}
+	if result.EventID == "" {
+		return nil
+	}
+	m.logger.Debug("Found m.fully_read marker",
+		"room_id", roomID, "event_id", result.EventID)
+	return &result.EventID
+}
+
+// countUnreadMessages counts m.room.message events backward from the latest event,
+// stopping when the receipt event ID is found or 200 events have been scanned.
+// If receiptEventID is nil, counts ALL non-self messages (for rooms with no receipt).
+// Returns (count, true) if receipt found or all events scanned.
+// Returns (count-so-far, false) if 200-event cap hit without finding receipt.
+func (m *MautrixAdapter) countUnreadMessages(
+	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID,
+	receiptEventID *id.EventID, userID id.UserID,
+) (int, bool) {
+	if receiptEventID == nil {
+		m.logger.Debug("No read receipt found for user in room, counting all messages",
+			"room_id", roomID, "user_id", userID)
+	}
+
+	batchSizes := []int{5, 10, 20, 50, 200}
+	var from string
+	count := 0
+	totalScanned := 0
+
+	for _, batchSize := range batchSizes {
+		resp, err := intent.Messages(ctx, roomID, from, "", mautrix.DirectionBackward, nil, batchSize)
+		if err != nil {
+			m.logger.Error("Failed to fetch messages for unread count",
+				"error", err, "room_id", roomID, "batch_size", batchSize)
+			return count, false
+		}
+
+		for _, evt := range resp.Chunk {
+			totalScanned++
+			// Check if this is the receipt target
+			if receiptEventID != nil && evt.ID == *receiptEventID {
+				m.logger.Debug("Found read receipt position",
+					"room_id", roomID,
+					"receipt_event_id", *receiptEventID,
+					"events_scanned", totalScanned,
+					"unread_count", count,
+				)
+				return count, true
+			}
+			// Count message events not from the user
+			if evt.Type == event.EventMessage && evt.Sender != userID {
+				count++
+			}
+		}
+
+		// No more events to fetch
+		if resp.End == "" || len(resp.Chunk) < batchSize {
+			m.logger.Debug("Scanned all available events",
+				"room_id", roomID,
+				"events_scanned", totalScanned,
+				"unread_count", count,
+				"has_receipt", receiptEventID != nil,
+			)
+			return count, true
+		}
+		from = resp.End
+	}
+
+	// 200-event cap hit without finding receipt
+	m.logger.Debug("Reached 200-event cap without finding receipt",
+		"room_id", roomID,
+		"receipt_event_id", receiptEventID,
+		"events_scanned", totalScanned,
+		"partial_count", count,
+	)
+	return count, false
+}
+
+// bootstrapFullyReadMarker sets m.fully_read to the latest message in the room.
+// Called when m.fully_read doesn't exist and Synapse reports 0 unread,
+// so future queries can use self-calculation.
+func (m *MautrixAdapter) bootstrapFullyReadMarker(
+	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID,
+) {
+	// Fetch the latest message to get its event ID
+	resp, err := intent.Messages(ctx, roomID, "", "", mautrix.DirectionBackward, nil, 1)
+	if err != nil || len(resp.Chunk) == 0 {
+		return
+	}
+	latestEventID := resp.Chunk[0].ID
+	if err := intent.SetReadMarkers(ctx, roomID, &mautrix.ReqSetReadMarkers{
+		FullyRead: latestEventID,
+	}); err != nil {
+		m.logger.Warn("Failed to bootstrap m.fully_read marker",
+			"error", err, "room_id", roomID, "event_id", latestEventID)
+		return
+	}
+	m.logger.Debug("Bootstrapped m.fully_read marker from latest event",
+		"room_id", roomID, "event_id", latestEventID)
+}
+
+// extractSynapseNotificationCount extracts the notification count from a sync joined room.
+// Prefers MSC2654 unread count over standard notification count.
+func extractSynapseNotificationCount(joinedRoom *mautrix.SyncJoinedRoom) int {
+	if joinedRoom == nil {
+		return 0
+	}
+	count := 0
+	if joinedRoom.UnreadNotifications != nil {
+		count = joinedRoom.UnreadNotifications.NotificationCount
+	}
+	if joinedRoom.MSC2654UnreadCount != nil {
+		count = *joinedRoom.MSC2654UnreadCount
+	}
+	return count
+}
+
+// getSynapseUnreadCount performs a /sync call to get Synapse's notification_count for a single room.
+// Used as fallback when self-calculation isn't possible.
+func (m *MautrixAdapter) getSynapseUnreadCount(
+	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID,
+) (int, error) {
+	filter := &mautrix.Filter{
+		Room: &mautrix.RoomFilter{
+			Rooms:     []id.RoomID{roomID},
+			Timeline:  &mautrix.FilterPart{Limit: 0},
+			State:     &mautrix.FilterPart{Limit: 0},
+			Ephemeral: &mautrix.FilterPart{Limit: 0},
+		},
+		Presence: &mautrix.FilterPart{Limit: 0},
+	}
+	filterResp, err := intent.CreateFilter(ctx, filter)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create sync filter: %w", err)
+	}
+	syncResp, err := intent.SyncRequest(ctx, 0, "", filterResp.FilterID, false, "")
+	if err != nil {
+		return 0, fmt.Errorf("failed to sync: %w", err)
+	}
+	if joinedRoom, ok := syncResp.Rooms.Join[roomID]; ok {
+		return extractSynapseNotificationCount(joinedRoom), nil
+	}
+	return 0, nil
+}
+
+// getSynapseBatchUnreadCounts performs a single /sync call to get Synapse's notification_count for multiple rooms.
+// Used as fallback when self-calculation isn't possible.
+func (m *MautrixAdapter) getSynapseBatchUnreadCounts(
+	ctx context.Context, intent *appservice.IntentAPI, roomIDs []id.RoomID,
+) (map[id.RoomID]int, error) {
+	filter := &mautrix.Filter{
+		Room: &mautrix.RoomFilter{
+			Rooms:     roomIDs,
+			Timeline:  &mautrix.FilterPart{Limit: 0},
+			State:     &mautrix.FilterPart{Limit: 0},
+			Ephemeral: &mautrix.FilterPart{Limit: 0},
+		},
+		Presence: &mautrix.FilterPart{Limit: 0},
+	}
+	filterResp, err := intent.CreateFilter(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sync filter: %w", err)
+	}
+	syncResp, err := intent.SyncRequest(ctx, 0, "", filterResp.FilterID, false, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to sync: %w", err)
+	}
+	results := make(map[id.RoomID]int)
+	for _, rid := range roomIDs {
+		if joinedRoom, ok := syncResp.Rooms.Join[rid]; ok {
+			results[rid] = extractSynapseNotificationCount(joinedRoom)
+		}
+	}
+	return results, nil
+}
+
 // GetUnreadCounts retrieves unread message counts for a room and optionally specific threads.
-// Uses the Matrix /sync API with a room filter to get notification counts.
+// Self-calculates unread counts from read receipt position and message timeline,
+// falling back to Synapse's notification_count when self-calculation isn't possible.
 //
 // Note: Thread-level unread counts require MSC3773 support which may not be available
 // on all homeservers. If thread counts are requested but not available, the thread
@@ -1788,118 +1976,92 @@ func (m *MautrixAdapter) SendReadReceipt(
 func (m *MautrixAdapter) GetUnreadCounts(
 	ctx context.Context, actor domain.Actor, roomID id.RoomID, threadRootIDs []id.EventID,
 ) (*domain.UnreadCountSummary, error) {
-	// Get the user's intent to make API calls as that user
 	userID := m.idMapper.UserID(actor.ID)
 	intent := m.as.Intent(userID)
 
-	// Ensure the user is registered before making sync requests
 	if err := intent.EnsureRegistered(ctx); err != nil {
-		m.logger.Error(
-			"Failed to ensure user is registered",
-			"error", err,
-			"user_id", userID,
-			"actor_id", actor.ID,
-		)
+		m.logger.Error("Failed to ensure user is registered",
+			"error", err, "user_id", userID, "actor_id", actor.ID)
 		return nil, fmt.Errorf("failed to ensure user registered: %w", err)
 	}
 
-	// Create a filter that only includes the specific room to minimize data transfer.
-	// We only need the unread notification counts, not timeline events.
-	filter := &mautrix.Filter{
-		Room: &mautrix.RoomFilter{
-			Rooms: []id.RoomID{roomID},
-			Timeline: &mautrix.FilterPart{
-				Limit: 0, // Don't fetch timeline events
-			},
-			State: &mautrix.FilterPart{
-				Limit: 0, // Don't fetch state events
-			},
-			Ephemeral: &mautrix.FilterPart{
-				Limit: 0, // Don't fetch ephemeral events
-			},
-		},
-		Presence: &mautrix.FilterPart{
-			Limit: 0, // Don't fetch presence
-		},
-	}
-
-	// Create the filter on the server
-	filterResp, err := intent.CreateFilter(ctx, filter)
-	if err != nil {
-		m.logger.Error(
-			"Failed to create sync filter",
-			"error", err,
-			"room_id", roomID,
-			"actor_id", actor.ID,
-		)
-		return nil, fmt.Errorf("failed to create sync filter: %w", err)
-	}
-
-	// Perform an initial sync (timeout=0) to get current state without blocking.
-	// Using empty "since" token to get a fresh snapshot.
-	syncResp, err := intent.SyncRequest(ctx, 0, "", filterResp.FilterID, false, "")
-	if err != nil {
-		m.logger.Error(
-			"Failed to sync for unread counts",
-			"error", err,
-			"room_id", roomID,
-			"actor_id", actor.ID,
-		)
-		return nil, fmt.Errorf("failed to sync: %w", err)
-	}
-
-	// Extract unread counts from the sync response
 	summary := &domain.UnreadCountSummary{
 		RoomUnreadCount:    0,
 		ThreadUnreadCounts: make(map[id.EventID]int),
 	}
 
-	// Check if the room is in the joined rooms response
-	if joinedRoom, ok := syncResp.Rooms.Join[roomID]; ok {
-		// Get standard notification count
-		if joinedRoom.UnreadNotifications != nil {
-			summary.RoomUnreadCount = joinedRoom.UnreadNotifications.NotificationCount
-		}
+	// Get read position from m.fully_read room account data
+	receiptEventID := m.getFullyReadMarker(ctx, intent, roomID)
 
-		// MSC2654 provides actual unread message count (not just notifications)
-		// Prefer this if available as it's more accurate for "unread messages"
-		if joinedRoom.MSC2654UnreadCount != nil {
-			summary.RoomUnreadCount = *joinedRoom.MSC2654UnreadCount
+	var count int
+	var calculationMethod string
+
+	if receiptEventID == nil {
+		// No m.fully_read marker — user has never read via this adapter version.
+		// Fall back to Synapse's notification_count to avoid marking everything as unread.
+		calculationMethod = "synapse-fallback-no-marker"
+		fallbackCount, fallbackErr := m.getSynapseUnreadCount(ctx, intent, roomID)
+		if fallbackErr != nil {
+			m.logger.Error("Failed to get Synapse fallback unread count",
+				"error", fallbackErr, "room_id", roomID, "actor_id", actor.ID)
+		} else {
+			count = fallbackCount
 		}
+		// Bootstrap: if Synapse says 0 unread, set m.fully_read to latest message
+		// so future queries use self-calculation
+		if count == 0 {
+			m.bootstrapFullyReadMarker(ctx, intent, roomID)
+		}
+		m.logger.Debug("No m.fully_read marker, using Synapse fallback",
+			"room_id", roomID, "actor_id", actor.ID, "fallback_count", count)
 	} else {
-		// Room not present in sync response - user may not be joined or sync issue
-		m.logger.Warn(
-			"Room not present in sync response for unread counts",
-			"room_id", roomID,
-			"actor_id", actor.ID,
-		)
+		// Self-calculate unread count via progressive timeline fetch
+		calculationMethod = "self-calculated"
+		var found bool
+		count, found = m.countUnreadMessages(ctx, intent, roomID, receiptEventID, userID)
+
+		if !found {
+			// Receipt not found in 200 events — fall back to Synapse's notification_count
+			calculationMethod = "synapse-fallback-receipt-not-found"
+			fallbackCount, fallbackErr := m.getSynapseUnreadCount(ctx, intent, roomID)
+			if fallbackErr != nil {
+				m.logger.Error("Failed to get Synapse fallback unread count",
+					"error", fallbackErr, "room_id", roomID, "actor_id", actor.ID)
+				count = 0
+			} else {
+				count = fallbackCount
+			}
+			m.logger.Debug("Receipt not found in 200 events, using Synapse fallback",
+				"room_id", roomID, "actor_id", actor.ID,
+				"receipt_event_id", receiptEventID, "fallback_count", count)
+		}
 	}
 
-	// Thread-level unread counts: Currently not available in standard /sync response.
-	// MSC3773 (thread notifications) would provide this, but implementation varies by homeserver.
-	// For now, we log a debug message if threads were requested but return empty map.
+	summary.RoomUnreadCount = count
+
+	// Thread-level unread counts: not yet supported (MSC3773)
 	if len(threadRootIDs) > 0 {
-		m.logger.Debug(
-			"Thread-level unread counts requested but not yet supported by homeserver",
-			"room_id", roomID,
-			"actor_id", actor.ID,
-			"requested_threads", len(threadRootIDs),
-		)
-		// Future: When MSC3773 is widely supported, extract thread notification counts here
+		m.logger.Debug("Thread-level unread counts requested but not yet supported by homeserver",
+			"room_id", roomID, "actor_id", actor.ID,
+			"requested_threads", len(threadRootIDs))
 	}
 
-	m.logger.Debug(
-		"Retrieved unread counts",
-		"room_id", roomID,
-		"actor_id", actor.ID,
+	m.logger.Debug("Retrieved unread counts",
+		"room_id", roomID, "actor_id", actor.ID,
 		"room_unread", summary.RoomUnreadCount,
+		"receipt_event_id", receiptEventID,
+		"calculation_method", calculationMethod,
 	)
 
 	return summary, nil
 }
 
-// GetBatchUnreadCounts retrieves unread counts for multiple rooms in a single sync call.
-// This is more efficient than calling GetUnreadCounts for each room individually.
+// maxConcurrentUnreadFetches limits parallel message fetch requests for batch unread counts.
+const maxConcurrentUnreadFetches = 10
+
+// GetBatchUnreadCounts retrieves unread counts for multiple rooms.
+// Self-calculates from read receipt positions and message timelines,
+// falling back to Synapse's notification_count when self-calculation isn't possible.
 func (m *MautrixAdapter) GetBatchUnreadCounts(
 	ctx context.Context, actor domain.Actor, roomIDs []id.RoomID,
 ) (map[id.RoomID]int, map[id.RoomID]error) {
@@ -1910,11 +2072,9 @@ func (m *MautrixAdapter) GetBatchUnreadCounts(
 		return results, errors
 	}
 
-	// Get the user's intent to make API calls as that user
 	userID := m.idMapper.UserID(actor.ID)
 	intent := m.as.Intent(userID)
 
-	// Ensure the user is registered before making sync requests
 	if err := intent.EnsureRegistered(ctx); err != nil {
 		m.logger.Error("Failed to ensure user registered for batch unread", "error", err, "user_id", userID)
 		for _, roomID := range roomIDs {
@@ -1923,68 +2083,96 @@ func (m *MautrixAdapter) GetBatchUnreadCounts(
 		return results, errors
 	}
 
-	// Create a filter that includes ALL requested rooms to minimize HTTP calls.
-	// We only need the unread notification counts, not timeline events.
-	filter := &mautrix.Filter{
-		Room: &mautrix.RoomFilter{
-			Rooms: roomIDs, // All rooms in single filter
-			Timeline: &mautrix.FilterPart{
-				Limit: 0, // Don't fetch timeline events
-			},
-			State: &mautrix.FilterPart{
-				Limit: 0, // Don't fetch state events
-			},
-			Ephemeral: &mautrix.FilterPart{
-				Limit: 0, // Don't fetch ephemeral events
-			},
-		},
-		Presence: &mautrix.FilterPart{
-			Limit: 0, // Don't fetch presence
-		},
+	// Pre-fetch Synapse fallback counts for all rooms in a single sync call
+	synapseCounts, synapseFallbackErr := m.getSynapseBatchUnreadCounts(ctx, intent, roomIDs)
+	if synapseFallbackErr != nil {
+		m.logger.Warn("Failed to get Synapse fallback counts, will use 0 for fallback",
+			"error", synapseFallbackErr, "actor_id", actor.ID)
 	}
 
-	// Create the filter on the server
-	filterResp, err := intent.CreateFilter(ctx, filter)
-	if err != nil {
-		m.logger.Error("Failed to create batch sync filter", "error", err, "actor_id", actor.ID, "room_count", len(roomIDs))
-		for _, roomID := range roomIDs {
-			errors[roomID] = fmt.Errorf("failed to create sync filter: %w", err)
-		}
-		return results, errors
+	// Process each room in parallel with semaphore
+	type batchResult struct {
+		roomID id.RoomID
+		count  int
+		err    error
 	}
+	resultCh := make(chan batchResult, len(roomIDs))
+	sem := make(chan struct{}, maxConcurrentUnreadFetches)
 
-	// Perform an initial sync (timeout=0) to get current state without blocking.
-	syncResp, err := intent.SyncRequest(ctx, 0, "", filterResp.FilterID, false, "")
-	if err != nil {
-		m.logger.Error("Failed to sync for batch unread counts", "error", err, "actor_id", actor.ID)
-		for _, roomID := range roomIDs {
-			errors[roomID] = fmt.Errorf("failed to sync: %w", err)
-		}
-		return results, errors
-	}
-
-	// Extract unread counts from the sync response for each room
+	var wg sync.WaitGroup
 	for _, roomID := range roomIDs {
-		if joinedRoom, ok := syncResp.Rooms.Join[roomID]; ok {
-			count := 0
-			// Get standard notification count
-			if joinedRoom.UnreadNotifications != nil {
-				count = joinedRoom.UnreadNotifications.NotificationCount
+		wg.Add(1)
+		go func(rid id.RoomID) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				resultCh <- batchResult{roomID: rid, err: ctx.Err()}
+				return
 			}
-			// MSC2654 provides actual unread message count (prefer if available)
-			if joinedRoom.MSC2654UnreadCount != nil {
-				count = *joinedRoom.MSC2654UnreadCount
+
+			// Get read position from m.fully_read room account data
+			receiptEventID := m.getFullyReadMarker(ctx, intent, rid)
+
+			var count int
+			var calculationMethod string
+
+			if receiptEventID == nil {
+				// No m.fully_read marker — fall back to Synapse to avoid marking everything as unread
+				calculationMethod = "synapse-fallback-no-marker"
+				if synapseCounts != nil {
+					count = synapseCounts[rid]
+				}
+				// Bootstrap: if Synapse says 0 unread, set m.fully_read to latest message
+				if count == 0 {
+					m.bootstrapFullyReadMarker(ctx, intent, rid)
+				}
+				m.logger.Debug("No m.fully_read marker, using Synapse fallback",
+					"room_id", rid, "actor_id", actor.ID, "fallback_count", count)
+			} else {
+				calculationMethod = "self-calculated"
+				var found bool
+				count, found = m.countUnreadMessages(ctx, intent, rid, receiptEventID, userID)
+
+				if !found {
+					calculationMethod = "synapse-fallback-receipt-not-found"
+					if synapseCounts != nil {
+						count = synapseCounts[rid]
+					} else {
+						count = 0
+					}
+					m.logger.Debug("Receipt not found in 200 events, using Synapse fallback",
+						"room_id", rid, "actor_id", actor.ID,
+						"receipt_event_id", receiptEventID, "fallback_count", count)
+				}
 			}
-			results[roomID] = count
+
+			m.logger.Debug("Batch unread count for room",
+				"actor_id", actor.ID, "room_id", rid,
+				"unread_count", count,
+				"receipt_event_id", receiptEventID,
+				"calculation_method", calculationMethod,
+			)
+
+			resultCh <- batchResult{roomID: rid, count: count}
+		}(roomID)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	for r := range resultCh {
+		if r.err != nil {
+			errors[r.roomID] = r.err
 		} else {
-			// Room not present in sync response - user may not be joined
-			m.logger.Warn("Room not in sync response for batch unread", "room_id", roomID, "actor_id", actor.ID)
-			errors[roomID] = fmt.Errorf("room not found in sync response")
+			results[r.roomID] = r.count
 		}
 	}
 
-	m.logger.Debug(
-		"Retrieved batch unread counts",
+	m.logger.Debug("Retrieved batch unread counts",
 		"actor_id", actor.ID,
 		"rooms_requested", len(roomIDs),
 		"rooms_found", len(results),
