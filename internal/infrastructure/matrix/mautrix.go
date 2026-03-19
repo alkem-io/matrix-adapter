@@ -1820,6 +1820,12 @@ func (m *MautrixAdapter) countUnreadMessages(
 	totalScanned := 0
 
 	for _, batchSize := range batchSizes {
+		select {
+		case <-ctx.Done():
+			return count, false
+		default:
+		}
+
 		resp, err := intent.Messages(ctx, roomID, from, "", mautrix.DirectionBackward, nil, batchSize)
 		if err != nil {
 			m.logger.Error("Failed to fetch messages for unread count",
@@ -1858,8 +1864,8 @@ func (m *MautrixAdapter) countUnreadMessages(
 		from = resp.End
 	}
 
-	// 200-event cap hit without finding receipt
-	m.logger.Debug("Reached 200-event cap without finding receipt",
+	// Progressive batch cap hit without finding receipt (max ~285 events across all batches)
+	m.logger.Debug("Reached progressive fetch cap without finding receipt",
 		"room_id", roomID,
 		"receipt_event_id", receiptEventID,
 		"events_scanned", totalScanned,

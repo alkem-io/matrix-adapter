@@ -46,10 +46,6 @@ func (m *MautrixAdapter) startEventLoop() {
 }
 
 func (m *MautrixAdapter) processEvent(evt *event.Event) {
-	m.logger.Debug("Processing event from Matrix",
-		"event_type", evt.Type.Type, "event_class", evt.Type.Class.Name,
-		"sender", evt.Sender, "room_id", evt.RoomID)
-
 	// State events are always processed, even from the bot itself,
 	// because the server needs to know about state changes it triggered
 	// (e.g. room property updates, member kicks via batch remove).
