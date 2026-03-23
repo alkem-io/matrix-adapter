@@ -5,31 +5,47 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: m4
     steps:
+      - name: Set up Docker
+        run: |
+          if ! command -v brew &>/dev/null; then
+            NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+            echo "/opt/homebrew/bin" >> $GITHUB_PATH
+          fi
+          brew install docker colima
+          colima delete --force 2>/dev/null || true
+          colima start
+
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go
+          tags: |
+            type=sha
+            type=raw,value=latest
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ secrets.REGISTRY_LOGIN_SERVER }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Build and push container image
-        uses: docker/build-push-action@v6
+      - name: Build and push
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go:${{ github.sha }}
-            ${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
