@@ -145,6 +145,7 @@ func (h *RoomHandler) HandleCreateRoom(ctx context.Context, payload []byte) (int
 		req.Name,
 		req.Topic,
 		req.AvatarURL,
+		string(req.JoinRule),
 		initialMembers,
 	)
 	if err != nil {
@@ -244,13 +245,20 @@ func (h *RoomHandler) HandleUpdateRoom(ctx context.Context, payload []byte) (int
 		return *errResp, nil
 	}
 
+	// Convert JoinRule pointer (following HandleUpdateSpace pattern)
+	var joinRule *string
+	if req.JoinRule != nil {
+		jr := string(*req.JoinRule)
+		joinRule = &jr
+	}
+
 	err := h.service.UpdateRoomMetadata(
 		ctx,
 		req.AlkemioRoomID.UUID(),
 		req.Name,
 		req.Topic,
 		req.AvatarURL,
-		req.IsPublic,
+		joinRule,
 	)
 	if err != nil {
 		return MapServiceError(err), nil

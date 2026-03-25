@@ -9,6 +9,7 @@ Auto-generated from all feature plans. Last updated: 2026-03-07
 - N/A (removing PostgreSQL dependency) (011-remove-db-actor-mapper)
 - Go 1.25 + mautrix-go v0.26.0 → v0.26.4 (update), Watermill (RabbitMQ), Zap (logging) (012-fix-unread-counts)
 - N/A (no persistence changes) (012-fix-unread-counts)
+- N/A (no persistence changes) (013-space-room-params)
 
 ## Project Structure
 
@@ -34,6 +35,7 @@ make run        # Run the service locally
 Go 1.25: Follow standard conventions
 
 ## Recent Changes
+- 013-space-room-params: Added Go 1.25 + mautrix-go (Matrix SDK), Watermill (RabbitMQ), Zap (logging)
 - 012-fix-unread-counts: Added Go 1.25 + mautrix-go v0.26.0 → v0.26.4 (update), Watermill (RabbitMQ), Zap (logging)
 - 011-remove-db-actor-mapper: Added Go 1.25 + mautrix-go (Matrix SDK), Watermill (RabbitMQ), Zap (logging) — removing pgx/v5 and SQLC
 - 010-room-state-events: Added Go 1.25 + mautrix-go (Matrix SDK), Watermill (RabbitMQ), Zap (logging)

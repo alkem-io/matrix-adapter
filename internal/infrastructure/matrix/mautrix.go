@@ -444,7 +444,7 @@ func (m *MautrixAdapter) GetRoomMembers(ctx context.Context, roomID id.RoomID) (
 
 // UpdateRoomState updates the state of a room.
 func (m *MautrixAdapter) UpdateRoomState(
-	ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, alias string,
+	ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, joinRule, alias string,
 ) error {
 	userID, err := m.EnsureUser(ctx, actorID)
 	if err != nil {
@@ -468,6 +468,14 @@ func (m *MautrixAdapter) UpdateRoomState(
 		}
 		if _, err := intent.SendStateEvent(ctx, roomID, event.StateRoomAvatar, "", avatarContent); err != nil {
 			return fmt.Errorf("failed to set room avatar: %w", err)
+		}
+	}
+	if joinRule != "" {
+		joinRuleContent := &event.JoinRulesEventContent{
+			JoinRule: event.JoinRule(joinRule),
+		}
+		if _, err := intent.SendStateEvent(ctx, roomID, event.StateJoinRules, "", joinRuleContent); err != nil {
+			return fmt.Errorf("failed to set room join rule: %w", err)
 		}
 	}
 	if alias != "" {
@@ -1199,7 +1207,7 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 	ctx context.Context,
 	alkemioRoomID uuid.UUID,
 	roomType string,
-	name, topic, avatarURL string,
+	name, topic, avatarURL, joinRule string,
 	initialMembers []domain.Actor,
 ) (id.RoomID, error) {
 	// Use IDMapper for consistent alias construction
@@ -1226,6 +1234,12 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		isDirect = true
 	}
 
+	// When an explicit joinRule is provided for non-direct rooms,
+	// use private_chat preset and let the join_rules state event control visibility
+	if joinRule != "" && !isDirect {
+		preset = "private_chat"
+	}
+
 	req := &mautrix.ReqCreateRoom{
 		Name:          name,
 		Topic:         topic,
@@ -1233,6 +1247,17 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		IsDirect:      isDirect,
 		RoomAliasName: aliasLocalpart,
 		Invite:        invites,
+	}
+
+	// Add join rule state event if provided (following CreateSpace pattern)
+	if joinRule != "" {
+		joinRuleContent := &event.JoinRulesEventContent{
+			JoinRule: event.JoinRule(joinRule),
+		}
+		req.InitialState = append(req.InitialState, &event.Event{
+			Type:    event.StateJoinRules,
+			Content: event.Content{Parsed: joinRuleContent},
+		})
 	}
 
 	// Add avatar state event if provided

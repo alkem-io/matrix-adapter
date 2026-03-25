@@ -39,7 +39,6 @@ type UpdateRoomRequest struct {
 	AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
 	Name          *string       `json:"name,omitempty"`
 	Topic         *string       `json:"topic,omitempty"`
-	IsPublic      *bool         `json:"is_public,omitempty"`
 	AvatarURL     *string       `json:"avatar_url,omitempty"`
 	JoinRule      *JoinRule     `json:"join_rule,omitempty"`
 }

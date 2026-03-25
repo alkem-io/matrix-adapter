@@ -38,7 +38,7 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	ctx context.Context,
 	alkemioRoomID uuid.UUID,
 	roomType string,
-	name, topic, avatarURL string,
+	name, topic, avatarURL, joinRule string,
 	initialMembers []domain.Actor,
 ) error {
 	s.logger.Info(
@@ -96,8 +96,14 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 		}
 	}
 
+	// For direct-message rooms, ignore joinRule — they always remain private
+	effectiveJoinRule := joinRule
+	if roomType == "direct" {
+		effectiveJoinRule = ""
+	}
+
 	// Create the room with alias
-	_, err = s.matrix.CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, initialMembers)
+	_, err = s.matrix.CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, effectiveJoinRule, initialMembers)
 	if err != nil {
 		return fmt.Errorf("failed to create room: %w", err)
 	}
@@ -222,13 +228,12 @@ func (s *RoomService) GetRoomAsUser(
 	}, nil
 }
 
-// UpdateRoomMetadata updates room name, topic, avatar, and visibility.
-// Note: isPublic is accepted but not yet implemented (reserved for future use).
+// UpdateRoomMetadata updates room name, topic, avatar, and join rule.
 func (s *RoomService) UpdateRoomMetadata(
 	ctx context.Context,
 	alkemioRoomID uuid.UUID,
 	name, topic, avatarURL *string,
-	_ *bool, // isPublic - reserved for future visibility control
+	joinRule *string,
 ) error {
 	s.logger.Info("Updating room metadata", "alkemio_room_id", alkemioRoomID)
 
@@ -239,8 +244,8 @@ func (s *RoomService) UpdateRoomMetadata(
 		return domain.NewRoomNotFoundError(alkemioRoomID.String())
 	}
 
-	// Use bot to update room state
-	var nameVal, topicVal, avatarVal string
+	// Prepare values (empty string means no change)
+	var nameVal, topicVal, avatarVal, joinRuleVal string
 	if name != nil {
 		nameVal = *name
 	}
@@ -250,11 +255,14 @@ func (s *RoomService) UpdateRoomMetadata(
 	if avatarURL != nil {
 		avatarVal = *avatarURL
 	}
+	if joinRule != nil {
+		joinRuleVal = *joinRule
+	}
 
 	// We need a dummy actor for the update - use the bot
 	botActor := domain.Actor{}
 
-	err = s.matrix.UpdateRoomState(ctx, roomID, botActor, nameVal, topicVal, avatarVal, "")
+	err = s.matrix.UpdateRoomState(ctx, roomID, botActor, nameVal, topicVal, avatarVal, joinRuleVal, "")
 	if err != nil {
 		return fmt.Errorf("failed to update room: %w", err)
 	}

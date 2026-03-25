@@ -753,7 +753,6 @@ export interface UpdateRoomRequest {
   alkemio_room_id: AlkemioRoomID;
   name?: string;
   topic?: string;
-  is_public?: boolean;
   avatar_url?: string;
   join_rule?: JoinRule;
 }
