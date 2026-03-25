@@ -5,19 +5,8 @@ on:
 
 jobs:
   build:
-    runs-on: m4
+    runs-on: ubuntu-latest
     steps:
-      - name: Set up Docker
-        run: |
-          if ! command -v brew &>/dev/null; then
-            NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            eval "$(/opt/homebrew/bin/brew shellenv)"
-            echo "/opt/homebrew/bin" >> $GITHUB_PATH
-          fi
-          brew install docker colima
-          colima delete --force 2>/dev/null || true
-          colima start
-
       - name: Checkout repository
         uses: actions/checkout@v6
 
