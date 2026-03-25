@@ -28,9 +28,9 @@ type mockMatrixPort struct {
 	updateRoomErr      error
 }
 
-func (m *mockMatrixPort) Connect(_ context.Context) error    { return nil }
-func (m *mockMatrixPort) Disconnect() error                  { return nil }
-func (m *mockMatrixPort) HomeserverDomain() string           { return "test.local" }
+func (m *mockMatrixPort) Connect(_ context.Context) error { return nil }
+func (m *mockMatrixPort) Disconnect() error               { return nil }
+func (m *mockMatrixPort) HomeserverDomain() string        { return "test.local" }
 func (m *mockMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (id.UserID, error) {
 	return "@bot:test.local", nil
 }
