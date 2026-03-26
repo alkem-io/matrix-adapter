@@ -273,10 +273,8 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 			continue
 		}
 
-		// Clear canonical alias by sending empty content (the state endpoint
-		// doesn't return event_id, so we can't redact directly)
-		emptyAlias := &event.CanonicalAliasEventContent{}
-		if _, err := memberIntent.SendStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "", emptyAlias); err != nil {
+		// Clear canonical alias by sending empty content {}
+		if _, err := memberIntent.SendStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "", map[string]interface{}{}); err != nil {
 			m.logger.Warn("Failed to clear canonical alias",
 				"room_id", room.RoomID, "error", err)
 		} else {
