@@ -20,7 +20,8 @@ type Config struct {
 		HomeserverName  string `yaml:"homeserver_name"`
 		AppServiceToken string `yaml:"as_token"`
 		HomeserverToken string `yaml:"hs_token"`
-		BotActorID      string `yaml:"bot_actor_id"` // Bot's Alkemio UUID, used as Matrix localpart
+		BotActorID      string `yaml:"bot_actor_id"`      // Bot's Alkemio UUID, used as Matrix localpart
+		BotDisplayName  string `yaml:"bot_display_name"` // Display name for the bot user in Matrix
 	} `yaml:"matrix"`
 
 	RabbitMQ struct {
@@ -36,6 +37,7 @@ func Load() (*Config, error) {
 	cfg.App.Environment = "development"
 	cfg.App.LogLevel = "info"
 	cfg.Matrix.BotActorID = "00000000-0000-0000-0000-000000000000"
+	cfg.Matrix.BotDisplayName = "Alkemio"
 
 	// Load from file if exists
 	configPath := os.Getenv("CONFIG_PATH")
@@ -94,6 +96,9 @@ func loadMatrixEnv(cfg *Config) {
 	}
 	if v := os.Getenv("MATRIX_BOT_ACTOR_ID"); v != "" {
 		cfg.Matrix.BotActorID = v
+	}
+	if v := os.Getenv("MATRIX_BOT_DISPLAY_NAME"); v != "" {
+		cfg.Matrix.BotDisplayName = v
 	}
 }
 

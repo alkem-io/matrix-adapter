@@ -24,12 +24,13 @@ import (
 
 // MautrixAdapter implements the MatrixPort interface using the mautrix-go library.
 type MautrixAdapter struct {
-	cfg           *config.Config
-	logger        ports.Logger
-	as            *appservice.AppService
-	idMapper      *domain.IDMapper
-	eventHandlers EventHandlers
-	eventLoopOnce sync.Once
+	cfg            *config.Config
+	logger         ports.Logger
+	as             *appservice.AppService
+	idMapper       *domain.IDMapper
+	botDisplayName string
+	eventHandlers  EventHandlers
+	eventLoopOnce  sync.Once
 }
 
 // NewMautrixAdapter creates a new instance of MautrixAdapter.
@@ -125,10 +126,11 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 	as.Log = zerolog.New(zerolog.NewConsoleWriter()).With().Timestamp().Str("component", "mautrix").Logger()
 
 	return &MautrixAdapter{
-		cfg:      cfg,
-		logger:   logger,
-		as:       as,
-		idMapper: domain.NewIDMapper(homeserverDomain),
+		cfg:            cfg,
+		logger:         logger,
+		as:             as,
+		idMapper:       domain.NewIDMapper(homeserverDomain),
+		botDisplayName: cfg.Matrix.BotDisplayName,
 	}, nil
 }
 
@@ -163,6 +165,16 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 		// Don't fail hard here, as AS might not be fully registered yet on HS side
 	} else {
 		m.logger.Info("Matrix AppService connected", "user_id", whoami.UserID)
+	}
+
+	// Set bot display name
+	if m.botDisplayName != "" {
+		botIntent := m.as.BotIntent()
+		if err := botIntent.SetDisplayName(ctx, m.botDisplayName); err != nil {
+			m.logger.Warn("Failed to set bot display name", "display_name", m.botDisplayName, "error", err)
+		} else {
+			m.logger.Info("Bot display name set", "display_name", m.botDisplayName)
+		}
 	}
 
 	return nil
