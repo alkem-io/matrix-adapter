@@ -169,7 +169,8 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 		m.logger.Info("Matrix AppService connected", "user_id", whoami.UserID)
 	}
 
-	// Step 4: Leave non-space rooms (migration cleanup for existing deployments)
+	// Step 4: Migration cleanup for existing deployments
+	m.redactCanonicalAliasesFromRooms(ctx)
 	m.leaveBotFromNonSpaceRooms(ctx)
 
 	// Step 5: Set bot display name
@@ -235,6 +236,66 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 // leaveBotFromNonSpaceRooms is a one-time migration step that removes the bot
 // from all rooms that are not spaces. This cleans up existing deployments where
 // the bot was previously a member of all rooms including DMs.
+// redactCanonicalAliasesFromRooms redacts m.room.canonical_alias from all
+// non-space rooms. Uses admin API to list rooms (works even if bot has left).
+// This is a migration cleanup for existing deployments where canonical alias
+// was set, causing clients to show UUID aliases instead of member names.
+func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
+	client := m.newDirectClient(m.cfg.Matrix.AppServiceToken)
+	intent := m.as.BotIntent()
+
+	// Use admin API to list all rooms (bot may have left most of them)
+	var resp struct {
+		Rooms []struct {
+			RoomID         id.RoomID `json:"room_id"`
+			RoomType       string    `json:"room_type"`
+			CanonicalAlias string    `json:"canonical_alias"`
+		} `json:"rooms"`
+	}
+	urlPath := client.BuildURL(mautrix.SynapseAdminURLPath{"v1", "rooms"})
+	_, err := client.MakeRequest(ctx, http.MethodGet, urlPath+"?limit=10000", nil, &resp)
+	if err != nil {
+		m.logger.Warn("Failed to list rooms for canonical alias cleanup", "error", err)
+		return
+	}
+
+	redactedCount := 0
+	for _, room := range resp.Rooms {
+		// Skip spaces and rooms without canonical alias
+		if room.RoomType == "m.space" || room.CanonicalAlias == "" {
+			continue
+		}
+
+		// Bot needs to be in the room to redact — rejoin, redact, leave
+		if err := intent.EnsureJoined(ctx, room.RoomID); err != nil {
+			m.logger.Warn("Failed to rejoin room for alias cleanup",
+				"room_id", room.RoomID, "error", err)
+			continue
+		}
+
+		existing, err := intent.FullStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "")
+		if err == nil && existing != nil && existing.ID != "" {
+			if _, err := intent.RedactEvent(ctx, room.RoomID, existing.ID); err != nil {
+				m.logger.Warn("Failed to redact canonical alias",
+					"room_id", room.RoomID, "error", err)
+			} else {
+				redactedCount++
+			}
+		}
+
+		// Leave again
+		if _, err := intent.LeaveRoom(ctx, room.RoomID); err != nil {
+			m.logger.Warn("Failed to leave room after alias cleanup",
+				"room_id", room.RoomID, "error", err)
+		}
+	}
+
+	if redactedCount > 0 {
+		m.logger.Info("Redacted canonical aliases (migration cleanup)", "rooms_redacted", redactedCount)
+	}
+}
+
+// leaveBotFromNonSpaceRooms removes the bot from all rooms that are not spaces.
 func (m *MautrixAdapter) leaveBotFromNonSpaceRooms(ctx context.Context) {
 	intent := m.as.BotIntent()
 	resp, err := intent.JoinedRooms(ctx)
@@ -248,11 +309,6 @@ func (m *MautrixAdapter) leaveBotFromNonSpaceRooms(ctx context.Context) {
 		if m.isSpaceRoom(ctx, roomID) {
 			continue
 		}
-
-		// Redact canonical alias before leaving — clients should show
-		// member names (for DMs) or room name, not the UUID alias.
-		m.redactCanonicalAlias(ctx, intent, roomID)
-
 		if _, err := intent.LeaveRoom(ctx, roomID); err != nil {
 			m.logger.Warn("Failed to leave room during cleanup",
 				"room_id", roomID, "error", err)
@@ -263,18 +319,6 @@ func (m *MautrixAdapter) leaveBotFromNonSpaceRooms(ctx context.Context) {
 
 	if leftCount > 0 {
 		m.logger.Info("Bot left non-space rooms (migration cleanup)", "rooms_left", leftCount)
-	}
-}
-
-// redactCanonicalAlias redacts the m.room.canonical_alias state event if it exists.
-func (m *MautrixAdapter) redactCanonicalAlias(ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID) {
-	existing, err := intent.FullStateEvent(ctx, roomID, event.StateCanonicalAlias, "")
-	if err != nil || existing == nil || existing.ID == "" {
-		return
-	}
-	if _, err := intent.RedactEvent(ctx, roomID, existing.ID); err != nil {
-		m.logger.Warn("Failed to redact canonical alias",
-			"room_id", roomID, "event_id", existing.ID, "error", err)
 	}
 }
 
