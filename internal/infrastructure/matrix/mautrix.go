@@ -1265,8 +1265,6 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 	initialMembers []domain.Actor,
 ) (id.RoomID, error) {
 	// Use IDMapper for consistent alias construction
-	aliasLocalpart := m.idMapper.RoomAliasLocalpart(alkemioRoomID)
-
 	// Use bot intent for creating rooms
 	intent := m.as.BotIntent()
 
@@ -1302,13 +1300,6 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		Invite:   invites,
 	}
 
-	// For non-direct rooms, set alias in create request (which also sets canonical alias).
-	// For direct rooms, skip — canonical alias would override the member-name display.
-	// We'll set the alias manually after creation instead.
-	if !isDirect {
-		req.RoomAliasName = aliasLocalpart
-	}
-
 	// Add join rule state event if provided (following CreateSpace pattern)
 	if joinRule != "" {
 		joinRuleContent := &event.JoinRulesEventContent{
@@ -1336,22 +1327,28 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		return "", fmt.Errorf("failed to create room with alias: %w", err)
 	}
 
-	// For direct rooms, set the alias manually (without canonical alias)
-	// so the room is findable by alias but clients show member names instead of the alias.
-	if isDirect {
-		fullAlias := m.idMapper.RoomAlias(alkemioRoomID)
-		if _, err := intent.CreateAlias(ctx, id.RoomAlias(fullAlias), resp.RoomID); err != nil {
-			m.logger.Warn("Failed to set alias on direct room",
-				"room_id", resp.RoomID, "alias", fullAlias, "error", err)
-		}
+	// Set alias manually after creation (without canonical alias).
+	// Using RoomAliasName in the create request auto-sets canonical alias,
+	// which causes clients to display the alias instead of member names for DMs.
+	fullAlias := m.idMapper.RoomAlias(alkemioRoomID)
+	if _, err := intent.CreateAlias(ctx, id.RoomAlias(fullAlias), resp.RoomID); err != nil {
+		m.logger.Warn("Failed to set alias on room",
+			"room_id", resp.RoomID, "alias", fullAlias, "error", err)
 	}
 
 	m.autoJoinAndMarkRead(ctx, resp.RoomID, invites)
 
+	// Bot leaves the room — the appservice still receives events via ghost users
+	// matching the user namespace. This keeps the bot out of member lists.
+	if _, err := intent.LeaveRoom(ctx, resp.RoomID); err != nil {
+		m.logger.Warn("Failed to leave room after creation",
+			"room_id", resp.RoomID, "error", err)
+	}
+
 	m.logger.Info(
-		"Room created with alias",
+		"Room created",
 		"room_id", resp.RoomID,
-		"alias", m.idMapper.RoomAlias(alkemioRoomID),
+		"alias", fullAlias,
 		"alkemio_room_id", alkemioRoomID,
 	)
 
