@@ -617,9 +617,8 @@ func (m *MautrixAdapter) InviteUser(
 func (m *MautrixAdapter) getLatestEventID(
 	ctx context.Context, roomID id.RoomID,
 ) (id.EventID, error) {
-	// Use bot intent to get latest event (any user can read room state)
-	intent := m.as.BotIntent()
-	resp, err := intent.Messages(ctx, roomID, "", "", mautrix.DirectionBackward, nil, 1)
+	// Use admin API to get latest event — works regardless of bot membership
+	resp, err := m.admin.GetRoomMessages(ctx, roomID, "", "b", 1)
 	if err != nil {
 		return "", fmt.Errorf("failed to get latest event: %w", err)
 	}
@@ -741,18 +740,9 @@ func (m *MautrixAdapter) GetRoomDetails(ctx context.Context, roomID id.RoomID) (
 }
 
 // GetRoomMembers returns the list of members in a room.
+// Uses admin API — works regardless of bot membership.
 func (m *MautrixAdapter) GetRoomMembers(ctx context.Context, roomID id.RoomID) ([]id.UserID, error) {
-	intent := m.as.BotIntent()
-	resp, err := intent.JoinedMembers(ctx, roomID)
-	if err != nil {
-		return nil, err
-	}
-
-	members := make([]id.UserID, 0, len(resp.Joined))
-	for userID := range resp.Joined {
-		members = append(members, userID)
-	}
-	return members, nil
+	return m.admin.GetRoomMemberIDs(ctx, roomID)
 }
 
 // UpdateRoomState updates the state of a room.
@@ -909,8 +899,7 @@ func (m *MautrixAdapter) SendReaction(
 func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, eventID id.EventID) (
 	*domain.Message, error,
 ) {
-	intent := m.as.BotIntent()
-	evt, err := intent.GetEvent(ctx, roomID, eventID)
+	evt, err := m.admin.GetEvent(ctx, roomID, eventID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get event: %w", err)
 	}
@@ -970,23 +959,6 @@ func (m *MautrixAdapter) extractThreadIDFromRaw(evt *event.Event) string {
 	return threadID
 }
 
-// RespRelations defines the response for relations endpoint
-type RespRelations struct {
-	Chunk []event.Event `json:"chunk"`
-}
-
-// relationsURLFormat is the format string for the Matrix relations API endpoint.
-const relationsURLFormat = "%s/_matrix/client/v1/rooms/%s/relations/%s/%s/%s"
-
-// buildRelationsURL constructs a URL for the Matrix relations API.
-func (m *MautrixAdapter) buildRelationsURL(
-	intent *appservice.IntentAPI, roomID id.RoomID, eventID id.EventID, relType event.RelationType,
-	eventType event.Type,
-) string {
-	hsURL := strings.TrimSuffix(intent.HomeserverURL.String(), "/")
-	return fmt.Sprintf(relationsURLFormat, hsURL, roomID, eventID, relType, eventType)
-}
-
 // parseEventContent attempts to parse event content, trying Parsed first then ParseRaw.
 // Returns the parsed content and true if successful, nil and false otherwise.
 func parseEventContent[T any](evt *event.Event) (*T, bool) {
@@ -1008,11 +980,7 @@ func parseEventContent[T any](evt *event.Event) (*T, bool) {
 func (m *MautrixAdapter) GetReactionEventID(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID, emoji string, senderID domain.Actor,
 ) (id.EventID, error) {
-	intent := m.as.BotIntent()
-	u := m.buildRelationsURL(intent, roomID, eventID, event.RelAnnotation, event.EventReaction)
-
-	var resp RespRelations
-	_, err := intent.MakeRequest(ctx, "GET", u, nil, &resp)
+	chunk, err := m.admin.GetRelations(ctx, roomID, eventID, event.RelAnnotation, event.EventReaction)
 	if err != nil {
 		return "", fmt.Errorf("failed to get relations: %w", err)
 	}
@@ -1022,18 +990,18 @@ func (m *MautrixAdapter) GetReactionEventID(
 		return "", err
 	}
 
-	return m.findReactionByEmojiAndSender(resp.Chunk, senderUserID, emoji)
+	return m.findReactionByEmojiAndSender(chunk, senderUserID, emoji)
 }
 
 // findReactionByEmojiAndSender searches for a specific reaction in a list of events.
 func (m *MautrixAdapter) findReactionByEmojiAndSender(
-	events []event.Event, senderUserID id.UserID, emoji string,
+	events []*event.Event, senderUserID id.UserID, emoji string,
 ) (id.EventID, error) {
 	for _, evt := range events {
 		if evt.Sender != senderUserID || evt.Type != event.EventReaction {
 			continue
 		}
-		content, ok := parseEventContent[event.ReactionEventContent](&evt)
+		content, ok := parseEventContent[event.ReactionEventContent](evt)
 		if ok && content.RelatesTo.Key == emoji {
 			return evt.ID, nil
 		}
@@ -1212,7 +1180,7 @@ func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
 
 // KickUser kicks a user from a room.
 func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
-	intent := m.as.BotIntent()
+	intent := m.getIntentForRoom(ctx, roomID)
 	_, err := intent.KickUser(
 		ctx, roomID, &mautrix.ReqKickUser{
 			UserID: userID,
@@ -1227,10 +1195,8 @@ func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID 
 
 // GetRoomMessages retrieves all messages from a room, including their reactions.
 func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) ([]domain.Message, error) {
-	intent := m.as.BotIntent()
-
-	// Get messages using the messages endpoint
-	resp, err := intent.Messages(ctx, roomID, "", "", mautrix.DirectionBackward, nil, 1000)
+	// Get messages using admin API — works regardless of bot membership
+	resp, err := m.admin.GetRoomMessages(ctx, roomID, "", "b", 1000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get room messages: %w", err)
 	}
@@ -1335,8 +1301,6 @@ func (s *lastMessageStats) record(eventsNeeded int, found bool, logger ports.Log
 // GetLastMessage retrieves the most recent message in a room.
 // Returns nil if the room has no messages.
 func (m *MautrixAdapter) GetLastMessage(ctx context.Context, roomID id.RoomID) (*domain.Message, error) {
-	intent := m.as.BotIntent()
-
 	// Progressive fetch: start small, expand if needed
 	// In most cases, the last message is within the first few events
 	batchSizes := []int{5, 10, 20, 50, 200}
@@ -1344,7 +1308,7 @@ func (m *MautrixAdapter) GetLastMessage(ctx context.Context, roomID id.RoomID) (
 	var from string
 
 	for _, batchSize := range batchSizes {
-		resp, err := intent.Messages(ctx, roomID, from, "", mautrix.DirectionBackward, nil, batchSize)
+		resp, err := m.admin.GetRoomMessages(ctx, roomID, from, "b", batchSize)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get last message: %w", err)
 		}
@@ -1541,9 +1505,7 @@ func (m *MautrixAdapter) extractMessageBody(evt *event.Event) string {
 func (m *MautrixAdapter) GetReaction(ctx context.Context, roomID id.RoomID, reactionID id.EventID) (
 	*domain.Reaction, error,
 ) {
-	intent := m.as.BotIntent()
-
-	evt, err := intent.GetEvent(ctx, roomID, reactionID)
+	evt, err := m.admin.GetEvent(ctx, roomID, reactionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get reaction event: %w", err)
 	}
@@ -1571,10 +1533,8 @@ func (m *MautrixAdapter) GetReaction(ctx context.Context, roomID id.RoomID, reac
 func (m *MautrixAdapter) GetThreadMessages(
 	ctx context.Context, roomID id.RoomID, threadRootID id.EventID,
 ) ([]domain.Message, error) {
-	intent := m.as.BotIntent()
-
 	// First, get the thread root message
-	rootEvt, err := intent.GetEvent(ctx, roomID, threadRootID)
+	rootEvt, err := m.admin.GetEvent(ctx, roomID, threadRootID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get thread root message: %w", err)
 	}
@@ -1588,11 +1548,8 @@ func (m *MautrixAdapter) GetThreadMessages(
 		messages = append(messages, *rootMsg)
 	}
 
-	// Get thread replies using relations API
-	u := m.buildRelationsURL(intent, roomID, threadRootID, event.RelThread, event.EventMessage)
-
-	var resp RespRelations
-	_, err = intent.MakeRequest(ctx, "GET", u, nil, &resp)
+	// Get thread replies using admin relations API
+	chunk, err := m.admin.GetRelations(ctx, roomID, threadRootID, event.RelThread, event.EventMessage)
 	if err != nil {
 		// If no relations found, return just the root message
 		m.logger.Debug("No thread relations found, returning only root", "thread_root_id", threadRootID)
@@ -1600,12 +1557,12 @@ func (m *MautrixAdapter) GetThreadMessages(
 	}
 
 	// Parse thread reply messages
-	for _, evt := range resp.Chunk {
+	for _, evt := range chunk {
 		if evt.Type != event.EventMessage {
 			continue
 		}
 
-		msg := m.parseMessageEvent(&evt, roomID)
+		msg := m.parseMessageEvent(evt, roomID)
 		if msg != nil {
 			msg.Reactions = []domain.Reaction{} // Initialize empty slice
 			msg.ThreadID = threadRootID.String()
