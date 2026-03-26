@@ -178,22 +178,7 @@ func (s *SpaceService) UpdateSpace(
 		return domain.NewSpaceNotFoundError(alkemioContextID.String())
 	}
 
-	// Prepare values (empty string means no change)
-	var nameVal, topicVal, avatarVal, joinRuleVal string
-	if name != nil {
-		nameVal = *name
-	}
-	if topic != nil {
-		topicVal = *topic
-	}
-	if avatarURL != nil {
-		avatarVal = *avatarURL
-	}
-	if joinRule != nil {
-		joinRuleVal = *joinRule
-	}
-
-	err = s.matrix.UpdateSpaceState(ctx, roomID, nameVal, topicVal, avatarVal, joinRuleVal)
+	err = s.matrix.UpdateSpaceState(ctx, roomID, name, topic, avatarURL, joinRule)
 	if err != nil {
 		return fmt.Errorf("failed to update space: %w", err)
 	}

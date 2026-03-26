@@ -24,7 +24,7 @@ type mockMatrixPort struct {
 
 	// UpdateRoomState captures
 	updateRoomCalled   bool
-	updateRoomJoinRule string
+	updateRoomJoinRule *string
 	updateRoomErr      error
 }
 
@@ -56,7 +56,7 @@ func (m *mockMatrixPort) ResolveAlias(_ context.Context, _ string) (id.RoomID, e
 	return "!room:test.local", nil
 }
 
-func (m *mockMatrixPort) UpdateRoomState(_ context.Context, _ id.RoomID, _ domain.Actor, _, _, _, joinRule, _ string) error {
+func (m *mockMatrixPort) UpdateRoomState(_ context.Context, _ id.RoomID, _ domain.Actor, _, _, _ *string, joinRule *string) error {
 	m.updateRoomCalled = true
 	m.updateRoomJoinRule = joinRule
 	return m.updateRoomErr
@@ -125,7 +125,7 @@ func (m *mockMatrixPort) GetSpaceDetails(_ context.Context, _ id.RoomID) (*domai
 func (m *mockMatrixPort) GetSpaceMembers(_ context.Context, _ id.RoomID) ([]id.UserID, error) {
 	return nil, nil
 }
-func (m *mockMatrixPort) UpdateSpaceState(_ context.Context, _ id.RoomID, _, _, _, _ string) error {
+func (m *mockMatrixPort) UpdateSpaceState(_ context.Context, _ id.RoomID, _, _, _, _ *string) error {
 	return nil
 }
 func (m *mockMatrixPort) GetSpaceChildren(_ context.Context, _ id.RoomID) ([]domain.SpaceChild, error) {
@@ -285,8 +285,8 @@ func TestUpdateRoom_JoinRuleProvided(t *testing.T) {
 	if !matrix.updateRoomCalled {
 		t.Fatal("expected UpdateRoomState to be called")
 	}
-	if matrix.updateRoomJoinRule != "public" {
-		t.Errorf("expected joinRule 'public', got '%s'", matrix.updateRoomJoinRule)
+	if matrix.updateRoomJoinRule == nil || *matrix.updateRoomJoinRule != "public" {
+		t.Errorf("expected joinRule pointer to 'public', got %v", matrix.updateRoomJoinRule)
 	}
 }
 
@@ -307,7 +307,7 @@ func TestUpdateRoom_JoinRuleOmitted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
-	if matrix.updateRoomJoinRule != "" {
-		t.Errorf("expected empty joinRule when omitted, got '%s'", matrix.updateRoomJoinRule)
+	if matrix.updateRoomJoinRule != nil {
+		t.Errorf("expected nil joinRule when omitted, got '%s'", *matrix.updateRoomJoinRule)
 	}
 }

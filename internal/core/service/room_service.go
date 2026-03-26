@@ -254,25 +254,10 @@ func (s *RoomService) UpdateRoomMetadata(
 		return domain.NewRoomNotFoundError(alkemioRoomID.String())
 	}
 
-	// Prepare values (empty string means no change)
-	var nameVal, topicVal, avatarVal, joinRuleVal string
-	if name != nil {
-		nameVal = *name
-	}
-	if topic != nil {
-		topicVal = *topic
-	}
-	if avatarURL != nil {
-		avatarVal = *avatarURL
-	}
-	if joinRule != nil {
-		joinRuleVal = *joinRule
-	}
-
 	// We need a dummy actor for the update - use the bot
 	botActor := domain.Actor{}
 
-	err = s.matrix.UpdateRoomState(ctx, roomID, botActor, nameVal, topicVal, avatarVal, joinRuleVal, "")
+	err = s.matrix.UpdateRoomState(ctx, roomID, botActor, name, topic, avatarURL, joinRule)
 	if err != nil {
 		return fmt.Errorf("failed to update room: %w", err)
 	}

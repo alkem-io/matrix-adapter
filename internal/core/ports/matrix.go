@@ -33,7 +33,8 @@ type MatrixPort interface {
 	// GetRoomMembers returns the list of member user IDs in a room.
 	GetRoomMembers(ctx context.Context, roomID id.RoomID) ([]id.UserID, error)
 	// UpdateRoomState updates a room's name, topic, avatar, join rule, and canonical alias.
-	UpdateRoomState(ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, joinRule, alias string) error
+	// nil pointers mean "no change"; non-nil (including empty string) means "set this value".
+	UpdateRoomState(ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, joinRule *string) error
 
 	// SetRoomDirectoryVisibility sets whether a room appears in the public room directory.
 	SetRoomDirectoryVisibility(ctx context.Context, roomID id.RoomID, isPublic bool) error
@@ -101,7 +102,8 @@ type MatrixPort interface {
 	GetSpaceMembers(ctx context.Context, roomID id.RoomID) ([]id.UserID, error)
 
 	// UpdateSpaceState updates space name, topic, avatar, or join rule.
-	UpdateSpaceState(ctx context.Context, roomID id.RoomID, name, topic, avatarURL, joinRule string) error
+	// nil pointers mean "no change"; non-nil (including empty string) means "set this value".
+	UpdateSpaceState(ctx context.Context, roomID id.RoomID, name, topic, avatarURL, joinRule *string) error
 
 	// GetSpaceChildren returns child rooms and subspaces of a space.
 	GetSpaceChildren(ctx context.Context, roomID id.RoomID) ([]domain.SpaceChild, error)

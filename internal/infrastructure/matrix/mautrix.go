@@ -455,8 +455,9 @@ func (m *MautrixAdapter) GetRoomMembers(ctx context.Context, roomID id.RoomID) (
 }
 
 // UpdateRoomState updates the state of a room.
+// nil pointers mean "no change"; non-nil (including empty string) means "set this value".
 func (m *MautrixAdapter) UpdateRoomState(
-	ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, joinRule, alias string,
+	ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, joinRule *string,
 ) error {
 	userID, err := m.EnsureUser(ctx, actorID)
 	if err != nil {
@@ -464,38 +465,30 @@ func (m *MautrixAdapter) UpdateRoomState(
 	}
 	intent := m.as.Intent(userID)
 
-	if name != "" {
-		if _, err := intent.SetRoomName(ctx, roomID, name); err != nil {
+	if name != nil {
+		if _, err := intent.SetRoomName(ctx, roomID, *name); err != nil {
 			return err
 		}
 	}
-	if topic != "" {
-		if _, err := intent.SetRoomTopic(ctx, roomID, topic); err != nil {
+	if topic != nil {
+		if _, err := intent.SetRoomTopic(ctx, roomID, *topic); err != nil {
 			return err
 		}
 	}
-	if avatarURL != "" {
+	if avatarURL != nil {
 		avatarContent := &event.RoomAvatarEventContent{
-			URL: id.ContentURIString(avatarURL),
+			URL: id.ContentURIString(*avatarURL),
 		}
 		if _, err := intent.SendStateEvent(ctx, roomID, event.StateRoomAvatar, "", avatarContent); err != nil {
 			return fmt.Errorf("failed to set room avatar: %w", err)
 		}
 	}
-	if joinRule != "" {
+	if joinRule != nil && *joinRule != "" {
 		joinRuleContent := &event.JoinRulesEventContent{
-			JoinRule: event.JoinRule(joinRule),
+			JoinRule: event.JoinRule(*joinRule),
 		}
 		if _, err := intent.SendStateEvent(ctx, roomID, event.StateJoinRules, "", joinRuleContent); err != nil {
 			return fmt.Errorf("failed to set room join rule: %w", err)
-		}
-	}
-	if alias != "" {
-		content := event.CanonicalAliasEventContent{
-			Alias: id.RoomAlias(alias),
-		}
-		if _, err := intent.SendStateEvent(ctx, roomID, event.StateCanonicalAlias, "", &content); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -1632,35 +1625,36 @@ func (m *MautrixAdapter) GetSpaceMembers(ctx context.Context, roomID id.RoomID) 
 }
 
 // UpdateSpaceState updates space name, topic, avatar, or join rule.
+// nil pointers mean "no change"; non-nil (including empty string) means "set this value".
 func (m *MautrixAdapter) UpdateSpaceState(
-	ctx context.Context, roomID id.RoomID, name, topic, avatarURL, joinRule string,
+	ctx context.Context, roomID id.RoomID, name, topic, avatarURL, joinRule *string,
 ) error {
 	intent := m.as.BotIntent()
 
-	if name != "" {
-		if _, err := intent.SetRoomName(ctx, roomID, name); err != nil {
+	if name != nil {
+		if _, err := intent.SetRoomName(ctx, roomID, *name); err != nil {
 			return fmt.Errorf("failed to set space name: %w", err)
 		}
 	}
 
-	if topic != "" {
-		if _, err := intent.SetRoomTopic(ctx, roomID, topic); err != nil {
+	if topic != nil {
+		if _, err := intent.SetRoomTopic(ctx, roomID, *topic); err != nil {
 			return fmt.Errorf("failed to set space topic: %w", err)
 		}
 	}
 
-	if avatarURL != "" {
+	if avatarURL != nil {
 		avatarContent := &event.RoomAvatarEventContent{
-			URL: id.ContentURIString(avatarURL),
+			URL: id.ContentURIString(*avatarURL),
 		}
 		if _, err := intent.SendStateEvent(ctx, roomID, event.StateRoomAvatar, "", avatarContent); err != nil {
 			return fmt.Errorf("failed to set space avatar: %w", err)
 		}
 	}
 
-	if joinRule != "" {
+	if joinRule != nil && *joinRule != "" {
 		joinRuleContent := &event.JoinRulesEventContent{
-			JoinRule: event.JoinRule(joinRule),
+			JoinRule: event.JoinRule(*joinRule),
 		}
 		if _, err := intent.SendStateEvent(ctx, roomID, event.StateJoinRules, "", joinRuleContent); err != nil {
 			return fmt.Errorf("failed to set space join rule: %w", err)
