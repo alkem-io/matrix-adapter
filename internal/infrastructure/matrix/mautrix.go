@@ -792,14 +792,23 @@ func (m *MautrixAdapter) ResolveAlias(ctx context.Context, alias string) (id.Roo
 // GetRoomAliases gets all aliases for a room ID.
 // Direction: Room ID -> Aliases (uses room_aliases table)
 // This is the reverse of ResolveAlias and uses the same underlying data source.
+// Uses BotClient without user_id impersonation since the bot may not be a room member.
 func (m *MautrixAdapter) GetRoomAliases(ctx context.Context, roomID id.RoomID) ([]string, error) {
-	intent := m.as.BotIntent()
-	aliasResp, err := intent.GetAliases(ctx, roomID)
+	client := m.as.BotClient()
+
+	// Temporarily disable user_id impersonation — the bot may have left the room,
+	// but room aliases are accessible with the appservice token directly.
+	client.SetAppServiceUserID = false
+	defer func() { client.SetAppServiceUserID = true }()
+
+	var resp mautrix.RespAliasList
+	urlPath := client.BuildClientURL("v3", "rooms", roomID, "aliases")
+	_, err := client.MakeRequest(ctx, http.MethodGet, urlPath, nil, &resp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get aliases for room %s: %w", roomID, err)
 	}
-	aliases := make([]string, len(aliasResp.Aliases))
-	for i, a := range aliasResp.Aliases {
+	aliases := make([]string, len(resp.Aliases))
+	for i, a := range resp.Aliases {
 		aliases[i] = string(a)
 	}
 	return aliases, nil
