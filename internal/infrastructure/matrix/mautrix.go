@@ -189,6 +189,9 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 //  3. If bot already exists but isn't admin → create temp admin, promote bot, delete temp
 //  4. If no secret → log warning with manual instructions
 func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
+	// Wait for Synapse to become available before checking admin status
+	m.waitForSynapse(ctx)
+
 	if m.isBotAdmin(ctx) {
 		m.logger.Info("Bot is Synapse server admin", "bot_mxid", m.as.BotMXID())
 		return
@@ -223,6 +226,32 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 			"error", err, "bot_mxid", m.as.BotMXID())
 	} else {
 		m.logger.Info("Bot promoted to server admin", "bot_mxid", m.as.BotMXID())
+	}
+}
+
+// waitForSynapse retries connecting to Synapse until it responds or context is cancelled.
+func (m *MautrixAdapter) waitForSynapse(ctx context.Context) {
+	client := m.newDirectClient("")
+	urlPath := client.BuildClientURL("v3", "login")
+
+	for {
+		_, err := client.MakeRequest(ctx, http.MethodGet, urlPath, nil, nil)
+		if err == nil {
+			return
+		}
+
+		// Check if context was cancelled
+		if ctx.Err() != nil {
+			m.logger.Error("Context cancelled while waiting for Synapse")
+			return
+		}
+
+		m.logger.Info("Waiting for Synapse to become available...", "error", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+		}
 	}
 }
 
