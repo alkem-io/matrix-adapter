@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
-	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
@@ -17,7 +16,7 @@ import (
 type SpaceHandler struct {
 	service  *service.SpaceService
 	matrix   ports.MatrixPort
-	idMapper *domain.IDMapper
+	resolver *AliasResolver
 }
 
 // NewSpaceHandler creates a new instance of SpaceHandler.
@@ -25,7 +24,7 @@ func NewSpaceHandler(service *service.SpaceService, matrix ports.MatrixPort, idM
 	return &SpaceHandler{
 		service:  service,
 		matrix:   matrix,
-		idMapper: idMapper,
+		resolver: NewAliasResolver(matrix, idMapper),
 	}
 }
 
@@ -330,17 +329,6 @@ func (h *SpaceHandler) HandleBatchRemoveSpaceMember(ctx context.Context, payload
 // Custom State Handlers (communication.space.state.*)
 // ============================================================================
 
-// resolveSpaceAlias resolves an Alkemio context ID to a Matrix room ID.
-func (h *SpaceHandler) resolveSpaceAlias(ctx context.Context, alkemioContextID dto.AlkemioContextID) (id.RoomID, *dto.BaseResponse) {
-	alias := h.idMapper.SpaceAlias(alkemioContextID.UUID())
-	roomID, err := h.matrix.ResolveAlias(ctx, alias)
-	if err != nil {
-		resp := NewSpaceNotFoundError(alkemioContextID.String())
-		return "", &resp
-	}
-	return roomID, nil
-}
-
 // HandleSetSpaceState handles communication.space.state.set topic.
 func (h *SpaceHandler) HandleSetSpaceState(ctx context.Context, payload []byte) (interface{}, error) {
 	var req dto.SetSpaceStateRequest
@@ -352,7 +340,7 @@ func (h *SpaceHandler) HandleSetSpaceState(ctx context.Context, payload []byte) 
 		return *errResp, nil
 	}
 
-	roomID, errResp := h.resolveSpaceAlias(ctx, req.AlkemioContextID)
+	roomID, errResp := h.resolver.ResolveSpace(ctx, req.AlkemioContextID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -375,7 +363,7 @@ func (h *SpaceHandler) HandleGetSpaceState(ctx context.Context, payload []byte) 
 		return *errResp, nil
 	}
 
-	roomID, errResp := h.resolveSpaceAlias(ctx, req.AlkemioContextID)
+	roomID, errResp := h.resolver.ResolveSpace(ctx, req.AlkemioContextID)
 	if errResp != nil {
 		return *errResp, nil
 	}

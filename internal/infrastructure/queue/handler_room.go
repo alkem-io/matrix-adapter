@@ -18,6 +18,7 @@ import (
 type RoomHandler struct {
 	service  *service.RoomService
 	matrix   ports.MatrixPort
+	resolver *AliasResolver
 	idMapper *domain.IDMapper
 }
 
@@ -26,31 +27,9 @@ func NewRoomHandler(service *service.RoomService, matrix ports.MatrixPort, idMap
 	return &RoomHandler{
 		service:  service,
 		matrix:   matrix,
+		resolver: NewAliasResolver(matrix, idMapper),
 		idMapper: idMapper,
 	}
-}
-
-// resolveRoomAlias resolves an Alkemio room ID to a Matrix room ID.
-// Returns the room ID and nil on success, or empty and an error response on failure.
-func (h *RoomHandler) resolveRoomAlias(ctx context.Context, alkemioRoomID dto.AlkemioRoomID) (id.RoomID, *dto.BaseResponse) {
-	alias := h.idMapper.RoomAlias(alkemioRoomID.UUID())
-	roomID, err := h.matrix.ResolveAlias(ctx, alias)
-	if err != nil {
-		resp := NewRoomNotFoundError(alkemioRoomID.String())
-		return "", &resp
-	}
-	return roomID, nil
-}
-
-// resolveRoomAliasForBatch resolves an Alkemio room ID to a Matrix room ID for batch operations.
-// Returns the room ID and nil on success, or empty and an error on failure.
-func (h *RoomHandler) resolveRoomAliasForBatch(ctx context.Context, alkemioRoomID dto.AlkemioRoomID) (id.RoomID, error) {
-	alias := h.idMapper.RoomAlias(alkemioRoomID.UUID())
-	roomID, err := h.matrix.ResolveAlias(ctx, alias)
-	if err != nil {
-		return "", err
-	}
-	return roomID, nil
 }
 
 // resolveSenderID resolves a Matrix user ID to an Alkemio actor UUID.
@@ -338,7 +317,7 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 	}
 
 	// Resolve room alias to Matrix room ID
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -387,7 +366,7 @@ func (h *RoomHandler) HandleGetMessage(ctx context.Context, payload []byte) (int
 	}
 
 	// Resolve room alias to Matrix room ID
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -424,7 +403,7 @@ func (h *RoomHandler) HandleDeleteMessage(ctx context.Context, payload []byte) (
 	}
 
 	// Resolve room alias to Matrix room ID
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -463,7 +442,7 @@ func (h *RoomHandler) HandleAddReaction(ctx context.Context, payload []byte) (in
 	}
 
 	// Resolve room alias to Matrix room ID
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -505,7 +484,7 @@ func (h *RoomHandler) HandleRemoveReaction(ctx context.Context, payload []byte) 
 	}
 
 	// Resolve room alias to Matrix room ID
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -541,7 +520,7 @@ func (h *RoomHandler) HandleGetReaction(ctx context.Context, payload []byte) (in
 	}
 
 	// Resolve room alias to Matrix room ID
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -587,7 +566,7 @@ func (h *RoomHandler) HandleBatchAddMember(ctx context.Context, payload []byte) 
 	actor := domain.NewActor(req.ActorID.UUID())
 
 	for _, alkemioRoomID := range req.AlkemioRoomIDs {
-		roomID, err := h.resolveRoomAliasForBatch(ctx, alkemioRoomID)
+		roomID, err := h.resolver.ResolveRoomForBatch(ctx, alkemioRoomID)
 		if err != nil {
 			results[alkemioRoomID.String()] = MapToBatchResult(err)
 			continue
@@ -622,7 +601,7 @@ func (h *RoomHandler) HandleBatchRemoveMember(ctx context.Context, payload []byt
 	actorMatrixID := h.idMapper.UserID(req.ActorID.UUID())
 
 	for _, alkemioRoomID := range req.AlkemioRoomIDs {
-		roomID, err := h.resolveRoomAliasForBatch(ctx, alkemioRoomID)
+		roomID, err := h.resolver.ResolveRoomForBatch(ctx, alkemioRoomID)
 		if err != nil {
 			results[alkemioRoomID.String()] = MapToBatchResult(err)
 			continue
@@ -655,7 +634,7 @@ func (h *RoomHandler) HandleGetRoomMembers(ctx context.Context, payload []byte) 
 	}
 
 	// Resolve room alias to Matrix room ID
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -703,7 +682,7 @@ func (h *RoomHandler) HandleGetThreadMessages(ctx context.Context, payload []byt
 	}
 
 	// Resolve room alias to Matrix room ID
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -747,7 +726,7 @@ func (h *RoomHandler) HandleGetLastMessage(ctx context.Context, payload []byte) 
 		return *errResp, nil
 	}
 
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -791,7 +770,7 @@ func (h *RoomHandler) HandleBatchGetLastMessages(ctx context.Context, payload []
 	errors := make(map[string]dto.BaseResponse)
 
 	for _, alkemioRoomID := range req.AlkemioRoomIDs {
-		roomID, err := h.resolveRoomAliasForBatch(ctx, alkemioRoomID)
+		roomID, err := h.resolver.ResolveRoomForBatch(ctx, alkemioRoomID)
 		if err != nil {
 			errors[alkemioRoomID.String()] = MapToBatchResult(err)
 			continue
@@ -848,7 +827,7 @@ func (h *RoomHandler) HandleSetRoomState(ctx context.Context, payload []byte) (i
 		return *errResp, nil
 	}
 
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -871,7 +850,7 @@ func (h *RoomHandler) HandleGetRoomState(ctx context.Context, payload []byte) (i
 		return *errResp, nil
 	}
 
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
