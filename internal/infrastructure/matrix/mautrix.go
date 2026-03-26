@@ -1295,12 +1295,18 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 	}
 
 	req := &mautrix.ReqCreateRoom{
-		Name:          name,
-		Topic:         topic,
-		Preset:        preset,
-		IsDirect:      isDirect,
-		RoomAliasName: aliasLocalpart,
-		Invite:        invites,
+		Name:     name,
+		Topic:    topic,
+		Preset:   preset,
+		IsDirect: isDirect,
+		Invite:   invites,
+	}
+
+	// For non-direct rooms, set alias in create request (which also sets canonical alias).
+	// For direct rooms, skip — canonical alias would override the member-name display.
+	// We'll set the alias manually after creation instead.
+	if !isDirect {
+		req.RoomAliasName = aliasLocalpart
 	}
 
 	// Add join rule state event if provided (following CreateSpace pattern)
@@ -1330,44 +1336,49 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		return "", fmt.Errorf("failed to create room with alias: %w", err)
 	}
 
-	// Auto-join initial members (they were only invited, need to accept)
-	joinedUsers := make([]id.UserID, 0, len(invites))
-	for _, memberUserID := range invites {
-		memberIntent := m.as.Intent(memberUserID)
-		if err := memberIntent.EnsureJoined(ctx, resp.RoomID); err != nil {
-			m.logger.Warn("Failed to auto-join member to room",
-				"room_id", resp.RoomID,
-				"user_id", memberUserID,
-				"error", err,
-			)
-			// Continue with other members, don't fail the whole operation
-		} else {
-			joinedUsers = append(joinedUsers, memberUserID)
+	// For direct rooms, set the alias manually (without canonical alias)
+	// so the room is findable by alias but clients show member names instead of the alias.
+	if isDirect {
+		fullAlias := m.idMapper.RoomAlias(alkemioRoomID)
+		if _, err := intent.CreateAlias(ctx, id.RoomAlias(fullAlias), resp.RoomID); err != nil {
+			m.logger.Warn("Failed to set alias on direct room",
+				"room_id", resp.RoomID, "alias", fullAlias, "error", err)
 		}
 	}
 
-	// Mark room as read for all joined users to clear invite notifications
-	// Optimized: get latest event once, send receipts for all users
-	if len(joinedUsers) > 0 {
-		if latestEventID, err := m.getLatestEventID(ctx, resp.RoomID); err != nil {
-			m.logger.Warn("Failed to get latest event for read receipts",
-				"room_id", resp.RoomID,
-				"error", err,
-			)
-		} else {
-			m.markRoomAsReadForUsers(ctx, resp.RoomID, joinedUsers, latestEventID)
-		}
-	}
+	m.autoJoinAndMarkRead(ctx, resp.RoomID, invites)
 
 	m.logger.Info(
 		"Room created with alias",
 		"room_id", resp.RoomID,
 		"alias", m.idMapper.RoomAlias(alkemioRoomID),
 		"alkemio_room_id", alkemioRoomID,
-		"members_joined", len(joinedUsers),
 	)
 
 	return resp.RoomID, nil
+}
+
+// autoJoinAndMarkRead auto-joins invited members and marks the room as read for them.
+func (m *MautrixAdapter) autoJoinAndMarkRead(ctx context.Context, roomID id.RoomID, invites []id.UserID) {
+	joinedUsers := make([]id.UserID, 0, len(invites))
+	for _, memberUserID := range invites {
+		memberIntent := m.as.Intent(memberUserID)
+		if err := memberIntent.EnsureJoined(ctx, roomID); err != nil {
+			m.logger.Warn("Failed to auto-join member to room",
+				"room_id", roomID, "user_id", memberUserID, "error", err)
+		} else {
+			joinedUsers = append(joinedUsers, memberUserID)
+		}
+	}
+
+	if len(joinedUsers) > 0 {
+		if latestEventID, err := m.getLatestEventID(ctx, roomID); err != nil {
+			m.logger.Warn("Failed to get latest event for read receipts",
+				"room_id", roomID, "error", err)
+		} else {
+			m.markRoomAsReadForUsers(ctx, roomID, joinedUsers, latestEventID)
+		}
+	}
 }
 
 // FindExistingDirectRoom finds an existing direct room between two users.
