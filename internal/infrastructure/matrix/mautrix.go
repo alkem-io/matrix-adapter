@@ -169,7 +169,10 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 		m.logger.Info("Matrix AppService connected", "user_id", whoami.UserID)
 	}
 
-	// Step 4: Set bot display name
+	// Step 4: Leave non-space rooms (migration cleanup for existing deployments)
+	m.leaveBotFromNonSpaceRooms(ctx)
+
+	// Step 5: Set bot display name
 	if m.botDisplayName != "" {
 		botIntent := m.as.BotIntent()
 		if err := botIntent.SetDisplayName(ctx, m.botDisplayName); err != nil {
@@ -226,6 +229,35 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 			"error", err, "bot_mxid", m.as.BotMXID())
 	} else {
 		m.logger.Info("Bot promoted to server admin", "bot_mxid", m.as.BotMXID())
+	}
+}
+
+// leaveBotFromNonSpaceRooms is a one-time migration step that removes the bot
+// from all rooms that are not spaces. This cleans up existing deployments where
+// the bot was previously a member of all rooms including DMs.
+func (m *MautrixAdapter) leaveBotFromNonSpaceRooms(ctx context.Context) {
+	intent := m.as.BotIntent()
+	resp, err := intent.JoinedRooms(ctx)
+	if err != nil {
+		m.logger.Warn("Failed to get bot's joined rooms for cleanup", "error", err)
+		return
+	}
+
+	leftCount := 0
+	for _, roomID := range resp.JoinedRooms {
+		if m.isSpaceRoom(ctx, roomID) {
+			continue
+		}
+		if _, err := intent.LeaveRoom(ctx, roomID); err != nil {
+			m.logger.Warn("Failed to leave room during cleanup",
+				"room_id", roomID, "error", err)
+		} else {
+			leftCount++
+		}
+	}
+
+	if leftCount > 0 {
+		m.logger.Info("Bot left non-space rooms (migration cleanup)", "rooms_left", leftCount)
 	}
 }
 
