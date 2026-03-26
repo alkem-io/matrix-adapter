@@ -5,7 +5,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha1" //nolint:gosec // Required by Synapse shared secret registration API (HMAC-SHA1)
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -32,6 +31,7 @@ type MautrixAdapter struct {
 	logger         ports.Logger
 	as             *appservice.AppService
 	idMapper       *domain.IDMapper
+	admin          *SynapseAdmin
 	botDisplayName string
 	eventHandlers  EventHandlers
 	eventLoopOnce  sync.Once
@@ -134,6 +134,7 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		logger:         logger,
 		as:             as,
 		idMapper:       domain.NewIDMapper(homeserverDomain),
+		admin:          NewSynapseAdmin(cfg.Matrix.HomeserverURL, cfg.Matrix.AppServiceToken),
 		botDisplayName: cfg.Matrix.BotDisplayName,
 	}, nil
 }
@@ -242,39 +243,25 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 // This is a migration cleanup for existing deployments where canonical alias
 // was set, causing clients to show UUID aliases instead of member names.
 func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
-	client := m.newDirectClient(m.cfg.Matrix.AppServiceToken)
-
-	// Use admin API to list all rooms (bot may have left most of them)
-	var resp struct {
-		Rooms []struct {
-			RoomID         id.RoomID `json:"room_id"`
-			RoomType       string    `json:"room_type"`
-			CanonicalAlias string    `json:"canonical_alias"`
-		} `json:"rooms"`
-	}
-	urlPath := client.BuildURL(mautrix.SynapseAdminURLPath{"v1", "rooms"})
-	_, err := client.MakeRequest(ctx, http.MethodGet, urlPath+"?limit=10000", nil, &resp)
+	rooms, err := m.admin.ListRooms(ctx, 10000)
 	if err != nil {
 		m.logger.Warn("Failed to list rooms for canonical alias cleanup", "error", err)
 		return
 	}
 
 	redactedCount := 0
-	for _, room := range resp.Rooms {
-		// Skip spaces and rooms without canonical alias
+	for _, room := range rooms {
 		if room.RoomType == "m.space" || room.CanonicalAlias == "" {
 			continue
 		}
 
-		// Find a ghost user in the room to act on their behalf
-		memberIntent := m.findGhostIntentInRoom(ctx, client, room.RoomID)
+		memberIntent := m.findGhostIntentInRoom(ctx, room.RoomID)
 		if memberIntent == nil {
 			m.logger.Warn("No ghost user found in room for alias cleanup",
 				"room_id", room.RoomID)
 			continue
 		}
 
-		// Clear canonical alias by sending empty content {}
 		if _, err := memberIntent.SendStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "", map[string]interface{}{}); err != nil {
 			m.logger.Warn("Failed to clear canonical alias",
 				"room_id", room.RoomID, "error", err)
@@ -289,19 +276,14 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 }
 
 // findGhostIntentInRoom finds a ghost user (appservice-managed) in a room and returns their intent.
-// Uses the admin API to get room members without needing room membership.
-func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, adminClient *mautrix.Client, roomID id.RoomID) *appservice.IntentAPI {
-	var resp struct {
-		Members []string `json:"members"`
-	}
-	urlPath := adminClient.BuildURL(mautrix.SynapseAdminURLPath{"v1", "rooms", roomID, "members"})
-	_, err := adminClient.MakeRequest(ctx, http.MethodGet, urlPath, nil, &resp)
+func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.RoomID) *appservice.IntentAPI {
+	members, err := m.admin.GetRoomMembers(ctx, roomID)
 	if err != nil {
 		return nil
 	}
 
 	botMXID := m.as.BotMXID().String()
-	for _, member := range resp.Members {
+	for _, member := range members {
 		if member == botMXID {
 			continue
 		}
@@ -366,20 +348,13 @@ func (m *MautrixAdapter) waitForSynapse(ctx context.Context) {
 	}
 }
 
-// isBotAdmin checks if the bot is a Synapse server admin by querying its own user record.
-// Uses a direct HTTP client (not appservice framework) so it works before as.Start().
+// isBotAdmin checks if the bot is a Synapse server admin.
 func (m *MautrixAdapter) isBotAdmin(ctx context.Context) bool {
-	client := m.newDirectClient(m.cfg.Matrix.AppServiceToken)
-	botMXID := m.as.BotMXID()
-	var resp struct {
-		Admin bool `json:"admin"`
-	}
-	urlPath := client.BuildURL(mautrix.SynapseAdminURLPath{"v2", "users", botMXID})
-	_, err := client.MakeRequest(ctx, http.MethodGet, urlPath, nil, &resp)
+	user, err := m.admin.GetUser(ctx, m.as.BotMXID())
 	if err != nil {
 		return false
 	}
-	return resp.Admin
+	return user.Admin
 }
 
 // promoteViaTemporaryAdmin creates a temporary admin user, uses it to promote
@@ -395,25 +370,16 @@ func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret st
 		return fmt.Errorf("failed to register bootstrap admin: %w", err)
 	}
 
-	adminClient := m.newDirectClient(adminToken)
+	tempAdmin := NewSynapseAdmin(m.cfg.Matrix.HomeserverURL, adminToken)
 
 	// Promote bot
-	botMXID := m.as.BotMXID()
-	urlPath := adminClient.BuildURL(mautrix.SynapseAdminURLPath{"v2", "users", botMXID})
-	_, err = adminClient.MakeRequest(ctx, http.MethodPut, urlPath, map[string]interface{}{
-		"admin": true,
-	}, nil)
-	if err != nil {
+	if err = tempAdmin.SetUserAdmin(ctx, m.as.BotMXID(), true); err != nil {
 		return fmt.Errorf("failed to promote bot: %w", err)
 	}
 
 	// Deactivate and erase temporary admin
-	bootstrapMXID := "@" + bootstrapUser + ":" + m.cfg.Matrix.HomeserverName
-	urlPath = adminClient.BuildURL(mautrix.SynapseAdminURLPath{"v1", "deactivate", bootstrapMXID})
-	_, err = adminClient.MakeRequest(ctx, http.MethodPost, urlPath, map[string]interface{}{
-		"erase": true,
-	}, nil)
-	if err != nil {
+	bootstrapMXID := id.UserID("@" + bootstrapUser + ":" + m.cfg.Matrix.HomeserverName)
+	if err = tempAdmin.DeactivateUser(ctx, bootstrapMXID, true); err != nil {
 		m.logger.Warn("Failed to deactivate bootstrap admin user",
 			"bootstrap_mxid", bootstrapMXID, "error", err)
 	} else {
@@ -425,6 +391,7 @@ func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret st
 
 // newDirectClient creates a mautrix.Client that talks directly to Synapse
 // without appservice impersonation. Uses config URL so it works before as.Start().
+// NOTE: Only used for shared secret registration (non-admin). For admin API, use m.admin.
 func (m *MautrixAdapter) newDirectClient(accessToken string) *mautrix.Client {
 	hsURL, _ := url.Parse(m.cfg.Matrix.HomeserverURL)
 	return &mautrix.Client{
@@ -1181,8 +1148,7 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID)
 	}
 
 	// Bot not in room — find a ghost user via admin API
-	adminClient := m.newDirectClient(m.cfg.Matrix.AppServiceToken)
-	intent := m.findGhostIntentInRoom(ctx, adminClient, roomID)
+	intent := m.findGhostIntentInRoom(ctx, roomID)
 	if intent != nil {
 		return intent
 	}
@@ -1192,48 +1158,9 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID)
 }
 
 // GetCustomState retrieves io.alkemio.* state events from a room.
-// If eventTypes is empty, retrieves all state and filters to io.alkemio.* types.
+// Uses Synapse admin API — works regardless of bot membership.
 func (m *MautrixAdapter) GetCustomState(ctx context.Context, roomID id.RoomID, eventTypes []string) (map[string]map[string]interface{}, error) {
-	intent := m.as.BotIntent()
-	result := make(map[string]map[string]interface{})
-
-	if len(eventTypes) > 0 {
-		// Use direct HTTP — BotIntent.StateEvent() calls EnsureJoined internally
-		// which fails for rooms the bot left. Direct MakeRequest bypasses that
-		// since the bot is server admin.
-		for _, et := range eventTypes {
-			if !strings.HasPrefix(et, "io.alkemio.") {
-				continue
-			}
-			var content map[string]interface{}
-			urlPath := intent.BuildClientURL("v3", "rooms", roomID, "state", et, "")
-			_, err := intent.MakeRequest(ctx, http.MethodGet, urlPath, nil, &content)
-			if err == nil && len(content) > 0 {
-				result[et] = content
-			}
-		}
-	} else {
-		// Fetch all state and filter to io.alkemio.* types
-		var stateEvents []json.RawMessage
-		urlPath := intent.BuildClientURL("v3", "rooms", roomID, "state")
-		_, err := intent.MakeRequest(ctx, http.MethodGet, urlPath, nil, &stateEvents)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get room state: %w", err)
-		}
-		for _, raw := range stateEvents {
-			var evt struct {
-				Type    string                 `json:"type"`
-				Content map[string]interface{} `json:"content"`
-			}
-			if err := json.Unmarshal(raw, &evt); err == nil {
-				if strings.HasPrefix(evt.Type, "io.alkemio.") && len(evt.Content) > 0 {
-					result[evt.Type] = evt.Content
-				}
-			}
-		}
-	}
-
-	return result, nil
+	return m.admin.GetCustomState(ctx, roomID, eventTypes)
 }
 
 // DeleteAlias removes a room alias.

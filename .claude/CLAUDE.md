@@ -33,6 +33,10 @@
 - **Lib Setup**:
   - `make generate`: Generates TypeScript definitions from Go code.
 
+## Synapse Admin API
+
+All Synapse Admin API calls MUST use `SynapseAdmin` (`internal/infrastructure/matrix/synapse_admin.go`). Bare HTTP requests to `/_synapse/admin/` are forbidden outside this package. Add new admin operations as methods on `SynapseAdmin`, not as inline HTTP calls.
+
 ## Quality Gates & Validation
 
 - **Lint**: `make lint` (runs `go vet`, `golangci-lint`).
