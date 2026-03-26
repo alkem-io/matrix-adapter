@@ -24,6 +24,7 @@ type EventHandlers struct {
 	OnRoomCreated        func(room domain.RoomCreatedEvent) error
 	OnMemberUpdated      func(membership domain.RoomMemberUpdatedEvent) error
 	OnRoomUpdated        func(evt domain.RoomUpdatedEvent) error
+	OnSpaceUpdated       func(evt domain.SpaceUpdatedEvent) error
 }
 
 // SetEventHandlers sets all event handlers at once.
@@ -603,25 +604,28 @@ func (m *MautrixAdapter) handleRoomCreateEvent(evt *event.Event) {
 }
 
 // handleRoomStateEvent handles m.room.name, m.room.avatar, and m.room.topic state events.
-// Each state event produces a RoomUpdatedEvent with only the changed property populated.
+// Detects whether the room is a space and routes to OnSpaceUpdated or OnRoomUpdated accordingly.
 func (m *MautrixAdapter) handleRoomStateEvent(evt *event.Event) {
-	if m.eventHandlers.OnRoomUpdated == nil {
+	if m.eventHandlers.OnRoomUpdated == nil && m.eventHandlers.OnSpaceUpdated == nil {
 		return
 	}
 
 	go func(e *event.Event) {
 		ctx := context.Background()
-		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID)
-		if alkemioRoomID == uuid.Nil {
-			m.logger.Warn("Could not resolve Alkemio room ID for state event",
-				"room_id", e.RoomID, "event_type", e.Type.Type)
+
+		// Determine if this is a space by checking the m.room.create event type
+		isSpace := m.isSpaceRoom(ctx, e.RoomID)
+
+		alkemioID := m.resolveAlkemioRoomID(ctx, e.RoomID)
+		if alkemioID == uuid.Nil {
+			m.logger.Warn("Could not resolve Alkemio ID for state event",
+				"room_id", e.RoomID, "event_type", e.Type.Type, "is_space", isSpace)
 			return
 		}
 
-		domainEvt := domain.RoomUpdatedEvent{
-			AlkemioRoomID: alkemioRoomID,
-			Timestamp:     time.UnixMilli(e.Timestamp),
-		}
+		// Extract the changed property
+		var displayName, topic *string
+		var avatarURL *string
 
 		switch e.Type {
 		case event.StateRoomName:
@@ -630,7 +634,7 @@ func (m *MautrixAdapter) handleRoomStateEvent(evt *event.Event) {
 				m.logger.Debug("Failed to parse room name content", "event_id", e.ID)
 				return
 			}
-			domainEvt.DisplayName = &content.Name
+			displayName = &content.Name
 
 		case event.StateRoomAvatar:
 			content, ok := parseEventContent[event.RoomAvatarEventContent](e)
@@ -638,8 +642,8 @@ func (m *MautrixAdapter) handleRoomStateEvent(evt *event.Event) {
 				m.logger.Debug("Failed to parse room avatar content", "event_id", e.ID)
 				return
 			}
-			avatarURL := string(content.URL)
-			domainEvt.AvatarURL = &avatarURL
+			url := string(content.URL)
+			avatarURL = &url
 
 		case event.StateTopic:
 			content, ok := parseEventContent[event.TopicEventContent](e)
@@ -647,14 +651,43 @@ func (m *MautrixAdapter) handleRoomStateEvent(evt *event.Event) {
 				m.logger.Debug("Failed to parse room topic content", "event_id", e.ID)
 				return
 			}
-			domainEvt.Topic = &content.Topic
+			topic = &content.Topic
 		}
 
-		if err := m.eventHandlers.OnRoomUpdated(domainEvt); err != nil {
-			m.logger.Error("Error handling room state event",
-				"error", err, "event_type", e.Type.Type, "room_id", e.RoomID)
+		if isSpace && m.eventHandlers.OnSpaceUpdated != nil {
+			if err := m.eventHandlers.OnSpaceUpdated(domain.SpaceUpdatedEvent{
+				AlkemioContextID: alkemioID,
+				DisplayName:      displayName,
+				AvatarURL:        avatarURL,
+				Topic:            topic,
+				Timestamp:        time.UnixMilli(e.Timestamp),
+			}); err != nil {
+				m.logger.Error("Error handling space state event",
+					"error", err, "event_type", e.Type.Type, "room_id", e.RoomID)
+			}
+		} else if !isSpace && m.eventHandlers.OnRoomUpdated != nil {
+			if err := m.eventHandlers.OnRoomUpdated(domain.RoomUpdatedEvent{
+				AlkemioRoomID: alkemioID,
+				DisplayName:   displayName,
+				AvatarURL:     avatarURL,
+				Topic:         topic,
+				Timestamp:     time.UnixMilli(e.Timestamp),
+			}); err != nil {
+				m.logger.Error("Error handling room state event",
+					"error", err, "event_type", e.Type.Type, "room_id", e.RoomID)
+			}
 		}
 	}(evt)
+}
+
+// isSpaceRoom checks if a Matrix room is a space by inspecting its m.room.create event.
+func (m *MautrixAdapter) isSpaceRoom(ctx context.Context, roomID id.RoomID) bool {
+	intent := m.as.BotIntent()
+	var createContent event.CreateEventContent
+	if err := intent.StateEvent(ctx, roomID, event.StateCreate, "", &createContent); err != nil {
+		return false
+	}
+	return createContent.Type == "m.space"
 }
 
 // getRoomNameAndTopic fetches the room name and topic from state events.

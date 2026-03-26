@@ -109,6 +109,8 @@ const (
 	TopicRoomMemberUpdated = "communication.room.member.updated"
 	// TopicRoomUpdated is the topic for room property updated events.
 	TopicRoomUpdated = "communication.room.updated"
+	// TopicSpaceUpdated is the topic for space property updated events.
+	TopicSpaceUpdated = "communication.space.updated"
 )
 
 // ============================================================================
@@ -201,4 +203,6 @@ var OutgoingEventRegistry = []CommandDef{
 	{Topic: TopicRoomMemberUpdated, RequestType: "", ResponseType: "RoomMemberUpdatedEvent"},
 	// Room state change events (010-room-state-events)
 	{Topic: TopicRoomUpdated, RequestType: "", ResponseType: "RoomUpdatedEvent"},
+	// Space state change events (013-space-room-params)
+	{Topic: TopicSpaceUpdated, RequestType: "", ResponseType: "SpaceUpdatedEvent"},
 }

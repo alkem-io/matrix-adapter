@@ -274,6 +274,10 @@ export const TopicRoomMemberUpdated = "communication.room.member.updated";
  */
 export const TopicRoomUpdated = "communication.room.updated";
 /**
+ * TopicSpaceUpdated is the topic for space property updated events.
+ */
+export const TopicSpaceUpdated = "communication.space.updated";
+/**
  * CommandDef defines a command with its topic, request type name, and response type name.
  * This is used by the TypeScript generator to create type-safe command definitions.
  */
@@ -460,6 +464,18 @@ export interface RoomMemberLeftEvent {
  */
 export interface RoomUpdatedEvent {
   alkemio_room_id: AlkemioRoomID;
+  display_name?: string;
+  avatar_url?: string;
+  topic?: string;
+  timestamp: number /* int64 */;
+}
+/**
+ * SpaceUpdatedEvent is published when a space's properties change in Matrix.
+ * Only populated fields represent changes; omitted fields are unchanged.
+ * Topic: communication.space.updated
+ */
+export interface SpaceUpdatedEvent {
+  alkemio_context_id: AlkemioContextID;
   display_name?: string;
   avatar_url?: string;
   topic?: string;

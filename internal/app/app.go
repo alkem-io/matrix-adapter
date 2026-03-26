@@ -96,6 +96,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		OnRoomCreated:        eventService.HandleRoomCreated,
 		OnMemberUpdated:      eventService.HandleMemberUpdated,
 		OnRoomUpdated:        eventService.HandleRoomUpdated,
+		OnSpaceUpdated:       eventService.HandleSpaceUpdated,
 	})
 
 	return &App{

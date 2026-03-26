@@ -59,6 +59,7 @@ import type {
   SendMessageRequest,
   SendMessageResponse,
   SetParentRequest,
+  SpaceUpdatedEvent,
   SyncActorRequest,
   UpdateRoomRequest,
   UpdateSpaceRequest,
@@ -227,6 +228,9 @@ export const OutgoingEvents = {
   },
   'communication.room.updated': {
     payload: {} as RoomUpdatedEvent,
+  },
+  'communication.space.updated': {
+    payload: {} as SpaceUpdatedEvent,
   },
 } as const;
 

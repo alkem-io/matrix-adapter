@@ -119,6 +119,16 @@ type RoomUpdatedEvent struct {
 	Timestamp     time.Time
 }
 
+// SpaceUpdatedEvent represents a space property change event from Matrix.
+// Only populated fields represent changes; nil means "property unchanged".
+type SpaceUpdatedEvent struct {
+	AlkemioContextID uuid.UUID
+	DisplayName      *string
+	AvatarURL        *string
+	Topic            *string
+	Timestamp        time.Time
+}
+
 // MembershipEvent represents a membership change event from Matrix.
 type MembershipEvent struct {
 	AlkemioRoomID uuid.UUID

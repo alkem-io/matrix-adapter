@@ -40,6 +40,7 @@ export enum MatrixAdapterEventType {
   COMMUNICATION_SPACE_MEMBER_BATCH_ADD = 'communication.space.member.batch.add',
   COMMUNICATION_SPACE_MEMBER_BATCH_REMOVE = 'communication.space.member.batch.remove',
   COMMUNICATION_SPACE_UPDATE = 'communication.space.update',
+  COMMUNICATION_SPACE_UPDATED = 'communication.space.updated',
   COMMUNICATION_THREAD_MESSAGES_GET = 'communication.thread.messages.get',
 
 }
