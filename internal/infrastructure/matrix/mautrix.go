@@ -595,15 +595,16 @@ func (m *MautrixAdapter) InviteUser(
 	}
 
 	// Mark room as read to clear invite notification from unread count
-	// Get latest event once, then send receipt for this user
 	if latestEventID, err := m.getLatestEventID(ctx, roomID); err != nil {
 		m.logger.Warn("Failed to get latest event for read receipt",
-			"room_id", roomID,
-			"error", err,
-		)
+			"room_id", roomID, "error", err)
 	} else {
 		m.markRoomAsReadForUsers(ctx, roomID, []id.UserID{inviteeUserID}, latestEventID)
 	}
+
+	// If bot is still in the room (e.g. room created without initial members),
+	// leave now that a real member has joined — bot shouldn't be visible to users.
+	m.leaveBotIfNotNeeded(ctx, roomID)
 
 	return nil
 }
@@ -1153,10 +1154,10 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID)
 	}
 
 	// Last resort — admin-join the bot so it can perform the write.
-	// The bot will be removed on next startup by leaveBotFromNonSpaceRooms.
-	m.logger.Info("getIntentForRoom: no ghost user found, admin-joining bot", "room_id", roomID)
+	// The bot will leave once a real member is added (via leaveBotIfNotNeeded).
+	m.logger.Debug("getIntentForRoom: no ghost user found, admin-joining bot", "room_id", roomID)
 	if err := m.admin.JoinRoom(ctx, roomID, m.as.BotMXID()); err != nil {
-		m.logger.Warn("getIntentForRoom: admin join failed, returning bot intent anyway",
+		m.logger.Debug("getIntentForRoom: admin join failed",
 			"room_id", roomID, "error", err)
 	}
 	return botIntent
@@ -1652,13 +1653,18 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 			"room_id", resp.RoomID, "alias", fullAlias, "error", err)
 	}
 
-	m.autoJoinAndMarkRead(ctx, resp.RoomID, invites)
+	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, invites)
 
-	// Bot leaves the room — the appservice still receives events via ghost users
-	// matching the user namespace. This keeps the bot out of member lists.
-	if _, err := intent.LeaveRoom(ctx, resp.RoomID); err != nil {
-		m.logger.Warn("Failed to leave room after creation",
-			"room_id", resp.RoomID, "error", err)
+	// Bot leaves only if other members are present — an empty room becomes
+	// unreachable if the last member leaves (Synapse loses server tracking).
+	if joinedCount > 0 {
+		if _, err := intent.LeaveRoom(ctx, resp.RoomID); err != nil {
+			m.logger.Warn("Failed to leave room after creation",
+				"room_id", resp.RoomID, "error", err)
+		}
+	} else {
+		m.logger.Info("Bot staying in room (no other members joined yet)",
+			"room_id", resp.RoomID)
 	}
 
 	m.logger.Info(
@@ -1672,7 +1678,8 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 }
 
 // autoJoinAndMarkRead auto-joins invited members and marks the room as read for them.
-func (m *MautrixAdapter) autoJoinAndMarkRead(ctx context.Context, roomID id.RoomID, invites []id.UserID) {
+// Returns the number of members successfully joined.
+func (m *MautrixAdapter) autoJoinAndMarkRead(ctx context.Context, roomID id.RoomID, invites []id.UserID) int {
 	joinedUsers := make([]id.UserID, 0, len(invites))
 	for _, memberUserID := range invites {
 		memberIntent := m.as.Intent(memberUserID)
@@ -1690,6 +1697,45 @@ func (m *MautrixAdapter) autoJoinAndMarkRead(ctx context.Context, roomID id.Room
 				"room_id", roomID, "error", err)
 		} else {
 			m.markRoomAsReadForUsers(ctx, roomID, joinedUsers, latestEventID)
+		}
+	}
+	return len(joinedUsers)
+}
+
+// leaveBotIfNotNeeded checks if the bot is in a non-space room and leaves
+// if at least one ghost user is also present. This ensures the bot doesn't
+// appear as a member in rooms visible to users.
+func (m *MautrixAdapter) leaveBotIfNotNeeded(ctx context.Context, roomID id.RoomID) {
+	if m.isSpaceRoom(ctx, roomID) {
+		return // Bot stays in spaces
+	}
+
+	members, err := m.admin.GetRoomMembers(ctx, roomID)
+	if err != nil {
+		return
+	}
+
+	botMXID := m.as.BotMXID().String()
+	botIsMember := false
+	ghostCount := 0
+
+	for _, member := range members {
+		if member == botMXID {
+			botIsMember = true
+			continue
+		}
+		if m.idMapper.AlkemioActorID(id.UserID(member)) != uuid.Nil {
+			ghostCount++
+		}
+	}
+
+	if botIsMember && ghostCount > 0 {
+		intent := m.as.BotIntent()
+		if _, err := intent.LeaveRoom(ctx, roomID); err != nil {
+			m.logger.Warn("Failed to leave room after member added",
+				"room_id", roomID, "error", err)
+		} else {
+			m.logger.Debug("Bot left room after member joined", "room_id", roomID)
 		}
 	}
 }
