@@ -690,31 +690,24 @@ func (m *MautrixAdapter) handleRoomStateEvent(evt *event.Event) {
 }
 
 // isSpaceRoom checks if a Matrix room is a space by inspecting its m.room.create event.
+// Uses admin API — works regardless of bot membership.
 func (m *MautrixAdapter) isSpaceRoom(ctx context.Context, roomID id.RoomID) bool {
-	intent := m.as.BotIntent()
-	var createContent event.CreateEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateCreate, "", &createContent); err != nil {
+	content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.create")
+	if err != nil || content == nil {
 		return false
 	}
-	return createContent.Type == "m.space"
+	roomType, _ := content["type"].(string)
+	return roomType == "m.space"
 }
 
 // getRoomNameAndTopic fetches the room name and topic from state events.
 // Returns empty strings if the state events are absent or fetching fails.
 func (m *MautrixAdapter) getRoomNameAndTopic(ctx context.Context, roomID id.RoomID) (name, topic string) {
-	intent := m.as.BotIntent()
-
-	// Fetch room name (best-effort)
-	var nameContent event.RoomNameEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateRoomName, "", &nameContent); err == nil {
-		name = nameContent.Name
+	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.name"); err == nil && content != nil {
+		name, _ = content["name"].(string)
 	}
-
-	// Fetch room topic (best-effort)
-	var topicContent event.TopicEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateTopic, "", &topicContent); err == nil {
-		topic = topicContent.Topic
+	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.topic"); err == nil && content != nil {
+		topic, _ = content["topic"].(string)
 	}
-
 	return name, topic
 }

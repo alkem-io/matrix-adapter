@@ -159,6 +159,22 @@ func (s *SynapseAdmin) GetRoomState(ctx context.Context, roomID id.RoomID, event
 	return resp.State, nil
 }
 
+// GetStateEventContent retrieves the content of a specific state event by type.
+// Returns nil if the event doesn't exist.
+func (s *SynapseAdmin) GetStateEventContent(ctx context.Context, roomID id.RoomID, eventType string) (map[string]interface{}, error) {
+	stateEvents, err := s.GetRoomState(ctx, roomID, eventType)
+	if err != nil || len(stateEvents) == 0 {
+		return nil, err
+	}
+	var evt struct {
+		Content map[string]interface{} `json:"content"`
+	}
+	if err := json.Unmarshal(stateEvents[0], &evt); err != nil {
+		return nil, err
+	}
+	return evt.Content, nil
+}
+
 // GetCustomState retrieves io.alkemio.* state events from a room.
 // If eventTypes is empty, returns all io.alkemio.* state events.
 func (s *SynapseAdmin) GetCustomState(ctx context.Context, roomID id.RoomID, eventTypes []string) (map[string]map[string]interface{}, error) {

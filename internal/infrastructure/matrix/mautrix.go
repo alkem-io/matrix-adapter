@@ -670,24 +670,26 @@ func (m *MautrixAdapter) GetAllJoinedRooms(ctx context.Context) ([]id.RoomID, er
 }
 
 // GetRoomDetails returns details about a room.
+// Uses admin API for state reads — works regardless of bot membership.
 func (m *MautrixAdapter) GetRoomDetails(ctx context.Context, roomID id.RoomID) (*domain.Room, error) {
-	intent := m.as.BotIntent()
-
 	var name, topic, alias, avatarURL string
 
-	var nameContent event.RoomNameEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateRoomName, "", &nameContent); err == nil {
-		name = nameContent.Name
+	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.name"); err == nil && content != nil {
+		if v, ok := content["name"].(string); ok {
+			name = v
+		}
 	}
 
-	var topicContent event.TopicEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateTopic, "", &topicContent); err == nil {
-		topic = topicContent.Topic
+	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.topic"); err == nil && content != nil {
+		if v, ok := content["topic"].(string); ok {
+			topic = v
+		}
 	}
 
-	var avatarContent event.RoomAvatarEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateRoomAvatar, "", &avatarContent); err == nil {
-		avatarURL = string(avatarContent.URL)
+	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.avatar"); err == nil && content != nil {
+		if v, ok := content["url"].(string); ok {
+			avatarURL = v
+		}
 	}
 
 	// Get alias (uses room_aliases table - same source as ResolveAlias)
@@ -1141,13 +1143,18 @@ func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, s
 func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID) *appservice.IntentAPI {
 	botIntent := m.as.BotIntent()
 
-	// Check if bot is in the room by trying to get state
-	var createContent event.CreateEventContent
-	if err := botIntent.StateEvent(ctx, roomID, event.StateCreate, "", &createContent); err == nil {
-		return botIntent
+	// Check if bot is in the room via admin API (no extra HTTP to Synapse client API)
+	members, err := m.admin.GetRoomMembers(ctx, roomID)
+	if err == nil {
+		botMXID := m.as.BotMXID().String()
+		for _, member := range members {
+			if member == botMXID {
+				return botIntent
+			}
+		}
 	}
 
-	// Bot not in room — find a ghost user via admin API
+	// Bot not in room — find a ghost user
 	intent := m.findGhostIntentInRoom(ctx, roomID)
 	if intent != nil {
 		return intent
@@ -1931,19 +1938,20 @@ func (m *MautrixAdapter) CreateSpace(
 }
 
 // GetSpaceDetails retrieves space metadata and state.
+// Uses admin API for state reads — works regardless of bot membership.
 func (m *MautrixAdapter) GetSpaceDetails(ctx context.Context, roomID id.RoomID) (*domain.Space, error) {
-	intent := m.as.BotIntent()
-
 	var name, topic, alias, avatarURL, joinRule string
 
-	var nameContent event.RoomNameEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateRoomName, "", &nameContent); err == nil {
-		name = nameContent.Name
+	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.name"); err == nil && content != nil {
+		if v, ok := content["name"].(string); ok {
+			name = v
+		}
 	}
 
-	var topicContent event.TopicEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateTopic, "", &topicContent); err == nil {
-		topic = topicContent.Topic
+	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.topic"); err == nil && content != nil {
+		if v, ok := content["topic"].(string); ok {
+			topic = v
+		}
 	}
 
 	// Get alias (uses room_aliases table - same source as ResolveAlias)
@@ -1951,14 +1959,16 @@ func (m *MautrixAdapter) GetSpaceDetails(ctx context.Context, roomID id.RoomID) 
 		alias = m.selectPreferredAlias(aliases)
 	}
 
-	var avatarContent event.RoomAvatarEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateRoomAvatar, "", &avatarContent); err == nil {
-		avatarURL = string(avatarContent.URL)
+	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.avatar"); err == nil && content != nil {
+		if v, ok := content["url"].(string); ok {
+			avatarURL = v
+		}
 	}
 
-	var joinRuleContent event.JoinRulesEventContent
-	if err := intent.StateEvent(ctx, roomID, event.StateJoinRules, "", &joinRuleContent); err == nil {
-		joinRule = string(joinRuleContent.JoinRule)
+	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.join_rules"); err == nil && content != nil {
+		if v, ok := content["join_rule"].(string); ok {
+			joinRule = v
+		}
 	}
 
 	// Get custom io.alkemio.* state events
@@ -2047,12 +2057,9 @@ func (m *MautrixAdapter) GetSpaceChildren(ctx context.Context, roomID id.RoomID)
 			Suggested: content.Suggested,
 		}
 
-		// Determine if child is a space by checking its creation content
+		// Determine if child is a space by checking its creation content via admin API
 		childRoomID := id.RoomID(stateKey)
-		var creationContent event.CreateEventContent
-		if err := intent.StateEvent(ctx, childRoomID, event.StateCreate, "", &creationContent); err == nil {
-			child.IsSpace = creationContent.Type == "m.space"
-		}
+		child.IsSpace = m.isSpaceRoom(ctx, childRoomID)
 
 		children = append(children, child)
 	}
