@@ -147,7 +147,7 @@ func (h *RoomHandler) HandleCreateRoom(ctx context.Context, payload []byte) (int
 		req.AvatarURL,
 		string(req.JoinRule),
 		req.IsPublic,
-		req.Visible,
+		req.CustomState,
 		initialMembers,
 	)
 	if err != nil {
@@ -178,6 +178,7 @@ func (h *RoomHandler) HandleGetRoom(ctx context.Context, payload []byte) (interf
 		AlkemioRoomID:  dto.AlkemioRoomID(room.AlkemioID),
 		DisplayName:    room.Name,
 		AvatarURL:      room.AvatarURL,
+		CustomState:    room.CustomState,
 		MemberActorIDs: convertMemberIDsToDTO(room.MemberIDs),
 		Messages:       convertMessagesToDTO(room.Messages),
 	}, nil
@@ -262,7 +263,7 @@ func (h *RoomHandler) HandleUpdateRoom(ctx context.Context, payload []byte) (int
 		req.AvatarURL,
 		joinRule,
 		req.IsPublic,
-		req.Visible,
+		req.CustomState,
 	)
 	if err != nil {
 		return MapServiceError(err), nil
@@ -830,4 +831,59 @@ func (h *RoomHandler) HandleBatchGetLastMessages(ctx context.Context, payload []
 		resp.Errors = errors
 	}
 	return resp, nil
+}
+
+// ============================================================================
+// Custom State Handlers (communication.room.state.*)
+// ============================================================================
+
+// HandleSetRoomState handles communication.room.state.set topic.
+func (h *RoomHandler) HandleSetRoomState(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.SetRoomStateRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	if err := h.matrix.SetCustomState(ctx, roomID, req.State); err != nil {
+		return MapServiceError(err), nil
+	}
+
+	return dto.NewSuccessResponse(), nil
+}
+
+// HandleGetRoomState handles communication.room.state.get topic.
+func (h *RoomHandler) HandleGetRoomState(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.GetRoomStateRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	state, err := h.matrix.GetCustomState(ctx, roomID, req.EventTypes)
+	if err != nil {
+		return MapServiceError(err), nil
+	}
+
+	return dto.GetRoomStateResponse{
+		BaseResponse:  dto.NewSuccessResponse(),
+		AlkemioRoomID: req.AlkemioRoomID,
+		State:         state,
+	}, nil
 }

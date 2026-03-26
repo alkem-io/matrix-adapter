@@ -727,12 +727,16 @@ func (m *MautrixAdapter) GetRoomDetails(ctx context.Context, roomID id.RoomID) (
 		alias = m.selectPreferredAlias(aliases)
 	}
 
+	// Get custom io.alkemio.* state events
+	customState, _ := m.GetCustomState(ctx, roomID, nil)
+
 	return &domain.Room{
-		ID:        roomID,
-		Name:      name,
-		Topic:     topic,
-		AvatarURL: avatarURL,
-		Alias:     alias,
+		ID:          roomID,
+		Name:        name,
+		Topic:       topic,
+		AvatarURL:   avatarURL,
+		Alias:       alias,
+		CustomState: customState,
 	}, nil
 }
 
@@ -1141,21 +1145,73 @@ func (m *MautrixAdapter) SetRoomDirectoryVisibility(ctx context.Context, roomID 
 	return nil
 }
 
-// SetRoomSyncVisibility sets the io.alkemio.visibility state event to control
-// whether a room appears in users' /sync responses (Element sidebar).
-// This is read by the Alkemio Synapse module which filters /sync accordingly.
-func (m *MautrixAdapter) SetRoomSyncVisibility(ctx context.Context, roomID id.RoomID, visible bool) error {
+// SetCustomState sets custom io.alkemio.* state events on a room.
+// Only event types with the "io.alkemio." prefix are allowed.
+func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, state map[string]map[string]interface{}) error {
 	intent := m.as.BotIntent()
-	_, err := intent.SendStateEvent(ctx, roomID, event.Type{
-		Type:  "io.alkemio.visibility",
-		Class: event.StateEventType,
-	}, "", map[string]interface{}{
-		"visible": visible,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to set room sync visibility: %w", err)
+	for eventType, content := range state {
+		if !strings.HasPrefix(eventType, "io.alkemio.") {
+			return fmt.Errorf("custom state event type must have io.alkemio. prefix, got: %s", eventType)
+		}
+		_, err := intent.SendStateEvent(ctx, roomID, event.Type{
+			Type:  eventType,
+			Class: event.StateEventType,
+		}, "", content)
+		if err != nil {
+			return fmt.Errorf("failed to set custom state %s: %w", eventType, err)
+		}
 	}
 	return nil
+}
+
+// GetCustomState retrieves io.alkemio.* state events from a room.
+// If eventTypes is empty, retrieves all state and filters to io.alkemio.* types.
+func (m *MautrixAdapter) GetCustomState(ctx context.Context, roomID id.RoomID, eventTypes []string) (map[string]map[string]interface{}, error) {
+	intent := m.as.BotIntent()
+	result := make(map[string]map[string]interface{})
+
+	if len(eventTypes) > 0 {
+		// Fetch specific types
+		for _, et := range eventTypes {
+			if !strings.HasPrefix(et, "io.alkemio.") {
+				continue
+			}
+			var content map[string]interface{}
+			if err := intent.StateEvent(ctx, roomID, event.Type{Type: et, Class: event.StateEventType}, "", &content); err == nil {
+				result[et] = content
+			}
+		}
+	} else {
+		// Fetch all state and filter to io.alkemio.* types
+		stateMap, err := intent.State(ctx, roomID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get room state: %w", err)
+		}
+		for evtType, stateKeyMap := range stateMap {
+			if !strings.HasPrefix(evtType.Type, "io.alkemio.") {
+				continue
+			}
+			for _, evt := range stateKeyMap {
+				if evt.Content.Parsed != nil {
+					if content, ok := evt.Content.Parsed.(map[string]interface{}); ok {
+						result[evtType.Type] = content
+						continue
+					}
+				}
+				// Fallback: try raw JSON
+				var content map[string]interface{}
+				if err := evt.Content.ParseRaw(evtType); err == nil {
+					if raw, ok := evt.Content.Parsed.(map[string]interface{}); ok {
+						result[evtType.Type] = raw
+						continue
+					}
+				}
+				_ = content
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // DeleteAlias removes a room alias.
@@ -1956,13 +2012,17 @@ func (m *MautrixAdapter) GetSpaceDetails(ctx context.Context, roomID id.RoomID) 
 		joinRule = string(joinRuleContent.JoinRule)
 	}
 
+	// Get custom io.alkemio.* state events
+	customState, _ := m.GetCustomState(ctx, roomID, nil)
+
 	return &domain.Space{
-		ID:        roomID,
-		Name:      name,
-		Topic:     topic,
-		Alias:     alias,
-		AvatarURL: avatarURL,
-		JoinRule:  joinRule,
+		ID:          roomID,
+		Name:        name,
+		Topic:       topic,
+		Alias:       alias,
+		AvatarURL:   avatarURL,
+		JoinRule:    joinRule,
+		CustomState: customState,
 	}, nil
 }
 

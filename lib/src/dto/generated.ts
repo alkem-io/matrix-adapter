@@ -206,6 +206,22 @@ export const TopicSpaceMemberBatchAdd = "communication.space.member.batch.add";
  */
 export const TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove";
 /**
+ * Custom state API
+ */
+export const TopicRoomStateSet = "communication.room.state.set";
+/**
+ * Space batch member command topics
+ */
+export const TopicRoomStateGet = "communication.room.state.get";
+/**
+ * Space batch member command topics
+ */
+export const TopicSpaceStateSet = "communication.space.state.set";
+/**
+ * Space batch member command topics
+ */
+export const TopicSpaceStateGet = "communication.space.state.get";
+/**
  * TopicRoomDMRequested is the topic for DM room request events (outbound to Server).
  */
 export const TopicRoomDMRequested = "communication.room.dm.requested";
@@ -744,7 +760,7 @@ export interface CreateRoomRequest {
   parent_context_id?: AlkemioContextID;
   join_rule?: JoinRule;
   is_public?: boolean; // Room directory visibility
-  visible?: boolean; // Whether room appears in user's /sync (Element sidebar)
+  custom_state?: { [key: string]: { [key: string]: any}}; // io.alkemio.* state events to set on creation
 }
 /**
  * GetRoomRequest retrieves current state of a room.
@@ -760,6 +776,7 @@ export interface GetRoomResponse extends BaseResponse {
   alkemio_room_id: AlkemioRoomID;
   display_name: string;
   avatar_url?: string;
+  custom_state?: { [key: string]: { [key: string]: any}}; // io.alkemio.* state events
   member_actor_ids: AlkemioActorID[];
   messages: MessageDto[];
 }
@@ -774,7 +791,7 @@ export interface UpdateRoomRequest {
   avatar_url?: string;
   join_rule?: JoinRule;
   is_public?: boolean; // Room directory visibility
-  visible?: boolean; // Whether room appears in user's /sync (Element sidebar)
+  custom_state?: { [key: string]: { [key: string]: any}}; // io.alkemio.* state events to set
 }
 /**
  * DeleteRoomRequest archives or deletes a room.
@@ -867,7 +884,7 @@ export interface CreateSpaceRequest {
   join_rule?: JoinRule;
   initial_members?: AlkemioActorID[];
   is_public?: boolean; // Room directory visibility
-  visible?: boolean; // Whether space appears in user's /sync (Element sidebar)
+  custom_state?: { [key: string]: { [key: string]: any}}; // io.alkemio.* state events to set on creation
 }
 /**
  * GetSpaceRequest retrieves current state of a space.
@@ -885,6 +902,7 @@ export interface GetSpaceResponse extends BaseResponse {
   topic?: string;
   avatar_url?: string;
   join_rule: JoinRule;
+  custom_state?: { [key: string]: { [key: string]: any}}; // io.alkemio.* state events
   member_actor_ids: AlkemioActorID[];
   children: SpaceChildDto[];
   parent_context_id?: AlkemioContextID;
@@ -900,7 +918,7 @@ export interface UpdateSpaceRequest {
   avatar_url?: string;
   join_rule?: JoinRule;
   is_public?: boolean; // Room directory visibility
-  visible?: boolean; // Whether space appears in user's /sync (Element sidebar)
+  custom_state?: { [key: string]: { [key: string]: any}}; // io.alkemio.* state events to set
 }
 /**
  * DeleteSpaceRequest archives/deletes a space.
@@ -955,6 +973,56 @@ export interface BatchRemoveSpaceMemberRequest {
  */
 export interface BatchRemoveSpaceMemberResponse extends BaseResponse {
   results?: { [key: string]: BaseResponse};
+}
+
+//////////
+// source: state.go
+
+/**
+ * SetRoomStateRequest sets custom io.alkemio.* state events on a room.
+ * Topic: communication.room.state.set
+ */
+export interface SetRoomStateRequest {
+  alkemio_room_id: AlkemioRoomID;
+  state: { [key: string]: { [key: string]: any}}; // e.g. {"io.alkemio.visibility": {"visible": true}}
+}
+/**
+ * GetRoomStateRequest retrieves custom io.alkemio.* state events from a room.
+ * Topic: communication.room.state.get
+ */
+export interface GetRoomStateRequest {
+  alkemio_room_id: AlkemioRoomID;
+  event_types?: string[]; // Filter to specific types; empty = all io.alkemio.*
+}
+/**
+ * GetRoomStateResponse returns custom state events.
+ */
+export interface GetRoomStateResponse extends BaseResponse {
+  alkemio_room_id: AlkemioRoomID;
+  state: { [key: string]: { [key: string]: any}};
+}
+/**
+ * SetSpaceStateRequest sets custom io.alkemio.* state events on a space.
+ * Topic: communication.space.state.set
+ */
+export interface SetSpaceStateRequest {
+  alkemio_context_id: AlkemioContextID;
+  state: { [key: string]: { [key: string]: any}};
+}
+/**
+ * GetSpaceStateRequest retrieves custom io.alkemio.* state events from a space.
+ * Topic: communication.space.state.get
+ */
+export interface GetSpaceStateRequest {
+  alkemio_context_id: AlkemioContextID;
+  event_types?: string[];
+}
+/**
+ * GetSpaceStateResponse returns custom state events.
+ */
+export interface GetSpaceStateResponse extends BaseResponse {
+  alkemio_context_id: AlkemioContextID;
+  state: { [key: string]: { [key: string]: any}};
 }
 
 //////////

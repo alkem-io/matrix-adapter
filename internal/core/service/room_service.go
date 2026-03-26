@@ -40,7 +40,7 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	roomType string,
 	name, topic, avatarURL, joinRule string,
 	isPublic *bool,
-	visible *bool,
+	customState map[string]map[string]interface{},
 	initialMembers []domain.Actor,
 ) error {
 	s.logger.Info(
@@ -118,11 +118,11 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 		}
 	}
 
-	// Set sync visibility if specified (controls Element sidebar via Synapse module)
-	if visible != nil {
-		if err := s.matrix.SetRoomSyncVisibility(ctx, roomID, *visible); err != nil {
-			s.logger.Warn("Failed to set room sync visibility",
-				"alkemio_room_id", alkemioRoomID, "visible", *visible, "error", err)
+	// Set custom io.alkemio.* state events if specified
+	if len(customState) > 0 {
+		if err := s.matrix.SetCustomState(ctx, roomID, customState); err != nil {
+			s.logger.Warn("Failed to set custom state on room",
+				"alkemio_room_id", alkemioRoomID, "error", err)
 		}
 	}
 
@@ -253,7 +253,7 @@ func (s *RoomService) UpdateRoomMetadata(
 	name, topic, avatarURL *string,
 	joinRule *string,
 	isPublic *bool,
-	visible *bool,
+	customState map[string]map[string]interface{},
 ) error {
 	s.logger.Info("Updating room metadata", "alkemio_room_id", alkemioRoomID)
 
@@ -280,11 +280,11 @@ func (s *RoomService) UpdateRoomMetadata(
 		}
 	}
 
-	// Set sync visibility if specified
-	if visible != nil {
-		if err := s.matrix.SetRoomSyncVisibility(ctx, roomID, *visible); err != nil {
-			s.logger.Warn("Failed to set room sync visibility",
-				"alkemio_room_id", alkemioRoomID, "visible", *visible, "error", err)
+	// Set custom io.alkemio.* state events if specified
+	if len(customState) > 0 {
+		if err := s.matrix.SetCustomState(ctx, roomID, customState); err != nil {
+			s.logger.Warn("Failed to set custom state on room",
+				"alkemio_room_id", alkemioRoomID, "error", err)
 		}
 	}
 

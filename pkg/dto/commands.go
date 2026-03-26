@@ -54,6 +54,12 @@ const TopicHierarchySetParent = "communication.hierarchy.set_parent"
 const (
 	TopicSpaceMemberBatchAdd    = "communication.space.member.batch.add"
 	TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove"
+
+	// Custom state API
+	TopicRoomStateSet  = "communication.room.state.set"
+	TopicRoomStateGet  = "communication.room.state.get"
+	TopicSpaceStateSet = "communication.space.state.set"
+	TopicSpaceStateGet = "communication.space.state.get"
 )
 
 // TopicRoomDMRequested is the topic for DM room request events (outbound to Server).
@@ -183,6 +189,12 @@ var CommandRegistry = []CommandDef{
 	{Topic: TopicBatchUnreadCountsGet, RequestType: "BatchGetUnreadCountsRequest", ResponseType: "BatchGetUnreadCountsResponse"},
 	{Topic: TopicLastMessageGet, RequestType: "GetLastMessageRequest", ResponseType: "GetLastMessageResponse"},
 	{Topic: TopicBatchLastMessagesGet, RequestType: "BatchGetLastMessagesRequest", ResponseType: "BatchGetLastMessagesResponse"},
+
+	// Custom state API (io.alkemio.*)
+	{Topic: TopicRoomStateSet, RequestType: "SetRoomStateRequest", ResponseType: "BaseResponse"},
+	{Topic: TopicRoomStateGet, RequestType: "GetRoomStateRequest", ResponseType: "GetRoomStateResponse"},
+	{Topic: TopicSpaceStateSet, RequestType: "SetSpaceStateRequest", ResponseType: "BaseResponse"},
+	{Topic: TopicSpaceStateGet, RequestType: "GetSpaceStateRequest", ResponseType: "GetSpaceStateResponse"},
 }
 
 // OutgoingEventRegistry defines events emitted by the adapter (not commands).

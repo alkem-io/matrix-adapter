@@ -39,7 +39,7 @@ func (s *SpaceService) CreateSpace(
 	name, topic, avatarURL string,
 	joinRule string,
 	isPublic *bool,
-	visible *bool,
+	customState map[string]map[string]interface{},
 	parentContextID *uuid.UUID,
 	initialMembers []domain.Actor,
 ) error {
@@ -86,11 +86,11 @@ func (s *SpaceService) CreateSpace(
 		}
 	}
 
-	// Set sync visibility if specified
-	if visible != nil {
-		if err := s.matrix.SetRoomSyncVisibility(ctx, spaceRoomID, *visible); err != nil {
-			s.logger.Warn("Failed to set space sync visibility",
-				"alkemio_context_id", alkemioContextID, "visible", *visible, "error", err)
+	// Set custom io.alkemio.* state events if specified
+	if len(customState) > 0 {
+		if err := s.matrix.SetCustomState(ctx, spaceRoomID, customState); err != nil {
+			s.logger.Warn("Failed to set custom state on space",
+				"alkemio_context_id", alkemioContextID, "error", err)
 		}
 	}
 
@@ -177,7 +177,7 @@ func (s *SpaceService) UpdateSpace(
 	name, topic, avatarURL *string,
 	joinRule *string,
 	isPublic *bool,
-	visible *bool,
+	customState map[string]map[string]interface{},
 ) error {
 	s.logger.Info("Updating space", "alkemio_context_id", alkemioContextID)
 
@@ -201,11 +201,11 @@ func (s *SpaceService) UpdateSpace(
 		}
 	}
 
-	// Set sync visibility if specified
-	if visible != nil {
-		if err := s.matrix.SetRoomSyncVisibility(ctx, roomID, *visible); err != nil {
-			s.logger.Warn("Failed to set space sync visibility",
-				"alkemio_context_id", alkemioContextID, "visible", *visible, "error", err)
+	// Set custom io.alkemio.* state events if specified
+	if len(customState) > 0 {
+		if err := s.matrix.SetCustomState(ctx, roomID, customState); err != nil {
+			s.logger.Warn("Failed to set custom state on space",
+				"alkemio_context_id", alkemioContextID, "error", err)
 		}
 	}
 

@@ -34,8 +34,12 @@ import type {
   GetRoomMembersResponse,
   GetRoomRequest,
   GetRoomResponse,
+  GetRoomStateRequest,
+  GetRoomStateResponse,
   GetSpaceRequest,
   GetSpaceResponse,
+  GetSpaceStateRequest,
+  GetSpaceStateResponse,
   GetThreadMessagesRequest,
   GetThreadMessagesResponse,
   GetUnreadCountsRequest,
@@ -59,6 +63,8 @@ import type {
   SendMessageRequest,
   SendMessageResponse,
   SetParentRequest,
+  SetRoomStateRequest,
+  SetSpaceStateRequest,
   SpaceUpdatedEvent,
   SyncActorRequest,
   UpdateRoomRequest,
@@ -150,6 +156,14 @@ export const Commands = {
     request: {} as GetRoomMembersRequest,
     response: {} as GetRoomMembersResponse,
   },
+  'communication.room.state.get': {
+    request: {} as GetRoomStateRequest,
+    response: {} as GetRoomStateResponse,
+  },
+  'communication.room.state.set': {
+    request: {} as SetRoomStateRequest,
+    response: {} as BaseResponse,
+  },
   'communication.room.unread_counts.get': {
     request: {} as GetUnreadCountsRequest,
     response: {} as GetUnreadCountsResponse,
@@ -181,6 +195,14 @@ export const Commands = {
   'communication.space.member.batch.remove': {
     request: {} as BatchRemoveSpaceMemberRequest,
     response: {} as BatchRemoveSpaceMemberResponse,
+  },
+  'communication.space.state.get': {
+    request: {} as GetSpaceStateRequest,
+    response: {} as GetSpaceStateResponse,
+  },
+  'communication.space.state.set': {
+    request: {} as SetSpaceStateRequest,
+    response: {} as BaseResponse,
   },
   'communication.space.update': {
     request: {} as UpdateSpaceRequest,

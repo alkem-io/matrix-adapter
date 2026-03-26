@@ -49,8 +49,11 @@ func (m *mockMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, roo
 func (m *mockMatrixPort) SetRoomDirectoryVisibility(_ context.Context, _ id.RoomID, _ bool) error {
 	return nil
 }
-func (m *mockMatrixPort) SetRoomSyncVisibility(_ context.Context, _ id.RoomID, _ bool) error {
+func (m *mockMatrixPort) SetCustomState(_ context.Context, _ id.RoomID, _ map[string]map[string]interface{}) error {
 	return nil
+}
+func (m *mockMatrixPort) GetCustomState(_ context.Context, _ id.RoomID, _ []string) (map[string]map[string]interface{}, error) {
+	return nil, nil
 }
 func (m *mockMatrixPort) ResolveAlias(_ context.Context, _ string) (id.RoomID, error) {
 	if m.resolveAliasErr != nil {
