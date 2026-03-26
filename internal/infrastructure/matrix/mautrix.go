@@ -1194,11 +1194,13 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID)
 // GetCustomState retrieves io.alkemio.* state events from a room.
 // If eventTypes is empty, retrieves all state and filters to io.alkemio.* types.
 func (m *MautrixAdapter) GetCustomState(ctx context.Context, roomID id.RoomID, eventTypes []string) (map[string]map[string]interface{}, error) {
-	intent := m.getIntentForRoom(ctx, roomID)
+	intent := m.as.BotIntent()
 	result := make(map[string]map[string]interface{})
 
 	if len(eventTypes) > 0 {
-		// Fetch specific types via direct HTTP (StateEvent doesn't parse custom types well)
+		// Use direct HTTP — BotIntent.StateEvent() calls EnsureJoined internally
+		// which fails for rooms the bot left. Direct MakeRequest bypasses that
+		// since the bot is server admin.
 		for _, et := range eventTypes {
 			if !strings.HasPrefix(et, "io.alkemio.") {
 				continue
