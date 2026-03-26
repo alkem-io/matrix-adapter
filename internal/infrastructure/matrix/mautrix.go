@@ -275,24 +275,53 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 	}
 }
 
-// findGhostIntentInRoom finds a ghost user (appservice-managed) in a room and returns their intent.
+// findGhostIntentInRoom finds the ghost user with the highest power level in a room.
+// Returns their intent, or nil if no ghost users are found.
 func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.RoomID) *appservice.IntentAPI {
 	members, err := m.admin.GetRoomMembers(ctx, roomID)
 	if err != nil {
 		return nil
 	}
 
+	// Get power levels to find the most privileged ghost
+	powerLevels := make(map[string]float64)
+	var usersDefault float64
+	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.power_levels"); err == nil && content != nil {
+		if users, ok := content["users"].(map[string]interface{}); ok {
+			for uid, pl := range users {
+				if v, ok := pl.(float64); ok {
+					powerLevels[uid] = v
+				}
+			}
+		}
+		if d, ok := content["users_default"].(float64); ok {
+			usersDefault = d
+		}
+	}
+
 	botMXID := m.as.BotMXID().String()
+	var bestIntent *appservice.IntentAPI
+	bestPL := float64(-1)
+
 	for _, member := range members {
 		if member == botMXID {
 			continue
 		}
 		userID := id.UserID(member)
-		if m.idMapper.AlkemioActorID(userID) != uuid.Nil {
-			return m.as.Intent(userID)
+		if m.idMapper.AlkemioActorID(userID) == uuid.Nil {
+			continue
+		}
+		pl, ok := powerLevels[member]
+		if !ok {
+			pl = usersDefault
+		}
+		if pl > bestPL {
+			bestPL = pl
+			bestIntent = m.as.Intent(userID)
 		}
 	}
-	return nil
+
+	return bestIntent
 }
 
 // leaveBotFromNonSpaceRooms removes the bot from all rooms that are not spaces.
@@ -728,13 +757,9 @@ func (m *MautrixAdapter) GetRoomMembers(ctx context.Context, roomID id.RoomID) (
 // UpdateRoomState updates the state of a room.
 // nil pointers mean "no change"; non-nil (including empty string) means "set this value".
 func (m *MautrixAdapter) UpdateRoomState(
-	ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, joinRule *string,
+	ctx context.Context, roomID id.RoomID, _ domain.Actor, name, topic, avatarURL, joinRule *string,
 ) error {
-	userID, err := m.EnsureUser(ctx, actorID)
-	if err != nil {
-		return err
-	}
-	intent := m.as.Intent(userID)
+	intent := m.getIntentForRoom(ctx, roomID)
 
 	if name != nil {
 		if err := m.setOrRedactState(ctx, intent, roomID, event.StateRoomName, *name); err != nil {
