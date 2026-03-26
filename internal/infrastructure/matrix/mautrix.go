@@ -248,6 +248,11 @@ func (m *MautrixAdapter) leaveBotFromNonSpaceRooms(ctx context.Context) {
 		if m.isSpaceRoom(ctx, roomID) {
 			continue
 		}
+
+		// Redact canonical alias before leaving — clients should show
+		// member names (for DMs) or room name, not the UUID alias.
+		m.redactCanonicalAlias(ctx, intent, roomID)
+
 		if _, err := intent.LeaveRoom(ctx, roomID); err != nil {
 			m.logger.Warn("Failed to leave room during cleanup",
 				"room_id", roomID, "error", err)
@@ -258,6 +263,18 @@ func (m *MautrixAdapter) leaveBotFromNonSpaceRooms(ctx context.Context) {
 
 	if leftCount > 0 {
 		m.logger.Info("Bot left non-space rooms (migration cleanup)", "rooms_left", leftCount)
+	}
+}
+
+// redactCanonicalAlias redacts the m.room.canonical_alias state event if it exists.
+func (m *MautrixAdapter) redactCanonicalAlias(ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID) {
+	existing, err := intent.FullStateEvent(ctx, roomID, event.StateCanonicalAlias, "")
+	if err != nil || existing == nil || existing.ID == "" {
+		return
+	}
+	if _, err := intent.RedactEvent(ctx, roomID, existing.ID); err != nil {
+		m.logger.Warn("Failed to redact canonical alias",
+			"room_id", roomID, "event_id", existing.ID, "error", err)
 	}
 }
 
@@ -1545,11 +1562,10 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		return "", fmt.Errorf("failed to create room with alias: %w", err)
 	}
 
-	// Set alias manually after creation (without canonical alias).
-	// Using RoomAliasName in the create request auto-sets canonical alias,
-	// which causes clients to display the alias instead of member names for DMs.
+	// Set alias via the shared helper (not via RoomAliasName in create request,
+	// which auto-sets canonical alias and breaks DM member-name display).
 	fullAlias := m.idMapper.RoomAlias(alkemioRoomID)
-	if _, err := intent.CreateAlias(ctx, id.RoomAlias(fullAlias), resp.RoomID); err != nil {
+	if err := m.SetRoomAlias(ctx, resp.RoomID, fullAlias); err != nil {
 		m.logger.Warn("Failed to set alias on room",
 			"room_id", resp.RoomID, "alias", fullAlias, "error", err)
 	}
@@ -1688,25 +1704,14 @@ func (m *MautrixAdapter) roomContainsBothUsers(
 }
 
 // SetRoomAlias sets a room alias for an existing room.
+// Does NOT set canonical alias — aliases are for internal lookups only,
+// not for client display (which should show room name or member names).
 func (m *MautrixAdapter) SetRoomAlias(ctx context.Context, roomID id.RoomID, alias string) error {
 	intent := m.as.BotIntent()
 
-	// Add the alias to the room
 	_, err := intent.CreateAlias(ctx, id.RoomAlias(alias), roomID)
 	if err != nil {
 		return fmt.Errorf("failed to create room alias: %w", err)
-	}
-
-	// Set it as the canonical alias
-	content := event.CanonicalAliasEventContent{
-		Alias: id.RoomAlias(alias),
-	}
-	_, err = intent.SendStateEvent(ctx, roomID, event.StateCanonicalAlias, "", &content)
-	if err != nil {
-		m.logger.Warn(
-			"Failed to set canonical alias, alias was still created",
-			"room_id", roomID, "alias", alias, "error", err,
-		)
 	}
 
 	m.logger.Info("Room alias set", "room_id", roomID, "alias", alias)
