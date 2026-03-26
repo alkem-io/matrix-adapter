@@ -167,6 +167,10 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 		m.logger.Info("Matrix AppService connected", "user_id", whoami.UserID)
 	}
 
+	// Ensure bot is a server admin — required for room directory visibility,
+	// alias queries on rooms the bot has left, and other admin operations.
+	m.ensureBotIsAdmin(ctx)
+
 	// Set bot display name
 	if m.botDisplayName != "" {
 		botIntent := m.as.BotIntent()
@@ -178,6 +182,23 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// ensureBotIsAdmin promotes the bot user to Synapse server admin.
+// Appservice tokens can upsert users in their namespace via the Synapse admin API.
+func (m *MautrixAdapter) ensureBotIsAdmin(ctx context.Context) {
+	client := m.as.BotClient()
+	botMXID := m.as.BotMXID()
+
+	urlPath := client.BuildURL(mautrix.SynapseAdminURLPath{"v2", "users", botMXID})
+	_, err := client.MakeRequest(ctx, http.MethodPut, urlPath, map[string]interface{}{
+		"admin": true,
+	}, nil)
+	if err != nil {
+		m.logger.Warn("Failed to promote bot to server admin", "bot_mxid", botMXID, "error", err)
+	} else {
+		m.logger.Info("Bot promoted to server admin", "bot_mxid", botMXID)
+	}
 }
 
 // waitForServerReady probes the AppService HTTP server until it's ready or times out.
