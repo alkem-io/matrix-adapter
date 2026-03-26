@@ -143,37 +143,33 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 
 // Connect initializes the connection to the Matrix homeserver.
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
+	// Step 1: Ensure bot user exists and is a server admin BEFORE appservice starts.
+	// This uses direct HTTP calls to Synapse, independent of the appservice framework.
+	m.ensureBotAdmin(ctx)
+
+	// Step 2: Start the AppService
 	m.logger.Info("Initializing Matrix AppService connection")
 
-	// Channel to signal when the server has started or failed
 	startedCh := make(chan error, 1)
-
-	// Start the AppService HTTP server in a goroutine
 	go func() {
-		// Start() blocks until the server stops
 		m.as.Start()
 		m.logger.Warn("AppService HTTP server stopped")
 	}()
 
-	// Perform readiness check with timeout
 	if err := m.waitForServerReady(ctx, startedCh); err != nil {
 		return fmt.Errorf("appservice failed to start: %w", err)
 	}
 
-	// Verify bot connection
+	// Step 3: Verify bot connection
 	botClient := m.as.BotClient()
 	whoami, err := botClient.Whoami(ctx)
 	if err != nil {
 		m.logger.Warn("Failed to verify bot connection (Whoami)", "error", err)
-		// Don't fail hard here, as AS might not be fully registered yet on HS side
 	} else {
 		m.logger.Info("Matrix AppService connected", "user_id", whoami.UserID)
 	}
 
-	// Ensure bot is a Synapse server admin
-	m.ensureBotAdmin(ctx)
-
-	// Set bot display name
+	// Step 4: Set bot display name
 	if m.botDisplayName != "" {
 		botIntent := m.as.BotIntent()
 		if err := botIntent.SetDisplayName(ctx, m.botDisplayName); err != nil {
@@ -186,16 +182,17 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	return nil
 }
 
-// ensureBotAdmin checks if the bot is a Synapse server admin.
-// If not, attempts to bootstrap admin via the registration shared secret.
-// Falls back to a warning with manual instructions if no secret is configured.
+// ensureBotAdmin ensures the bot user exists and is a Synapse server admin.
+// Flow:
+//  1. If bot is already admin → done
+//  2. If SYNAPSE_REGISTRATION_SECRET is set → try registering bot as admin directly
+//  3. If bot already exists but isn't admin → create temp admin, promote bot, delete temp
+//  4. If no secret → log warning with manual instructions
 func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 	if m.isBotAdmin(ctx) {
 		m.logger.Info("Bot is Synapse server admin", "bot_mxid", m.as.BotMXID())
 		return
 	}
-
-	m.logger.Info("Bot is not a server admin, attempting bootstrap...")
 
 	secret := m.cfg.Matrix.RegistrationSecret
 	if secret == "" {
@@ -209,11 +206,23 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 		return
 	}
 
-	if err := m.bootstrapBotAdmin(ctx, secret); err != nil {
-		m.logger.Warn("Failed to bootstrap bot admin via shared secret",
+	m.logger.Info("Bot is not a server admin, bootstrapping via shared secret...")
+
+	// Try registering the bot itself as admin (works on fresh deployments)
+	botLocalpart := m.cfg.Matrix.BotActorID
+	_, err := m.registerSharedSecretUser(ctx, secret, botLocalpart, "bot-"+secret[:8], true)
+	if err == nil {
+		m.logger.Info("Bot registered as server admin via shared secret")
+		return
+	}
+	m.logger.Info("Bot user already exists, promoting via temp admin...")
+
+	// Bot exists but isn't admin — bootstrap via temp admin user
+	if err := m.promoteViaTemporaryAdmin(ctx, secret); err != nil {
+		m.logger.Warn("Failed to bootstrap bot admin",
 			"error", err, "bot_mxid", m.as.BotMXID())
 	} else {
-		m.logger.Info("Bot successfully promoted to server admin", "bot_mxid", m.as.BotMXID())
+		m.logger.Info("Bot promoted to server admin", "bot_mxid", m.as.BotMXID())
 	}
 }
 
@@ -225,55 +234,56 @@ func (m *MautrixAdapter) isBotAdmin(ctx context.Context) bool {
 	return err == nil
 }
 
-// bootstrapBotAdmin uses the Synapse registration shared secret to create a
-// temporary admin user, promote the bot to admin, then deactivate the temp user.
-func (m *MautrixAdapter) bootstrapBotAdmin(ctx context.Context, secret string) error {
-	botMXID := m.as.BotMXID()
+// promoteViaTemporaryAdmin creates a temporary admin user, uses it to promote
+// the bot to server admin, then deactivates the temporary user.
+func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret string) error {
 	bootstrapUser := "_alkemio_admin_bootstrap"
-	bootstrapPass := "bootstrap-" + secret[:8] // deterministic password derived from secret
+	bootstrapPass := "bootstrap-" + secret[:8]
 
-	// Step 1: Register temporary admin user via shared secret
-	adminToken, err := m.registerSharedSecretAdmin(ctx, secret, bootstrapUser, bootstrapPass)
+	// Create temporary admin
+	adminToken, err := m.registerSharedSecretUser(ctx, secret, bootstrapUser, bootstrapPass, true)
 	if err != nil {
 		return fmt.Errorf("failed to register bootstrap admin: %w", err)
 	}
-	m.logger.Info("Bootstrap admin user created")
 
-	// Step 2: Use temp admin to promote bot
-	adminClient := &mautrix.Client{
-		HomeserverURL: m.as.BotClient().HomeserverURL,
-		AccessToken:   adminToken,
-		Client:        http.DefaultClient,
-	}
+	adminClient := m.newDirectClient(adminToken)
 
+	// Promote bot
+	botMXID := m.as.BotMXID()
 	urlPath := adminClient.BuildURL(mautrix.SynapseAdminURLPath{"v2", "users", botMXID})
 	_, err = adminClient.MakeRequest(ctx, http.MethodPut, urlPath, map[string]interface{}{
 		"admin": true,
 	}, nil)
 	if err != nil {
-		return fmt.Errorf("failed to promote bot to admin: %w", err)
+		return fmt.Errorf("failed to promote bot: %w", err)
 	}
 
-	// Step 3: Deactivate bootstrap user
+	// Deactivate temporary admin
 	bootstrapMXID := "@" + bootstrapUser + ":" + m.cfg.Matrix.HomeserverName
 	urlPath = adminClient.BuildURL(mautrix.SynapseAdminURLPath{"v1", "deactivate", bootstrapMXID})
 	_, _ = adminClient.MakeRequest(ctx, http.MethodPost, urlPath, map[string]interface{}{
 		"erase": true,
 	}, nil)
-	m.logger.Info("Bootstrap admin user deactivated")
 
 	return nil
 }
 
-// registerSharedSecretAdmin registers an admin user via Synapse's shared secret API.
-// Uses HMAC-SHA1 as required by the Synapse registration endpoint.
-func (m *MautrixAdapter) registerSharedSecretAdmin(
-	ctx context.Context, secret, username, password string,
-) (string, error) {
-	client := &mautrix.Client{
+// newDirectClient creates a mautrix.Client that talks directly to Synapse
+// without appservice impersonation.
+func (m *MautrixAdapter) newDirectClient(accessToken string) *mautrix.Client {
+	return &mautrix.Client{
 		HomeserverURL: m.as.BotClient().HomeserverURL,
+		AccessToken:   accessToken,
 		Client:        http.DefaultClient,
 	}
+}
+
+// registerSharedSecretUser registers a user via Synapse's shared secret API.
+// Uses HMAC-SHA1 as required by the Synapse registration endpoint.
+func (m *MautrixAdapter) registerSharedSecretUser(
+	ctx context.Context, secret, username, password string, admin bool,
+) (string, error) {
+	client := m.newDirectClient("")
 
 	// Get nonce
 	var nonceResp struct {
@@ -285,15 +295,13 @@ func (m *MautrixAdapter) registerSharedSecretAdmin(
 		return "", fmt.Errorf("failed to get registration nonce: %w", err)
 	}
 
-	// Compute HMAC-SHA1: nonce + \0 + username + \0 + password + \0 + "admin"
+	// Compute HMAC-SHA1: nonce + \0 + username + \0 + password + \0 + "admin"|"notadmin"
+	adminStr := "notadmin"
+	if admin {
+		adminStr = "admin"
+	}
 	mac := hmac.New(sha1.New, []byte(secret))
-	mac.Write([]byte(nonceResp.Nonce))
-	mac.Write([]byte{0})
-	mac.Write([]byte(username))
-	mac.Write([]byte{0})
-	mac.Write([]byte(password))
-	mac.Write([]byte{0})
-	mac.Write([]byte("admin"))
+	mac.Write([]byte(nonceResp.Nonce + "\x00" + username + "\x00" + password + "\x00" + adminStr))
 	macHex := hex.EncodeToString(mac.Sum(nil))
 
 	// Register
@@ -304,11 +312,11 @@ func (m *MautrixAdapter) registerSharedSecretAdmin(
 		"nonce":    nonceResp.Nonce,
 		"username": username,
 		"password": password,
-		"admin":    true,
+		"admin":    admin,
 		"mac":      macHex,
 	}, &regResp)
 	if err != nil {
-		return "", fmt.Errorf("failed to register admin user: %w", err)
+		return "", fmt.Errorf("failed to register user: %w", err)
 	}
 
 	return regResp.AccessToken, nil
