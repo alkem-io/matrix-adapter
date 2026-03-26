@@ -124,7 +124,7 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 
 	go func(e *event.Event, c string, s uuid.UUID, tid string) {
 		// Resolve Alkemio room ID from Matrix room ID (HTTP call - must be async)
-		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID)
+		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID, e.Sender)
 		if alkemioRoomID == uuid.Nil {
 			m.logger.Warn("Could not resolve Alkemio room ID for message", "room_id", e.RoomID)
 			return
@@ -210,7 +210,7 @@ func (m *MautrixAdapter) handleMessageEditEvent(evt *event.Event) {
 
 	go func(e *event.Event, sender uuid.UUID, origID, content string, tid *id.EventID) {
 		ctx := context.Background()
-		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID)
+		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID, e.Sender)
 		if alkemioRoomID == uuid.Nil {
 			m.logger.Warn("Could not resolve Alkemio room ID for edit", "room_id", e.RoomID)
 			return
@@ -252,7 +252,7 @@ func (m *MautrixAdapter) handleReactionEvent(evt *event.Event) {
 	// Move all blocking calls inside the goroutine to avoid blocking the event loop
 	go func(e *event.Event, c *event.ReactionEventContent, s uuid.UUID) {
 		// Get room alias to extract Alkemio room ID (HTTP call - must be async)
-		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID)
+		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID, e.Sender)
 		if alkemioRoomID == uuid.Nil {
 			m.logger.Warn("Could not resolve Alkemio room ID for reaction", "room_id", e.RoomID)
 			return
@@ -293,7 +293,7 @@ func (m *MautrixAdapter) handleRedactionEvent(evt *event.Event) {
 		ctx := context.Background()
 
 		// Get Alkemio room ID first (HTTP call)
-		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID)
+		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID, e.Sender)
 		if alkemioRoomID == uuid.Nil {
 			m.logger.Warn("Could not resolve Alkemio room ID for redaction", "room_id", e.RoomID)
 			return
@@ -447,7 +447,7 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 	// Move HTTP call inside goroutine to avoid blocking the event loop
 	go func(e *event.Event, memberID, senderID uuid.UUID, membershipState, _ string) {
 		// Get Alkemio room ID (HTTP call - must be async)
-		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID)
+		alkemioRoomID := m.resolveAlkemioRoomID(context.Background(), e.RoomID, e.Sender)
 		if alkemioRoomID == uuid.Nil {
 			m.logger.Warn("Could not resolve Alkemio room ID for membership event", "room_id", e.RoomID)
 			return
@@ -471,8 +471,9 @@ func (m *MautrixAdapter) handleMembershipEvent(evt *event.Event) {
 // resolveAlkemioRoomID gets the Alkemio room UUID from a Matrix room ID.
 // Uses GetRoomAliases() which queries room_aliases table - same source as ResolveAlias().
 // Prefers aliases matching the Alkemio UUID pattern, falls back to first alias if none match.
-func (m *MautrixAdapter) resolveAlkemioRoomID(ctx context.Context, roomID id.RoomID) uuid.UUID {
-	aliases, err := m.GetRoomAliases(ctx, roomID)
+// An optional userHint can be provided to use a specific user's intent (for rooms the bot has left).
+func (m *MautrixAdapter) resolveAlkemioRoomID(ctx context.Context, roomID id.RoomID, userHint ...id.UserID) uuid.UUID {
+	aliases, err := m.GetRoomAliases(ctx, roomID, userHint...)
 	if err != nil || len(aliases) == 0 {
 		return uuid.Nil
 	}
@@ -531,9 +532,9 @@ func (m *MautrixAdapter) handleReceiptEvent(evt *event.Event) {
 					threadID = &tid
 				}
 
-				go func(roomID id.RoomID, evtID id.EventID, actor uuid.UUID, ts int64, tid *id.EventID) {
+				go func(roomID id.RoomID, evtID id.EventID, actor uuid.UUID, ts int64, tid *id.EventID, senderHint id.UserID) {
 					ctx := context.Background()
-					alkemioRoomID := m.resolveAlkemioRoomID(ctx, roomID)
+					alkemioRoomID := m.resolveAlkemioRoomID(ctx, roomID, senderHint)
 					if alkemioRoomID == uuid.Nil {
 						return
 					}
@@ -547,7 +548,7 @@ func (m *MautrixAdapter) handleReceiptEvent(evt *event.Event) {
 					}); err != nil {
 						m.logger.Error("Error handling read receipt", "error", err)
 					}
-				}(evt.RoomID, eventID, actorUUID, receipt.Timestamp.UnixMilli(), threadID)
+				}(evt.RoomID, eventID, actorUUID, receipt.Timestamp.UnixMilli(), threadID, userID)
 			}
 		}
 	}
@@ -581,7 +582,7 @@ func (m *MautrixAdapter) handleRoomCreateEvent(evt *event.Event) {
 
 	go func(e *event.Event, creator uuid.UUID, rType string) {
 		ctx := context.Background()
-		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID)
+		alkemioRoomID := m.resolveAlkemioRoomID(ctx, e.RoomID, e.Sender)
 		if alkemioRoomID == uuid.Nil {
 			return
 		}
@@ -656,7 +657,7 @@ func (m *MautrixAdapter) handleRoomStateEvent(evt *event.Event) {
 		ctx := context.Background()
 		isSpace := m.isSpaceRoom(ctx, e.RoomID)
 
-		alkemioID := m.resolveAlkemioRoomID(ctx, e.RoomID)
+		alkemioID := m.resolveAlkemioRoomID(ctx, e.RoomID, e.Sender)
 		if alkemioID == uuid.Nil {
 			m.logger.Warn("Could not resolve Alkemio ID for state event",
 				"room_id", e.RoomID, "event_type", e.Type.Type, "is_space", isSpace)
