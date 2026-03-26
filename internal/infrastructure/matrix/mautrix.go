@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -571,18 +570,15 @@ func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id
 // InviteUser invites a user to a room and auto-joins them.
 // Since all users are appservice ghosts, they are automatically joined after invitation.
 func (m *MautrixAdapter) InviteUser(
-	ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID domain.Actor,
+	ctx context.Context, roomID id.RoomID, _ domain.Actor, inviteeID domain.Actor,
 ) error {
-	inviterUserID, err := m.EnsureUser(ctx, inviterID)
-	if err != nil {
-		return err
-	}
 	inviteeUserID, err := m.EnsureUser(ctx, inviteeID)
 	if err != nil {
 		return err
 	}
 
-	inviterIntent := m.as.Intent(inviterUserID)
+	// Use a room member's intent to invite (bot may have left)
+	inviterIntent := m.getIntentForRoom(ctx, roomID)
 	_, err = inviterIntent.InviteUser(
 		ctx, roomID, &mautrix.ReqInviteUser{
 			UserID: inviteeUserID,
@@ -1156,9 +1152,13 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID)
 		return intent
 	}
 
-	// Last resort — return bot intent (will trigger EnsureJoined!)
-	m.logger.Warn("getIntentForRoom: NO ghost user found, falling back to bot (will rejoin!)",
-		"room_id", roomID, "stack", string(debug.Stack()))
+	// Last resort — admin-join the bot so it can perform the write.
+	// The bot will be removed on next startup by leaveBotFromNonSpaceRooms.
+	m.logger.Info("getIntentForRoom: no ghost user found, admin-joining bot", "room_id", roomID)
+	if err := m.admin.JoinRoom(ctx, roomID, m.as.BotMXID()); err != nil {
+		m.logger.Warn("getIntentForRoom: admin join failed, returning bot intent anyway",
+			"room_id", roomID, "error", err)
+	}
 	return botIntent
 }
 
