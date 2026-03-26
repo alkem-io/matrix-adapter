@@ -242,7 +242,6 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 // was set, causing clients to show UUID aliases instead of member names.
 func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 	client := m.newDirectClient(m.cfg.Matrix.AppServiceToken)
-	intent := m.as.BotIntent()
 
 	// Use admin API to list all rooms (bot may have left most of them)
 	var resp struct {
@@ -266,37 +265,53 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 			continue
 		}
 
-		// Bot needs to be in the room to redact — use admin API to bypass join rules
-		joinURL := client.BuildURL(mautrix.SynapseAdminURLPath{"v1", "join", room.RoomID})
-		_, err := client.MakeRequest(ctx, http.MethodPost, joinURL, map[string]interface{}{
-			"user_id": m.as.BotMXID(),
-		}, nil)
-		if err != nil {
-			m.logger.Warn("Failed to rejoin room for alias cleanup",
-				"room_id", room.RoomID, "error", err)
+		// Find a ghost user in the room to act on their behalf
+		memberIntent := m.findGhostIntentInRoom(ctx, client, room.RoomID)
+		if memberIntent == nil {
+			m.logger.Warn("No ghost user found in room for alias cleanup",
+				"room_id", room.RoomID)
 			continue
 		}
 
-		existing, err := intent.FullStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "")
+		existing, err := memberIntent.FullStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "")
 		if err == nil && existing != nil && existing.ID != "" {
-			if _, err := intent.RedactEvent(ctx, room.RoomID, existing.ID); err != nil {
+			if _, err := memberIntent.RedactEvent(ctx, room.RoomID, existing.ID); err != nil {
 				m.logger.Warn("Failed to redact canonical alias",
 					"room_id", room.RoomID, "error", err)
 			} else {
 				redactedCount++
 			}
 		}
-
-		// Leave again
-		if _, err := intent.LeaveRoom(ctx, room.RoomID); err != nil {
-			m.logger.Warn("Failed to leave room after alias cleanup",
-				"room_id", room.RoomID, "error", err)
-		}
 	}
 
 	if redactedCount > 0 {
 		m.logger.Info("Redacted canonical aliases (migration cleanup)", "rooms_redacted", redactedCount)
 	}
+}
+
+// findGhostIntentInRoom finds a ghost user (appservice-managed) in a room and returns their intent.
+// Uses the admin API to get room members without needing room membership.
+func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, adminClient *mautrix.Client, roomID id.RoomID) *appservice.IntentAPI {
+	var resp struct {
+		Members []string `json:"members"`
+	}
+	urlPath := adminClient.BuildURL(mautrix.SynapseAdminURLPath{"v1", "rooms", roomID, "members"})
+	_, err := adminClient.MakeRequest(ctx, http.MethodGet, urlPath, nil, &resp)
+	if err != nil {
+		return nil
+	}
+
+	botMXID := m.as.BotMXID().String()
+	for _, member := range resp.Members {
+		if member == botMXID {
+			continue
+		}
+		userID := id.UserID(member)
+		if m.idMapper.AlkemioActorID(userID) != uuid.Nil {
+			return m.as.Intent(userID)
+		}
+	}
+	return nil
 }
 
 // leaveBotFromNonSpaceRooms removes the bot from all rooms that are not spaces.
