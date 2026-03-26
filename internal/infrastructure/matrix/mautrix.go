@@ -274,17 +274,14 @@ func (m *MautrixAdapter) isBotAdmin(ctx context.Context) bool {
 // promoteViaTemporaryAdmin creates a temporary admin user, uses it to promote
 // the bot to server admin, then deactivates the temporary user.
 func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret string) error {
-	bootstrapUser := "alkemio-admin-bootstrap"
+	// Use a unique username each time to avoid conflicts with deactivated leftover users
+	bootstrapUser := fmt.Sprintf("alkemio-bootstrap-%d", time.Now().UnixMilli())
 	bootstrapPass := "bootstrap-" + secret[:8]
 
-	// Create temporary admin (or login if it already exists from a previous failed cleanup)
+	// Create temporary admin
 	adminToken, err := m.registerSharedSecretUser(ctx, secret, bootstrapUser, bootstrapPass, true)
 	if err != nil {
-		// User might exist from a previous run — try logging in
-		adminToken, err = m.loginUser(ctx, bootstrapUser, bootstrapPass)
-		if err != nil {
-			return fmt.Errorf("failed to register or login bootstrap admin: %w", err)
-		}
+		return fmt.Errorf("failed to register bootstrap admin: %w", err)
 	}
 
 	adminClient := m.newDirectClient(adminToken)
@@ -313,27 +310,6 @@ func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret st
 	}
 
 	return nil
-}
-
-// loginUser logs in as a local user and returns the access token.
-func (m *MautrixAdapter) loginUser(ctx context.Context, username, password string) (string, error) {
-	client := m.newDirectClient("")
-	var resp struct {
-		AccessToken string `json:"access_token"`
-	}
-	urlPath := client.BuildClientURL("v3", "login")
-	_, err := client.MakeRequest(ctx, http.MethodPost, urlPath, map[string]interface{}{
-		"type": "m.login.password",
-		"identifier": map[string]interface{}{
-			"type": "m.id.user",
-			"user": username,
-		},
-		"password": password,
-	}, &resp)
-	if err != nil {
-		return "", fmt.Errorf("failed to login: %w", err)
-	}
-	return resp.AccessToken, nil
 }
 
 // newDirectClient creates a mautrix.Client that talks directly to Synapse
