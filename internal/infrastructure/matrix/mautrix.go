@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -1168,12 +1169,13 @@ func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, s
 func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID) *appservice.IntentAPI {
 	botIntent := m.as.BotIntent()
 
-	// Check if bot is in the room via admin API (no extra HTTP to Synapse client API)
+	// Check if bot is in the room via admin API
 	members, err := m.admin.GetRoomMembers(ctx, roomID)
 	if err == nil {
 		botMXID := m.as.BotMXID().String()
 		for _, member := range members {
 			if member == botMXID {
+				m.logger.Debug("getIntentForRoom: using bot (member of room)", "room_id", roomID)
 				return botIntent
 			}
 		}
@@ -1182,10 +1184,13 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID)
 	// Bot not in room — find a ghost user
 	intent := m.findGhostIntentInRoom(ctx, roomID)
 	if intent != nil {
+		m.logger.Debug("getIntentForRoom: using ghost user", "room_id", roomID)
 		return intent
 	}
 
-	// Last resort — return bot intent anyway (caller will handle the error)
+	// Last resort — return bot intent (will trigger EnsureJoined!)
+	m.logger.Warn("getIntentForRoom: NO ghost user found, falling back to bot (will rejoin!)",
+		"room_id", roomID, "stack", string(debug.Stack()))
 	return botIntent
 }
 
