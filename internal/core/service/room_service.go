@@ -104,8 +104,9 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 		effectiveJoinRule = ""
 	}
 
-	// Create the room with alias
-	roomID, err := s.matrix.CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, effectiveJoinRule, initialMembers)
+	// Create the room with alias (custom state is included as initial state
+	// so visibility filtering is active before members are invited)
+	roomID, err := s.matrix.CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, effectiveJoinRule, customState, initialMembers)
 	if err != nil {
 		return fmt.Errorf("failed to create room: %w", err)
 	}
@@ -115,14 +116,6 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 		if err := s.matrix.SetRoomDirectoryVisibility(ctx, roomID, *isPublic); err != nil {
 			s.logger.Warn("Failed to set room directory visibility",
 				"alkemio_room_id", alkemioRoomID, "is_public", *isPublic, "error", err)
-		}
-	}
-
-	// Set custom io.alkemio.* state events if specified
-	if len(customState) > 0 {
-		if err := s.matrix.SetCustomState(ctx, roomID, customState); err != nil {
-			s.logger.Warn("Failed to set custom state on room",
-				"alkemio_room_id", alkemioRoomID, "error", err)
 		}
 	}
 

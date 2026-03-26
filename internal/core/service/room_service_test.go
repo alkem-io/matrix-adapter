@@ -36,7 +36,7 @@ func (m *mockMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (id.UserI
 }
 func (m *mockMatrixPort) SetUserProfile(_ context.Context, _ domain.Actor) error { return nil }
 
-func (m *mockMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, roomType string, _, _, _ string, joinRule string, _ []domain.Actor) (id.RoomID, error) {
+func (m *mockMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, roomType string, _, _, _ string, joinRule string, _ map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
 	m.createRoomCalled = true
 	m.createRoomJoinRule = joinRule
 	m.createRoomType = roomType

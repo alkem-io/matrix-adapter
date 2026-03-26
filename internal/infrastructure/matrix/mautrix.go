@@ -1580,6 +1580,7 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 	alkemioRoomID uuid.UUID,
 	roomType string,
 	name, topic, avatarURL, joinRule string,
+	customState map[string]map[string]interface{},
 	initialMembers []domain.Actor,
 ) (id.RoomID, error) {
 	// Use IDMapper for consistent alias construction
@@ -1638,6 +1639,17 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 			Type:    event.StateRoomAvatar,
 			Content: event.Content{Parsed: avatarContent},
 		})
+	}
+
+	// Add custom io.alkemio.* state events (must be set before members join,
+	// so visibility filtering is active from the start).
+	for eventType, content := range customState {
+		if strings.HasPrefix(eventType, "io.alkemio.") {
+			req.InitialState = append(req.InitialState, &event.Event{
+				Type:    event.Type{Type: eventType, Class: event.StateEventType},
+				Content: event.Content{Parsed: content},
+			})
+		}
 	}
 
 	resp, err := intent.CreateRoom(ctx, req)
