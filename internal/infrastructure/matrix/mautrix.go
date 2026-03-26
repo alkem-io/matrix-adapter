@@ -816,18 +816,10 @@ func (m *MautrixAdapter) ResolveAlias(ctx context.Context, alias string) (id.Roo
 }
 
 // GetRoomAliases gets all aliases for a room ID.
-// Accepts an optional userID hint — if the bot has left the room, uses that user's
-// intent instead. Falls back to BotIntent for spaces where bot is still a member.
-func (m *MautrixAdapter) GetRoomAliases(ctx context.Context, roomID id.RoomID, userHint ...id.UserID) ([]string, error) {
+// The bot must be a Synapse server admin to query rooms it has left.
+func (m *MautrixAdapter) GetRoomAliases(ctx context.Context, roomID id.RoomID) ([]string, error) {
 	intent := m.as.BotIntent()
-	if len(userHint) > 0 && userHint[0] != "" {
-		intent = m.as.Intent(userHint[0])
-	}
 	aliasResp, err := intent.GetAliases(ctx, roomID)
-	if err != nil && len(userHint) == 0 {
-		// Bot may have left — no fallback available
-		return nil, fmt.Errorf("failed to get aliases for room %s: %w", roomID, err)
-	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get aliases for room %s: %w", roomID, err)
 	}
