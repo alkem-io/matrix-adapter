@@ -227,8 +227,9 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 }
 
 // isBotAdmin checks if the bot is a Synapse server admin by querying its own user record.
+// Uses a direct HTTP client (not appservice framework) so it works before as.Start().
 func (m *MautrixAdapter) isBotAdmin(ctx context.Context) bool {
-	client := m.as.BotClient()
+	client := m.newDirectClient(m.cfg.Matrix.AppServiceToken)
 	botMXID := m.as.BotMXID()
 	var resp struct {
 		Admin bool `json:"admin"`
@@ -276,10 +277,11 @@ func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret st
 }
 
 // newDirectClient creates a mautrix.Client that talks directly to Synapse
-// without appservice impersonation.
+// without appservice impersonation. Uses config URL so it works before as.Start().
 func (m *MautrixAdapter) newDirectClient(accessToken string) *mautrix.Client {
+	hsURL, _ := url.Parse(m.cfg.Matrix.HomeserverURL)
 	return &mautrix.Client{
-		HomeserverURL: m.as.BotClient().HomeserverURL,
+		HomeserverURL: hsURL,
 		AccessToken:   accessToken,
 		Client:        http.DefaultClient,
 	}
