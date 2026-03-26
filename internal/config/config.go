@@ -101,7 +101,7 @@ func loadMatrixEnv(cfg *Config) {
 	if v := os.Getenv("MATRIX_BOT_DISPLAY_NAME"); v != "" {
 		cfg.Matrix.BotDisplayName = v
 	}
-	if v := os.Getenv("SYNAPSE_REGISTRATION_SECRET"); v != "" {
+	if v := os.Getenv("SYNAPSE_SERVER_SHARED_SECRET"); v != "" {
 		cfg.Matrix.RegistrationSecret = v
 	}
 }
