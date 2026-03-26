@@ -16,12 +16,13 @@ type Config struct {
 	} `yaml:"app"`
 
 	Matrix struct {
-		HomeserverURL   string `yaml:"homeserver_url"`
-		HomeserverName  string `yaml:"homeserver_name"`
-		AppServiceToken string `yaml:"as_token"`
-		HomeserverToken string `yaml:"hs_token"`
-		BotActorID      string `yaml:"bot_actor_id"`     // Bot's Alkemio UUID, used as Matrix localpart
-		BotDisplayName  string `yaml:"bot_display_name"` // Display name for the bot user in Matrix
+		HomeserverURL      string `yaml:"homeserver_url"`
+		HomeserverName     string `yaml:"homeserver_name"`
+		AppServiceToken    string `yaml:"as_token"`
+		HomeserverToken    string `yaml:"hs_token"`
+		BotActorID         string `yaml:"bot_actor_id"`        // Bot's Alkemio UUID, used as Matrix localpart
+		BotDisplayName     string `yaml:"bot_display_name"`    // Display name for the bot user in Matrix
+		RegistrationSecret string `yaml:"registration_secret"` // Synapse registration_shared_secret for admin bootstrap
 	} `yaml:"matrix"`
 
 	RabbitMQ struct {
@@ -99,6 +100,9 @@ func loadMatrixEnv(cfg *Config) {
 	}
 	if v := os.Getenv("MATRIX_BOT_DISPLAY_NAME"); v != "" {
 		cfg.Matrix.BotDisplayName = v
+	}
+	if v := os.Getenv("SYNAPSE_REGISTRATION_SECRET"); v != "" {
+		cfg.Matrix.RegistrationSecret = v
 	}
 }
 

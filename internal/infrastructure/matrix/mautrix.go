@@ -2,6 +2,9 @@ package matrix
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // Required by Synapse shared secret registration API (HMAC-SHA1)
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -167,8 +170,8 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 		m.logger.Info("Matrix AppService connected", "user_id", whoami.UserID)
 	}
 
-	// Check if bot is a Synapse server admin
-	m.checkBotAdminStatus(ctx)
+	// Ensure bot is a Synapse server admin
+	m.ensureBotAdmin(ctx)
 
 	// Set bot display name
 	if m.botDisplayName != "" {
@@ -183,27 +186,132 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	return nil
 }
 
-// checkBotAdminStatus checks if the bot user is a Synapse server admin.
-// Logs a warning with instructions if not — admin status is required for
-// directory visibility and room operations after the bot leaves rooms.
-func (m *MautrixAdapter) checkBotAdminStatus(ctx context.Context) {
-	client := m.as.BotClient()
-	botMXID := m.as.BotMXID()
+// ensureBotAdmin checks if the bot is a Synapse server admin.
+// If not, attempts to bootstrap admin via the registration shared secret.
+// Falls back to a warning with manual instructions if no secret is configured.
+func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
+	if m.isBotAdmin(ctx) {
+		m.logger.Info("Bot is Synapse server admin", "bot_mxid", m.as.BotMXID())
+		return
+	}
 
-	// Try a lightweight admin API call to check admin status
+	m.logger.Info("Bot is not a server admin, attempting bootstrap...")
+
+	secret := m.cfg.Matrix.RegistrationSecret
+	if secret == "" {
+		m.logger.Warn(
+			"Bot is NOT a Synapse server admin and no SYNAPSE_REGISTRATION_SECRET configured. "+
+				"To fix, either set SYNAPSE_REGISTRATION_SECRET or run: "+
+				"UPDATE users SET admin = 1 WHERE name = '"+m.as.BotMXID().String()+"'; "+
+				"then restart Synapse.",
+			"bot_mxid", m.as.BotMXID(),
+		)
+		return
+	}
+
+	if err := m.bootstrapBotAdmin(ctx, secret); err != nil {
+		m.logger.Warn("Failed to bootstrap bot admin via shared secret",
+			"error", err, "bot_mxid", m.as.BotMXID())
+	} else {
+		m.logger.Info("Bot successfully promoted to server admin", "bot_mxid", m.as.BotMXID())
+	}
+}
+
+// isBotAdmin checks if the bot is a Synapse server admin.
+func (m *MautrixAdapter) isBotAdmin(ctx context.Context) bool {
+	client := m.as.BotClient()
 	urlPath := client.BuildURL(mautrix.SynapseAdminURLPath{"v1", "server_version"})
 	_, err := client.MakeRequest(ctx, http.MethodGet, urlPath, nil, nil)
+	return err == nil
+}
+
+// bootstrapBotAdmin uses the Synapse registration shared secret to create a
+// temporary admin user, promote the bot to admin, then deactivate the temp user.
+func (m *MautrixAdapter) bootstrapBotAdmin(ctx context.Context, secret string) error {
+	botMXID := m.as.BotMXID()
+	bootstrapUser := "_alkemio_admin_bootstrap"
+	bootstrapPass := "bootstrap-" + secret[:8] // deterministic password derived from secret
+
+	// Step 1: Register temporary admin user via shared secret
+	adminToken, err := m.registerSharedSecretAdmin(ctx, secret, bootstrapUser, bootstrapPass)
 	if err != nil {
-		m.logger.Warn(
-			"Bot is NOT a Synapse server admin. Some features (directory visibility, "+
-				"room operations after bot leaves) will not work. "+
-				"To fix, run: UPDATE users SET admin = 1 WHERE name = '"+botMXID.String()+"'; "+
-				"then restart Synapse.",
-			"bot_mxid", botMXID,
-		)
-	} else {
-		m.logger.Info("Bot is Synapse server admin", "bot_mxid", botMXID)
+		return fmt.Errorf("failed to register bootstrap admin: %w", err)
 	}
+	m.logger.Info("Bootstrap admin user created")
+
+	// Step 2: Use temp admin to promote bot
+	adminClient := &mautrix.Client{
+		HomeserverURL: m.as.BotClient().HomeserverURL,
+		AccessToken:   adminToken,
+		Client:        http.DefaultClient,
+	}
+
+	urlPath := adminClient.BuildURL(mautrix.SynapseAdminURLPath{"v2", "users", botMXID})
+	_, err = adminClient.MakeRequest(ctx, http.MethodPut, urlPath, map[string]interface{}{
+		"admin": true,
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("failed to promote bot to admin: %w", err)
+	}
+
+	// Step 3: Deactivate bootstrap user
+	bootstrapMXID := "@" + bootstrapUser + ":" + m.cfg.Matrix.HomeserverName
+	urlPath = adminClient.BuildURL(mautrix.SynapseAdminURLPath{"v1", "deactivate", bootstrapMXID})
+	_, _ = adminClient.MakeRequest(ctx, http.MethodPost, urlPath, map[string]interface{}{
+		"erase": true,
+	}, nil)
+	m.logger.Info("Bootstrap admin user deactivated")
+
+	return nil
+}
+
+// registerSharedSecretAdmin registers an admin user via Synapse's shared secret API.
+// Uses HMAC-SHA1 as required by the Synapse registration endpoint.
+func (m *MautrixAdapter) registerSharedSecretAdmin(
+	ctx context.Context, secret, username, password string,
+) (string, error) {
+	client := &mautrix.Client{
+		HomeserverURL: m.as.BotClient().HomeserverURL,
+		Client:        http.DefaultClient,
+	}
+
+	// Get nonce
+	var nonceResp struct {
+		Nonce string `json:"nonce"`
+	}
+	urlPath := client.BuildURL(mautrix.SynapseAdminURLPath{"v1", "register"})
+	_, err := client.MakeRequest(ctx, http.MethodGet, urlPath, nil, &nonceResp)
+	if err != nil {
+		return "", fmt.Errorf("failed to get registration nonce: %w", err)
+	}
+
+	// Compute HMAC-SHA1: nonce + \0 + username + \0 + password + \0 + "admin"
+	mac := hmac.New(sha1.New, []byte(secret))
+	mac.Write([]byte(nonceResp.Nonce))
+	mac.Write([]byte{0})
+	mac.Write([]byte(username))
+	mac.Write([]byte{0})
+	mac.Write([]byte(password))
+	mac.Write([]byte{0})
+	mac.Write([]byte("admin"))
+	macHex := hex.EncodeToString(mac.Sum(nil))
+
+	// Register
+	var regResp struct {
+		AccessToken string `json:"access_token"`
+	}
+	_, err = client.MakeRequest(ctx, http.MethodPost, urlPath, map[string]interface{}{
+		"nonce":    nonceResp.Nonce,
+		"username": username,
+		"password": password,
+		"admin":    true,
+		"mac":      macHex,
+	}, &regResp)
+	if err != nil {
+		return "", fmt.Errorf("failed to register admin user: %w", err)
+	}
+
+	return regResp.AccessToken, nil
 }
 
 // waitForServerReady probes the AppService HTTP server until it's ready or times out.
