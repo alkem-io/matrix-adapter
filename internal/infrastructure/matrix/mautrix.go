@@ -2119,7 +2119,7 @@ func (m *MautrixAdapter) AddSpaceChild(
 
 // SetSpaceParent sets the parent space for a room or subspace (m.space.parent state event).
 func (m *MautrixAdapter) SetSpaceParent(ctx context.Context, childID id.RoomID, parentID id.RoomID) error {
-	intent := m.as.BotIntent()
+	intent := m.getIntentForRoom(ctx, childID)
 
 	content := &event.SpaceParentEventContent{
 		Via:       []string{m.as.HomeserverDomain},
