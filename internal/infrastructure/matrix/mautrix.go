@@ -266,8 +266,12 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 			continue
 		}
 
-		// Bot needs to be in the room to redact — rejoin, redact, leave
-		if err := intent.EnsureJoined(ctx, room.RoomID); err != nil {
+		// Bot needs to be in the room to redact — use admin API to bypass join rules
+		joinURL := client.BuildURL(mautrix.SynapseAdminURLPath{"v1", "join", room.RoomID})
+		_, err := client.MakeRequest(ctx, http.MethodPost, joinURL, map[string]interface{}{
+			"user_id": m.as.BotMXID(),
+		}, nil)
+		if err != nil {
 			m.logger.Warn("Failed to rejoin room for alias cleanup",
 				"room_id", room.RoomID, "error", err)
 			continue
