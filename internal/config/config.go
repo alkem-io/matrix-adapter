@@ -20,7 +20,7 @@ type Config struct {
 		HomeserverName  string `yaml:"homeserver_name"`
 		AppServiceToken string `yaml:"as_token"`
 		HomeserverToken string `yaml:"hs_token"`
-		BotActorID      string `yaml:"bot_actor_id"`      // Bot's Alkemio UUID, used as Matrix localpart
+		BotActorID      string `yaml:"bot_actor_id"`     // Bot's Alkemio UUID, used as Matrix localpart
 		BotDisplayName  string `yaml:"bot_display_name"` // Display name for the bot user in Matrix
 	} `yaml:"matrix"`
 
