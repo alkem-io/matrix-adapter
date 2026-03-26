@@ -568,7 +568,9 @@ func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id
 }
 
 // InviteUser invites a user to a room and auto-joins them.
-// Since all users are appservice ghosts, they are automatically joined after invitation.
+// InviteUser joins a ghost user directly to a room (no invite event).
+// Since all users are appservice ghosts, we skip the invite and join directly
+// to avoid triggering invite notifications in Element for invisible rooms.
 func (m *MautrixAdapter) InviteUser(
 	ctx context.Context, roomID id.RoomID, _ domain.Actor, inviteeID domain.Actor,
 ) error {
@@ -577,24 +579,14 @@ func (m *MautrixAdapter) InviteUser(
 		return err
 	}
 
-	// Use a room member's intent to invite (bot may have left)
-	inviterIntent := m.getIntentForRoom(ctx, roomID)
-	_, err = inviterIntent.InviteUser(
-		ctx, roomID, &mautrix.ReqInviteUser{
-			UserID: inviteeUserID,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to invite user: %w", err)
-	}
-
-	// Auto-join the invitee since they are an appservice ghost user
+	// Join directly — appservice ghosts don't need invites.
+	// This avoids the invite event appearing in /sync before the module can filter it.
 	inviteeIntent := m.as.Intent(inviteeUserID)
 	if err := inviteeIntent.EnsureJoined(ctx, roomID); err != nil {
-		return fmt.Errorf("failed to join room after invite: %w", err)
+		return fmt.Errorf("failed to join user to room: %w", err)
 	}
 
-	// Mark room as read to clear invite notification from unread count
+	// Mark room as read to clear join notification from unread count
 	if latestEventID, err := m.getLatestEventID(ctx, roomID); err != nil {
 		m.logger.Warn("Failed to get latest event for read receipt",
 			"room_id", roomID, "error", err)
@@ -603,7 +595,7 @@ func (m *MautrixAdapter) InviteUser(
 	}
 
 	// If bot is still in the room (e.g. room created without initial members),
-	// leave now that a real member has joined — bot shouldn't be visible to users.
+	// leave now that a real member has joined.
 	m.leaveBotIfNotNeeded(ctx, roomID)
 
 	return nil
