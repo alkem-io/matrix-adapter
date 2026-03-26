@@ -167,9 +167,8 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 		m.logger.Info("Matrix AppService connected", "user_id", whoami.UserID)
 	}
 
-	// Ensure bot is a server admin — required for room directory visibility,
-	// alias queries on rooms the bot has left, and other admin operations.
-	m.ensureBotIsAdmin(ctx)
+	// Check if bot is a Synapse server admin
+	m.checkBotAdminStatus(ctx)
 
 	// Set bot display name
 	if m.botDisplayName != "" {
@@ -184,20 +183,26 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	return nil
 }
 
-// ensureBotIsAdmin promotes the bot user to Synapse server admin.
-// Appservice tokens can upsert users in their namespace via the Synapse admin API.
-func (m *MautrixAdapter) ensureBotIsAdmin(ctx context.Context) {
+// checkBotAdminStatus checks if the bot user is a Synapse server admin.
+// Logs a warning with instructions if not — admin status is required for
+// directory visibility and room operations after the bot leaves rooms.
+func (m *MautrixAdapter) checkBotAdminStatus(ctx context.Context) {
 	client := m.as.BotClient()
 	botMXID := m.as.BotMXID()
 
-	urlPath := client.BuildURL(mautrix.SynapseAdminURLPath{"v2", "users", botMXID})
-	_, err := client.MakeRequest(ctx, http.MethodPut, urlPath, map[string]interface{}{
-		"admin": true,
-	}, nil)
+	// Try a lightweight admin API call to check admin status
+	urlPath := client.BuildURL(mautrix.SynapseAdminURLPath{"v1", "server_version"})
+	_, err := client.MakeRequest(ctx, http.MethodGet, urlPath, nil, nil)
 	if err != nil {
-		m.logger.Warn("Failed to promote bot to server admin", "bot_mxid", botMXID, "error", err)
+		m.logger.Warn(
+			"Bot is NOT a Synapse server admin. Some features (directory visibility, "+
+				"room operations after bot leaves) will not work. "+
+				"To fix, run: UPDATE users SET admin = 1 WHERE name = '"+botMXID.String()+"'; "+
+				"then restart Synapse.",
+			"bot_mxid", botMXID,
+		)
 	} else {
-		m.logger.Info("Bot promoted to server admin", "bot_mxid", botMXID)
+		m.logger.Info("Bot is Synapse server admin", "bot_mxid", botMXID)
 	}
 }
 
