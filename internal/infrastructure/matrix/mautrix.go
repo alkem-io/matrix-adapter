@@ -466,20 +466,17 @@ func (m *MautrixAdapter) UpdateRoomState(
 	intent := m.as.Intent(userID)
 
 	if name != nil {
-		if _, err := intent.SetRoomName(ctx, roomID, *name); err != nil {
-			return err
+		if err := m.setOrRedactState(ctx, intent, roomID, event.StateRoomName, *name); err != nil {
+			return fmt.Errorf("failed to set room name: %w", err)
 		}
 	}
 	if topic != nil {
-		if _, err := intent.SetRoomTopic(ctx, roomID, *topic); err != nil {
-			return err
+		if err := m.setOrRedactState(ctx, intent, roomID, event.StateTopic, *topic); err != nil {
+			return fmt.Errorf("failed to set room topic: %w", err)
 		}
 	}
 	if avatarURL != nil {
-		avatarContent := &event.RoomAvatarEventContent{
-			URL: id.ContentURIString(*avatarURL),
-		}
-		if _, err := intent.SendStateEvent(ctx, roomID, event.StateRoomAvatar, "", avatarContent); err != nil {
+		if err := m.setOrRedactState(ctx, intent, roomID, event.StateRoomAvatar, *avatarURL); err != nil {
 			return fmt.Errorf("failed to set room avatar: %w", err)
 		}
 	}
@@ -492,6 +489,41 @@ func (m *MautrixAdapter) UpdateRoomState(
 		}
 	}
 	return nil
+}
+
+// setOrRedactState sets a state event value, or redacts the existing state event
+// if the value is empty. Redacting (instead of setting to empty) ensures clients
+// fall back to their default behavior (e.g. showing member names for unnamed rooms).
+func (m *MautrixAdapter) setOrRedactState(
+	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID, eventType event.Type, value string,
+) error {
+	if value != "" {
+		var content interface{}
+		switch eventType {
+		case event.StateRoomName:
+			content = map[string]interface{}{"name": value}
+		case event.StateTopic:
+			content = map[string]interface{}{"topic": value}
+		case event.StateRoomAvatar:
+			content = &event.RoomAvatarEventContent{URL: id.ContentURIString(value)}
+		default:
+			content = map[string]interface{}{}
+		}
+		_, err := intent.SendStateEvent(ctx, roomID, eventType, "", content)
+		return err
+	}
+
+	// Value is empty — redact the current state event to fully remove it.
+	// In Matrix, state events are keyed by (type, state_key), so there is
+	// only one "current" state event. Redacting it removes the property
+	// entirely, causing clients to fall back to defaults (e.g. member names for unnamed DMs).
+	existing, err := intent.FullStateEvent(ctx, roomID, eventType, "")
+	if err != nil || existing == nil || existing.ID == "" {
+		// No existing state event — nothing to redact
+		return nil
+	}
+	_, err = intent.RedactEvent(ctx, roomID, existing.ID)
+	return err
 }
 
 // ============================================================================
@@ -792,9 +824,9 @@ func (m *MautrixAdapter) selectPreferredAlias(aliases []string) string {
 }
 
 // SetRoomDirectoryVisibility sets whether a room appears in the public room directory.
-// Uses PUT /_matrix/client/v3/directory/list/room/{roomId} via BotIntent.
-// Requires Synapse room_list_publication_rules to allow the bot user.
+// Uses PUT /_matrix/client/v3/directory/list/room/{roomId}.
 func (m *MautrixAdapter) SetRoomDirectoryVisibility(ctx context.Context, roomID id.RoomID, isPublic bool) error {
+	// TODO: Currently returns 403 from Synapse — needs investigation
 	intent := m.as.BotIntent()
 	visibility := "private"
 	if isPublic {
@@ -1633,22 +1665,19 @@ func (m *MautrixAdapter) UpdateSpaceState(
 	intent := m.as.BotIntent()
 
 	if name != nil {
-		if _, err := intent.SetRoomName(ctx, roomID, *name); err != nil {
+		if err := m.setOrRedactState(ctx, intent, roomID, event.StateRoomName, *name); err != nil {
 			return fmt.Errorf("failed to set space name: %w", err)
 		}
 	}
 
 	if topic != nil {
-		if _, err := intent.SetRoomTopic(ctx, roomID, *topic); err != nil {
+		if err := m.setOrRedactState(ctx, intent, roomID, event.StateTopic, *topic); err != nil {
 			return fmt.Errorf("failed to set space topic: %w", err)
 		}
 	}
 
 	if avatarURL != nil {
-		avatarContent := &event.RoomAvatarEventContent{
-			URL: id.ContentURIString(*avatarURL),
-		}
-		if _, err := intent.SendStateEvent(ctx, roomID, event.StateRoomAvatar, "", avatarContent); err != nil {
+		if err := m.setOrRedactState(ctx, intent, roomID, event.StateRoomAvatar, *avatarURL); err != nil {
 			return fmt.Errorf("failed to set space avatar: %w", err)
 		}
 	}
