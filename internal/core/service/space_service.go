@@ -39,6 +39,7 @@ func (s *SpaceService) CreateSpace(
 	name, topic, avatarURL string,
 	joinRule string,
 	isPublic *bool,
+	visible *bool,
 	parentContextID *uuid.UUID,
 	initialMembers []domain.Actor,
 ) error {
@@ -82,6 +83,14 @@ func (s *SpaceService) CreateSpace(
 		if err := s.matrix.SetRoomDirectoryVisibility(ctx, spaceRoomID, *isPublic); err != nil {
 			s.logger.Warn("Failed to set space directory visibility",
 				"alkemio_context_id", alkemioContextID, "is_public", *isPublic, "error", err)
+		}
+	}
+
+	// Set sync visibility if specified
+	if visible != nil {
+		if err := s.matrix.SetRoomSyncVisibility(ctx, spaceRoomID, *visible); err != nil {
+			s.logger.Warn("Failed to set space sync visibility",
+				"alkemio_context_id", alkemioContextID, "visible", *visible, "error", err)
 		}
 	}
 
@@ -168,6 +177,7 @@ func (s *SpaceService) UpdateSpace(
 	name, topic, avatarURL *string,
 	joinRule *string,
 	isPublic *bool,
+	visible *bool,
 ) error {
 	s.logger.Info("Updating space", "alkemio_context_id", alkemioContextID)
 
@@ -188,6 +198,14 @@ func (s *SpaceService) UpdateSpace(
 		if err := s.matrix.SetRoomDirectoryVisibility(ctx, roomID, *isPublic); err != nil {
 			s.logger.Warn("Failed to set space directory visibility",
 				"alkemio_context_id", alkemioContextID, "is_public", *isPublic, "error", err)
+		}
+	}
+
+	// Set sync visibility if specified
+	if visible != nil {
+		if err := s.matrix.SetRoomSyncVisibility(ctx, roomID, *visible); err != nil {
+			s.logger.Warn("Failed to set space sync visibility",
+				"alkemio_context_id", alkemioContextID, "visible", *visible, "error", err)
 		}
 	}
 

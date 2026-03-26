@@ -40,6 +40,7 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	roomType string,
 	name, topic, avatarURL, joinRule string,
 	isPublic *bool,
+	visible *bool,
 	initialMembers []domain.Actor,
 ) error {
 	s.logger.Info(
@@ -114,6 +115,14 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 		if err := s.matrix.SetRoomDirectoryVisibility(ctx, roomID, *isPublic); err != nil {
 			s.logger.Warn("Failed to set room directory visibility",
 				"alkemio_room_id", alkemioRoomID, "is_public", *isPublic, "error", err)
+		}
+	}
+
+	// Set sync visibility if specified (controls Element sidebar via Synapse module)
+	if visible != nil {
+		if err := s.matrix.SetRoomSyncVisibility(ctx, roomID, *visible); err != nil {
+			s.logger.Warn("Failed to set room sync visibility",
+				"alkemio_room_id", alkemioRoomID, "visible", *visible, "error", err)
 		}
 	}
 
@@ -244,6 +253,7 @@ func (s *RoomService) UpdateRoomMetadata(
 	name, topic, avatarURL *string,
 	joinRule *string,
 	isPublic *bool,
+	visible *bool,
 ) error {
 	s.logger.Info("Updating room metadata", "alkemio_room_id", alkemioRoomID)
 
@@ -267,6 +277,14 @@ func (s *RoomService) UpdateRoomMetadata(
 		if err := s.matrix.SetRoomDirectoryVisibility(ctx, roomID, *isPublic); err != nil {
 			s.logger.Warn("Failed to set room directory visibility",
 				"alkemio_room_id", alkemioRoomID, "is_public", *isPublic, "error", err)
+		}
+	}
+
+	// Set sync visibility if specified
+	if visible != nil {
+		if err := s.matrix.SetRoomSyncVisibility(ctx, roomID, *visible); err != nil {
+			s.logger.Warn("Failed to set room sync visibility",
+				"alkemio_room_id", alkemioRoomID, "visible", *visible, "error", err)
 		}
 	}
 

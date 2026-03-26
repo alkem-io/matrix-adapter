@@ -1141,6 +1141,23 @@ func (m *MautrixAdapter) SetRoomDirectoryVisibility(ctx context.Context, roomID 
 	return nil
 }
 
+// SetRoomSyncVisibility sets the io.alkemio.visibility state event to control
+// whether a room appears in users' /sync responses (Element sidebar).
+// This is read by the Alkemio Synapse module which filters /sync accordingly.
+func (m *MautrixAdapter) SetRoomSyncVisibility(ctx context.Context, roomID id.RoomID, visible bool) error {
+	intent := m.as.BotIntent()
+	_, err := intent.SendStateEvent(ctx, roomID, event.Type{
+		Type:  "io.alkemio.visibility",
+		Class: event.StateEventType,
+	}, "", map[string]interface{}{
+		"visible": visible,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set room sync visibility: %w", err)
+	}
+	return nil
+}
+
 // DeleteAlias removes a room alias.
 func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
 	intent := m.as.BotIntent()

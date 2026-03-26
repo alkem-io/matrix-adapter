@@ -28,6 +28,7 @@ type CreateSpaceRequest struct {
 	JoinRule         JoinRule          `json:"join_rule,omitempty"`
 	InitialMembers   []AlkemioActorID  `json:"initial_members,omitempty"`
 	IsPublic         *bool             `json:"is_public,omitempty"` // Room directory visibility
+	Visible          *bool             `json:"visible,omitempty"`   // Whether space appears in user's /sync (Element sidebar)
 }
 
 // ============================================================================
@@ -66,6 +67,7 @@ type UpdateSpaceRequest struct {
 	AvatarURL        *string          `json:"avatar_url,omitempty"`
 	JoinRule         *JoinRule        `json:"join_rule,omitempty"`
 	IsPublic         *bool            `json:"is_public,omitempty"` // Room directory visibility
+	Visible          *bool            `json:"visible,omitempty"`   // Whether space appears in user's /sync (Element sidebar)
 }
 
 // ============================================================================

@@ -147,6 +147,7 @@ func (h *RoomHandler) HandleCreateRoom(ctx context.Context, payload []byte) (int
 		req.AvatarURL,
 		string(req.JoinRule),
 		req.IsPublic,
+		req.Visible,
 		initialMembers,
 	)
 	if err != nil {
@@ -261,6 +262,7 @@ func (h *RoomHandler) HandleUpdateRoom(ctx context.Context, payload []byte) (int
 		req.AvatarURL,
 		joinRule,
 		req.IsPublic,
+		req.Visible,
 	)
 	if err != nil {
 		return MapServiceError(err), nil

@@ -744,6 +744,7 @@ export interface CreateRoomRequest {
   parent_context_id?: AlkemioContextID;
   join_rule?: JoinRule;
   is_public?: boolean; // Room directory visibility
+  visible?: boolean; // Whether room appears in user's /sync (Element sidebar)
 }
 /**
  * GetRoomRequest retrieves current state of a room.
@@ -773,6 +774,7 @@ export interface UpdateRoomRequest {
   avatar_url?: string;
   join_rule?: JoinRule;
   is_public?: boolean; // Room directory visibility
+  visible?: boolean; // Whether room appears in user's /sync (Element sidebar)
 }
 /**
  * DeleteRoomRequest archives or deletes a room.
@@ -865,6 +867,7 @@ export interface CreateSpaceRequest {
   join_rule?: JoinRule;
   initial_members?: AlkemioActorID[];
   is_public?: boolean; // Room directory visibility
+  visible?: boolean; // Whether space appears in user's /sync (Element sidebar)
 }
 /**
  * GetSpaceRequest retrieves current state of a space.
@@ -897,6 +900,7 @@ export interface UpdateSpaceRequest {
   avatar_url?: string;
   join_rule?: JoinRule;
   is_public?: boolean; // Room directory visibility
+  visible?: boolean; // Whether space appears in user's /sync (Element sidebar)
 }
 /**
  * DeleteSpaceRequest archives/deletes a space.

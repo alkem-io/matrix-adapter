@@ -38,6 +38,9 @@ type MatrixPort interface {
 
 	// SetRoomDirectoryVisibility sets whether a room appears in the public room directory.
 	SetRoomDirectoryVisibility(ctx context.Context, roomID id.RoomID, isPublic bool) error
+	// SetRoomSyncVisibility sets the io.alkemio.visibility state event to control
+	// whether a room appears in users' /sync responses (Element sidebar).
+	SetRoomSyncVisibility(ctx context.Context, roomID id.RoomID, visible bool) error
 
 	// ResolveAlias resolves a room alias to a room ID.
 	ResolveAlias(ctx context.Context, alias string) (id.RoomID, error)

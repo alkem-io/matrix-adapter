@@ -65,6 +65,7 @@ func (h *SpaceHandler) HandleCreateSpace(ctx context.Context, payload []byte) (i
 		req.AvatarURL,
 		string(req.JoinRule),
 		req.IsPublic,
+		req.Visible,
 		parentContextID,
 		initialMembers,
 	)
@@ -151,6 +152,7 @@ func (h *SpaceHandler) HandleUpdateSpace(ctx context.Context, payload []byte) (i
 		req.AvatarURL,
 		joinRule,
 		req.IsPublic,
+		req.Visible,
 	)
 	if err != nil {
 		return MapServiceError(err), nil
