@@ -273,14 +273,14 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 			continue
 		}
 
-		existing, err := memberIntent.FullStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "")
-		if err == nil && existing != nil && existing.ID != "" {
-			if _, err := memberIntent.RedactEvent(ctx, room.RoomID, existing.ID); err != nil {
-				m.logger.Warn("Failed to redact canonical alias",
-					"room_id", room.RoomID, "error", err)
-			} else {
-				redactedCount++
-			}
+		// Clear canonical alias by sending empty content (the state endpoint
+		// doesn't return event_id, so we can't redact directly)
+		emptyAlias := &event.CanonicalAliasEventContent{}
+		if _, err := memberIntent.SendStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "", emptyAlias); err != nil {
+			m.logger.Warn("Failed to clear canonical alias",
+				"room_id", room.RoomID, "error", err)
+		} else {
+			redactedCount++
 		}
 	}
 
@@ -812,16 +812,21 @@ func (m *MautrixAdapter) setOrRedactState(
 		return err
 	}
 
-	// Value is empty — redact the current state event to fully remove it.
-	// In Matrix, state events are keyed by (type, state_key), so there is
-	// only one "current" state event. Redacting it removes the property
-	// entirely, causing clients to fall back to defaults (e.g. member names for unnamed DMs).
-	existing, err := intent.FullStateEvent(ctx, roomID, eventType, "")
-	if err != nil || existing == nil || existing.ID == "" {
-		// No existing state event — nothing to redact
-		return nil
+	// Value is empty — send empty content to clear the state.
+	// The /state/ endpoint doesn't return event_id, so we can't redact directly.
+	// Sending empty content effectively clears the property.
+	var emptyContent interface{}
+	switch eventType {
+	case event.StateRoomName:
+		emptyContent = map[string]interface{}{"name": ""}
+	case event.StateTopic:
+		emptyContent = map[string]interface{}{"topic": ""}
+	case event.StateRoomAvatar:
+		emptyContent = &event.RoomAvatarEventContent{}
+	default:
+		emptyContent = map[string]interface{}{}
 	}
-	_, err = intent.RedactEvent(ctx, roomID, existing.ID)
+	_, err := intent.SendStateEvent(ctx, roomID, eventType, "", emptyContent)
 	return err
 }
 
