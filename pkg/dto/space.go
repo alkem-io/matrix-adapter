@@ -27,6 +27,7 @@ type CreateSpaceRequest struct {
 	ParentContextID  *AlkemioContextID `json:"parent_context_id,omitempty"`
 	JoinRule         JoinRule          `json:"join_rule,omitempty"`
 	InitialMembers   []AlkemioActorID  `json:"initial_members,omitempty"`
+	IsPublic         *bool             `json:"is_public,omitempty"` // Room directory visibility
 }
 
 // ============================================================================
@@ -64,6 +65,7 @@ type UpdateSpaceRequest struct {
 	Topic            *string          `json:"topic,omitempty"`
 	AvatarURL        *string          `json:"avatar_url,omitempty"`
 	JoinRule         *JoinRule        `json:"join_rule,omitempty"`
+	IsPublic         *bool            `json:"is_public,omitempty"` // Room directory visibility
 }
 
 // ============================================================================

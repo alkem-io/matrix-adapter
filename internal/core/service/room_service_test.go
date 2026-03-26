@@ -46,6 +46,9 @@ func (m *mockMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, roo
 	return "!room:test.local", nil
 }
 
+func (m *mockMatrixPort) SetRoomDirectoryVisibility(_ context.Context, _ id.RoomID, _ bool) error {
+	return nil
+}
 func (m *mockMatrixPort) ResolveAlias(_ context.Context, _ string) (id.RoomID, error) {
 	if m.resolveAliasErr != nil {
 		return "", m.resolveAliasErr
@@ -168,7 +171,7 @@ func TestCreateRoom_JoinRulePublic(t *testing.T) {
 		"community",
 		"Test Room", "", "",
 		"public",
-		nil,
+		nil, nil,
 	)
 
 	if err != nil {
@@ -196,7 +199,7 @@ func TestCreateRoom_JoinRuleInvite(t *testing.T) {
 		"community",
 		"Test Room", "", "",
 		"invite",
-		nil,
+		nil, nil,
 	)
 
 	if err != nil {
@@ -221,7 +224,7 @@ func TestCreateRoom_JoinRuleOmitted(t *testing.T) {
 		"community",
 		"Test Room", "", "",
 		"",
-		nil,
+		nil, nil,
 	)
 
 	if err != nil {
@@ -246,7 +249,7 @@ func TestCreateRoom_DirectMessage_JoinRuleIgnored(t *testing.T) {
 		"direct",
 		"", "", "",
 		"public", // should be ignored for DM rooms
-		nil,
+		nil, nil,
 	)
 
 	if err != nil {
@@ -273,6 +276,7 @@ func TestUpdateRoom_JoinRuleProvided(t *testing.T) {
 		uuid.New(),
 		nil, nil, nil,
 		&joinRule,
+		nil,
 	)
 
 	if err != nil {
@@ -297,6 +301,7 @@ func TestUpdateRoom_JoinRuleOmitted(t *testing.T) {
 		uuid.New(),
 		nil, nil, nil,
 		nil, // joinRule omitted
+		nil, // isPublic omitted
 	)
 
 	if err != nil {

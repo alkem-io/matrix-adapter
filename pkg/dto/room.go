@@ -15,6 +15,7 @@ type CreateRoomRequest struct {
 	AvatarURL       string            `json:"avatar_url,omitempty"`
 	ParentContextID *AlkemioContextID `json:"parent_context_id,omitempty"`
 	JoinRule        JoinRule          `json:"join_rule,omitempty"`
+	IsPublic        *bool             `json:"is_public,omitempty"` // Room directory visibility
 }
 
 // GetRoomRequest retrieves current state of a room.
@@ -41,6 +42,7 @@ type UpdateRoomRequest struct {
 	Topic         *string       `json:"topic,omitempty"`
 	AvatarURL     *string       `json:"avatar_url,omitempty"`
 	JoinRule      *JoinRule     `json:"join_rule,omitempty"`
+	IsPublic      *bool         `json:"is_public,omitempty"` // Room directory visibility
 }
 
 // DeleteRoomRequest archives or deletes a room.

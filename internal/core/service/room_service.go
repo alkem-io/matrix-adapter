@@ -39,6 +39,7 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	alkemioRoomID uuid.UUID,
 	roomType string,
 	name, topic, avatarURL, joinRule string,
+	isPublic *bool,
 	initialMembers []domain.Actor,
 ) error {
 	s.logger.Info(
@@ -103,9 +104,17 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	}
 
 	// Create the room with alias
-	_, err = s.matrix.CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, effectiveJoinRule, initialMembers)
+	roomID, err := s.matrix.CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, effectiveJoinRule, initialMembers)
 	if err != nil {
 		return fmt.Errorf("failed to create room: %w", err)
+	}
+
+	// Set directory visibility if specified
+	if isPublic != nil {
+		if err := s.matrix.SetRoomDirectoryVisibility(ctx, roomID, *isPublic); err != nil {
+			s.logger.Warn("Failed to set room directory visibility",
+				"alkemio_room_id", alkemioRoomID, "is_public", *isPublic, "error", err)
+		}
 	}
 
 	s.logger.Info("Room created successfully", "alkemio_room_id", alkemioRoomID)
@@ -228,12 +237,13 @@ func (s *RoomService) GetRoomAsUser(
 	}, nil
 }
 
-// UpdateRoomMetadata updates room name, topic, avatar, and join rule.
+// UpdateRoomMetadata updates room name, topic, avatar, join rule, and directory visibility.
 func (s *RoomService) UpdateRoomMetadata(
 	ctx context.Context,
 	alkemioRoomID uuid.UUID,
 	name, topic, avatarURL *string,
 	joinRule *string,
+	isPublic *bool,
 ) error {
 	s.logger.Info("Updating room metadata", "alkemio_room_id", alkemioRoomID)
 
@@ -265,6 +275,14 @@ func (s *RoomService) UpdateRoomMetadata(
 	err = s.matrix.UpdateRoomState(ctx, roomID, botActor, nameVal, topicVal, avatarVal, joinRuleVal, "")
 	if err != nil {
 		return fmt.Errorf("failed to update room: %w", err)
+	}
+
+	// Set directory visibility if specified
+	if isPublic != nil {
+		if err := s.matrix.SetRoomDirectoryVisibility(ctx, roomID, *isPublic); err != nil {
+			s.logger.Warn("Failed to set room directory visibility",
+				"alkemio_room_id", alkemioRoomID, "is_public", *isPublic, "error", err)
+		}
 	}
 
 	return nil

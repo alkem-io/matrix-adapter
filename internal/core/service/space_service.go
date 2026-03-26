@@ -38,6 +38,7 @@ func (s *SpaceService) CreateSpace(
 	alkemioContextID uuid.UUID,
 	name, topic, avatarURL string,
 	joinRule string,
+	isPublic *bool,
 	parentContextID *uuid.UUID,
 	initialMembers []domain.Actor,
 ) error {
@@ -74,6 +75,14 @@ func (s *SpaceService) CreateSpace(
 	spaceRoomID, err := s.matrix.CreateSpace(ctx, alkemioContextID, name, topic, avatarURL, effectiveJoinRule, initialMembers)
 	if err != nil {
 		return fmt.Errorf("failed to create space: %w", err)
+	}
+
+	// Set directory visibility if specified
+	if isPublic != nil {
+		if err := s.matrix.SetRoomDirectoryVisibility(ctx, spaceRoomID, *isPublic); err != nil {
+			s.logger.Warn("Failed to set space directory visibility",
+				"alkemio_context_id", alkemioContextID, "is_public", *isPublic, "error", err)
+		}
 	}
 
 	// If parent context is specified, set up hierarchy
@@ -158,6 +167,7 @@ func (s *SpaceService) UpdateSpace(
 	alkemioContextID uuid.UUID,
 	name, topic, avatarURL *string,
 	joinRule *string,
+	isPublic *bool,
 ) error {
 	s.logger.Info("Updating space", "alkemio_context_id", alkemioContextID)
 
@@ -186,6 +196,14 @@ func (s *SpaceService) UpdateSpace(
 	err = s.matrix.UpdateSpaceState(ctx, roomID, nameVal, topicVal, avatarVal, joinRuleVal)
 	if err != nil {
 		return fmt.Errorf("failed to update space: %w", err)
+	}
+
+	// Set directory visibility if specified
+	if isPublic != nil {
+		if err := s.matrix.SetRoomDirectoryVisibility(ctx, roomID, *isPublic); err != nil {
+			s.logger.Warn("Failed to set space directory visibility",
+				"alkemio_context_id", alkemioContextID, "is_public", *isPublic, "error", err)
+		}
 	}
 
 	return nil

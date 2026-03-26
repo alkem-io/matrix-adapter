@@ -798,6 +798,22 @@ func (m *MautrixAdapter) selectPreferredAlias(aliases []string) string {
 	return aliases[0]
 }
 
+// SetRoomDirectoryVisibility sets whether a room appears in the public room directory.
+// Uses PUT /_matrix/client/v3/directory/list/room/{roomId}.
+func (m *MautrixAdapter) SetRoomDirectoryVisibility(ctx context.Context, roomID id.RoomID, isPublic bool) error {
+	intent := m.as.BotIntent()
+	visibility := "private"
+	if isPublic {
+		visibility = "public"
+	}
+	urlPath := intent.BuildClientURL("v3", "directory", "list", "room", roomID)
+	_, err := intent.MakeRequest(ctx, http.MethodPut, urlPath, map[string]string{"visibility": visibility}, nil)
+	if err != nil {
+		return fmt.Errorf("failed to set room directory visibility: %w", err)
+	}
+	return nil
+}
+
 // DeleteAlias removes a room alias.
 func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
 	intent := m.as.BotIntent()

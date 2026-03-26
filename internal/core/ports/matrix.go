@@ -35,6 +35,9 @@ type MatrixPort interface {
 	// UpdateRoomState updates a room's name, topic, avatar, join rule, and canonical alias.
 	UpdateRoomState(ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, joinRule, alias string) error
 
+	// SetRoomDirectoryVisibility sets whether a room appears in the public room directory.
+	SetRoomDirectoryVisibility(ctx context.Context, roomID id.RoomID, isPublic bool) error
+
 	// ResolveAlias resolves a room alias to a room ID.
 	ResolveAlias(ctx context.Context, alias string) (id.RoomID, error)
 	// DeleteAlias removes a room alias from the homeserver.
