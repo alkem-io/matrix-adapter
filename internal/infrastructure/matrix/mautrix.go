@@ -266,12 +266,18 @@ func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret st
 		return fmt.Errorf("failed to promote bot: %w", err)
 	}
 
-	// Deactivate temporary admin
+	// Deactivate and erase temporary admin
 	bootstrapMXID := "@" + bootstrapUser + ":" + m.cfg.Matrix.HomeserverName
 	urlPath = adminClient.BuildURL(mautrix.SynapseAdminURLPath{"v1", "deactivate", bootstrapMXID})
-	_, _ = adminClient.MakeRequest(ctx, http.MethodPost, urlPath, map[string]interface{}{
+	_, err = adminClient.MakeRequest(ctx, http.MethodPost, urlPath, map[string]interface{}{
 		"erase": true,
 	}, nil)
+	if err != nil {
+		m.logger.Warn("Failed to deactivate bootstrap admin user",
+			"bootstrap_mxid", bootstrapMXID, "error", err)
+	} else {
+		m.logger.Info("Bootstrap admin user deactivated", "bootstrap_mxid", bootstrapMXID)
+	}
 
 	return nil
 }
