@@ -245,7 +245,7 @@ func (m *MautrixAdapter) isBotAdmin(ctx context.Context) bool {
 // promoteViaTemporaryAdmin creates a temporary admin user, uses it to promote
 // the bot to server admin, then deactivates the temporary user.
 func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret string) error {
-	bootstrapUser := "_alkemio_admin_bootstrap"
+	bootstrapUser := "alkemio-admin-bootstrap"
 	bootstrapPass := "bootstrap-" + secret[:8]
 
 	// Create temporary admin
