@@ -226,12 +226,19 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 	}
 }
 
-// isBotAdmin checks if the bot is a Synapse server admin.
+// isBotAdmin checks if the bot is a Synapse server admin by querying its own user record.
 func (m *MautrixAdapter) isBotAdmin(ctx context.Context) bool {
 	client := m.as.BotClient()
-	urlPath := client.BuildURL(mautrix.SynapseAdminURLPath{"v1", "server_version"})
-	_, err := client.MakeRequest(ctx, http.MethodGet, urlPath, nil, nil)
-	return err == nil
+	botMXID := m.as.BotMXID()
+	var resp struct {
+		Admin bool `json:"admin"`
+	}
+	urlPath := client.BuildURL(mautrix.SynapseAdminURLPath{"v2", "users", botMXID})
+	_, err := client.MakeRequest(ctx, http.MethodGet, urlPath, nil, &resp)
+	if err != nil {
+		return false
+	}
+	return resp.Admin
 }
 
 // promoteViaTemporaryAdmin creates a temporary admin user, uses it to promote
