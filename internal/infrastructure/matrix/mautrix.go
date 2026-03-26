@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha1" //nolint:gosec // Required by Synapse shared secret registration API (HMAC-SHA1)
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -1193,46 +1194,39 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID)
 // GetCustomState retrieves io.alkemio.* state events from a room.
 // If eventTypes is empty, retrieves all state and filters to io.alkemio.* types.
 func (m *MautrixAdapter) GetCustomState(ctx context.Context, roomID id.RoomID, eventTypes []string) (map[string]map[string]interface{}, error) {
-	intent := m.as.BotIntent()
+	intent := m.getIntentForRoom(ctx, roomID)
 	result := make(map[string]map[string]interface{})
 
 	if len(eventTypes) > 0 {
-		// Fetch specific types
+		// Fetch specific types via direct HTTP (StateEvent doesn't parse custom types well)
 		for _, et := range eventTypes {
 			if !strings.HasPrefix(et, "io.alkemio.") {
 				continue
 			}
 			var content map[string]interface{}
-			if err := intent.StateEvent(ctx, roomID, event.Type{Type: et, Class: event.StateEventType}, "", &content); err == nil {
+			urlPath := intent.BuildClientURL("v3", "rooms", roomID, "state", et, "")
+			_, err := intent.MakeRequest(ctx, http.MethodGet, urlPath, nil, &content)
+			if err == nil && len(content) > 0 {
 				result[et] = content
 			}
 		}
 	} else {
 		// Fetch all state and filter to io.alkemio.* types
-		stateMap, err := intent.State(ctx, roomID)
+		var stateEvents []json.RawMessage
+		urlPath := intent.BuildClientURL("v3", "rooms", roomID, "state")
+		_, err := intent.MakeRequest(ctx, http.MethodGet, urlPath, nil, &stateEvents)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get room state: %w", err)
 		}
-		for evtType, stateKeyMap := range stateMap {
-			if !strings.HasPrefix(evtType.Type, "io.alkemio.") {
-				continue
+		for _, raw := range stateEvents {
+			var evt struct {
+				Type    string                 `json:"type"`
+				Content map[string]interface{} `json:"content"`
 			}
-			for _, evt := range stateKeyMap {
-				if evt.Content.Parsed != nil {
-					if content, ok := evt.Content.Parsed.(map[string]interface{}); ok {
-						result[evtType.Type] = content
-						continue
-					}
+			if err := json.Unmarshal(raw, &evt); err == nil {
+				if strings.HasPrefix(evt.Type, "io.alkemio.") && len(evt.Content) > 0 {
+					result[evt.Type] = evt.Content
 				}
-				// Fallback: try raw JSON
-				var content map[string]interface{}
-				if err := evt.Content.ParseRaw(evtType); err == nil {
-					if raw, ok := evt.Content.Parsed.(map[string]interface{}); ok {
-						result[evtType.Type] = raw
-						continue
-					}
-				}
-				_ = content
 			}
 		}
 	}
