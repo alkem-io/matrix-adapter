@@ -1147,8 +1147,11 @@ func (m *MautrixAdapter) SetRoomDirectoryVisibility(ctx context.Context, roomID 
 
 // SetCustomState sets custom io.alkemio.* state events on a room.
 // Only event types with the "io.alkemio." prefix are allowed.
+// Uses BotIntent if bot is in the room, otherwise finds a ghost user.
 func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, state map[string]map[string]interface{}) error {
-	intent := m.as.BotIntent()
+	// Try bot first; if it fails (not in room), find a ghost user
+	intent := m.getIntentForRoom(ctx, roomID)
+
 	for eventType, content := range state {
 		if !strings.HasPrefix(eventType, "io.alkemio.") {
 			return fmt.Errorf("custom state event type must have io.alkemio. prefix, got: %s", eventType)
@@ -1162,6 +1165,29 @@ func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, s
 		}
 	}
 	return nil
+}
+
+// getIntentForRoom returns an intent that has access to a room.
+// Tries BotIntent first (for spaces where bot is a member), then falls back
+// to finding a joined ghost user via the admin API.
+func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID) *appservice.IntentAPI {
+	botIntent := m.as.BotIntent()
+
+	// Check if bot is in the room by trying to get state
+	var createContent event.CreateEventContent
+	if err := botIntent.StateEvent(ctx, roomID, event.StateCreate, "", &createContent); err == nil {
+		return botIntent
+	}
+
+	// Bot not in room — find a ghost user via admin API
+	adminClient := m.newDirectClient(m.cfg.Matrix.AppServiceToken)
+	intent := m.findGhostIntentInRoom(ctx, adminClient, roomID)
+	if intent != nil {
+		return intent
+	}
+
+	// Last resort — return bot intent anyway (caller will handle the error)
+	return botIntent
 }
 
 // GetCustomState retrieves io.alkemio.* state events from a room.
