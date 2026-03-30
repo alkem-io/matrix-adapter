@@ -38,6 +38,8 @@ func (s *SpaceService) CreateSpace(
 	alkemioContextID uuid.UUID,
 	name, topic, avatarURL string,
 	joinRule string,
+	isPublic *bool,
+	customState map[string]map[string]interface{},
 	parentContextID *uuid.UUID,
 	initialMembers []domain.Actor,
 ) error {
@@ -74,6 +76,22 @@ func (s *SpaceService) CreateSpace(
 	spaceRoomID, err := s.matrix.CreateSpace(ctx, alkemioContextID, name, topic, avatarURL, effectiveJoinRule, initialMembers)
 	if err != nil {
 		return fmt.Errorf("failed to create space: %w", err)
+	}
+
+	// Set directory visibility if specified
+	if isPublic != nil {
+		if err := s.matrix.SetRoomDirectoryVisibility(ctx, spaceRoomID, *isPublic); err != nil {
+			s.logger.Warn("Failed to set space directory visibility",
+				"alkemio_context_id", alkemioContextID, "is_public", *isPublic, "error", err)
+		}
+	}
+
+	// Set custom io.alkemio.* state events if specified
+	if len(customState) > 0 {
+		if err := s.matrix.SetCustomState(ctx, spaceRoomID, customState); err != nil {
+			s.logger.Warn("Failed to set custom state on space",
+				"alkemio_context_id", alkemioContextID, "error", err)
+		}
 	}
 
 	// If parent context is specified, set up hierarchy
@@ -158,6 +176,8 @@ func (s *SpaceService) UpdateSpace(
 	alkemioContextID uuid.UUID,
 	name, topic, avatarURL *string,
 	joinRule *string,
+	isPublic *bool,
+	customState map[string]map[string]interface{},
 ) error {
 	s.logger.Info("Updating space", "alkemio_context_id", alkemioContextID)
 
@@ -168,24 +188,25 @@ func (s *SpaceService) UpdateSpace(
 		return domain.NewSpaceNotFoundError(alkemioContextID.String())
 	}
 
-	// Prepare values (empty string means no change)
-	var nameVal, topicVal, avatarVal, joinRuleVal string
-	if name != nil {
-		nameVal = *name
-	}
-	if topic != nil {
-		topicVal = *topic
-	}
-	if avatarURL != nil {
-		avatarVal = *avatarURL
-	}
-	if joinRule != nil {
-		joinRuleVal = *joinRule
-	}
-
-	err = s.matrix.UpdateSpaceState(ctx, roomID, nameVal, topicVal, avatarVal, joinRuleVal)
+	err = s.matrix.UpdateSpaceState(ctx, roomID, name, topic, avatarURL, joinRule)
 	if err != nil {
 		return fmt.Errorf("failed to update space: %w", err)
+	}
+
+	// Set directory visibility if specified
+	if isPublic != nil {
+		if err := s.matrix.SetRoomDirectoryVisibility(ctx, roomID, *isPublic); err != nil {
+			s.logger.Warn("Failed to set space directory visibility",
+				"alkemio_context_id", alkemioContextID, "is_public", *isPublic, "error", err)
+		}
+	}
+
+	// Set custom io.alkemio.* state events if specified
+	if len(customState) > 0 {
+		if err := s.matrix.SetCustomState(ctx, roomID, customState); err != nil {
+			s.logger.Warn("Failed to set custom state on space",
+				"alkemio_context_id", alkemioContextID, "error", err)
+		}
 	}
 
 	return nil

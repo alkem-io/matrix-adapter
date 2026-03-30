@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: write  # Required for pkg-pr-new PR comments
       id-token: write       # Required for npm provenance / trusted publishing
 
     steps:
@@ -62,8 +63,41 @@ jobs:
       - name: Publish to npmjs (Tag)
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         working-directory: lib
-        run: pnpm publish --no-git-checks --tag latest --access public --provenance
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          pnpm publish --no-git-checks --tag latest --access public --provenance
+          echo "## 📦 Published to npmjs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** \`@alkemio/matrix-adapter-lib@${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "npm i @alkemio/matrix-adapter-lib@${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[View on npmjs](https://www.npmjs.com/package/@alkemio/matrix-adapter-lib/v/${VERSION})" >> $GITHUB_STEP_SUMMARY
 
       - name: Publish preview to pkg.pr.new (PR/Manual, pinned v0.0.65)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: pnpx pkg-pr-new@0.0.65 publish './lib'
+        run: |
+          set +e
+          OUTPUT=$(pnpx pkg-pr-new@0.0.65 publish --comment=update './lib' 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          URL=$(echo "$OUTPUT" | grep -oE 'https://pkg\.pr\.new/[^ ]+' | head -n1)
+
+          if [ $STATUS -eq 0 ] && [ -n "$URL" ]; then
+            echo "## 📦 Published preview to pkg.pr.new" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**SHA:** \`${GITHUB_SHA}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "npm i ${URL}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⚠️ Preview publish failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "$OUTPUT" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi

@@ -62,6 +62,12 @@ func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, s
 		TopicBatchUnreadCountsGet: readReceipt.HandleBatchGetUnreadCounts,
 		TopicLastMessageGet:       room.HandleGetLastMessage,
 		TopicBatchLastMessagesGet: room.HandleBatchGetLastMessages,
+
+		// Custom State Routes (communication.{room,space}.state.*)
+		TopicRoomStateSet:  room.HandleSetRoomState,
+		TopicRoomStateGet:  room.HandleGetRoomState,
+		TopicSpaceStateSet: space.HandleSetSpaceState,
+		TopicSpaceStateGet: space.HandleGetSpaceState,
 	}
 
 	for topic, handler := range routes {

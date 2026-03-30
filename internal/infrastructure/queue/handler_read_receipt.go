@@ -15,6 +15,7 @@ import (
 type ReadReceiptHandler struct {
 	service  ports.ReadReceiptServicePort
 	matrix   ports.MatrixPort
+	resolver *AliasResolver
 	idMapper *domain.IDMapper
 	logger   ports.Logger
 }
@@ -29,6 +30,7 @@ func NewReadReceiptHandler(
 	return &ReadReceiptHandler{
 		service:  svc,
 		matrix:   matrix,
+		resolver: NewAliasResolver(matrix, idMapper),
 		idMapper: idMapper,
 		logger:   logger,
 	}
@@ -53,7 +55,7 @@ func (h *ReadReceiptHandler) HandleMarkMessageRead(ctx context.Context, payload 
 	}
 
 	// Resolve room alias to Matrix room ID
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -96,7 +98,7 @@ func (h *ReadReceiptHandler) HandleGetUnreadCounts(ctx context.Context, payload 
 	}
 
 	// Resolve room alias to Matrix room ID
-	roomID, errResp := h.resolveRoomAlias(ctx, req.AlkemioRoomID)
+	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
 		return *errResp, nil
 	}
@@ -155,7 +157,7 @@ func (h *ReadReceiptHandler) HandleBatchGetUnreadCounts(ctx context.Context, pay
 	errors := make(map[string]dto.BaseResponse)
 
 	for _, alkemioRoomID := range req.AlkemioRoomIDs {
-		roomID, errResp := h.resolveRoomAlias(ctx, alkemioRoomID)
+		roomID, errResp := h.resolver.ResolveRoom(ctx, alkemioRoomID)
 		if errResp != nil {
 			errors[alkemioRoomID.String()] = *errResp
 			continue
@@ -187,15 +189,4 @@ func (h *ReadReceiptHandler) HandleBatchGetUnreadCounts(ctx context.Context, pay
 		resp.Errors = errors
 	}
 	return resp, nil
-}
-
-// resolveRoomAlias resolves an Alkemio room ID to a Matrix room ID.
-func (h *ReadReceiptHandler) resolveRoomAlias(ctx context.Context, alkemioRoomID dto.AlkemioRoomID) (id.RoomID, *dto.BaseResponse) {
-	alias := h.idMapper.RoomAlias(alkemioRoomID.UUID())
-	roomID, err := h.matrix.ResolveAlias(ctx, alias)
-	if err != nil {
-		resp := NewRoomNotFoundError(alkemioRoomID.String())
-		return "", &resp
-	}
-	return roomID, nil
 }

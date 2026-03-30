@@ -7,14 +7,16 @@ package dto
 // CreateRoomRequest creates a new communication channel.
 // Topic: communication.room.create
 type CreateRoomRequest struct {
-	AlkemioRoomID   AlkemioRoomID     `json:"alkemio_room_id"`
-	Type            RoomType          `json:"type"`
-	Name            string            `json:"name,omitempty"` // Ignored for 'direct'
-	InitialMembers  []AlkemioActorID  `json:"initial_members,omitempty"`
-	Topic           string            `json:"topic,omitempty"`
-	AvatarURL       string            `json:"avatar_url,omitempty"`
-	ParentContextID *AlkemioContextID `json:"parent_context_id,omitempty"`
-	JoinRule        JoinRule          `json:"join_rule,omitempty"`
+	AlkemioRoomID   AlkemioRoomID                     `json:"alkemio_room_id"`
+	Type            RoomType                          `json:"type"`
+	Name            string                            `json:"name,omitempty"` // Ignored for 'direct'
+	InitialMembers  []AlkemioActorID                  `json:"initial_members,omitempty"`
+	Topic           string                            `json:"topic,omitempty"`
+	AvatarURL       string                            `json:"avatar_url,omitempty"`
+	ParentContextID *AlkemioContextID                 `json:"parent_context_id,omitempty"`
+	JoinRule        JoinRule                          `json:"join_rule,omitempty"`
+	IsPublic        *bool                             `json:"is_public,omitempty"`    // Room directory visibility
+	CustomState     map[string]map[string]interface{} `json:"custom_state,omitempty"` // io.alkemio.* state events to set on creation
 }
 
 // GetRoomRequest retrieves current state of a room.
@@ -26,22 +28,24 @@ type GetRoomRequest struct {
 // GetRoomResponse returns room details with members and messages.
 type GetRoomResponse struct {
 	BaseResponse   `tstype:",extends"`
-	AlkemioRoomID  AlkemioRoomID    `json:"alkemio_room_id"`
-	DisplayName    string           `json:"display_name"`
-	AvatarURL      string           `json:"avatar_url,omitempty"`
-	MemberActorIDs []AlkemioActorID `json:"member_actor_ids"`
-	Messages       []MessageDto     `json:"messages"`
+	AlkemioRoomID  AlkemioRoomID                     `json:"alkemio_room_id"`
+	DisplayName    string                            `json:"display_name"`
+	AvatarURL      string                            `json:"avatar_url,omitempty"`
+	CustomState    map[string]map[string]interface{} `json:"custom_state,omitempty"` // io.alkemio.* state events
+	MemberActorIDs []AlkemioActorID                  `json:"member_actor_ids"`
+	Messages       []MessageDto                      `json:"messages"`
 }
 
 // UpdateRoomRequest updates room metadata.
 // Topic: communication.room.update
 type UpdateRoomRequest struct {
-	AlkemioRoomID AlkemioRoomID `json:"alkemio_room_id"`
-	Name          *string       `json:"name,omitempty"`
-	Topic         *string       `json:"topic,omitempty"`
-	IsPublic      *bool         `json:"is_public,omitempty"`
-	AvatarURL     *string       `json:"avatar_url,omitempty"`
-	JoinRule      *JoinRule     `json:"join_rule,omitempty"`
+	AlkemioRoomID AlkemioRoomID                     `json:"alkemio_room_id"`
+	Name          *string                           `json:"name,omitempty"`
+	Topic         *string                           `json:"topic,omitempty"`
+	AvatarURL     *string                           `json:"avatar_url,omitempty"`
+	JoinRule      *JoinRule                         `json:"join_rule,omitempty"`
+	IsPublic      *bool                             `json:"is_public,omitempty"`    // Room directory visibility
+	CustomState   map[string]map[string]interface{} `json:"custom_state,omitempty"` // io.alkemio.* state events to set
 }
 
 // DeleteRoomRequest archives or deletes a room.

@@ -41,6 +41,8 @@ The service is configured via environment variables or a `config.yaml` file. The
 | `MATRIX_AS_TOKEN` | AppService Token (as_token) | - |
 | `MATRIX_HS_TOKEN` | Homeserver Token (hs_token) | - |
 | `MATRIX_BOT_ACTOR_ID` | Bot Actor ID (UUID), also used as Matrix localpart | `00000000-0000-0000-0000-000000000000` |
+| `MATRIX_BOT_DISPLAY_NAME` | Display name for the bot user in Matrix | `Alkemio` |
+| `SYNAPSE_SERVER_SHARED_SECRET` | Synapse `registration_shared_secret` for auto-promoting bot to server admin | - |
 | `RABBITMQ_URL` | Full AMQP Connection URL | - |
 | `RABBITMQ_HOST` | RabbitMQ Host (if URL not set) | - |
 | `RABBITMQ_PORT` | RabbitMQ Port (if URL not set) | `5672` |
@@ -189,6 +191,10 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 | **Actor** | Sync Actor Profile | `communication.actor.sync` |
 | **Read Receipts** | Mark Message Read | `communication.message.read` |
 | | Get Unread Counts | `communication.room.unread_counts.get` |
+| **Custom State** | Set Room State | `communication.room.state.set` |
+| | Get Room State | `communication.room.state.get` |
+| | Set Space State | `communication.space.state.set` |
+| | Get Space State | `communication.space.state.get` |
 
 ### Outgoing Events
 
@@ -204,6 +210,8 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 | Message Redacted | `communication.message.redacted` | Emitted when a message is deleted/redacted |
 | Room Created | `communication.room.created` | Emitted when a room is created in Matrix |
 | Room Member Updated | `communication.room.member.updated` | Emitted when a user's membership status changes (join, invite, etc.) |
+| Room Updated | `communication.room.updated` | Emitted when a room's name, avatar, or topic changes |
+| Space Updated | `communication.space.updated` | Emitted when a space's name, avatar, or topic changes |
 
 ## DM Room Creation Flow
 
@@ -307,6 +315,58 @@ Error responses include structured error information:
 | `MATRIX_ERROR` | Matrix SDK/homeserver error |
 | `INTERNAL_ERROR` | Unexpected system error |
 | `NOT_ALLOWED` | Operation not permitted |
+
+## Bot Architecture
+
+The adapter's bot user (`@00000000-...:domain`) operates as a **Synapse server admin** but is **not a member of rooms** (only spaces). This architecture minimizes the bot's footprint in user-visible room lists.
+
+### Bot Behavior
+
+- **Spaces**: Bot stays as a member (required for hierarchy operations)
+- **Rooms**: Bot leaves after creation; re-joins temporarily only if no ghost users are available for writes
+- **Reads**: All room reads (state, messages, members) use the Synapse Admin API — no membership required
+- **Writes**: State events are sent via ghost users (the member with the highest power level)
+- **Invites**: Ghost users are joined directly via `EnsureJoined` — no invite events sent to clients
+
+### Server Admin Bootstrap
+
+On startup, the adapter ensures the bot is a Synapse server admin:
+
+1. **Already admin** → proceeds normally
+2. **`SYNAPSE_SERVER_SHARED_SECRET` set** → registers bot as admin via shared secret, or creates a temporary admin to promote the bot
+3. **No secret** → logs a warning with SQL instructions
+
+### Custom State Events (`io.alkemio.*`)
+
+The adapter supports setting/reading custom state events with the `io.alkemio.` prefix on any room or space. These are used for:
+
+- **`io.alkemio.visibility`**: Controls whether a room appears in Element via the Synapse module
+- Custom metadata for rooms/spaces managed by the Alkemio platform
+
+Custom state can be set at room creation (via `custom_state` field) or independently via the `state.set/get` API endpoints.
+
+## Synapse Configuration
+
+The following Synapse `homeserver.yaml` settings are required:
+
+```yaml
+# Allow bot to publish rooms to the public directory
+room_list_publication_rules:
+  - user_id: "@00000000-0000-0000-0000-000000000000:your.domain"
+    action: allow
+  - action: deny
+
+# Optional: Enable admin bootstrap (alternative to manual DB setup)
+registration_shared_secret: "your-secret"
+```
+
+### Synapse Module
+
+The adapter includes a companion Synapse module (`alkemio_room_control.py`) that:
+
+1. **Controls room creation** — only the AppService bot can create rooms
+2. **Filters `/sync` responses** — hides rooms with `io.alkemio.visibility: {visible: false}` from Element
+3. **DM webhook** — notifies the adapter when users attempt to create DMs from Element
 
 ## Synapse AppService Registration
 

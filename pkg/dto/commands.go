@@ -56,6 +56,14 @@ const (
 	TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove"
 )
 
+// Custom state API topics (io.alkemio.* state events)
+const (
+	TopicRoomStateSet  = "communication.room.state.set"
+	TopicRoomStateGet  = "communication.room.state.get"
+	TopicSpaceStateSet = "communication.space.state.set"
+	TopicSpaceStateGet = "communication.space.state.get"
+)
+
 // TopicRoomDMRequested is the topic for DM room request events (outbound to Server).
 const TopicRoomDMRequested = "communication.room.dm.requested"
 
@@ -109,6 +117,8 @@ const (
 	TopicRoomMemberUpdated = "communication.room.member.updated"
 	// TopicRoomUpdated is the topic for room property updated events.
 	TopicRoomUpdated = "communication.room.updated"
+	// TopicSpaceUpdated is the topic for space property updated events.
+	TopicSpaceUpdated = "communication.space.updated"
 )
 
 // ============================================================================
@@ -181,6 +191,12 @@ var CommandRegistry = []CommandDef{
 	{Topic: TopicBatchUnreadCountsGet, RequestType: "BatchGetUnreadCountsRequest", ResponseType: "BatchGetUnreadCountsResponse"},
 	{Topic: TopicLastMessageGet, RequestType: "GetLastMessageRequest", ResponseType: "GetLastMessageResponse"},
 	{Topic: TopicBatchLastMessagesGet, RequestType: "BatchGetLastMessagesRequest", ResponseType: "BatchGetLastMessagesResponse"},
+
+	// Custom state API (io.alkemio.*)
+	{Topic: TopicRoomStateSet, RequestType: "SetRoomStateRequest", ResponseType: "BaseResponse"},
+	{Topic: TopicRoomStateGet, RequestType: "GetRoomStateRequest", ResponseType: "GetRoomStateResponse"},
+	{Topic: TopicSpaceStateSet, RequestType: "SetSpaceStateRequest", ResponseType: "BaseResponse"},
+	{Topic: TopicSpaceStateGet, RequestType: "GetSpaceStateRequest", ResponseType: "GetSpaceStateResponse"},
 }
 
 // OutgoingEventRegistry defines events emitted by the adapter (not commands).
@@ -201,4 +217,6 @@ var OutgoingEventRegistry = []CommandDef{
 	{Topic: TopicRoomMemberUpdated, RequestType: "", ResponseType: "RoomMemberUpdatedEvent"},
 	// Room state change events (010-room-state-events)
 	{Topic: TopicRoomUpdated, RequestType: "", ResponseType: "RoomUpdatedEvent"},
+	// Space state change events (013-space-room-params)
+	{Topic: TopicSpaceUpdated, RequestType: "", ResponseType: "SpaceUpdatedEvent"},
 }

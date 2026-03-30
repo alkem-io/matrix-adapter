@@ -73,3 +73,14 @@ type RoomUpdatedEvent struct {
 	Topic         *string       `json:"topic,omitempty"`
 	Timestamp     int64         `json:"timestamp"`
 }
+
+// SpaceUpdatedEvent is published when a space's properties change in Matrix.
+// Only populated fields represent changes; omitted fields are unchanged.
+// Topic: communication.space.updated
+type SpaceUpdatedEvent struct {
+	AlkemioContextID AlkemioContextID `json:"alkemio_context_id"`
+	DisplayName      *string          `json:"display_name,omitempty"`
+	AvatarURL        *string          `json:"avatar_url,omitempty"`
+	Topic            *string          `json:"topic,omitempty"`
+	Timestamp        int64            `json:"timestamp"`
+}

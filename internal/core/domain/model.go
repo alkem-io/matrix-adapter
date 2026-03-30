@@ -23,15 +23,16 @@ func NewActor(id uuid.UUID) Actor {
 
 // Room represents a Matrix room.
 type Room struct {
-	ID        id.RoomID
-	AlkemioID uuid.UUID // Alkemio room UUID
-	Alias     string
-	Name      string
-	Topic     string
-	AvatarURL string
-	Type      string      // "community" or "direct"
-	MemberIDs []uuid.UUID // Alkemio actor IDs
-	Messages  []Message   // For room.get operations
+	ID          id.RoomID
+	AlkemioID   uuid.UUID // Alkemio room UUID
+	Alias       string
+	Name        string
+	Topic       string
+	AvatarURL   string
+	CustomState map[string]map[string]interface{} // io.alkemio.* state events
+	Type        string                            // "community" or "direct"
+	MemberIDs   []uuid.UUID                       // Alkemio actor IDs
+	Messages    []Message                         // For room.get operations
 }
 
 // RoomWithReadState extends Room with user-specific read receipt information.
@@ -52,6 +53,7 @@ type Space struct {
 	AvatarURL        string
 	Alias            string
 	JoinRule         string
+	CustomState      map[string]map[string]interface{} // io.alkemio.* state events
 	MemberIDs        []uuid.UUID
 	Children         []SpaceChild
 	ParentContextID  *uuid.UUID
@@ -117,6 +119,16 @@ type RoomUpdatedEvent struct {
 	AvatarURL     *string
 	Topic         *string
 	Timestamp     time.Time
+}
+
+// SpaceUpdatedEvent represents a space property change event from Matrix.
+// Only populated fields represent changes; nil means "property unchanged".
+type SpaceUpdatedEvent struct {
+	AlkemioContextID uuid.UUID
+	DisplayName      *string
+	AvatarURL        *string
+	Topic            *string
+	Timestamp        time.Time
 }
 
 // MembershipEvent represents a membership change event from Matrix.

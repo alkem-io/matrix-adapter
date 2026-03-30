@@ -25,6 +25,11 @@ func NewRoomNotFoundError(msg string) dto.BaseResponse {
 	return dto.NewErrorResponse(dto.ErrCodeRoomNotFound, msg)
 }
 
+// NewSpaceNotFoundError creates an error response for space not found errors.
+func NewSpaceNotFoundError(msg string) dto.BaseResponse {
+	return dto.NewErrorResponse(dto.ErrCodeSpaceNotFound, msg)
+}
+
 // NewMessageNotFoundError creates an error response for message not found errors.
 func NewMessageNotFoundError(msg string) dto.BaseResponse {
 	return dto.NewErrorResponse(dto.ErrCodeMessageNotFound, msg)

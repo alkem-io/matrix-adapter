@@ -25,15 +25,24 @@ type MatrixPort interface {
 	SetUserProfile(ctx context.Context, actorID domain.Actor) error
 
 	// CreateRoomWithAlias creates a new Matrix room with the specified alias and initial members.
-	CreateRoomWithAlias(ctx context.Context, alkemioRoomID uuid.UUID, roomType string, name, topic, avatarURL string, initialMembers []domain.Actor) (id.RoomID, error)
+	CreateRoomWithAlias(ctx context.Context, alkemioRoomID uuid.UUID, roomType string, name, topic, avatarURL, joinRule string, customState map[string]map[string]interface{}, initialMembers []domain.Actor) (id.RoomID, error)
 	// InviteUser invites a user to a Matrix room on behalf of another user.
 	InviteUser(ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID domain.Actor) error
 	// GetRoomDetails retrieves room metadata including name, topic, and state.
 	GetRoomDetails(ctx context.Context, roomID id.RoomID) (*domain.Room, error)
 	// GetRoomMembers returns the list of member user IDs in a room.
 	GetRoomMembers(ctx context.Context, roomID id.RoomID) ([]id.UserID, error)
-	// UpdateRoomState updates a room's name, topic, avatar, and canonical alias.
-	UpdateRoomState(ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, alias string) error
+	// UpdateRoomState updates a room's name, topic, avatar, join rule, and canonical alias.
+	// nil pointers mean "no change"; non-nil (including empty string) means "set this value".
+	UpdateRoomState(ctx context.Context, roomID id.RoomID, actorID domain.Actor, name, topic, avatarURL, joinRule *string) error
+
+	// SetRoomDirectoryVisibility sets whether a room appears in the public room directory.
+	SetRoomDirectoryVisibility(ctx context.Context, roomID id.RoomID, isPublic bool) error
+	// SetCustomState sets custom io.alkemio.* state events on a room.
+	SetCustomState(ctx context.Context, roomID id.RoomID, state map[string]map[string]interface{}) error
+	// GetCustomState retrieves io.alkemio.* state events from a room.
+	// If eventTypes is empty, returns all io.alkemio.* state events.
+	GetCustomState(ctx context.Context, roomID id.RoomID, eventTypes []string) (map[string]map[string]interface{}, error)
 
 	// ResolveAlias resolves a room alias to a room ID.
 	ResolveAlias(ctx context.Context, alias string) (id.RoomID, error)
@@ -98,7 +107,8 @@ type MatrixPort interface {
 	GetSpaceMembers(ctx context.Context, roomID id.RoomID) ([]id.UserID, error)
 
 	// UpdateSpaceState updates space name, topic, avatar, or join rule.
-	UpdateSpaceState(ctx context.Context, roomID id.RoomID, name, topic, avatarURL, joinRule string) error
+	// nil pointers mean "no change"; non-nil (including empty string) means "set this value".
+	UpdateSpaceState(ctx context.Context, roomID id.RoomID, name, topic, avatarURL, joinRule *string) error
 
 	// GetSpaceChildren returns child rooms and subspaces of a space.
 	GetSpaceChildren(ctx context.Context, roomID id.RoomID) ([]domain.SpaceChild, error)

@@ -20,13 +20,15 @@ type SpaceChildDto struct {
 // CreateSpaceRequest creates a new Matrix Space for an Alkemio context.
 // Topic: communication.space.create
 type CreateSpaceRequest struct {
-	AlkemioContextID AlkemioContextID  `json:"alkemio_context_id"`
-	Name             string            `json:"name"`
-	Topic            string            `json:"topic,omitempty"`
-	AvatarURL        string            `json:"avatar_url,omitempty"`
-	ParentContextID  *AlkemioContextID `json:"parent_context_id,omitempty"`
-	JoinRule         JoinRule          `json:"join_rule,omitempty"`
-	InitialMembers   []AlkemioActorID  `json:"initial_members,omitempty"`
+	AlkemioContextID AlkemioContextID                  `json:"alkemio_context_id"`
+	Name             string                            `json:"name"`
+	Topic            string                            `json:"topic,omitempty"`
+	AvatarURL        string                            `json:"avatar_url,omitempty"`
+	ParentContextID  *AlkemioContextID                 `json:"parent_context_id,omitempty"`
+	JoinRule         JoinRule                          `json:"join_rule,omitempty"`
+	InitialMembers   []AlkemioActorID                  `json:"initial_members,omitempty"`
+	IsPublic         *bool                             `json:"is_public,omitempty"`    // Room directory visibility
+	CustomState      map[string]map[string]interface{} `json:"custom_state,omitempty"` // io.alkemio.* state events to set on creation
 }
 
 // ============================================================================
@@ -42,14 +44,15 @@ type GetSpaceRequest struct {
 // GetSpaceResponse returns space details.
 type GetSpaceResponse struct {
 	BaseResponse     `tstype:",extends"`
-	AlkemioContextID AlkemioContextID  `json:"alkemio_context_id"`
-	DisplayName      string            `json:"display_name"`
-	Topic            string            `json:"topic,omitempty"`
-	AvatarURL        string            `json:"avatar_url,omitempty"`
-	JoinRule         JoinRule          `json:"join_rule"`
-	MemberActorIDs   []AlkemioActorID  `json:"member_actor_ids"`
-	Children         []SpaceChildDto   `json:"children"`
-	ParentContextID  *AlkemioContextID `json:"parent_context_id,omitempty"`
+	AlkemioContextID AlkemioContextID                  `json:"alkemio_context_id"`
+	DisplayName      string                            `json:"display_name"`
+	Topic            string                            `json:"topic,omitempty"`
+	AvatarURL        string                            `json:"avatar_url,omitempty"`
+	JoinRule         JoinRule                          `json:"join_rule"`
+	CustomState      map[string]map[string]interface{} `json:"custom_state,omitempty"` // io.alkemio.* state events
+	MemberActorIDs   []AlkemioActorID                  `json:"member_actor_ids"`
+	Children         []SpaceChildDto                   `json:"children"`
+	ParentContextID  *AlkemioContextID                 `json:"parent_context_id,omitempty"`
 }
 
 // ============================================================================
@@ -59,11 +62,13 @@ type GetSpaceResponse struct {
 // UpdateSpaceRequest updates space metadata.
 // Topic: communication.space.update
 type UpdateSpaceRequest struct {
-	AlkemioContextID AlkemioContextID `json:"alkemio_context_id"`
-	Name             *string          `json:"name,omitempty"`
-	Topic            *string          `json:"topic,omitempty"`
-	AvatarURL        *string          `json:"avatar_url,omitempty"`
-	JoinRule         *JoinRule        `json:"join_rule,omitempty"`
+	AlkemioContextID AlkemioContextID                  `json:"alkemio_context_id"`
+	Name             *string                           `json:"name,omitempty"`
+	Topic            *string                           `json:"topic,omitempty"`
+	AvatarURL        *string                           `json:"avatar_url,omitempty"`
+	JoinRule         *JoinRule                         `json:"join_rule,omitempty"`
+	IsPublic         *bool                             `json:"is_public,omitempty"`    // Room directory visibility
+	CustomState      map[string]map[string]interface{} `json:"custom_state,omitempty"` // io.alkemio.* state events to set
 }
 
 // ============================================================================
