@@ -1,11 +1,10 @@
-# Implementation Plan: Wire joinRule for Rooms & Remove isPublic
+# Implementation Plan: Space & Room Parameters, Bot Architecture, Custom State
 
-**Branch**: `013-space-room-params` | **Date**: 2026-03-25 | **Spec**: [spec.md](spec.md)
-**Input**: Feature specification from `/specs/013-space-room-params/spec.md`
+**Branch**: `013-space-room-params` | **Date**: 2026-03-25 | **Updated**: 2026-03-30 | **Spec**: [spec.md](spec.md)
 
 ## Summary
 
-Wire the existing `joinRule` DTO field end-to-end for `createRoom` and `updateRoom` operations (matching the already-working space pattern), and remove the redundant, never-implemented `isPublic` field from `UpdateRoomRequest`. The implementation follows the exact pattern used by space operations — adding `joinRule` as a parameter through handler → service → port → adapter layers, and applying it as a Matrix `m.room.join_rules` state event.
+Originally scoped to wire `joinRule` for rooms, this feature grew to include directory visibility, bot architecture changes, custom state API, sync filtering, and a dedicated Synapse admin client. The implementation touched most of the adapter's infrastructure layer.
 
 ## Technical Context
 
@@ -15,64 +14,51 @@ Wire the existing `joinRule` DTO field end-to-end for `createRoom` and `updateRo
 **Testing**: Go `testing` package, `testify`
 **Target Platform**: Linux server (Docker container)
 **Project Type**: web-service (message-driven adapter)
-**Performance Goals**: N/A (no performance-sensitive changes)
-**Constraints**: Must not break existing space joinRule handling; isPublic removal is a breaking DTO change
-**Scale/Scope**: 5 files modified, ~50 lines changed
+**Scale/Scope**: ~20 files modified, ~2000 lines changed
 
-## Constitution Check
-
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| 1. Adapter-First Domain Isolation | PASS | All Matrix SDK interactions remain in `internal/infrastructure/matrix`. joinRule is passed as a plain string through service/port layers. |
-| 2. Event-Driven State Synchronization | PASS | No changes to event flow. joinRule is set during room creation/update via state events. |
-| 3. Microservice Contract Stability | PASS with note | Removing `isPublic` is a breaking change, but the field was never implemented (silently ignored). No callers depend on it. `joinRule` already exists in the DTO. |
-| 4. Matrix Client Lifecycle Management | PASS | No client lifecycle changes. |
-| 5. Observability with Matrix Context | PASS | Existing logging patterns preserved. |
-| 6. Pragmatic Testing with SDK Boundaries | PASS | Unit tests will mock MatrixPort interface. |
-| 7. Go Service as Source of Truth | PASS | DTO changes in Go, TS lib regenerated via `make generate`. |
-| 8. Secure Matrix Credential Management | PASS | No credential handling changes. |
-| 9. Container Determinism | PASS | No build/config changes. |
-| 10. Simplicity and Matrix API Coverage | PASS | Wiring an existing, unused DTO field — not adding new Matrix API surface. |
-
-## Project Structure
-
-### Documentation (this feature)
-
-```text
-specs/013-space-room-params/
-├── spec.md
-├── plan.md              # This file
-├── research.md          # Phase 0 output
-├── data-model.md        # Phase 1 output
-├── contracts/           # Phase 1 output
-│   └── dto-changes.md
-└── tasks.md             # Phase 2 output (via /speckit.tasks)
-```
-
-### Source Code (files to modify)
+## Source Code Structure
 
 ```text
 pkg/dto/
-└── room.go                          # Remove isPublic from UpdateRoomRequest
+├── room.go                          # joinRule wiring, isPublic, customState on create/update/get
+├── space.go                         # isPublic, customState on create/update/get
+├── state.go                         # NEW: SetRoomState/GetRoomState, SetSpaceState/GetSpaceState DTOs
+├── event.go                         # SpaceUpdatedEvent
+└── commands.go                      # New topics: state.set/get, space.updated
 
 internal/core/
-├── ports/
-│   └── matrix.go                    # Add joinRule param to CreateRoomWithAlias, UpdateRoomState
+├── domain/model.go                  # CustomState on Room/Space, SpaceUpdatedEvent
+├── ports/matrix.go                  # Updated signatures, SetCustomState/GetCustomState, SetRoomDirectoryVisibility
 └── service/
-    └── room_service.go              # Add joinRule to CreateRoomWithAlkemioID, UpdateRoomMetadata
+    ├── room_service.go              # joinRule, isPublic, customState, pointer semantics
+    ├── space_service.go             # isPublic, customState
+    └── event_service.go             # HandleSpaceUpdated
 
 internal/infrastructure/
 ├── matrix/
-│   └── mautrix.go                   # Add joinRule handling to CreateRoomWithAlias, UpdateRoomState
+│   ├── mautrix.go                   # Bot architecture, ghost intents, admin API migration
+│   ├── synapse_admin.go             # NEW: Encapsulated Synapse Admin API client
+│   └── listener.go                  # parseStateChange, isSpaceRoom via admin, space event routing
 └── queue/
-    └── handler_room.go              # Pass joinRule from DTO to service calls
+    ├── handler_room.go              # State handlers, AliasResolver
+    ├── handler_space.go             # State handlers, AliasResolver
+    ├── resolver.go                  # NEW: Shared AliasResolver
+    ├── router.go                    # New state routes
+    ├── topics.go                    # New topic constants
+    └── errors.go                    # NewSpaceNotFoundError
 
-lib/src/dto/
-└── generated.ts                     # Regenerated via make generate
+internal/config/config.go            # BotDisplayName, RegistrationSecret
 ```
 
-## Complexity Tracking
+## Key Architectural Decisions
 
-No constitution violations. No complexity justification needed.
+| Decision | Rationale |
+|----------|-----------|
+| Bot leaves rooms, stays in spaces | Avoids bot appearing in DM member lists; spaces need bot for hierarchy ops |
+| All reads via Synapse Admin API | Bot not in rooms; admin API doesn't require membership |
+| Writes via ghost user (highest PL) | Can't write state without membership; ghost with highest PL has best chance |
+| Admin bootstrap via shared secret | Zero-touch deployment; bot self-promotes at startup |
+| Custom state as InitialState | Visibility filtering active before members join (prevents /sync leak) |
+| No invite events | Ghost users join directly; prevents Element notification for hidden rooms |
+| SynapseAdmin encapsulation | All admin API calls in one place; forbidden to use bare HTTP elsewhere |
+| Shared AliasResolver | Eliminates DRY violation across handlers |

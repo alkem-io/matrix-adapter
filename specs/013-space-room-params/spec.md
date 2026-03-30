@@ -1,96 +1,107 @@
-# Feature Specification: Wire joinRule for Rooms & Remove isPublic
+# Feature Specification: Space & Room Parameters, Bot Architecture, Custom State
 
 **Feature Branch**: `013-space-room-params`
 **Created**: 2026-03-25
-**Status**: Draft
-**Input**: User description: "Wire joinRule end-to-end for createRoom and updateRoom (matching spaces), and remove the redundant isPublic field from UpdateRoomRequest."
+**Updated**: 2026-03-30
+**Status**: Implemented
 
-## User Scenarios & Testing *(mandatory)*
+## Overview
 
-### User Story 1 - Create a Room with Controlled Visibility (Priority: P1)
+This feature encompasses a series of interconnected changes to the Matrix adapter:
 
-An Alkemio user creates a new room and specifies its visibility via the `joinRule` parameter (e.g., `public` or `invite`). The system creates the corresponding Matrix room with the correct join rule.
+1. **joinRule wiring** for rooms (matching spaces)
+2. **isPublic** (directory visibility) for rooms and spaces
+3. **Bot architecture overhaul** — bot leaves rooms, operates as server admin
+4. **Custom state API** — generic `io.alkemio.*` state events
+5. **Sync visibility filtering** — Synapse module hides rooms from Element
+6. **SynapseAdmin client** — encapsulated admin API operations
+7. **Bot display name** and **admin bootstrap** on startup
 
-**Why this priority**: The `joinRule` field already exists in the CreateRoomRequest DTO but is silently ignored — wiring it through is the highest-value fix.
+## Changes Summary
 
-**Independent Test**: Can be fully tested by sending a createRoom command with `join_rule: "public"` and verifying the resulting Matrix room has a public join rule; repeat with `join_rule: "invite"` and verify invite-only.
+### 1. joinRule End-to-End for Rooms
 
-**Acceptance Scenarios**:
+Wire the existing `joinRule` DTO field through handler → service → port → adapter for both `createRoom` and `updateRoom`. For DM rooms, `joinRule` is ignored (always private).
 
-1. **Given** a createRoom request with `joinRule` set to `public`, **When** the room is created, **Then** the Matrix room has join rule `public`.
-2. **Given** a createRoom request with `joinRule` set to `invite`, **When** the room is created, **Then** the Matrix room has join rule `invite`.
-3. **Given** a createRoom request with `joinRule` omitted, **When** the room is created, **Then** the system uses the existing default behavior (preset-based).
-4. **Given** a createRoom request for a direct-message room with `joinRule` set to `public`, **When** the room is created, **Then** the `joinRule` is ignored and the room remains private.
+### 2. isPublic (Directory Visibility)
 
----
+Add `is_public` parameter to all create/update room/space operations. Controls whether a room appears in Matrix's public room directory ("Explore rooms" in Element). Uses `PUT /_matrix/client/v3/directory/list/room/{roomId}`. Requires `room_list_publication_rules` in Synapse config to allow the bot.
 
-### User Story 2 - Update a Room's Visibility (Priority: P1)
+### 3. Bot Architecture
 
-An Alkemio administrator updates an existing room's visibility by changing its `joinRule`.
+- **Bot leaves rooms after creation** — stays only in spaces
+- **Bot is Synapse server admin** — required for reading room state/aliases/messages without membership
+- **Admin bootstrap** — auto-promotes bot via shared secret registration at startup
+- **Ghost user intents** — writes (state events, kicks) use the ghost user with highest power level
+- **No invite events** — ghost users join directly via `EnsureJoined` (no invite notification)
 
-**Why this priority**: Equally important — rooms need to change visibility over time, and the current updateRoom handler does not pass `joinRule` through to Matrix.
+### 4. Custom State API (`io.alkemio.*`)
 
-**Independent Test**: Can be tested by sending an updateRoom command with `join_rule: "public"` on a private room and verifying the Matrix room join rule changes.
+Generic API for setting/getting custom state events on rooms and spaces:
+- `custom_state` map on create/update requests
+- `custom_state` returned in get responses
+- Standalone endpoints: `communication.room.state.set/get`, `communication.space.state.set/get`
+- Only `io.alkemio.*` prefixed event types are allowed
 
-**Acceptance Scenarios**:
+### 5. Sync Visibility Filtering
 
-1. **Given** an existing private room and an updateRoom request with `joinRule` set to `public`, **When** the update is processed, **Then** the Matrix room join rule changes to `public`.
-2. **Given** an existing public room and an updateRoom request with `joinRule` set to `invite`, **When** the update is processed, **Then** the Matrix room join rule changes to `invite`.
-3. **Given** an updateRoom request with `joinRule` omitted, **When** the update is processed, **Then** the room's join rule remains unchanged.
+Synapse module (`alkemio_room_control.py`) monkey-patches `SyncHandler.get_sync_result_builder` to:
+- Hide rooms with `io.alkemio.visibility: {visible: false}` from `/sync`
+- Exempt the bot user (sees all rooms)
+- Custom state is set as `InitialState` at room creation (before members join)
 
----
+### 6. SynapseAdmin Client
 
-### User Story 3 - Remove isPublic from UpdateRoomRequest (Priority: P2)
+Encapsulated Synapse Admin API operations in `internal/infrastructure/matrix/synapse_admin.go`:
+- User operations: GetUser, SetUserAdmin, DeactivateUser
+- Room operations: ListRooms, GetRoomMembers, GetRoomState, GetRoomMessages, GetEvent, GetRelations
+- Registration: GetRegistrationNonce, RegisterWithMAC
+- All room reads migrated from BotIntent to admin API
 
-The `isPublic` field is removed from the UpdateRoomRequest DTO since `joinRule` is the consistent, more expressive mechanism used across all space and room operations.
+### 7. Additional Changes
 
-**Why this priority**: Cleanup that removes a redundant, never-implemented field. Lower priority than wiring joinRule, but important for API consistency.
+- **Bot display name**: `MATRIX_BOT_DISPLAY_NAME` env var (default: "Alkemio")
+- **COMMUNICATION_SPACE_UPDATED** event for space property changes (separate from room updates)
+- **Pointer semantics** for update operations: `nil` = no change, `""` = clear value
+- **No canonical alias** on rooms — aliases are for internal lookups only
+- **Startup cleanup**: redact canonical aliases, bot leaves non-space rooms
+- **Shared AliasResolver** for DRY handler code
+- **Removed pgx dependency** and broken `cmd/fix-canonical-aliases`
 
-**Independent Test**: Can be verified by confirming the `is_public` field no longer appears in the Go DTO or generated TypeScript interface, and that existing callers use `join_rule` instead.
+## New Environment Variables
 
-**Acceptance Scenarios**:
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MATRIX_BOT_DISPLAY_NAME` | Bot display name in Matrix | `Alkemio` |
+| `SYNAPSE_SERVER_SHARED_SECRET` | Synapse registration_shared_secret for admin bootstrap | - |
 
-1. **Given** the UpdateRoomRequest DTO, **When** inspected, **Then** the `isPublic` / `is_public` field no longer exists.
-2. **Given** the generated TypeScript library, **When** regenerated, **Then** `UpdateRoomRequest` no longer includes `is_public`.
+## New API Topics
 
----
+| Topic | Direction | Description |
+|-------|-----------|-------------|
+| `communication.room.state.set` | Command | Set io.alkemio.* state on a room |
+| `communication.room.state.get` | Command | Get io.alkemio.* state from a room |
+| `communication.space.state.set` | Command | Set io.alkemio.* state on a space |
+| `communication.space.state.get` | Command | Get io.alkemio.* state from a space |
+| `communication.space.updated` | Event | Space property change (name, avatar, topic) |
 
-### Edge Cases
+## Synapse Configuration Requirements
 
-- What happens when `joinRule` is set on a direct-message room at creation? Direct-message rooms ignore the `joinRule` and always use `trusted_private_chat` preset.
-- What happens when an unsupported `joinRule` value is provided? The system passes it to Matrix, which will return an error. The adapter wraps the Matrix error with context (room ID, attempted join rule) and returns it to the caller via the standard error response format. The error is logged with structured context per existing adapter patterns.
+```yaml
+# Allow bot to publish rooms to directory
+room_list_publication_rules:
+  - user_id: "@00000000-0000-0000-0000-000000000000:your.domain"
+    action: allow
+  - action: deny
 
-## Requirements *(mandatory)*
+# Required for admin bootstrap (optional if bot is manually set as admin)
+registration_shared_secret: "your-secret"
+```
 
-### Functional Requirements
+## Architecture Rules Added
 
-- **FR-001**: The createRoom handler MUST pass the `joinRule` field from the DTO through the service layer to the Matrix adapter.
-- **FR-002**: The updateRoom handler MUST pass the `joinRule` field from the DTO through the service layer to the Matrix adapter.
-- **FR-003**: The Matrix adapter MUST apply the `joinRule` as a state event when creating a room (if provided).
-- **FR-004**: The Matrix adapter MUST update the join rule state event when updating a room (if provided).
-- **FR-005**: When `joinRule` is omitted, the system MUST preserve existing default behavior.
-- **FR-006**: The `joinRule` MUST be ignored for direct-message rooms, which always remain private.
-- **FR-007**: The `isPublic` field MUST be removed from UpdateRoomRequest DTO.
-- **FR-008**: The generated TypeScript library MUST be regenerated to reflect the DTO change.
-- **FR-009**: Existing space operations (createSpace, updateSpace) MUST remain unaffected — they already handle `joinRule` correctly.
-
-### Key Entities
-
-- **Room**: A Matrix room representing an Alkemio communication channel. Its `joinRule` parameter is now wired end-to-end for both creation and update.
-- **JoinRule**: The Matrix concept (`public`, `invite`, `restricted`) controlling room/space visibility. Used consistently across all operations.
-
-## Success Criteria *(mandatory)*
-
-### Measurable Outcomes
-
-- **SC-001**: createRoom correctly applies `joinRule` end-to-end, from request through to Matrix room state.
-- **SC-002**: updateRoom correctly applies `joinRule` end-to-end, from request through to Matrix room state.
-- **SC-003**: The `isPublic` field no longer exists in the UpdateRoomRequest DTO or generated TypeScript.
-- **SC-004**: Unit tests cover joinRule handling for createRoom and updateRoom (present, absent, direct-message override).
-- **SC-005**: Existing space joinRule handling remains functional and unmodified.
-
-## Assumptions
-
-- The `joinRule` field already exists in both CreateRoomRequest and UpdateRoomRequest DTOs — no DTO additions needed, only wiring through handler/service/adapter layers.
-- Removing `isPublic` from UpdateRoomRequest is a breaking change for any callers currently sending that field. Since the field was never implemented (silently ignored), this is considered safe.
-- Space operations (createSpace, updateSpace) already handle `joinRule` correctly end-to-end and require no changes.
+- All Synapse Admin API calls MUST go through `SynapseAdmin` (`synapse_admin.go`)
+- Bare HTTP requests to `/_synapse/admin/` are forbidden outside this package
+- Bot MUST NOT be a member of non-space rooms (leaves after setup)
+- All room state reads use admin API (no BotIntent.StateEvent)
+- Room state writes use ghost user with highest power level

@@ -1,68 +1,116 @@
-# Data Model: Wire joinRule for Rooms & Remove isPublic
+# Data Model: 013-space-room-params
 
-**Date**: 2026-03-25
+**Updated**: 2026-03-30
 
-## DTO Changes
+## Domain Model Changes
 
-### UpdateRoomRequest — Remove isPublic
+### Room — added CustomState
 
-**Before**:
-```
-UpdateRoomRequest {
-  AlkemioRoomID  AlkemioRoomID
-  Name           *string
-  Topic          *string
-  IsPublic       *bool          ← REMOVE
-  AvatarURL      *string
-  JoinRule       *JoinRule      ← already exists, will be wired
+```go
+type Room struct {
+    ID          id.RoomID
+    AlkemioID   uuid.UUID
+    Alias       string
+    Name        string
+    Topic       string
+    AvatarURL   string
+    CustomState map[string]map[string]interface{} // io.alkemio.* state events
+    Type        string
+    MemberIDs   []uuid.UUID
+    Messages    []Message
 }
 ```
 
-**After**:
-```
-UpdateRoomRequest {
-  AlkemioRoomID  AlkemioRoomID
-  Name           *string
-  Topic          *string
-  AvatarURL      *string
-  JoinRule       *JoinRule      ← now wired end-to-end
+### Space — added CustomState
+
+```go
+type Space struct {
+    ID               id.RoomID
+    AlkemioContextID uuid.UUID
+    Name             string
+    Topic            string
+    AvatarURL        string
+    Alias            string
+    JoinRule         string
+    CustomState      map[string]map[string]interface{} // io.alkemio.* state events
+    MemberIDs        []uuid.UUID
+    Children         []SpaceChild
+    ParentContextID  *uuid.UUID
 }
 ```
 
-### CreateRoomRequest — No DTO changes
+### SpaceUpdatedEvent — new
 
-Already has `JoinRule JoinRule` field. Only handler/service/adapter wiring needed.
+```go
+type SpaceUpdatedEvent struct {
+    AlkemioContextID uuid.UUID
+    DisplayName      *string
+    AvatarURL        *string
+    Topic            *string
+    Timestamp        time.Time
+}
+```
 
 ## Interface Changes
 
-### MatrixPort (ports/matrix.go)
+### MatrixPort
 
-**CreateRoomWithAlias** — add `joinRule string` parameter:
 ```
-Before: CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, initialMembers)
-After:  CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, joinRule, initialMembers)
-```
+CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, joinRule string,
+                    customState map[string]map[string]interface{}, initialMembers []domain.Actor) (id.RoomID, error)
 
-**UpdateRoomState** — add `joinRule string` parameter:
-```
-Before: UpdateRoomState(ctx, roomID, actorID, name, topic, avatarURL, alias)
-After:  UpdateRoomState(ctx, roomID, actorID, name, topic, avatarURL, joinRule, alias)
-```
+UpdateRoomState(ctx, roomID, actorID, name, topic, avatarURL, joinRule *string) error
 
-## Service Signature Changes
+UpdateSpaceState(ctx, roomID, name, topic, avatarURL, joinRule *string) error
 
-### RoomService.CreateRoomWithAlkemioID — add `joinRule string`:
-```
-Before: (ctx, alkemioRoomID, roomType, name, topic, avatarURL, initialMembers)
-After:  (ctx, alkemioRoomID, roomType, name, topic, avatarURL, joinRule, initialMembers)
+SetRoomDirectoryVisibility(ctx, roomID, isPublic bool) error
+SetCustomState(ctx, roomID, state map[string]map[string]interface{}) error
+GetCustomState(ctx, roomID, eventTypes []string) (map[string]map[string]interface{}, error)
+SetRoomSyncVisibility — REMOVED (replaced by generic SetCustomState)
 ```
 
-### RoomService.UpdateRoomMetadata — replace `isPublic *bool` with `joinRule *string`:
+### SynapseAdmin (new)
+
 ```
-Before: (ctx, alkemioRoomID, name, topic, avatarURL, isPublic)
-After:  (ctx, alkemioRoomID, name, topic, avatarURL, joinRule)
+GetUser(ctx, userID) (*UserInfo, error)
+SetUserAdmin(ctx, userID, admin bool) error
+DeactivateUser(ctx, userID, erase bool) error
+GetRegistrationNonce(ctx) (string, error)
+RegisterWithMAC(ctx, nonce, username, password, mac string, admin bool) (string, error)
+ListRooms(ctx, limit int) ([]AdminRoom, error)
+GetRoomMembers(ctx, roomID) ([]string, error)
+GetRoomMemberIDs(ctx, roomID) ([]id.UserID, error)
+GetRoomState(ctx, roomID, eventType string) ([]json.RawMessage, error)
+GetStateEventContent(ctx, roomID, eventType string) (map[string]interface{}, error)
+GetCustomState(ctx, roomID, eventTypes []string) (map[string]map[string]interface{}, error)
+GetRoomMessages(ctx, roomID, from, dir string, limit int) (*mautrix.RespMessages, error)
+GetEvent(ctx, roomID, eventID) (*event.Event, error)
+GetEventContext(ctx, roomID, eventID) (*mautrix.RespContext, error)
+GetRelations(ctx, roomID, eventID, relType, eventType) ([]*event.Event, error)
+GetTimestampToEvent(ctx, roomID, ts int64, dir string) (id.EventID, error)
+JoinRoom(ctx, roomID, userID) error
 ```
 
-## No Domain Model Changes
+## Startup Flow
 
-The `Room` domain model in `internal/core/domain/model.go` does not need a `JoinRule` field — joinRule is applied as a Matrix state event during creation/update and is not stored in the adapter's domain model.
+```
+1. waitForSynapse()          — retry until Synapse responds
+2. ensureBotAdmin()          — check/bootstrap admin status
+   ├─ already admin? → done
+   ├─ has shared secret? → register bot as admin / temp admin bootstrap
+   └─ no secret → warn with SQL instructions
+3. Start appservice
+4. redactCanonicalAliases()  — migration cleanup
+5. leaveBotFromNonSpaceRooms() — bot exits non-space rooms
+6. Set bot display name
+7. Connect to RabbitMQ
+```
+
+## Bot Membership Rules
+
+| Room Type | Bot Membership | State Reads | State Writes |
+|-----------|---------------|-------------|-------------|
+| Space | Stays as member | Admin API | BotIntent |
+| Room (with members) | Leaves after creation | Admin API | Ghost user (highest PL) |
+| Room (no members) | Stays until first member joins | Admin API | BotIntent |
+| DM Room | Leaves after creation | Admin API | Ghost user |
