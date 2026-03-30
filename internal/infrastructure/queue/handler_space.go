@@ -7,19 +7,24 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
 
 // SpaceHandler handles queue messages related to space operations.
 type SpaceHandler struct {
-	service *service.SpaceService
+	service  *service.SpaceService
+	matrix   ports.MatrixPort
+	resolver *AliasResolver
 }
 
 // NewSpaceHandler creates a new instance of SpaceHandler.
-func NewSpaceHandler(service *service.SpaceService) *SpaceHandler {
+func NewSpaceHandler(service *service.SpaceService, matrix ports.MatrixPort, idMapper *domain.IDMapper) *SpaceHandler {
 	return &SpaceHandler{
-		service: service,
+		service:  service,
+		matrix:   matrix,
+		resolver: NewAliasResolver(matrix, idMapper),
 	}
 }
 
@@ -64,6 +69,8 @@ func (h *SpaceHandler) HandleCreateSpace(ctx context.Context, payload []byte) (i
 		req.Topic,
 		req.AvatarURL,
 		string(req.JoinRule),
+		req.IsPublic,
+		req.CustomState,
 		parentContextID,
 		initialMembers,
 	)
@@ -118,6 +125,7 @@ func (h *SpaceHandler) HandleGetSpace(ctx context.Context, payload []byte) (inte
 		Topic:            space.Topic,
 		AvatarURL:        space.AvatarURL,
 		JoinRule:         dto.JoinRule(space.JoinRule),
+		CustomState:      space.CustomState,
 		MemberActorIDs:   memberActorIDs,
 		Children:         children,
 		ParentContextID:  parentContextID,
@@ -149,6 +157,8 @@ func (h *SpaceHandler) HandleUpdateSpace(ctx context.Context, payload []byte) (i
 		req.Topic,
 		req.AvatarURL,
 		joinRule,
+		req.IsPublic,
+		req.CustomState,
 	)
 	if err != nil {
 		return MapServiceError(err), nil
@@ -312,5 +322,60 @@ func (h *SpaceHandler) HandleBatchRemoveSpaceMember(ctx context.Context, payload
 	return dto.BatchRemoveSpaceMemberResponse{
 		BaseResponse: dto.NewSuccessResponse(),
 		Results:      results,
+	}, nil
+}
+
+// ============================================================================
+// Custom State Handlers (communication.space.state.*)
+// ============================================================================
+
+// HandleSetSpaceState handles communication.space.state.set topic.
+func (h *SpaceHandler) HandleSetSpaceState(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.SetSpaceStateRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.AlkemioContextID, "alkemio_context_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	roomID, errResp := h.resolver.ResolveSpace(ctx, req.AlkemioContextID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	if err := h.matrix.SetCustomState(ctx, roomID, req.State); err != nil {
+		return MapServiceError(err), nil
+	}
+
+	return dto.NewSuccessResponse(), nil
+}
+
+// HandleGetSpaceState handles communication.space.state.get topic.
+func (h *SpaceHandler) HandleGetSpaceState(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.GetSpaceStateRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.AlkemioContextID, "alkemio_context_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	roomID, errResp := h.resolver.ResolveSpace(ctx, req.AlkemioContextID)
+	if errResp != nil {
+		return *errResp, nil
+	}
+
+	state, err := h.matrix.GetCustomState(ctx, roomID, req.EventTypes)
+	if err != nil {
+		return MapServiceError(err), nil
+	}
+
+	return dto.GetSpaceStateResponse{
+		BaseResponse:     dto.NewSuccessResponse(),
+		AlkemioContextID: req.AlkemioContextID,
+		State:            state,
 	}, nil
 }

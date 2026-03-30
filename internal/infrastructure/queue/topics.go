@@ -96,4 +96,10 @@ const (
 	TopicRoomCreated = dto.TopicRoomCreated
 	// TopicRoomMemberUpdated is the topic for room member updated events.
 	TopicRoomMemberUpdated = dto.TopicRoomMemberUpdated
+
+	// Custom State Topics (io.alkemio.* state events)
+	TopicRoomStateSet  = dto.TopicRoomStateSet
+	TopicRoomStateGet  = dto.TopicRoomStateGet
+	TopicSpaceStateSet = dto.TopicSpaceStateSet
+	TopicSpaceStateGet = dto.TopicSpaceStateGet
 )

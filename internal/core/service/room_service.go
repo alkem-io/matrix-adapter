@@ -38,7 +38,9 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	ctx context.Context,
 	alkemioRoomID uuid.UUID,
 	roomType string,
-	name, topic, avatarURL string,
+	name, topic, avatarURL, joinRule string,
+	isPublic *bool,
+	customState map[string]map[string]interface{},
 	initialMembers []domain.Actor,
 ) error {
 	s.logger.Info(
@@ -96,10 +98,25 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 		}
 	}
 
-	// Create the room with alias
-	_, err = s.matrix.CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, initialMembers)
+	// For direct-message rooms, ignore joinRule — they always remain private
+	effectiveJoinRule := joinRule
+	if roomType == "direct" {
+		effectiveJoinRule = ""
+	}
+
+	// Create the room with alias (custom state is included as initial state
+	// so visibility filtering is active before members are invited)
+	roomID, err := s.matrix.CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, effectiveJoinRule, customState, initialMembers)
 	if err != nil {
 		return fmt.Errorf("failed to create room: %w", err)
+	}
+
+	// Set directory visibility if specified
+	if isPublic != nil {
+		if err := s.matrix.SetRoomDirectoryVisibility(ctx, roomID, *isPublic); err != nil {
+			s.logger.Warn("Failed to set room directory visibility",
+				"alkemio_room_id", alkemioRoomID, "is_public", *isPublic, "error", err)
+		}
 	}
 
 	s.logger.Info("Room created successfully", "alkemio_room_id", alkemioRoomID)
@@ -222,13 +239,14 @@ func (s *RoomService) GetRoomAsUser(
 	}, nil
 }
 
-// UpdateRoomMetadata updates room name, topic, avatar, and visibility.
-// Note: isPublic is accepted but not yet implemented (reserved for future use).
+// UpdateRoomMetadata updates room name, topic, avatar, join rule, and directory visibility.
 func (s *RoomService) UpdateRoomMetadata(
 	ctx context.Context,
 	alkemioRoomID uuid.UUID,
 	name, topic, avatarURL *string,
-	_ *bool, // isPublic - reserved for future visibility control
+	joinRule *string,
+	isPublic *bool,
+	customState map[string]map[string]interface{},
 ) error {
 	s.logger.Info("Updating room metadata", "alkemio_room_id", alkemioRoomID)
 
@@ -239,24 +257,28 @@ func (s *RoomService) UpdateRoomMetadata(
 		return domain.NewRoomNotFoundError(alkemioRoomID.String())
 	}
 
-	// Use bot to update room state
-	var nameVal, topicVal, avatarVal string
-	if name != nil {
-		nameVal = *name
-	}
-	if topic != nil {
-		topicVal = *topic
-	}
-	if avatarURL != nil {
-		avatarVal = *avatarURL
-	}
-
 	// We need a dummy actor for the update - use the bot
 	botActor := domain.Actor{}
 
-	err = s.matrix.UpdateRoomState(ctx, roomID, botActor, nameVal, topicVal, avatarVal, "")
+	err = s.matrix.UpdateRoomState(ctx, roomID, botActor, name, topic, avatarURL, joinRule)
 	if err != nil {
 		return fmt.Errorf("failed to update room: %w", err)
+	}
+
+	// Set directory visibility if specified
+	if isPublic != nil {
+		if err := s.matrix.SetRoomDirectoryVisibility(ctx, roomID, *isPublic); err != nil {
+			s.logger.Warn("Failed to set room directory visibility",
+				"alkemio_room_id", alkemioRoomID, "is_public", *isPublic, "error", err)
+		}
+	}
+
+	// Set custom io.alkemio.* state events if specified
+	if len(customState) > 0 {
+		if err := s.matrix.SetCustomState(ctx, roomID, customState); err != nil {
+			s.logger.Warn("Failed to set custom state on room",
+				"alkemio_room_id", alkemioRoomID, "error", err)
+		}
 	}
 
 	return nil

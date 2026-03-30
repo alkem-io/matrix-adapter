@@ -92,7 +92,9 @@ Implement only Matrix features explicitly required by Alkemio platform use cases
 
 2. **Matrix SDK Encapsulation**: Direct `mautrix-go` imports are ONLY permitted in `internal/infrastructure/matrix`. All other code must use domain ports.
 
-3. **Error Handling**: Matrix SDK errors MUST map to application error codes defined in `pkg/dto` or domain errors. Generic `error` propagation across the microservice boundary is forbidden without context.
+3. **Synapse Admin API Encapsulation**: All Synapse Admin API calls MUST go through `SynapseAdmin` (`internal/infrastructure/matrix/synapse_admin.go`). Bare HTTP requests to `/_synapse/admin/` endpoints are forbidden outside this package. The only exception is the shared secret registration endpoint (`/_synapse/admin/v1/register`) which uses HMAC authentication instead of admin tokens.
+
+4. **Error Handling**: Matrix SDK errors MUST map to application error codes defined in `pkg/dto` or domain errors. Generic `error` propagation across the microservice boundary is forbidden without context.
 
 4. **Configuration Validation**: All Matrix homeserver URLs and credentials MUST validate at service startup. Invalid configuration prevents application start.
 

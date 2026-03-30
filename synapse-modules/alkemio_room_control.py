@@ -18,14 +18,14 @@ Zero-config usage:
 
 All config values are automatically detected from the AppService with id 'alkemio-matrix-adapter':
 - homeserver_domain: Synapse's server_name
-- appservice_sender: AppService's sender_localpart  
+- appservice_sender: AppService's sender_localpart
 - adapter_url: AppService's registered URL
 - hs_token: AppService's hs_token
 """
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Set
 
 from synapse.module_api import ModuleApi
 from synapse.module_api.errors import Codes, SynapseError
@@ -34,55 +34,137 @@ from synapse.types import Requester
 
 logger = logging.getLogger(__name__)
 
+# Custom state event type for room visibility control
+ALKEMIO_VISIBILITY_EVENT = "io.alkemio.visibility"
+
 
 class AlkemioRoomControl:
     """
     Spam checker module that restricts room creation.
-    
+
     Only the AppService bot user is allowed to create rooms.
     When ghost users attempt to create DM rooms, the module notifies
     the Adapter via webhook for async processing.
-    
+
     All configuration values are auto-detected from the AppService with
     id 'alkemio-matrix-adapter'.
     """
-    
+
     # Hardcoded AppService ID - must match registration.yaml
     APPSERVICE_ID = "alkemio-matrix-adapter"
 
     def __init__(self, config: dict, api: ModuleApi):
         self.api = api
         self._http_client = None  # Lazy initialization
-        
+
         # Auto-detect homeserver domain from Synapse's server_name
         self.homeserver_domain = api.server_name
-        
+
         # Find and configure from registered AppService
         detected = self._detect_appservice_config()
-        
+
         # Use detected values (fallback to default UUID if not found)
         self.appservice_sender = detected.get("sender", "00000000-0000-0000-0000-000000000000")
         self.adapter_url = detected.get("url", "http://localhost:8280")
         self.hs_token = detected.get("hs_token")
-        
+
         # Register third-party rules callback for room creation control
         # This allows us to raise SynapseError with custom messages
         self.api.register_third_party_rules_callbacks(
             on_create_room=self.on_create_room,
         )
-        
+
+        # Monkey-patch SyncHandler to filter rooms based on io.alkemio.visibility
+        self._patch_sync_handler()
+
         logger.info(
-            "AlkemioRoomControl initialized - AppService: @%s:%s, Adapter: %s, Token: %s",
+            "AlkemioRoomControl initialized - AppService: @%s:%s, Adapter: %s, Token: %s, SyncFilter: enabled",
             self.appservice_sender,
             self.homeserver_domain,
             self.adapter_url,
             "configured" if self.hs_token else "NOT FOUND",
         )
-    
+
+    def _patch_sync_handler(self) -> None:
+        """
+        Monkey-patch SyncHandler.get_sync_result_builder to filter rooms
+        based on the io.alkemio.visibility state event.
+
+        Rooms with {"visible": false} are excluded from /sync responses
+        for all users except the AppService bot.
+
+        Compatible with Synapse v1.132.0.
+        """
+        try:
+            sync_handler = self.api._hs.get_sync_handler()
+            original_get_sync_result_builder = sync_handler.get_sync_result_builder
+            store = self.api._hs.get_datastores().main
+            state_storage = self.api._hs.get_storage_controllers().state
+            bot_mxid = f"@{self.appservice_sender}:{self.homeserver_domain}"
+
+            async def patched_get_sync_result_builder(sync_config, since_token=None, full_state=False):
+                result_builder = await original_get_sync_result_builder(
+                    sync_config, since_token, full_state
+                )
+
+                user_id = sync_config.user.to_string()
+
+                # Don't filter for the bot — it needs to see everything
+                if user_id == bot_mxid:
+                    logger.debug("Sync filter: skipping bot user %s", user_id)
+                    return result_builder
+
+                logger.debug(
+                    "Sync filter: checking %d rooms for user %s",
+                    len(result_builder.joined_room_ids), user_id,
+                )
+
+                # Find rooms to hide based on io.alkemio.visibility state
+                hidden_room_ids = set()
+                for room_id in result_builder.joined_room_ids:
+                    try:
+                        visibility_event = await state_storage.get_current_state_event(
+                            room_id, ALKEMIO_VISIBILITY_EVENT, ""
+                        )
+                        if visibility_event:
+                            visible = visibility_event.content.get("visible")
+                            logger.debug(
+                                "Sync filter: room %s visibility=%s",
+                                room_id, visible,
+                            )
+                            if visible is False:
+                                hidden_room_ids.add(room_id)
+                    except Exception as e:
+                        logger.warning("Sync filter: error checking room %s, hiding it: %s", room_id, e)
+                        hidden_room_ids.add(room_id)
+
+                if hidden_room_ids:
+                    # Rebuild with hidden rooms excluded
+                    result_builder.joined_room_ids = frozenset(
+                        rid for rid in result_builder.joined_room_ids
+                        if rid not in hidden_room_ids
+                    )
+                    result_builder.excluded_room_ids = frozenset(
+                        set(result_builder.excluded_room_ids) | hidden_room_ids
+                    )
+                    logger.debug(
+                        "Filtered %d hidden rooms from /sync for %s",
+                        len(hidden_room_ids), user_id,
+                    )
+
+
+                return result_builder
+
+            sync_handler.get_sync_result_builder = patched_get_sync_result_builder
+            logger.info("SyncHandler patched for io.alkemio.visibility filtering")
+
+        except Exception as e:
+            logger.error("Failed to patch SyncHandler: %s", str(e))
+
     def _detect_appservice_config(self) -> dict:
         """
         Auto-detect configuration from the 'alkemio-matrix-adapter' AppService.
-        
+
         Returns:
             Dict with detected values: {sender, url, hs_token}
         """
@@ -90,21 +172,21 @@ class AlkemioRoomControl:
         try:
             # Access Synapse's AppService store
             appservices = self.api._hs.get_datastores().main.get_app_services()
-            
+
             # Find our specific AppService by ID
             appservice = None
             for svc in appservices:
                 if svc.id == self.APPSERVICE_ID:
                     appservice = svc
                     break
-            
+
             if not appservice:
                 logger.error(
                     "AppService '%s' not found! Check registration.yaml is loaded.",
                     self.APPSERVICE_ID,
                 )
                 return result
-            
+
             # Extract configuration from AppService
             if appservice.sender:
                 # sender might be a full Matrix ID, a string localpart, or an object
@@ -119,27 +201,27 @@ class AlkemioRoomControl:
                         result["sender"] = sender_value
                 else:
                     result["sender"] = str(sender_value)
-            
+
             if appservice.url:
                 result["url"] = appservice.url
-            
+
             if appservice.hs_token:
                 result["hs_token"] = appservice.hs_token
-            
+
             logger.info(
                 "Loaded config from AppService '%s': sender=%s, url=%s",
                 self.APPSERVICE_ID,
                 result.get("sender", "<not found>"),
                 result.get("url", "<not found>"),
             )
-            
+
         except Exception as e:
             logger.error(
                 "Failed to load AppService '%s': %s",
                 self.APPSERVICE_ID,
                 str(e),
             )
-        
+
         return result
 
     def _is_appservice_bot(self, user_id: str) -> bool:
@@ -158,22 +240,22 @@ class AlkemioRoomControl:
         return self._http_client
 
     async def _notify_dm_request(
-        self, 
-        initiator_user_id: str, 
+        self,
+        initiator_user_id: str,
         target_user_id: str
     ) -> bool:
         """
         Notify the Adapter about a DM creation request.
-        
+
         Args:
             initiator_user_id: Matrix ID of user initiating the DM
             target_user_id: Matrix ID of target user
-            
+
         Returns:
             True if notification was sent successfully
         """
         import json
-        
+
         webhook_url = f"{self.adapter_url}/_matrix/app/alkemio/dm-request"
         payload = {
             "inviter": initiator_user_id,
@@ -185,7 +267,7 @@ class AlkemioRoomControl:
         # Add Authorization header if hs_token is configured
         if self.hs_token:
             headers[b"Authorization"] = [f"Bearer {self.hs_token}".encode()]
-        
+
         # Retry logic: 3 attempts with exponential backoff
         max_retries = 3
         for attempt in range(max_retries):
@@ -223,31 +305,31 @@ class AlkemioRoomControl:
     ) -> None:
         """
         Third-party rules callback for room creation.
-        
+
         This runs BEFORE the spam checker and can raise SynapseError with
         a custom message that Element may display.
-        
+
         Room creation policy:
         - Server admins and AppService bot: Always allowed
         - DM rooms (is_direct=true, 1 invitee): ALLOWED, but adapter is notified
           so it can track/manage the room (e.g., set alias if room already exists)
         - Community rooms: BLOCKED - must be created via Alkemio platform
-        
+
         Args:
             requester: The user requesting room creation
             request_content: The room creation request body
             is_requester_admin: Whether the requester is a server admin
         """
         user_id = requester.user.to_string()
-        
+
         # Allow server admins and AppService bot
         if is_requester_admin or self._is_appservice_bot(user_id):
             return
-        
+
         # Check if this is a DM attempt
         is_direct = request_content.get("is_direct", False)
         invite_list = request_content.get("invite", [])
-        
+
         if is_direct and len(invite_list) == 1:
             target_user_id = invite_list[0]
             logger.info(
@@ -264,11 +346,11 @@ class AlkemioRoomControl:
                     "Failed to notify adapter about DM request: %s",
                     str(e),
                 )
-            
+
             # ALLOW the DM room creation to proceed
             # The adapter will be notified and can manage the room as needed
             return
-        
+
         # Block non-DM room creation
         logger.info(
             "Room creation blocked via third_party_rules: %s",

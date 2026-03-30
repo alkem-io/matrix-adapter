@@ -30,6 +30,8 @@ export enum MatrixAdapterEventType {
   COMMUNICATION_ROOM_MEMBER_LEFT = 'communication.room.member.left',
   COMMUNICATION_ROOM_MEMBER_UPDATED = 'communication.room.member.updated',
   COMMUNICATION_ROOM_RECEIPT_UPDATED = 'communication.room.receipt.updated',
+  COMMUNICATION_ROOM_STATE_GET = 'communication.room.state.get',
+  COMMUNICATION_ROOM_STATE_SET = 'communication.room.state.set',
   COMMUNICATION_ROOM_UNREAD_COUNTS_GET = 'communication.room.unread_counts.get',
   COMMUNICATION_ROOM_UPDATE = 'communication.room.update',
   COMMUNICATION_ROOM_UPDATED = 'communication.room.updated',
@@ -39,7 +41,10 @@ export enum MatrixAdapterEventType {
   COMMUNICATION_SPACE_LIST = 'communication.space.list',
   COMMUNICATION_SPACE_MEMBER_BATCH_ADD = 'communication.space.member.batch.add',
   COMMUNICATION_SPACE_MEMBER_BATCH_REMOVE = 'communication.space.member.batch.remove',
+  COMMUNICATION_SPACE_STATE_GET = 'communication.space.state.get',
+  COMMUNICATION_SPACE_STATE_SET = 'communication.space.state.set',
   COMMUNICATION_SPACE_UPDATE = 'communication.space.update',
+  COMMUNICATION_SPACE_UPDATED = 'communication.space.updated',
   COMMUNICATION_THREAD_MESSAGES_GET = 'communication.thread.messages.get',
 
 }

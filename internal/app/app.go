@@ -65,7 +65,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// 5. Initialize Handlers (using shared IDMapper)
 	roomHandler := queue.NewRoomHandler(roomService, matrixAdapter, idMapper)
 	actorHandler := queue.NewActorHandler(actorService)
-	spaceHandler := queue.NewSpaceHandler(spaceService)
+	spaceHandler := queue.NewSpaceHandler(spaceService, matrixAdapter, idMapper)
 	readReceiptHandler := queue.NewReadReceiptHandler(readReceiptService, matrixAdapter, idMapper, log)
 
 	// 6. Register all HTTP endpoints on AppService router (single port 8280)
@@ -96,6 +96,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		OnRoomCreated:        eventService.HandleRoomCreated,
 		OnMemberUpdated:      eventService.HandleMemberUpdated,
 		OnRoomUpdated:        eventService.HandleRoomUpdated,
+		OnSpaceUpdated:       eventService.HandleSpaceUpdated,
 	})
 
 	return &App{
