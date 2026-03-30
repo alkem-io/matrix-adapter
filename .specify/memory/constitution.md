@@ -96,7 +96,7 @@ Implement only Matrix features explicitly required by Alkemio platform use cases
 
 4. **Error Handling**: Matrix SDK errors MUST map to application error codes defined in `pkg/dto` or domain errors. Generic `error` propagation across the microservice boundary is forbidden without context.
 
-4. **Configuration Validation**: All Matrix homeserver URLs and credentials MUST validate at service startup. Invalid configuration prevents application start.
+5. **Configuration Validation**: All Matrix homeserver URLs and credentials MUST validate at service startup. Invalid configuration prevents application start.
 
 ## Engineering Workflow
 

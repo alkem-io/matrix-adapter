@@ -160,6 +160,7 @@ class AlkemioRoomControl:
 
         except Exception as e:
             logger.error("Failed to patch SyncHandler: %s", str(e))
+            raise RuntimeError(f"AlkemioRoomControl: SyncHandler patch failed: {e}")
 
     def _detect_appservice_config(self) -> dict:
         """

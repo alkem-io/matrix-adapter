@@ -201,10 +201,13 @@ func (s *SynapseAdmin) GetCustomState(ctx context.Context, roomID id.RoomID, eve
 		// Fetch specific types
 		for _, et := range eventTypes {
 			if !strings.HasPrefix(et, "io.alkemio.") {
-				continue
+				return nil, fmt.Errorf("custom state event type must have io.alkemio. prefix, got: %s", et)
 			}
 			stateEvents, err := s.GetRoomState(ctx, roomID, et)
-			if err != nil || len(stateEvents) == 0 {
+			if err != nil {
+				return nil, fmt.Errorf("failed to get state for %s in %s: %w", et, roomID, err)
+			}
+			if len(stateEvents) == 0 {
 				continue
 			}
 			var evt struct {

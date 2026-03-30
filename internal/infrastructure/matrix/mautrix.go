@@ -144,6 +144,14 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 	}, nil
 }
 
+// safePrefix returns the first n characters of s, or all of s if shorter.
+func safePrefix(s string, n int) string {
+	if len(s) < n {
+		return s
+	}
+	return s[:n]
+}
+
 // ============================================================================
 // Core / Connection
 // ============================================================================
@@ -224,7 +232,7 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 
 	// Try registering the bot itself as admin (works on fresh deployments)
 	botLocalpart := m.cfg.Matrix.BotActorID
-	_, err := m.registerSharedSecretUser(ctx, secret, botLocalpart, "bot-"+secret[:8], true)
+	_, err := m.registerSharedSecretUser(ctx, secret, botLocalpart, "bot-"+safePrefix(secret, 8), true)
 	if err == nil {
 		m.logger.Info("Bot registered as server admin via shared secret")
 		return
@@ -396,7 +404,7 @@ func (m *MautrixAdapter) isBotAdmin(ctx context.Context) bool {
 func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret string) error {
 	// Use a unique username each time to avoid conflicts with deactivated leftover users
 	bootstrapUser := fmt.Sprintf("alkemio-bootstrap-%d", time.Now().UnixMilli())
-	bootstrapPass := "bootstrap-" + secret[:8]
+	bootstrapPass := "bootstrap-" + safePrefix(secret, 8)
 
 	// Create temporary admin
 	adminToken, err := m.registerSharedSecretUser(ctx, secret, bootstrapUser, bootstrapPass, true)
@@ -1672,8 +1680,7 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 	// which auto-sets canonical alias and breaks DM member-name display).
 	fullAlias := m.idMapper.RoomAlias(alkemioRoomID)
 	if err := m.SetRoomAlias(ctx, resp.RoomID, fullAlias); err != nil {
-		m.logger.Warn("Failed to set alias on room",
-			"room_id", resp.RoomID, "alias", fullAlias, "error", err)
+		return "", fmt.Errorf("failed to set alias on room %s (%s): %w", resp.RoomID, fullAlias, err)
 	}
 
 	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, invites)
