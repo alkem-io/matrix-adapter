@@ -1103,7 +1103,8 @@ func (m *MautrixAdapter) selectPreferredAlias(aliases []string) string {
 // SetRoomDirectoryVisibility sets whether a room appears in the public room directory.
 // Uses PUT /_matrix/client/v3/directory/list/room/{roomId}.
 func (m *MautrixAdapter) SetRoomDirectoryVisibility(ctx context.Context, roomID id.RoomID, isPublic bool) error {
-	// TODO: Currently returns 403 from Synapse — needs investigation
+	// Requires Synapse room_list_publication_rules to allow the bot user.
+	// Without it, Synapse v1.126.0+ returns 403 by default.
 	intent := m.as.BotIntent()
 	visibility := "private"
 	if isPublic {
