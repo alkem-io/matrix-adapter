@@ -98,7 +98,6 @@ class AlkemioRoomControl:
         try:
             sync_handler = self.api._hs.get_sync_handler()
             original_get_sync_result_builder = sync_handler.get_sync_result_builder
-            store = self.api._hs.get_datastores().main
             state_storage = self.api._hs.get_storage_controllers().state
             bot_mxid = f"@{self.appservice_sender}:{self.homeserver_domain}"
 
