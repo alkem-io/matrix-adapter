@@ -93,7 +93,7 @@ class AlkemioRoomControl:
         Rooms with {"visible": false} are excluded from /sync responses
         for all users except the AppService bot.
 
-        Compatible with Synapse v1.132.0.
+        Requires Synapse >= 1.135.0 (get_sync_result_builder).
         """
         try:
             sync_handler = self.api._hs.get_sync_handler()
