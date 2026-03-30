@@ -47,7 +47,7 @@ type UserInfo struct {
 	Admin bool `json:"admin"`
 }
 
-// GetUser retrieves user details. Returns nil if user doesn't exist.
+// GetUser retrieves user details.
 func (s *SynapseAdmin) GetUser(ctx context.Context, userID id.UserID) (*UserInfo, error) {
 	var resp UserInfo
 	_, err := s.client.MakeRequest(ctx, http.MethodGet, s.buildURL("v2", "users", userID), nil, &resp)
@@ -213,7 +213,10 @@ func (s *SynapseAdmin) GetCustomState(ctx context.Context, roomID id.RoomID, eve
 			var evt struct {
 				Content map[string]interface{} `json:"content"`
 			}
-			if err := json.Unmarshal(stateEvents[0], &evt); err == nil && len(evt.Content) > 0 {
+			if err := json.Unmarshal(stateEvents[0], &evt); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal state event %s: %w", et, err)
+			}
+			if len(evt.Content) > 0 {
 				result[et] = evt.Content
 			}
 		}
@@ -302,7 +305,8 @@ func (s *SynapseAdmin) GetTimestampToEvent(ctx context.Context, roomID id.RoomID
 }
 
 // GetRelations retrieves relations (reactions, threads) for an event.
-// Uses the client API without user impersonation — admin token bypasses membership.
+// Uses the Matrix Client API (not Synapse Admin API) since no admin relations endpoint exists.
+// The admin access token is a normal client token — standard room access rules apply.
 func (s *SynapseAdmin) GetRelations(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID,
 	relType event.RelationType, eventType event.Type,
