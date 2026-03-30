@@ -54,8 +54,10 @@ const TopicHierarchySetParent = "communication.hierarchy.set_parent"
 const (
 	TopicSpaceMemberBatchAdd    = "communication.space.member.batch.add"
 	TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove"
+)
 
-	// Custom state API
+// Custom state API topics (io.alkemio.* state events)
+const (
 	TopicRoomStateSet  = "communication.room.state.set"
 	TopicRoomStateGet  = "communication.room.state.get"
 	TopicSpaceStateSet = "communication.space.state.set"

@@ -231,10 +231,11 @@ func (s *SynapseAdmin) GetCustomState(ctx context.Context, roomID id.RoomID, eve
 				Type    string                 `json:"type"`
 				Content map[string]interface{} `json:"content"`
 			}
-			if err := json.Unmarshal(raw, &evt); err == nil {
-				if strings.HasPrefix(evt.Type, "io.alkemio.") && len(evt.Content) > 0 {
-					result[evt.Type] = evt.Content
-				}
+			if err := json.Unmarshal(raw, &evt); err != nil {
+				continue // skip non-JSON state events (e.g. binary or malformed)
+			}
+			if strings.HasPrefix(evt.Type, "io.alkemio.") && len(evt.Content) > 0 {
+				result[evt.Type] = evt.Content
 			}
 		}
 	}

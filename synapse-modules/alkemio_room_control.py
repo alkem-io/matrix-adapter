@@ -25,7 +25,7 @@ All config values are automatically detected from the AppService with id 'alkemi
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional, Set
+from typing import Optional
 
 from synapse.module_api import ModuleApi
 from synapse.module_api.errors import Codes, SynapseError
