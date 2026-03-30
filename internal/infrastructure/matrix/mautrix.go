@@ -499,9 +499,12 @@ func (m *MautrixAdapter) SendReply(
 		MsgType: event.MsgText,
 		Body:    content,
 		RelatesTo: &event.RelatesTo{
+			Type:    event.RelThread,
+			EventID: threadID,
 			InReplyTo: &event.InReplyTo{
 				EventID: threadID,
 			},
+			IsFallingBack: true,
 		},
 	}
 
@@ -1157,27 +1160,30 @@ func (m *MautrixAdapter) GetThreadMessages(
 		return nil, fmt.Errorf("failed to get thread root message: %w", err)
 	}
 
-	messages := make([]domain.Message, 0)
-
 	// Parse the root message
-	rootMsg := m.parseMessageEvent(rootEvt, roomID)
-	if rootMsg != nil {
-		rootMsg.Reactions = []domain.Reaction{} // Initialize empty slice
-		messages = append(messages, *rootMsg)
+	var rootMsg *domain.Message
+	if parsed := m.parseMessageEvent(rootEvt, roomID); parsed != nil {
+		parsed.Reactions = []domain.Reaction{}
+		rootMsg = parsed
 	}
 
 	// Get thread replies using relations API
 	u := m.buildRelationsURL(intent, roomID, threadRootID, event.RelThread, event.EventMessage)
+
+	messages := make([]domain.Message, 0)
 
 	var resp RespRelations
 	_, err = intent.MakeRequest(ctx, "GET", u, nil, &resp)
 	if err != nil {
 		// If no relations found, return just the root message
 		m.logger.Debug("No thread relations found, returning only root", "thread_root_id", threadRootID)
+		if rootMsg != nil {
+			messages = append(messages, *rootMsg)
+		}
 		return messages, nil
 	}
 
-	// Parse thread reply messages
+	// Parse thread reply messages (relations API returns newest-first)
 	for _, evt := range resp.Chunk {
 		if evt.Type != event.EventMessage {
 			continue
@@ -1185,10 +1191,15 @@ func (m *MautrixAdapter) GetThreadMessages(
 
 		msg := m.parseMessageEvent(&evt, roomID)
 		if msg != nil {
-			msg.Reactions = []domain.Reaction{} // Initialize empty slice
+			msg.Reactions = []domain.Reaction{}
 			msg.ThreadID = threadRootID.String()
 			messages = append(messages, *msg)
 		}
+	}
+
+	// Append root message last so the server's .reverse() puts it first
+	if rootMsg != nil {
+		messages = append(messages, *rootMsg)
 	}
 
 	return messages, nil

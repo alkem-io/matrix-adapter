@@ -34,9 +34,9 @@ make run        # Run the service locally
 Go 1.25: Follow standard conventions
 
 ## Recent Changes
+- 014-fix-thread-replies: Added Go 1.25 + mautrix-go (Matrix SDK), Watermill (RabbitMQ), Zap (logging)
 - 012-fix-unread-counts: Added Go 1.25 + mautrix-go v0.26.0 → v0.26.4 (update), Watermill (RabbitMQ), Zap (logging)
 - 011-remove-db-actor-mapper: Added Go 1.25 + mautrix-go (Matrix SDK), Watermill (RabbitMQ), Zap (logging) — removing pgx/v5 and SQLC
-- 010-room-state-events: Added Go 1.25 + mautrix-go (Matrix SDK), Watermill (RabbitMQ), Zap (logging)
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
