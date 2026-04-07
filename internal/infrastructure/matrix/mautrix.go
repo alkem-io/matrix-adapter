@@ -158,19 +158,18 @@ func safePrefix(s string, n int) string {
 
 // Connect initializes the connection to the Matrix homeserver.
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
-	// Step 1: Ensure bot user exists and is a server admin BEFORE appservice starts.
-	// This uses direct HTTP calls to Synapse, independent of the appservice framework.
+	// Step 1: Try to ensure bot is admin (quick path — works on restarts).
 	m.ensureBotAdmin(ctx)
 
 	// Step 2: Start the AppService
 	m.logger.Info("Initializing Matrix AppService connection")
 
-	startedCh := make(chan error, 1)
 	go func() {
 		m.as.Start()
 		m.logger.Warn("AppService HTTP server stopped")
 	}()
 
+	startedCh := make(chan error, 1)
 	if err := m.waitForServerReady(ctx, startedCh); err != nil {
 		return fmt.Errorf("appservice failed to start: %w", err)
 	}
@@ -237,11 +236,19 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 		m.logger.Info("Bot registered as server admin via shared secret")
 		return
 	}
+	// Ensure the bot is registered as an appservice user before promoting.
+	// On a fresh DB, Synapse creates the bot from registration YAML but the
+	// M_EXCLUSIVE check blocks external admin API calls until the appservice
+	// itself has registered the user via POST /register.
+	if err := m.as.BotIntent().EnsureRegistered(ctx); err != nil {
+		m.logger.Debug("Bot appservice registration", "result", err)
+	}
+
 	m.logger.Info("Bot user already exists, promoting via temp admin...")
 
-	// Bot exists but isn't admin — bootstrap via temp admin user
+	// Bot exists but isn't admin — try temp admin approach
 	if err := m.promoteViaTemporaryAdmin(ctx, secret); err != nil {
-		m.logger.Warn("Failed to bootstrap bot admin",
+		m.logger.Warn("Failed to promote bot via temp admin",
 			"error", err, "bot_mxid", m.as.BotMXID())
 	} else {
 		m.logger.Info("Bot promoted to server admin", "bot_mxid", m.as.BotMXID())
