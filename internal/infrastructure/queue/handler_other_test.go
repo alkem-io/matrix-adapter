@@ -466,7 +466,7 @@ func TestHandleSetParent_MissingParentContextID(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	payload, _ := json.Marshal(dto.SetParentRequest{
-		ChildID: "some-child-id",
+		ChildID: uuid.New().String(),
 		// ParentContextID is zero-value
 	})
 

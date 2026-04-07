@@ -801,8 +801,8 @@ func TestSetParent_Success_RoomChild(t *testing.T) {
 
 	matrix := &mockSpaceMatrixPort{
 		resolveAliasResults: map[string]id.RoomID{
-			mustAlias(parentCtxID):   "!parent:test.local",
-			mustAlias(childRoomUUID): "!child:test.local",
+			mustAlias(parentCtxID):                 "!parent:test.local",
+			spaceIDMapper.RoomAlias(childRoomUUID): "!child:test.local",
 		},
 	}
 	svc := newSpaceService(matrix)
