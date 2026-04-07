@@ -31,7 +31,7 @@ type MautrixAdapter struct {
 	logger         ports.Logger
 	as             *appservice.AppService
 	idMapper       *domain.IDMapper
-	admin          *SynapseAdmin
+	admin          adminAPI
 	botDisplayName string
 	eventHandlers  EventHandlers
 	eventLoopOnce  sync.Once
