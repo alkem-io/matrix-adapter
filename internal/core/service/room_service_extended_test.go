@@ -82,8 +82,9 @@ type mockExtendedMatrixPort struct {
 	setCustomStateCalled bool
 
 	// CreateRoomWithAlias
-	createRoomResult id.RoomID
-	createRoomErr    error
+	createRoomResult      id.RoomID
+	createRoomErr         error
+	createRoomCustomState map[string]map[string]interface{}
 
 	// UpdateRoomState
 	updateRoomStateErr error
@@ -167,7 +168,8 @@ func (m *mockExtendedMatrixPort) SetCustomState(_ context.Context, _ id.RoomID, 
 	return nil
 }
 
-func (m *mockExtendedMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, _ string, _, _, _, _ string, _ map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
+func (m *mockExtendedMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, _ string, _, _, _, _ string, customState map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
+	m.createRoomCustomState = customState
 	if m.createRoomErr != nil {
 		return "", m.createRoomErr
 	}
@@ -248,6 +250,9 @@ func (m *mockExtendedMatrixPort) GetBatchUnreadCounts(_ context.Context, _ domai
 // ============================================================================
 // Helper
 // ============================================================================
+
+// testIDMapper is a shared IDMapper for constructing Matrix IDs in tests.
+var testIDMapper = domain.NewIDMapper("test.local")
 
 func newTestService(matrix *mockExtendedMatrixPort) *RoomService {
 	return NewRoomService(matrix, &mockLogger{}, domain.NewIDMapper("test.local"))
@@ -375,7 +380,7 @@ func TestCreateRoom_IsPublic_SetsDirectoryVisibility(t *testing.T) {
 
 func TestCreateRoom_CustomState_Included(t *testing.T) {
 	// customState is passed to CreateRoomWithAlias (as initial state), not SetCustomState.
-	// This test simply verifies the full flow succeeds with customState.
+	// Verify it is forwarded correctly to the mock.
 	matrix := &mockExtendedMatrixPort{
 		resolveAliasFunc: func(_ context.Context, _ string) (id.RoomID, error) {
 			return "", domain.NewRoomNotFoundError("not found")
@@ -392,6 +397,17 @@ func TestCreateRoom_CustomState_Included(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	// Assert the customState argument was forwarded to CreateRoomWithAlias.
+	if matrix.createRoomCustomState == nil {
+		t.Fatal("expected customState to be captured by CreateRoomWithAlias mock")
+	}
+	vis, ok := matrix.createRoomCustomState["io.alkemio.visibility"]
+	if !ok {
+		t.Fatal("expected 'io.alkemio.visibility' key in captured customState")
+	}
+	if v, ok := vis["hidden"].(bool); !ok || !v {
+		t.Errorf("expected hidden=true, got %v", vis["hidden"])
+	}
 }
 
 // ============================================================================
@@ -400,7 +416,7 @@ func TestCreateRoom_CustomState_Included(t *testing.T) {
 
 func TestGetRoomWithMessages_Success(t *testing.T) {
 	senderUUID := uuid.New()
-	senderMatrixID := "@" + senderUUID.String() + ":test.local"
+	senderMatrixID := string(testIDMapper.UserID(senderUUID))
 
 	matrix := &mockExtendedMatrixPort{
 		resolveAliasFunc: func(_ context.Context, _ string) (id.RoomID, error) {
@@ -408,7 +424,7 @@ func TestGetRoomWithMessages_Success(t *testing.T) {
 		},
 		getRoomDetailsResult: &domain.Room{
 			ID:    "!room1:test.local",
-			Alias: "#" + uuid.Nil.String() + ":test.local",
+			Alias: testIDMapper.RoomAlias(uuid.Nil),
 			Name:  "Test Room",
 		},
 		getRoomMembersResult: []id.UserID{id.UserID(senderMatrixID)},
@@ -519,14 +535,14 @@ func TestGetRoomWithMessages_SenderIDMapping(t *testing.T) {
 		getRoomMessagesResult: []domain.Message{
 			{
 				ID:             "$evt1",
-				SenderMatrixID: "@" + senderUUID.String() + ":test.local",
+				SenderMatrixID: string(testIDMapper.UserID(senderUUID)),
 				Content:        "hi",
 				Timestamp:      time.Now(),
 				Reactions: []domain.Reaction{
 					{
 						ID:             "$react1",
 						Emoji:          "thumbsup",
-						SenderMatrixID: "@" + reactionSenderUUID.String() + ":test.local",
+						SenderMatrixID: string(testIDMapper.UserID(reactionSenderUUID)),
 					},
 				},
 			},
@@ -561,9 +577,9 @@ func TestGetRoomAsUser_Success_WithUnread(t *testing.T) {
 		getRoomDetailsResult: &domain.Room{ID: "!room1:test.local", Name: "R"},
 		getRoomMembersResult: []id.UserID{},
 		getRoomMessagesResult: []domain.Message{
-			{ID: "$evt1", SenderMatrixID: "@" + senderUUID.String() + ":test.local", Timestamp: time.Unix(1000, 0)},
-			{ID: "$evt2", SenderMatrixID: "@" + senderUUID.String() + ":test.local", Timestamp: time.Unix(2000, 0)},
-			{ID: "$evt3", SenderMatrixID: "@" + senderUUID.String() + ":test.local", Timestamp: time.Unix(3000, 0)},
+			{ID: "$evt1", SenderMatrixID: string(testIDMapper.UserID(senderUUID)), Timestamp: time.Unix(1000, 0)},
+			{ID: "$evt2", SenderMatrixID: string(testIDMapper.UserID(senderUUID)), Timestamp: time.Unix(2000, 0)},
+			{ID: "$evt3", SenderMatrixID: string(testIDMapper.UserID(senderUUID)), Timestamp: time.Unix(3000, 0)},
 		},
 		getUnreadCountsResult: &domain.UnreadCountSummary{RoomUnreadCount: 1},
 	}
@@ -592,8 +608,8 @@ func TestGetRoomAsUser_AllRead(t *testing.T) {
 		getRoomDetailsResult: &domain.Room{ID: "!room1:test.local", Name: "R"},
 		getRoomMembersResult: []id.UserID{},
 		getRoomMessagesResult: []domain.Message{
-			{ID: "$evt1", SenderMatrixID: "@" + senderUUID.String() + ":test.local", Timestamp: time.Unix(1000, 0)},
-			{ID: "$evt2", SenderMatrixID: "@" + senderUUID.String() + ":test.local", Timestamp: time.Unix(2000, 0)},
+			{ID: "$evt1", SenderMatrixID: string(testIDMapper.UserID(senderUUID)), Timestamp: time.Unix(1000, 0)},
+			{ID: "$evt2", SenderMatrixID: string(testIDMapper.UserID(senderUUID)), Timestamp: time.Unix(2000, 0)},
 		},
 		getUnreadCountsResult: &domain.UnreadCountSummary{RoomUnreadCount: 0},
 	}
@@ -814,7 +830,7 @@ func TestDeleteRoomFully_KickFailures_NonFatal(t *testing.T) {
 
 func TestListRooms_Success(t *testing.T) {
 	roomUUID := uuid.New()
-	roomAlias := "#" + roomUUID.String() + ":test.local"
+	roomAlias := testIDMapper.RoomAlias(roomUUID)
 
 	matrix := &mockExtendedMatrixPort{
 		getAllJoinedRoomsResult: []id.RoomID{"!room1:test.local"},
@@ -979,7 +995,7 @@ func TestGetMessage_Success_SenderMapping(t *testing.T) {
 		getMessageResult: &domain.Message{
 			ID:             "$msg1",
 			Content:        "hello",
-			SenderMatrixID: "@" + senderUUID.String() + ":test.local",
+			SenderMatrixID: string(testIDMapper.UserID(senderUUID)),
 			Timestamp:      time.Now(),
 		},
 	}

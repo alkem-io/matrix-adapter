@@ -66,6 +66,9 @@ func TestHTTPServer_StartAndStop(t *testing.T) {
 }
 
 func TestDMWebhookHandler_RegisterRoutes(t *testing.T) {
+	// nil dependencies (service, matrix) are safe here because handleDMRequest
+	// validates the auth token first and returns 401 before reaching any
+	// service or matrix calls.
 	handler := NewDMWebhookHandler(nil, nil, "token", &healthMockLogger{})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)

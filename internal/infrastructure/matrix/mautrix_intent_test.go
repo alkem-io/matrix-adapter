@@ -296,8 +296,8 @@ func (m *mockAppserviceAPI) Intent(userID id.UserID) intentAPI {
 	if intent, ok := m.intents[userID]; ok {
 		return intent
 	}
-	// Return the bot intent as fallback for any unknown user
-	return m.botIntent
+	// Panic on unexpected user IDs so tests must explicitly map all expected users.
+	panic("mockAppserviceAPI.Intent called with unmapped user ID: " + userID.String())
 }
 
 func (m *mockAppserviceAPI) Start()                       {}
@@ -335,9 +335,12 @@ func testActor(id uuid.UUID, displayName string) domain.Actor {
 	}
 }
 
+// intentTestIDMapper is a shared IDMapper for constructing Matrix IDs in intent tests.
+var intentTestIDMapper = domain.NewIDMapper("test.local")
+
 // expectedUserID returns the Matrix user ID for a test actor UUID.
 func expectedUserID(actorID uuid.UUID) id.UserID {
-	return id.NewUserID(actorID.String(), "test.local")
+	return intentTestIDMapper.UserID(actorID)
 }
 
 // newMockAS creates a mockAppserviceAPI where both botIntent and any user intent
@@ -1465,7 +1468,7 @@ func TestLeaveBotIfNotNeeded_Leaves_WhenGhostPresent(t *testing.T) {
 		// Room members include bot and a ghost user (UUID-formatted localpart)
 		getRoomMembersResult: []string{
 			"@bot:test.local",
-			"@" + testActorID.String() + ":test.local",
+			expectedUserID(testActorID).String(),
 		},
 		// Not a space
 		getStateEventContentResult: map[string]interface{}{},
@@ -1499,7 +1502,7 @@ func TestLeaveBotIfNotNeeded_Stays_IsSpace(t *testing.T) {
 	admin := &mockAdminAPI{
 		getRoomMembersResult: []string{
 			"@bot:test.local",
-			"@" + testActorID.String() + ":test.local",
+			expectedUserID(testActorID).String(),
 		},
 		// This is a space room
 		getStateEventContentResult: map[string]interface{}{"type": "m.space"},
@@ -1516,7 +1519,7 @@ func TestLeaveBotIfNotNeeded_Stays_BotNotMember(t *testing.T) {
 	admin := &mockAdminAPI{
 		// Bot is NOT in the room
 		getRoomMembersResult: []string{
-			"@" + testActorID.String() + ":test.local",
+			expectedUserID(testActorID).String(),
 		},
 		getStateEventContentResult: map[string]interface{}{},
 	}

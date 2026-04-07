@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -23,9 +22,10 @@ type mockSpaceMatrixPort struct {
 	resolveAliasErr     error
 
 	// CreateSpace captures
-	createSpaceCalled bool
-	createSpaceRoomID id.RoomID
-	createSpaceErr    error
+	createSpaceCalled   bool
+	createSpaceRoomID   id.RoomID
+	createSpaceErr      error
+	createSpaceJoinRule string
 
 	// GetSpaceDetails
 	getSpaceDetailsResult *domain.Space
@@ -83,8 +83,9 @@ func (m *mockSpaceMatrixPort) ResolveAlias(_ context.Context, alias string) (id.
 	return "", domain.NewSpaceNotFoundError(alias)
 }
 
-func (m *mockSpaceMatrixPort) CreateSpace(_ context.Context, _ uuid.UUID, _, _, _ string, _ string, _ []domain.Actor) (id.RoomID, error) {
+func (m *mockSpaceMatrixPort) CreateSpace(_ context.Context, _ uuid.UUID, _, _, _ string, joinRule string, _ []domain.Actor) (id.RoomID, error) {
 	m.createSpaceCalled = true
+	m.createSpaceJoinRule = joinRule
 	if m.createSpaceErr != nil {
 		return "", m.createSpaceErr
 	}
@@ -251,13 +252,15 @@ var _ ports.MatrixPort = (*mockSpaceMatrixPort)(nil)
 // Helpers
 // ============================================================================
 
+// spaceIDMapper is a shared IDMapper for constructing Matrix IDs in space tests.
+var spaceIDMapper = domain.NewIDMapper("test.local")
+
 func newSpaceService(matrix *mockSpaceMatrixPort) *SpaceService {
-	idMapper := domain.NewIDMapper("test.local")
-	return NewSpaceService(matrix, &mockLogger{}, idMapper)
+	return NewSpaceService(matrix, &mockLogger{}, domain.NewIDMapper("test.local"))
 }
 
 func mustAlias(contextID uuid.UUID) string {
-	return fmt.Sprintf("#%s:test.local", contextID.String())
+	return spaceIDMapper.SpaceAlias(contextID)
 }
 
 // ============================================================================
@@ -405,6 +408,10 @@ func TestCreateSpace_DefaultJoinRuleInvite(t *testing.T) {
 	if !matrix.createSpaceCalled {
 		t.Fatal("expected CreateSpace to be called")
 	}
+	// Assert the joinRule was defaulted to "invite" by the service layer.
+	if matrix.createSpaceJoinRule != "invite" {
+		t.Errorf("expected joinRule 'invite', got %q", matrix.createSpaceJoinRule)
+	}
 }
 
 // ============================================================================
@@ -414,7 +421,7 @@ func TestCreateSpace_DefaultJoinRuleInvite(t *testing.T) {
 func TestGetSpace_Success(t *testing.T) {
 	contextID := uuid.New()
 	memberActorID := uuid.New()
-	memberMatrixID := id.NewUserID(memberActorID.String(), "test.local")
+	memberMatrixID := spaceIDMapper.UserID(memberActorID)
 	spaceAlias := mustAlias(contextID)
 
 	matrix := &mockSpaceMatrixPort{
@@ -649,8 +656,8 @@ func TestUpdateSpace_WithCustomState(t *testing.T) {
 
 func TestDeleteSpace_Success(t *testing.T) {
 	contextID := uuid.New()
-	member1 := id.NewUserID(uuid.New().String(), "test.local")
-	member2 := id.NewUserID(uuid.New().String(), "test.local")
+	member1 := spaceIDMapper.UserID(uuid.New())
+	member2 := spaceIDMapper.UserID(uuid.New())
 
 	matrix := &mockSpaceMatrixPort{
 		resolveAliasResults: map[string]id.RoomID{
@@ -686,7 +693,7 @@ func TestDeleteSpace_NotFound_Idempotent(t *testing.T) {
 
 func TestDeleteSpace_MembersKickFailures(t *testing.T) {
 	contextID := uuid.New()
-	member1 := id.NewUserID(uuid.New().String(), "test.local")
+	member1 := spaceIDMapper.UserID(uuid.New())
 
 	matrix := &mockSpaceMatrixPort{
 		resolveAliasResults: map[string]id.RoomID{

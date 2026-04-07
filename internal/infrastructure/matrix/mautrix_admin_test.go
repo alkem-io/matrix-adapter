@@ -133,13 +133,18 @@ func TestAdminAPI_IsBotAdmin_True(t *testing.T) {
 	mock := &mockAdminAPI{
 		getUserResult: &UserInfo{Admin: true},
 	}
-	a := newAdminTestAdapter(mock)
-	user, err := a.admin.GetUser(context.Background(), "@bot:test.local")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	as := &mockAppserviceAPI{
+		botMXID:          "@bot:test.local",
+		homeserverDomain: "test.local",
 	}
-	if !user.Admin {
-		t.Error("expected admin=true")
+	a := &MautrixAdapter{
+		admin:    mock,
+		as:       as,
+		idMapper: domain.NewIDMapper("test.local"),
+		logger:   &adapterMockLogger{},
+	}
+	if !a.isBotAdmin(context.Background()) {
+		t.Error("expected isBotAdmin=true")
 	}
 }
 
@@ -147,13 +152,18 @@ func TestAdminAPI_IsBotAdmin_False(t *testing.T) {
 	mock := &mockAdminAPI{
 		getUserResult: &UserInfo{Admin: false},
 	}
-	a := newAdminTestAdapter(mock)
-	user, err := a.admin.GetUser(context.Background(), "@bot:test.local")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	as := &mockAppserviceAPI{
+		botMXID:          "@bot:test.local",
+		homeserverDomain: "test.local",
 	}
-	if user.Admin {
-		t.Error("expected admin=false")
+	a := &MautrixAdapter{
+		admin:    mock,
+		as:       as,
+		idMapper: domain.NewIDMapper("test.local"),
+		logger:   &adapterMockLogger{},
+	}
+	if a.isBotAdmin(context.Background()) {
+		t.Error("expected isBotAdmin=false")
 	}
 }
 
@@ -161,10 +171,18 @@ func TestAdminAPI_IsBotAdmin_Error(t *testing.T) {
 	mock := &mockAdminAPI{
 		getUserErr: errors.New("connection refused"),
 	}
-	a := newAdminTestAdapter(mock)
-	_, err := a.admin.GetUser(context.Background(), "@bot:test.local")
-	if err == nil {
-		t.Fatal("expected error")
+	as := &mockAppserviceAPI{
+		botMXID:          "@bot:test.local",
+		homeserverDomain: "test.local",
+	}
+	a := &MautrixAdapter{
+		admin:    mock,
+		as:       as,
+		idMapper: domain.NewIDMapper("test.local"),
+		logger:   &adapterMockLogger{},
+	}
+	if a.isBotAdmin(context.Background()) {
+		t.Error("expected isBotAdmin=false on error")
 	}
 }
 
@@ -1308,35 +1326,64 @@ func TestAdminAPI_FindReaction_WrongEmoji(t *testing.T) {
 }
 
 // ============================================================================
-// JoinRoom mock tracking
+// getIntentForRoom admin-join fallback (exercises admin.JoinRoom)
 // ============================================================================
 
-func TestAdminAPI_JoinRoom_Success(t *testing.T) {
-	mock := &mockAdminAPI{}
-	a := newAdminTestAdapter(mock)
-	err := a.admin.JoinRoom(context.Background(), "!room:test.local", "@user1:test.local")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestAdminAPI_GetIntentForRoom_AdminJoinFallback(t *testing.T) {
+	// Scenario: bot is NOT a member and no ghost users exist.
+	// getIntentForRoom should admin-join the bot as a last resort.
+	botIntent := &mockIntentAPI{}
+	mock := &mockAdminAPI{
+		// GetRoomMembers returns members without the bot → bot not in room.
+		getRoomMembersResult: []string{"@other:test.local"},
 	}
+	as := &mockAppserviceAPI{
+		botIntent:        botIntent,
+		intents:          map[id.UserID]intentAPI{},
+		botMXID:          "@bot:test.local",
+		homeserverDomain: "test.local",
+	}
+	a := &MautrixAdapter{
+		admin:    mock,
+		as:       as,
+		idMapper: domain.NewIDMapper("test.local"),
+		logger:   &adapterMockLogger{},
+	}
+	_ = a.getIntentForRoom(context.Background(), "!room:test.local")
 	if len(mock.joinRoomCalls) != 1 {
-		t.Fatalf("expected 1 JoinRoom call, got %d", len(mock.joinRoomCalls))
+		t.Fatalf("expected 1 admin JoinRoom call, got %d", len(mock.joinRoomCalls))
 	}
 	if mock.joinRoomCalls[0].RoomID != "!room:test.local" {
 		t.Errorf("expected room '!room:test.local', got %q", mock.joinRoomCalls[0].RoomID)
 	}
-	if mock.joinRoomCalls[0].UserID != "@user1:test.local" {
-		t.Errorf("expected user '@user1:test.local', got %q", mock.joinRoomCalls[0].UserID)
+	if mock.joinRoomCalls[0].UserID != "@bot:test.local" {
+		t.Errorf("expected user '@bot:test.local', got %q", mock.joinRoomCalls[0].UserID)
 	}
 }
 
-func TestAdminAPI_JoinRoom_Error(t *testing.T) {
+func TestAdminAPI_GetIntentForRoom_AdminJoinError(t *testing.T) {
+	// Scenario: admin-join fails — getIntentForRoom should still return bot intent
+	// without panicking.
+	botIntent := &mockIntentAPI{}
 	mock := &mockAdminAPI{
-		joinRoomErr: errors.New("forbidden"),
+		getRoomMembersResult: []string{},
+		joinRoomErr:          errors.New("forbidden"),
 	}
-	a := newAdminTestAdapter(mock)
-	err := a.admin.JoinRoom(context.Background(), "!room:test.local", "@user1:test.local")
-	if err == nil {
-		t.Fatal("expected error")
+	as := &mockAppserviceAPI{
+		botIntent:        botIntent,
+		intents:          map[id.UserID]intentAPI{},
+		botMXID:          "@bot:test.local",
+		homeserverDomain: "test.local",
+	}
+	a := &MautrixAdapter{
+		admin:    mock,
+		as:       as,
+		idMapper: domain.NewIDMapper("test.local"),
+		logger:   &adapterMockLogger{},
+	}
+	intent := a.getIntentForRoom(context.Background(), "!room:test.local")
+	if intent == nil {
+		t.Fatal("expected non-nil intent even when admin join fails")
 	}
 }
 

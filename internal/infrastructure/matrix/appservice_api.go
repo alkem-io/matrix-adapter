@@ -76,6 +76,7 @@ type appserviceWrapper struct {
 }
 
 var _ appserviceAPI = (*appserviceWrapper)(nil)
+var _ intentAPI = (*appservice.IntentAPI)(nil)
 
 func (w *appserviceWrapper) BotIntent() intentAPI {
 	return w.as.BotIntent()
