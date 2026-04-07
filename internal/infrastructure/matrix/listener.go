@@ -39,7 +39,7 @@ func (m *MautrixAdapter) startEventLoop() {
 	m.eventLoopOnce.Do(func() {
 		m.logger.Info("Starting Matrix event loop")
 		go func() {
-			for evt := range m.as.Events {
+			for evt := range m.as.Events() {
 				m.processEvent(evt)
 			}
 			m.logger.Warn("Matrix event channel closed, event loop exiting")

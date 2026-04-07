@@ -29,9 +29,9 @@ import (
 type MautrixAdapter struct {
 	cfg            *config.Config
 	logger         ports.Logger
-	as             *appservice.AppService
+	as             appserviceAPI
 	idMapper       *domain.IDMapper
-	admin          *SynapseAdmin
+	admin          adminAPI
 	botDisplayName string
 	eventHandlers  EventHandlers
 	eventLoopOnce  sync.Once
@@ -137,7 +137,7 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 	return &MautrixAdapter{
 		cfg:            cfg,
 		logger:         logger,
-		as:             as,
+		as:             &appserviceWrapper{as: as},
 		idMapper:       domain.NewIDMapper(homeserverDomain),
 		admin:          admin,
 		botDisplayName: cfg.Matrix.BotDisplayName,
@@ -174,8 +174,8 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	}
 
 	// Step 3: Verify bot connection
-	botClient := m.as.BotClient()
-	whoami, err := botClient.Whoami(ctx)
+	botIntent := m.as.BotIntent()
+	whoami, err := botIntent.Whoami(ctx)
 	if err != nil {
 		m.logger.Warn("Failed to verify bot connection (Whoami)", "error", err)
 	} else {
@@ -308,7 +308,7 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 
 // findGhostIntentInRoom finds the ghost user with the highest power level in a room.
 // Returns their intent, or nil if no ghost users are found.
-func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.RoomID) *appservice.IntentAPI {
+func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.RoomID) intentAPI {
 	members, err := m.admin.GetRoomMembers(ctx, roomID)
 	if err != nil {
 		return nil
@@ -331,7 +331,7 @@ func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.Ro
 	}
 
 	botMXID := m.as.BotMXID().String()
-	var bestIntent *appservice.IntentAPI
+	var bestIntent intentAPI
 	bestPL := float64(-1)
 
 	for _, member := range members {
@@ -549,10 +549,10 @@ func (m *MautrixAdapter) waitForServerReady(ctx context.Context) error {
 
 // getServerAddress returns the HTTP address of the AppService server.
 func (m *MautrixAdapter) getServerAddress() string {
-	if m.as.Host.IsUnixSocket() {
+	if m.as.Host().IsUnixSocket() {
 		return "" // Unix sockets need different handling, skip for now
 	}
-	return m.as.Host.Address()
+	return m.as.Host().Address()
 }
 
 // probeServer attempts to connect to the server to verify it's listening.
@@ -656,7 +656,7 @@ func (m *MautrixAdapter) getLatestEventID(
 // markAsRead sends m.read receipt (triggers EDU) and sets m.fully_read marker (queryable)
 // for a single user in a room. This is the single source of truth for marking messages as read.
 func (m *MautrixAdapter) markAsRead(
-	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID, eventID id.EventID,
+	ctx context.Context, intent intentAPI, roomID id.RoomID, eventID id.EventID,
 ) {
 	if err := intent.SendReceipt(ctx, roomID, eventID, event.ReceiptTypeRead, nil); err != nil {
 		m.logger.Warn("Failed to send m.read receipt",
@@ -805,7 +805,7 @@ func (m *MautrixAdapter) UpdateRoomState(
 // if the value is empty. Redacting (instead of setting to empty) ensures clients
 // fall back to their default behavior (e.g. showing member names for unnamed rooms).
 func (m *MautrixAdapter) setOrRedactState(
-	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID, eventType event.Type, value string,
+	ctx context.Context, intent intentAPI, roomID id.RoomID, eventType event.Type, value string,
 ) error {
 	if value != "" {
 		var content interface{}
@@ -1041,13 +1041,13 @@ func (m *MautrixAdapter) findReactionByEmojiAndSender(
 
 // HomeserverDomain returns the homeserver domain for room alias construction.
 func (m *MautrixAdapter) HomeserverDomain() string {
-	return m.as.HomeserverDomain
+	return m.as.HomeserverDomain()
 }
 
 // Router returns the AppService HTTP router for registering custom endpoints.
 // Custom endpoints will be served on the same port as the AppService transaction API.
 func (m *MautrixAdapter) Router() *http.ServeMux {
-	return m.as.Router
+	return m.as.Router()
 }
 
 // SetUserProfile updates the user's display name and avatar.
@@ -1161,7 +1161,7 @@ func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, s
 // getIntentForRoom returns an intent that has access to a room.
 // Tries BotIntent first (for spaces where bot is a member), then falls back
 // to finding a joined ghost user via the admin API.
-func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID) *appservice.IntentAPI {
+func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID) intentAPI {
 	botIntent := m.as.BotIntent()
 
 	// Check if bot is in the room via admin API
@@ -2131,7 +2131,7 @@ func (m *MautrixAdapter) AddSpaceChild(
 	intent := m.as.BotIntent()
 
 	content := &event.SpaceChildEventContent{
-		Via:       []string{m.as.HomeserverDomain},
+		Via:       []string{m.as.HomeserverDomain()},
 		Order:     order,
 		Suggested: suggested,
 	}
@@ -2149,7 +2149,7 @@ func (m *MautrixAdapter) SetSpaceParent(ctx context.Context, childID id.RoomID, 
 	intent := m.getIntentForRoom(ctx, childID)
 
 	content := &event.SpaceParentEventContent{
-		Via:       []string{m.as.HomeserverDomain},
+		Via:       []string{m.as.HomeserverDomain()},
 		Canonical: true,
 	}
 
@@ -2245,7 +2245,7 @@ func (m *MautrixAdapter) SendReadReceipt(
 // getFullyReadMarker queries the m.fully_read room account data for a user in a room.
 // Returns nil if no marker is set (user has never marked anything as read in this room).
 func (m *MautrixAdapter) getFullyReadMarker(
-	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID,
+	ctx context.Context, intent intentAPI, roomID id.RoomID,
 ) *id.EventID {
 	var result struct {
 		EventID id.EventID `json:"event_id"`
@@ -2270,7 +2270,7 @@ func (m *MautrixAdapter) getFullyReadMarker(
 // Returns (count, true) if receipt found or all events scanned.
 // Returns (count-so-far, false) if 200-event cap hit without finding receipt.
 func (m *MautrixAdapter) countUnreadMessages(
-	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID,
+	ctx context.Context, intent intentAPI, roomID id.RoomID,
 	receiptEventID *id.EventID, userID id.UserID,
 ) (int, bool) {
 	if receiptEventID == nil {
@@ -2342,7 +2342,7 @@ func (m *MautrixAdapter) countUnreadMessages(
 // Called when m.fully_read doesn't exist and Synapse reports 0 unread,
 // so future queries can use self-calculation.
 func (m *MautrixAdapter) bootstrapFullyReadMarker(
-	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID,
+	ctx context.Context, intent intentAPI, roomID id.RoomID,
 ) {
 	// Fetch the latest message to get its event ID
 	resp, err := intent.Messages(ctx, roomID, "", "", mautrix.DirectionBackward, nil, 1)
@@ -2380,7 +2380,7 @@ func extractSynapseNotificationCount(joinedRoom *mautrix.SyncJoinedRoom) int {
 // getSynapseUnreadCount performs a /sync call to get Synapse's notification_count for a single room.
 // Used as fallback when self-calculation isn't possible.
 func (m *MautrixAdapter) getSynapseUnreadCount(
-	ctx context.Context, intent *appservice.IntentAPI, roomID id.RoomID,
+	ctx context.Context, intent intentAPI, roomID id.RoomID,
 ) (int, error) {
 	filter := &mautrix.Filter{
 		Room: &mautrix.RoomFilter{
@@ -2408,7 +2408,7 @@ func (m *MautrixAdapter) getSynapseUnreadCount(
 // getSynapseBatchUnreadCounts performs a single /sync call to get Synapse's notification_count for multiple rooms.
 // Used as fallback when self-calculation isn't possible.
 func (m *MautrixAdapter) getSynapseBatchUnreadCounts(
-	ctx context.Context, intent *appservice.IntentAPI, roomIDs []id.RoomID,
+	ctx context.Context, intent intentAPI, roomIDs []id.RoomID,
 ) (map[id.RoomID]int, error) {
 	filter := &mautrix.Filter{
 		Room: &mautrix.RoomFilter{
