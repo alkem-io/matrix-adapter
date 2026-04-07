@@ -65,6 +65,14 @@ func TestHandleCreateSpace_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, resp)
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if matrix.capturedCreateSpaceName != "Test Space" {
+		t.Errorf("expected space name 'Test Space', got %q", matrix.capturedCreateSpaceName)
+	}
+	if matrix.capturedCreateSpaceAlkemioID != contextID {
+		t.Errorf("expected alkemio context ID %s, got %s", contextID, matrix.capturedCreateSpaceAlkemioID)
+	}
 }
 
 func TestHandleCreateSpace_InvalidJSON(t *testing.T) {
@@ -241,6 +249,14 @@ func TestHandleUpdateSpace_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, resp)
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if matrix.capturedUpdateSpaceStateName == nil || *matrix.capturedUpdateSpaceStateName != "Updated Name" {
+		t.Errorf("expected space name 'Updated Name', got %v", matrix.capturedUpdateSpaceStateName)
+	}
+	if matrix.capturedUpdateSpaceStateRoomID != roomID {
+		t.Errorf("expected space room ID %q, got %q", roomID, matrix.capturedUpdateSpaceStateRoomID)
+	}
 }
 
 func TestHandleUpdateSpace_InvalidJSON(t *testing.T) {
@@ -431,6 +447,20 @@ func TestHandleSetParent_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, resp)
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if matrix.capturedAddSpaceChildChildID != childRoomID {
+		t.Errorf("expected child room ID %q, got %q", childRoomID, matrix.capturedAddSpaceChildChildID)
+	}
+	if matrix.capturedAddSpaceChildSpaceID != parentRoomID {
+		t.Errorf("expected parent space ID %q, got %q", parentRoomID, matrix.capturedAddSpaceChildSpaceID)
+	}
+	if matrix.capturedSetSpaceParentChildID != childRoomID {
+		t.Errorf("expected set-parent child ID %q, got %q", childRoomID, matrix.capturedSetSpaceParentChildID)
+	}
+	if matrix.capturedSetSpaceParentParentID != parentRoomID {
+		t.Errorf("expected set-parent parent ID %q, got %q", parentRoomID, matrix.capturedSetSpaceParentParentID)
+	}
 }
 
 func TestHandleSetParent_InvalidJSON(t *testing.T) {
@@ -536,6 +566,11 @@ func TestHandleBatchAddSpaceMember_Success(t *testing.T) {
 	if len(batchResp.Results) != 2 {
 		t.Errorf("expected 2 results, got %d", len(batchResp.Results))
 	}
+
+	// Verify the handler correctly parsed the actor ID (last invitee captured)
+	if matrix.capturedInviteToSpaceActor.ID != actorID {
+		t.Errorf("expected invite actor ID %s, got %s", actorID, matrix.capturedInviteToSpaceActor.ID)
+	}
 }
 
 func TestHandleBatchAddSpaceMember_InvalidJSON(t *testing.T) {
@@ -614,6 +649,15 @@ func TestHandleBatchRemoveSpaceMember_Success(t *testing.T) {
 	if !batchResp.Success {
 		t.Fatalf("expected success, got error: %+v", batchResp.Error)
 	}
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	expectedUserID := id.NewUserID(actorID.String(), testOtherDomain)
+	if matrix.capturedKickFromSpaceUserID != expectedUserID {
+		t.Errorf("expected kick user ID %q, got %q", expectedUserID, matrix.capturedKickFromSpaceUserID)
+	}
+	if matrix.capturedKickFromSpaceRoomID != "!space1:matrix.example.com" {
+		t.Errorf("expected kick space room ID '!space1:matrix.example.com', got %q", matrix.capturedKickFromSpaceRoomID)
+	}
 }
 
 func TestHandleBatchRemoveSpaceMember_InvalidJSON(t *testing.T) {
@@ -685,6 +729,21 @@ func TestHandleSetSpaceState_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, resp)
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if matrix.capturedSetCustomStateRoomID != roomID {
+		t.Errorf("expected room ID %q, got %q", roomID, matrix.capturedSetCustomStateRoomID)
+	}
+	if matrix.capturedSetCustomState == nil {
+		t.Fatal("expected custom state to be non-nil")
+	}
+	vis, ok := matrix.capturedSetCustomState["io.alkemio.visibility"]
+	if !ok {
+		t.Fatal("expected io.alkemio.visibility in captured state")
+	}
+	if v, ok := vis["visible"].(bool); !ok || !v {
+		t.Errorf("expected visible=true in captured state, got %v", vis["visible"])
+	}
 }
 
 func TestHandleSetSpaceState_InvalidJSON(t *testing.T) {
@@ -798,6 +857,11 @@ func TestHandleGetSpaceState_Success(t *testing.T) {
 	if _, ok := stateResp.State["io.alkemio.visibility"]; !ok {
 		t.Error("expected io.alkemio.visibility in state")
 	}
+
+	// Verify the handler correctly forwarded the room ID to the mock
+	if matrix.capturedGetCustomStateRoomID != roomID {
+		t.Errorf("expected room ID %q, got %q", roomID, matrix.capturedGetCustomStateRoomID)
+	}
 }
 
 func TestHandleGetSpaceState_InvalidJSON(t *testing.T) {
@@ -891,6 +955,17 @@ func TestHandleSyncActor_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, resp)
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if matrix.capturedEnsureUserActor.ID != actorID {
+		t.Errorf("expected actor ID %s, got %s", actorID, matrix.capturedEnsureUserActor.ID)
+	}
+	if matrix.capturedSetProfileActor.DisplayName != "Test Actor" {
+		t.Errorf("expected display name 'Test Actor', got %q", matrix.capturedSetProfileActor.DisplayName)
+	}
+	if matrix.capturedSetProfileActor.AvatarURL != "mxc://example.com/avatar" {
+		t.Errorf("expected avatar URL 'mxc://example.com/avatar', got %q", matrix.capturedSetProfileActor.AvatarURL)
+	}
 }
 
 func TestHandleSyncActor_InvalidJSON(t *testing.T) {
@@ -1015,6 +1090,20 @@ func TestHandleMarkMessageRead_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, resp)
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if svc.capturedMarkReadActorID != actorID {
+		t.Errorf("expected actor ID %s, got %s", actorID, svc.capturedMarkReadActorID)
+	}
+	if svc.capturedMarkReadRoomID != matrixRoomID {
+		t.Errorf("expected room ID %q, got %q", matrixRoomID, svc.capturedMarkReadRoomID)
+	}
+	if svc.capturedMarkReadEventID != "$event1:matrix.example.com" {
+		t.Errorf("expected event ID '$event1:matrix.example.com', got %q", svc.capturedMarkReadEventID)
+	}
+	if svc.capturedMarkReadThreadID != nil {
+		t.Errorf("expected nil thread ID, got %v", svc.capturedMarkReadThreadID)
+	}
 }
 
 func TestHandleMarkMessageRead_WithThreadID(t *testing.T) {
@@ -1044,6 +1133,17 @@ func TestHandleMarkMessageRead_WithThreadID(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, resp)
+
+	// Verify the handler correctly parsed and forwarded the thread ID
+	if svc.capturedMarkReadActorID != actorID {
+		t.Errorf("expected actor ID %s, got %s", actorID, svc.capturedMarkReadActorID)
+	}
+	if svc.capturedMarkReadThreadID == nil {
+		t.Fatal("expected thread ID to be non-nil")
+	}
+	if *svc.capturedMarkReadThreadID != id.EventID("$thread1:matrix.example.com") {
+		t.Errorf("expected thread ID '$thread1:matrix.example.com', got %q", *svc.capturedMarkReadThreadID)
+	}
 }
 
 func TestHandleMarkMessageRead_InvalidJSON(t *testing.T) {
@@ -1211,6 +1311,20 @@ func TestHandleGetUnreadCounts_Success(t *testing.T) {
 	}
 	if len(unreadResp.ThreadUnreadCounts) != 1 {
 		t.Errorf("expected 1 thread count, got %d", len(unreadResp.ThreadUnreadCounts))
+	}
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if svc.capturedGetUnreadActorID != actorID {
+		t.Errorf("expected actor ID %s, got %s", actorID, svc.capturedGetUnreadActorID)
+	}
+	if svc.capturedGetUnreadRoomID != matrixRoomID {
+		t.Errorf("expected room ID %q, got %q", matrixRoomID, svc.capturedGetUnreadRoomID)
+	}
+	if len(svc.capturedGetUnreadThreadIDs) != 1 {
+		t.Fatalf("expected 1 thread ID, got %d", len(svc.capturedGetUnreadThreadIDs))
+	}
+	if svc.capturedGetUnreadThreadIDs[0] != threadEventID {
+		t.Errorf("expected thread ID %q, got %q", threadEventID, svc.capturedGetUnreadThreadIDs[0])
 	}
 }
 

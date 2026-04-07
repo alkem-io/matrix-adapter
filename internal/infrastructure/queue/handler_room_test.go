@@ -210,6 +210,23 @@ func TestHandleCreateRoom_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, result)
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if mock.capturedCreateRoomName != "Test Room" {
+		t.Errorf("expected room name 'Test Room', got %q", mock.capturedCreateRoomName)
+	}
+	if mock.capturedCreateRoomType != string(dto.RoomTypeCommunity) {
+		t.Errorf("expected room type %q, got %q", dto.RoomTypeCommunity, mock.capturedCreateRoomType)
+	}
+	if mock.capturedCreateRoomAlkemioID != roomID {
+		t.Errorf("expected alkemio room ID %s, got %s", roomID, mock.capturedCreateRoomAlkemioID)
+	}
+	if len(mock.capturedCreateRoomMembers) != 1 {
+		t.Fatalf("expected 1 initial member, got %d", len(mock.capturedCreateRoomMembers))
+	}
+	if mock.capturedCreateRoomMembers[0].ID != memberID {
+		t.Errorf("expected member ID %s, got %s", memberID, mock.capturedCreateRoomMembers[0].ID)
+	}
 }
 
 func TestHandleCreateRoom_InvalidJSON(t *testing.T) {
@@ -428,6 +445,14 @@ func TestHandleUpdateRoom_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, result)
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if mock.capturedUpdateRoomStateName == nil || *mock.capturedUpdateRoomStateName != "Updated Name" {
+		t.Errorf("expected name 'Updated Name', got %v", mock.capturedUpdateRoomStateName)
+	}
+	if mock.capturedUpdateRoomStateRoomID != "!room1:test" {
+		t.Errorf("expected room ID '!room1:test', got %q", mock.capturedUpdateRoomStateRoomID)
+	}
 }
 
 func TestHandleUpdateRoom_InvalidJSON(t *testing.T) {
@@ -473,6 +498,15 @@ func TestHandleUpdateRoom_WithJoinRule(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, result)
+
+	// Verify the handler correctly converted and forwarded the join rule
+	if mock.capturedUpdateRoomStateJoinRule == nil || *mock.capturedUpdateRoomStateJoinRule != string(dto.JoinRulePublic) {
+		t.Errorf("expected join rule %q, got %v", dto.JoinRulePublic, mock.capturedUpdateRoomStateJoinRule)
+	}
+	// Name should not be set
+	if mock.capturedUpdateRoomStateName != nil {
+		t.Errorf("expected name to be nil, got %q", *mock.capturedUpdateRoomStateName)
+	}
 }
 
 // ============================================================================
@@ -595,9 +629,10 @@ func TestHandleSendMessage_Success(t *testing.T) {
 	}
 	h := testRoomHandler(mock)
 
+	senderID := uuid.New()
 	payload := mustMarshal(t, dto.SendMessageRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
-		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(senderID),
 		Content:       "Hello!",
 	})
 
@@ -616,6 +651,17 @@ func TestHandleSendMessage_Success(t *testing.T) {
 	}
 	if resp.Timestamp == 0 {
 		t.Errorf("expected non-zero timestamp")
+	}
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if mock.capturedSendMessageContent != "Hello!" {
+		t.Errorf("expected content 'Hello!', got %q", mock.capturedSendMessageContent)
+	}
+	if mock.capturedSendMessageSender.ID != senderID {
+		t.Errorf("expected sender actor ID %s, got %s", senderID, mock.capturedSendMessageSender.ID)
+	}
+	if mock.capturedSendMessageRoomID != "!room1:test" {
+		t.Errorf("expected room ID '!room1:test', got %q", mock.capturedSendMessageRoomID)
 	}
 }
 
@@ -643,6 +689,14 @@ func TestHandleSendMessage_WithThread(t *testing.T) {
 	resp := result.(dto.SendMessageResponse)
 	if string(resp.MessageID) != "$reply1:test" {
 		t.Errorf("expected message_id=$reply1:test, got %s", resp.MessageID)
+	}
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if mock.capturedSendReplyContent != "Reply!" {
+		t.Errorf("expected reply content 'Reply!', got %q", mock.capturedSendReplyContent)
+	}
+	if mock.capturedSendReplyThread != "$parent:test" {
+		t.Errorf("expected thread ID '$parent:test', got %q", mock.capturedSendReplyThread)
 	}
 }
 
@@ -813,6 +867,14 @@ func TestHandleDeleteMessage_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, result)
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if mock.capturedRedactEventID != "$msg1:test" {
+		t.Errorf("expected redacted event ID '$msg1:test', got %q", mock.capturedRedactEventID)
+	}
+	if mock.capturedRedactEventRoomID != "!room1:test" {
+		t.Errorf("expected redact room ID '!room1:test', got %q", mock.capturedRedactEventRoomID)
+	}
 }
 
 func TestHandleDeleteMessage_InvalidJSON(t *testing.T) {
@@ -880,7 +942,7 @@ func TestHandleAddReaction_Success(t *testing.T) {
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
 		MessageID:     "$msg1:test",
 		SenderActorID: dto.AlkemioActorID(uuid.New()),
-		Emoji:         "👍",
+		Emoji:         "\xf0\x9f\x91\x8d",
 	})
 
 	result, err := h.HandleAddReaction(context.Background(), payload)
@@ -898,6 +960,17 @@ func TestHandleAddReaction_Success(t *testing.T) {
 	}
 	if resp.Timestamp == 0 {
 		t.Errorf("expected non-zero timestamp")
+	}
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if mock.capturedSendReactionEmoji != "\xf0\x9f\x91\x8d" {
+		t.Errorf("expected emoji thumbs up, got %q", mock.capturedSendReactionEmoji)
+	}
+	if mock.capturedSendReactionEventID != "$msg1:test" {
+		t.Errorf("expected event ID '$msg1:test', got %q", mock.capturedSendReactionEventID)
+	}
+	if mock.capturedSendReactionRoomID != "!room1:test" {
+		t.Errorf("expected room ID '!room1:test', got %q", mock.capturedSendReactionRoomID)
 	}
 }
 
@@ -965,6 +1038,11 @@ func TestHandleRemoveReaction_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, result)
+
+	// Verify the handler correctly forwarded the reaction ID for redaction
+	if mock.capturedRedactEventID != "$reaction1:test" {
+		t.Errorf("expected redacted event ID '$reaction1:test', got %q", mock.capturedRedactEventID)
+	}
 }
 
 func TestHandleRemoveReaction_InvalidJSON(t *testing.T) {
@@ -1128,13 +1206,14 @@ func TestHandleGetReaction_ResolvesSenderID(t *testing.T) {
 
 func TestHandleBatchAddMember_Success(t *testing.T) {
 	roomID1 := uuid.New()
+	actorID := uuid.New()
 	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 	}
 	h := testRoomHandler(mock)
 
 	payload := mustMarshal(t, dto.BatchAddMemberRequest{
-		ActorID:        dto.AlkemioActorID(uuid.New()),
+		ActorID:        dto.AlkemioActorID(actorID),
 		AlkemioRoomIDs: []dto.AlkemioRoomID{dto.AlkemioRoomID(roomID1)},
 	})
 
@@ -1158,6 +1237,14 @@ func TestHandleBatchAddMember_Success(t *testing.T) {
 	}
 	if !roomResult.Success {
 		t.Errorf("expected per-room result success=true")
+	}
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if mock.capturedInviteUserRoomID != "!room1:test" {
+		t.Errorf("expected invite room ID '!room1:test', got %q", mock.capturedInviteUserRoomID)
+	}
+	if mock.capturedInviteUserInvitee.ID != actorID {
+		t.Errorf("expected invitee actor ID %s, got %s", actorID, mock.capturedInviteUserInvitee.ID)
 	}
 }
 
@@ -1206,13 +1293,14 @@ func TestHandleBatchAddMember_EmptyRoomIDs(t *testing.T) {
 
 func TestHandleBatchRemoveMember_Success(t *testing.T) {
 	roomID1 := uuid.New()
+	actorID := uuid.New()
 	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 	}
 	h := testRoomHandler(mock)
 
 	payload := mustMarshal(t, dto.BatchRemoveMemberRequest{
-		ActorID:        dto.AlkemioActorID(uuid.New()),
+		ActorID:        dto.AlkemioActorID(actorID),
 		AlkemioRoomIDs: []dto.AlkemioRoomID{dto.AlkemioRoomID(roomID1)},
 		Reason:         "no longer relevant",
 	})
@@ -1229,6 +1317,15 @@ func TestHandleBatchRemoveMember_Success(t *testing.T) {
 	}
 	if len(resp.Results) != 1 {
 		t.Errorf("expected 1 result, got %d", len(resp.Results))
+	}
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if mock.capturedKickUserRoomID != "!room1:test" {
+		t.Errorf("expected kick room ID '!room1:test', got %q", mock.capturedKickUserRoomID)
+	}
+	expectedUserID := id.NewUserID(actorID.String(), testDomain)
+	if mock.capturedKickUserUserID != expectedUserID {
+		t.Errorf("expected kick user ID %q, got %q", expectedUserID, mock.capturedKickUserUserID)
 	}
 }
 
@@ -1628,6 +1725,21 @@ func TestHandleSetRoomState_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, result)
+
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if mock.capturedSetCustomStateRoomID != "!room1:test" {
+		t.Errorf("expected room ID '!room1:test', got %q", mock.capturedSetCustomStateRoomID)
+	}
+	if mock.capturedSetCustomState == nil {
+		t.Fatal("expected custom state to be non-nil")
+	}
+	vis, ok := mock.capturedSetCustomState["io.alkemio.visibility"]
+	if !ok {
+		t.Fatal("expected io.alkemio.visibility in captured state")
+	}
+	if v, ok := vis["visible"].(bool); !ok || !v {
+		t.Errorf("expected visible=true in captured state, got %v", vis["visible"])
+	}
 }
 
 func TestHandleSetRoomState_InvalidJSON(t *testing.T) {
@@ -1736,6 +1848,17 @@ func TestHandleGetRoomState_WithEventTypeFilter(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertSuccess(t, result)
+
+	// Verify the handler correctly forwarded the event type filter
+	if len(mock.capturedGetCustomStateEventTypes) != 1 {
+		t.Fatalf("expected 1 event type filter, got %d", len(mock.capturedGetCustomStateEventTypes))
+	}
+	if mock.capturedGetCustomStateEventTypes[0] != "io.alkemio.visibility" {
+		t.Errorf("expected event type 'io.alkemio.visibility', got %q", mock.capturedGetCustomStateEventTypes[0])
+	}
+	if mock.capturedGetCustomStateRoomID != "!room1:test" {
+		t.Errorf("expected room ID '!room1:test', got %q", mock.capturedGetCustomStateRoomID)
+	}
 }
 
 func TestHandleGetRoomState_InvalidJSON(t *testing.T) {
