@@ -2,7 +2,6 @@ package queue
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 
@@ -55,7 +54,7 @@ func TestHandleCreateSpace_Success(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.CreateSpaceRequest{
+	payload := mustMarshal(t,dto.CreateSpaceRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 		Name:             "Test Space",
 	})
@@ -90,7 +89,7 @@ func TestHandleCreateSpace_MissingContextID(t *testing.T) {
 	matrix := otherNewMatrixPort()
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.CreateSpaceRequest{
+	payload := mustMarshal(t,dto.CreateSpaceRequest{
 		Name: "Test Space",
 		// AlkemioContextID is zero-value
 	})
@@ -107,7 +106,7 @@ func TestHandleCreateSpace_MissingName(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	contextID := uuid.New()
-	payload, _ := json.Marshal(dto.CreateSpaceRequest{
+	payload := mustMarshal(t,dto.CreateSpaceRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 		// Name is empty
 	})
@@ -130,7 +129,7 @@ func TestHandleCreateSpace_ServiceError(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.CreateSpaceRequest{
+	payload := mustMarshal(t,dto.CreateSpaceRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 		Name:             "Test Space",
 	})
@@ -163,7 +162,7 @@ func TestHandleGetSpace_Success(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.GetSpaceRequest{
+	payload := mustMarshal(t,dto.GetSpaceRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 	})
 
@@ -199,7 +198,7 @@ func TestHandleGetSpace_MissingContextID(t *testing.T) {
 	matrix := otherNewMatrixPort()
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.GetSpaceRequest{})
+	payload := mustMarshal(t,dto.GetSpaceRequest{})
 
 	resp, err := handler.HandleGetSpace(context.Background(), payload)
 	if err != nil {
@@ -213,7 +212,7 @@ func TestHandleGetSpace_NotFound(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	contextID := uuid.New()
-	payload, _ := json.Marshal(dto.GetSpaceRequest{
+	payload := mustMarshal(t,dto.GetSpaceRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 	})
 
@@ -239,7 +238,7 @@ func TestHandleUpdateSpace_Success(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	newName := "Updated Name"
-	payload, _ := json.Marshal(dto.UpdateSpaceRequest{
+	payload := mustMarshal(t,dto.UpdateSpaceRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 		Name:             &newName,
 	})
@@ -274,7 +273,7 @@ func TestHandleUpdateSpace_MissingContextID(t *testing.T) {
 	matrix := otherNewMatrixPort()
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.UpdateSpaceRequest{})
+	payload := mustMarshal(t,dto.UpdateSpaceRequest{})
 
 	resp, err := handler.HandleUpdateSpace(context.Background(), payload)
 	if err != nil {
@@ -289,7 +288,7 @@ func TestHandleUpdateSpace_NotFound(t *testing.T) {
 
 	contextID := uuid.New()
 	newName := "Updated"
-	payload, _ := json.Marshal(dto.UpdateSpaceRequest{
+	payload := mustMarshal(t,dto.UpdateSpaceRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 		Name:             &newName,
 	})
@@ -315,7 +314,7 @@ func TestHandleDeleteSpace_Success(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.DeleteSpaceRequest{
+	payload := mustMarshal(t,dto.DeleteSpaceRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 		Reason:           "testing",
 	})
@@ -342,7 +341,7 @@ func TestHandleDeleteSpace_MissingContextID(t *testing.T) {
 	matrix := otherNewMatrixPort()
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.DeleteSpaceRequest{})
+	payload := mustMarshal(t,dto.DeleteSpaceRequest{})
 
 	resp, err := handler.HandleDeleteSpace(context.Background(), payload)
 	if err != nil {
@@ -356,7 +355,7 @@ func TestHandleDeleteSpace_IdempotentNotFound(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	contextID := uuid.New()
-	payload, _ := json.Marshal(dto.DeleteSpaceRequest{
+	payload := mustMarshal(t,dto.DeleteSpaceRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 	})
 
@@ -376,7 +375,7 @@ func TestHandleListSpaces_Success(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.ListSpacesRequest{})
+	payload := mustMarshal(t,dto.ListSpacesRequest{})
 
 	resp, err := handler.HandleListSpaces(context.Background(), payload)
 	if err != nil {
@@ -409,7 +408,7 @@ func TestHandleListSpaces_ServiceError(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.ListSpacesRequest{})
+	payload := mustMarshal(t,dto.ListSpacesRequest{})
 
 	resp, err := handler.HandleListSpaces(context.Background(), payload)
 	if err != nil {
@@ -436,7 +435,7 @@ func TestHandleSetParent_Success(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.SetParentRequest{
+	payload := mustMarshal(t,dto.SetParentRequest{
 		ChildID:         childID.String(),
 		IsSpace:         false,
 		ParentContextID: dto.AlkemioContextID(parentContextID),
@@ -479,7 +478,7 @@ func TestHandleSetParent_MissingChildID(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	parentContextID := uuid.New()
-	payload, _ := json.Marshal(dto.SetParentRequest{
+	payload := mustMarshal(t,dto.SetParentRequest{
 		// ChildID is empty
 		ParentContextID: dto.AlkemioContextID(parentContextID),
 	})
@@ -495,7 +494,7 @@ func TestHandleSetParent_MissingParentContextID(t *testing.T) {
 	matrix := otherNewMatrixPort()
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.SetParentRequest{
+	payload := mustMarshal(t,dto.SetParentRequest{
 		ChildID: uuid.New().String(),
 		// ParentContextID is zero-value
 	})
@@ -513,7 +512,7 @@ func TestHandleSetParent_ParentNotFound(t *testing.T) {
 
 	parentContextID := uuid.New()
 	childID := uuid.New()
-	payload, _ := json.Marshal(dto.SetParentRequest{
+	payload := mustMarshal(t,dto.SetParentRequest{
 		ChildID:         childID.String(),
 		ParentContextID: dto.AlkemioContextID(parentContextID),
 	})
@@ -543,7 +542,7 @@ func TestHandleBatchAddSpaceMember_Success(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.BatchAddSpaceMemberRequest{
+	payload := mustMarshal(t,dto.BatchAddSpaceMemberRequest{
 		ActorID: dto.AlkemioActorID(actorID),
 		AlkemioContextIDs: []dto.AlkemioContextID{
 			dto.AlkemioContextID(contextID1),
@@ -589,7 +588,7 @@ func TestHandleBatchAddSpaceMember_MissingActorID(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	contextID := uuid.New()
-	payload, _ := json.Marshal(dto.BatchAddSpaceMemberRequest{
+	payload := mustMarshal(t,dto.BatchAddSpaceMemberRequest{
 		AlkemioContextIDs: []dto.AlkemioContextID{dto.AlkemioContextID(contextID)},
 	})
 
@@ -605,7 +604,7 @@ func TestHandleBatchAddSpaceMember_EmptyContextIDs(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	actorID := uuid.New()
-	payload, _ := json.Marshal(dto.BatchAddSpaceMemberRequest{
+	payload := mustMarshal(t,dto.BatchAddSpaceMemberRequest{
 		ActorID:           dto.AlkemioActorID(actorID),
 		AlkemioContextIDs: []dto.AlkemioContextID{},
 	})
@@ -631,7 +630,7 @@ func TestHandleBatchRemoveSpaceMember_Success(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.BatchRemoveSpaceMemberRequest{
+	payload := mustMarshal(t,dto.BatchRemoveSpaceMemberRequest{
 		ActorID:           dto.AlkemioActorID(actorID),
 		AlkemioContextIDs: []dto.AlkemioContextID{dto.AlkemioContextID(contextID)},
 		Reason:            "removed from group",
@@ -676,7 +675,7 @@ func TestHandleBatchRemoveSpaceMember_MissingActorID(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	contextID := uuid.New()
-	payload, _ := json.Marshal(dto.BatchRemoveSpaceMemberRequest{
+	payload := mustMarshal(t,dto.BatchRemoveSpaceMemberRequest{
 		AlkemioContextIDs: []dto.AlkemioContextID{dto.AlkemioContextID(contextID)},
 	})
 
@@ -692,7 +691,7 @@ func TestHandleBatchRemoveSpaceMember_EmptyContextIDs(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	actorID := uuid.New()
-	payload, _ := json.Marshal(dto.BatchRemoveSpaceMemberRequest{
+	payload := mustMarshal(t,dto.BatchRemoveSpaceMemberRequest{
 		ActorID:           dto.AlkemioActorID(actorID),
 		AlkemioContextIDs: []dto.AlkemioContextID{},
 	})
@@ -717,7 +716,7 @@ func TestHandleSetSpaceState_Success(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.SetSpaceStateRequest{
+	payload := mustMarshal(t,dto.SetSpaceStateRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 		State: map[string]map[string]interface{}{
 			"io.alkemio.visibility": {"visible": true},
@@ -761,7 +760,7 @@ func TestHandleSetSpaceState_MissingContextID(t *testing.T) {
 	matrix := otherNewMatrixPort()
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.SetSpaceStateRequest{
+	payload := mustMarshal(t,dto.SetSpaceStateRequest{
 		State: map[string]map[string]interface{}{
 			"io.alkemio.test": {"key": "value"},
 		},
@@ -779,7 +778,7 @@ func TestHandleSetSpaceState_SpaceNotFound(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	contextID := uuid.New()
-	payload, _ := json.Marshal(dto.SetSpaceStateRequest{
+	payload := mustMarshal(t,dto.SetSpaceStateRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 		State: map[string]map[string]interface{}{
 			"io.alkemio.test": {"key": "value"},
@@ -805,7 +804,7 @@ func TestHandleSetSpaceState_MatrixError(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.SetSpaceStateRequest{
+	payload := mustMarshal(t,dto.SetSpaceStateRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 		State: map[string]map[string]interface{}{
 			"io.alkemio.test": {"key": "value"},
@@ -835,7 +834,7 @@ func TestHandleGetSpaceState_Success(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.GetSpaceStateRequest{
+	payload := mustMarshal(t,dto.GetSpaceStateRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 	})
 
@@ -879,7 +878,7 @@ func TestHandleGetSpaceState_MissingContextID(t *testing.T) {
 	matrix := otherNewMatrixPort()
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.GetSpaceStateRequest{})
+	payload := mustMarshal(t,dto.GetSpaceStateRequest{})
 
 	resp, err := handler.HandleGetSpaceState(context.Background(), payload)
 	if err != nil {
@@ -893,7 +892,7 @@ func TestHandleGetSpaceState_SpaceNotFound(t *testing.T) {
 	handler := newTestSpaceHandler(matrix)
 
 	contextID := uuid.New()
-	payload, _ := json.Marshal(dto.GetSpaceStateRequest{
+	payload := mustMarshal(t,dto.GetSpaceStateRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 	})
 
@@ -916,7 +915,7 @@ func TestHandleGetSpaceState_MatrixError(t *testing.T) {
 
 	handler := newTestSpaceHandler(matrix)
 
-	payload, _ := json.Marshal(dto.GetSpaceStateRequest{
+	payload := mustMarshal(t,dto.GetSpaceStateRequest{
 		AlkemioContextID: dto.AlkemioContextID(contextID),
 	})
 
@@ -944,7 +943,7 @@ func TestHandleSyncActor_Success(t *testing.T) {
 	handler := newTestActorHandler(matrix)
 
 	actorID := uuid.New()
-	payload, _ := json.Marshal(dto.SyncActorRequest{
+	payload := mustMarshal(t,dto.SyncActorRequest{
 		ActorID:     dto.AlkemioActorID(actorID),
 		DisplayName: "Test Actor",
 		AvatarURL:   "mxc://example.com/avatar",
@@ -983,7 +982,7 @@ func TestHandleSyncActor_MissingActorID(t *testing.T) {
 	matrix := otherNewMatrixPort()
 	handler := newTestActorHandler(matrix)
 
-	payload, _ := json.Marshal(dto.SyncActorRequest{
+	payload := mustMarshal(t,dto.SyncActorRequest{
 		DisplayName: "Test Actor",
 	})
 
@@ -999,7 +998,7 @@ func TestHandleSyncActor_MissingDisplayName(t *testing.T) {
 	handler := newTestActorHandler(matrix)
 
 	actorID := uuid.New()
-	payload, _ := json.Marshal(dto.SyncActorRequest{
+	payload := mustMarshal(t,dto.SyncActorRequest{
 		ActorID: dto.AlkemioActorID(actorID),
 		// DisplayName is empty
 	})
@@ -1018,7 +1017,7 @@ func TestHandleSyncActor_EnsureUserError(t *testing.T) {
 	handler := newTestActorHandler(matrix)
 
 	actorID := uuid.New()
-	payload, _ := json.Marshal(dto.SyncActorRequest{
+	payload := mustMarshal(t,dto.SyncActorRequest{
 		ActorID:     dto.AlkemioActorID(actorID),
 		DisplayName: "Test Actor",
 	})
@@ -1038,7 +1037,7 @@ func TestHandleSyncActor_SetProfileError(t *testing.T) {
 	handler := newTestActorHandler(matrix)
 
 	actorID := uuid.New()
-	payload, _ := json.Marshal(dto.SyncActorRequest{
+	payload := mustMarshal(t,dto.SyncActorRequest{
 		ActorID:     dto.AlkemioActorID(actorID),
 		DisplayName: "Test Actor",
 	})
@@ -1079,7 +1078,7 @@ func TestHandleMarkMessageRead_Success(t *testing.T) {
 
 	handler := newTestReadReceiptHandler(matrix, svc)
 
-	payload, _ := json.Marshal(dto.MarkMessageReadRequest{
+	payload := mustMarshal(t,dto.MarkMessageReadRequest{
 		ActorID:       dto.AlkemioActorID(actorID),
 		AlkemioRoomID: dto.AlkemioRoomID(roomUUID),
 		MessageID:     "$event1:matrix.example.com",
@@ -1121,7 +1120,7 @@ func TestHandleMarkMessageRead_WithThreadID(t *testing.T) {
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	threadID := dto.MessageID("$thread1:matrix.example.com")
-	payload, _ := json.Marshal(dto.MarkMessageReadRequest{
+	payload := mustMarshal(t,dto.MarkMessageReadRequest{
 		ActorID:       dto.AlkemioActorID(actorID),
 		AlkemioRoomID: dto.AlkemioRoomID(roomUUID),
 		MessageID:     "$event1:matrix.example.com",
@@ -1164,7 +1163,7 @@ func TestHandleMarkMessageRead_MissingActorID(t *testing.T) {
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	roomUUID := uuid.New()
-	payload, _ := json.Marshal(dto.MarkMessageReadRequest{
+	payload := mustMarshal(t,dto.MarkMessageReadRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(roomUUID),
 		MessageID:     "$event1:matrix.example.com",
 	})
@@ -1182,7 +1181,7 @@ func TestHandleMarkMessageRead_MissingRoomID(t *testing.T) {
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	actorID := uuid.New()
-	payload, _ := json.Marshal(dto.MarkMessageReadRequest{
+	payload := mustMarshal(t,dto.MarkMessageReadRequest{
 		ActorID:   dto.AlkemioActorID(actorID),
 		MessageID: "$event1:matrix.example.com",
 	})
@@ -1201,7 +1200,7 @@ func TestHandleMarkMessageRead_MissingMessageID(t *testing.T) {
 
 	actorID := uuid.New()
 	roomUUID := uuid.New()
-	payload, _ := json.Marshal(dto.MarkMessageReadRequest{
+	payload := mustMarshal(t,dto.MarkMessageReadRequest{
 		ActorID:       dto.AlkemioActorID(actorID),
 		AlkemioRoomID: dto.AlkemioRoomID(roomUUID),
 		// MessageID is empty
@@ -1221,7 +1220,7 @@ func TestHandleMarkMessageRead_RoomNotFound(t *testing.T) {
 
 	actorID := uuid.New()
 	roomUUID := uuid.New()
-	payload, _ := json.Marshal(dto.MarkMessageReadRequest{
+	payload := mustMarshal(t,dto.MarkMessageReadRequest{
 		ActorID:       dto.AlkemioActorID(actorID),
 		AlkemioRoomID: dto.AlkemioRoomID(roomUUID),
 		MessageID:     "$event1:matrix.example.com",
@@ -1251,7 +1250,7 @@ func TestHandleMarkMessageRead_ServiceError(t *testing.T) {
 
 	handler := newTestReadReceiptHandler(matrix, svc)
 
-	payload, _ := json.Marshal(dto.MarkMessageReadRequest{
+	payload := mustMarshal(t,dto.MarkMessageReadRequest{
 		ActorID:       dto.AlkemioActorID(actorID),
 		AlkemioRoomID: dto.AlkemioRoomID(roomUUID),
 		MessageID:     "$event1:matrix.example.com",
@@ -1288,7 +1287,7 @@ func TestHandleGetUnreadCounts_Success(t *testing.T) {
 
 	handler := newTestReadReceiptHandler(matrix, svc)
 
-	payload, _ := json.Marshal(dto.GetUnreadCountsRequest{
+	payload := mustMarshal(t,dto.GetUnreadCountsRequest{
 		ActorID:       dto.AlkemioActorID(actorID),
 		AlkemioRoomID: dto.AlkemioRoomID(roomUUID),
 		ThreadIDs:     []dto.MessageID{"$thread1:matrix.example.com"},
@@ -1346,7 +1345,7 @@ func TestHandleGetUnreadCounts_MissingActorID(t *testing.T) {
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	roomUUID := uuid.New()
-	payload, _ := json.Marshal(dto.GetUnreadCountsRequest{
+	payload := mustMarshal(t,dto.GetUnreadCountsRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(roomUUID),
 	})
 
@@ -1363,7 +1362,7 @@ func TestHandleGetUnreadCounts_MissingRoomID(t *testing.T) {
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	actorID := uuid.New()
-	payload, _ := json.Marshal(dto.GetUnreadCountsRequest{
+	payload := mustMarshal(t,dto.GetUnreadCountsRequest{
 		ActorID: dto.AlkemioActorID(actorID),
 	})
 
@@ -1381,7 +1380,7 @@ func TestHandleGetUnreadCounts_RoomNotFound(t *testing.T) {
 
 	actorID := uuid.New()
 	roomUUID := uuid.New()
-	payload, _ := json.Marshal(dto.GetUnreadCountsRequest{
+	payload := mustMarshal(t,dto.GetUnreadCountsRequest{
 		ActorID:       dto.AlkemioActorID(actorID),
 		AlkemioRoomID: dto.AlkemioRoomID(roomUUID),
 	})
@@ -1409,7 +1408,7 @@ func TestHandleGetUnreadCounts_ServiceError(t *testing.T) {
 
 	handler := newTestReadReceiptHandler(matrix, svc)
 
-	payload, _ := json.Marshal(dto.GetUnreadCountsRequest{
+	payload := mustMarshal(t,dto.GetUnreadCountsRequest{
 		ActorID:       dto.AlkemioActorID(actorID),
 		AlkemioRoomID: dto.AlkemioRoomID(roomUUID),
 	})
@@ -1446,7 +1445,7 @@ func TestHandleBatchGetUnreadCounts_Success(t *testing.T) {
 	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
-	payload, _ := json.Marshal(dto.BatchGetUnreadCountsRequest{
+	payload := mustMarshal(t,dto.BatchGetUnreadCountsRequest{
 		ActorID: dto.AlkemioActorID(actorID),
 		AlkemioRoomIDs: []dto.AlkemioRoomID{
 			dto.AlkemioRoomID(roomUUID1),
@@ -1495,7 +1494,7 @@ func TestHandleBatchGetUnreadCounts_MissingActorID(t *testing.T) {
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	roomUUID := uuid.New()
-	payload, _ := json.Marshal(dto.BatchGetUnreadCountsRequest{
+	payload := mustMarshal(t,dto.BatchGetUnreadCountsRequest{
 		AlkemioRoomIDs: []dto.AlkemioRoomID{dto.AlkemioRoomID(roomUUID)},
 	})
 
@@ -1512,7 +1511,7 @@ func TestHandleBatchGetUnreadCounts_EmptyRoomIDs(t *testing.T) {
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	actorID := uuid.New()
-	payload, _ := json.Marshal(dto.BatchGetUnreadCountsRequest{
+	payload := mustMarshal(t,dto.BatchGetUnreadCountsRequest{
 		ActorID:        dto.AlkemioActorID(actorID),
 		AlkemioRoomIDs: []dto.AlkemioRoomID{},
 	})
@@ -1546,7 +1545,7 @@ func TestHandleBatchGetUnreadCounts_PartialErrors(t *testing.T) {
 	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
-	payload, _ := json.Marshal(dto.BatchGetUnreadCountsRequest{
+	payload := mustMarshal(t,dto.BatchGetUnreadCountsRequest{
 		ActorID: dto.AlkemioActorID(actorID),
 		AlkemioRoomIDs: []dto.AlkemioRoomID{
 			dto.AlkemioRoomID(roomUUID1),
@@ -1601,7 +1600,7 @@ func TestHandleBatchGetUnreadCounts_MatrixBatchErrors(t *testing.T) {
 	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
-	payload, _ := json.Marshal(dto.BatchGetUnreadCountsRequest{
+	payload := mustMarshal(t,dto.BatchGetUnreadCountsRequest{
 		ActorID:        dto.AlkemioActorID(actorID),
 		AlkemioRoomIDs: []dto.AlkemioRoomID{dto.AlkemioRoomID(roomUUID1)},
 	})
