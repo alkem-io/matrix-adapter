@@ -276,7 +276,8 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 	botMXID := m.as.BotMXID()
 
 	for _, room := range rooms {
-		if room.RoomType == "m.space" || room.CanonicalAlias == "" {
+		if room.RoomType == "m.space" || room.CanonicalAlias == "" ||
+			m.idMapper.AlkemioRoomID(room.CanonicalAlias) == uuid.Nil {
 			continue
 		}
 
