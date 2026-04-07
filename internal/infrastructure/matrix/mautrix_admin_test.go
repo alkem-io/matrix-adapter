@@ -1018,10 +1018,14 @@ func TestAdminAPI_RedactCanonicalAliases_SkipsSpaces(t *testing.T) {
 			},
 		},
 	}
-	a := newAdminTestAdapter(mock)
-	// Space rooms should be skipped; no further admin calls expected.
-	// Would panic on m.as usage if it tried to proceed past the skip.
+	botIntent := &mockIntentAPI{}
+	as := &mockAppserviceAPI{botIntent: botIntent, botMXID: "@bot:test.local"}
+	a := newFullTestAdapter(as, mock)
 	a.redactCanonicalAliasesFromRooms(context.Background())
+	// Space rooms should be skipped — no JoinRoom or SendStateEvent calls.
+	if len(mock.joinRoomCalls) > 0 {
+		t.Error("should not join space rooms")
+	}
 }
 
 func TestAdminAPI_RedactCanonicalAliases_SkipsEmptyAlias(t *testing.T) {
@@ -1034,29 +1038,32 @@ func TestAdminAPI_RedactCanonicalAliases_SkipsEmptyAlias(t *testing.T) {
 			},
 		},
 	}
-	a := newAdminTestAdapter(mock)
-	// Rooms with empty canonical alias should be skipped.
+	botIntent := &mockIntentAPI{}
+	as := &mockAppserviceAPI{botIntent: botIntent, botMXID: "@bot:test.local"}
+	a := newFullTestAdapter(as, mock)
 	a.redactCanonicalAliasesFromRooms(context.Background())
+	if len(mock.joinRoomCalls) > 0 {
+		t.Error("should not join rooms with empty alias")
+	}
 }
 
-func TestAdminAPI_RedactCanonicalAliases_SkipsBothSpaceAndEmptyAlias(t *testing.T) {
+func TestAdminAPI_RedactCanonicalAliases_SkipsNonAlkemioAlias(t *testing.T) {
 	mock := &mockAdminAPI{
 		listRoomsResult: []AdminRoom{
 			{
-				RoomID:         "!space1:test.local",
-				RoomType:       "m.space",
-				CanonicalAlias: "#space:test.local",
-			},
-			{
 				RoomID:         "!room1:test.local",
 				RoomType:       "",
-				CanonicalAlias: "",
+				CanonicalAlias: "#not-a-uuid:test.local",
 			},
 		},
 	}
-	a := newAdminTestAdapter(mock)
-	// Both rooms should be skipped for different reasons.
+	botIntent := &mockIntentAPI{}
+	as := &mockAppserviceAPI{botIntent: botIntent, botMXID: "@bot:test.local"}
+	a := newFullTestAdapter(as, mock)
 	a.redactCanonicalAliasesFromRooms(context.Background())
+	if len(mock.joinRoomCalls) > 0 {
+		t.Error("should not join rooms with non-Alkemio alias")
+	}
 }
 
 // ============================================================================
