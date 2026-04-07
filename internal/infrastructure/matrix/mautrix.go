@@ -241,7 +241,9 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 	// M_EXCLUSIVE check blocks external admin API calls until the appservice
 	// itself has registered the user via POST /register.
 	if err := m.as.BotIntent().EnsureRegistered(ctx); err != nil {
-		m.logger.Debug("Bot appservice registration", "result", err)
+		m.logger.Debug("Bot appservice registration check", "error", err)
+	} else {
+		m.logger.Debug("Bot appservice registration ensured")
 	}
 
 	m.logger.Info("Bot user already exists, promoting via temp admin...")
