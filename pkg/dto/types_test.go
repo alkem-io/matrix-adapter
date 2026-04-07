@@ -121,6 +121,68 @@ func TestCreateRoomRequest_JSONUnmarshal(t *testing.T) {
 	}
 }
 
+func TestAlkemioActorID_String(t *testing.T) {
+	id := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
+	actorID := AlkemioActorID(id)
+	if actorID.String() != id.String() {
+		t.Errorf("String: got %s, want %s", actorID.String(), id.String())
+	}
+}
+
+func TestAlkemioContextID_String(t *testing.T) {
+	id := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
+	contextID := AlkemioContextID(id)
+	if contextID.String() != id.String() {
+		t.Errorf("String: got %s, want %s", contextID.String(), id.String())
+	}
+}
+
+func TestMessageID_String(t *testing.T) {
+	mid := MessageID("$event123")
+	if mid.String() != "$event123" {
+		t.Errorf("String: got %s, want $event123", mid.String())
+	}
+}
+
+func TestReactionID_String(t *testing.T) {
+	rid := ReactionID("$reaction456")
+	if rid.String() != "$reaction456" {
+		t.Errorf("String: got %s, want $reaction456", rid.String())
+	}
+}
+
+func TestNewErrorResponseWithDetails(t *testing.T) {
+	resp := NewErrorResponseWithDetails(ErrCodeMatrixError, "something failed", "extra info")
+	if resp.Success {
+		t.Error("Expected success=false")
+	}
+	if resp.Error == nil {
+		t.Fatal("Expected error!=nil")
+	}
+	if resp.Error.Code != ErrCodeMatrixError {
+		t.Errorf("Code: got %s, want %s", resp.Error.Code, ErrCodeMatrixError)
+	}
+	if resp.Error.Details != "extra info" {
+		t.Errorf("Details: got %s, want 'extra info'", resp.Error.Details)
+	}
+}
+
+func TestAlkemioActorID_UnmarshalInvalidJSON(t *testing.T) {
+	var actorID AlkemioActorID
+	err := json.Unmarshal([]byte(`"not-a-uuid"`), &actorID)
+	if err == nil {
+		t.Error("Expected error for invalid UUID, got nil")
+	}
+}
+
+func TestAlkemioContextID_UnmarshalInvalidJSON(t *testing.T) {
+	var contextID AlkemioContextID
+	err := json.Unmarshal([]byte(`"not-a-uuid"`), &contextID)
+	if err == nil {
+		t.Error("Expected error for invalid UUID, got nil")
+	}
+}
+
 func TestBaseResponse_JSONMarshal(t *testing.T) {
 	// Success response
 	success := NewSuccessResponse()
