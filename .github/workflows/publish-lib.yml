@@ -38,9 +38,6 @@ jobs:
         with:
           version: 10
 
-      - name: Update npm
-        run: npm install -g npm@11
-
       - name: Generate Library
         run: make generate
 
