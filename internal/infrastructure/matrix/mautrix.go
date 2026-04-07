@@ -1963,41 +1963,14 @@ func (m *MautrixAdapter) CreateSpace(
 		return "", fmt.Errorf("failed to create space: %w", err)
 	}
 
-	// Auto-join initial members
-	joinedUsers := make([]id.UserID, 0, len(memberUserIDs))
-	for _, memberUserID := range memberUserIDs {
-		memberIntent := m.as.Intent(memberUserID)
-		if err := memberIntent.EnsureJoined(ctx, resp.RoomID); err != nil {
-			m.logger.Warn("Failed to auto-join member to space",
-				"room_id", resp.RoomID,
-				"user_id", memberUserID,
-				"error", err,
-			)
-			// Continue with other members, don't fail the whole operation
-		} else {
-			joinedUsers = append(joinedUsers, memberUserID)
-		}
-	}
-
-	// Mark space as read for all joined users to clear invite notifications
-	// Optimized: get latest event once, send receipts for all users
-	if len(joinedUsers) > 0 {
-		if latestEventID, err := m.getLatestEventID(ctx, resp.RoomID); err != nil {
-			m.logger.Warn("Failed to get latest event for read receipts",
-				"room_id", resp.RoomID,
-				"error", err,
-			)
-		} else {
-			m.markRoomAsReadForUsers(ctx, resp.RoomID, joinedUsers, latestEventID)
-		}
-	}
+	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, memberUserIDs)
 
 	m.logger.Info(
 		"Space created",
 		"room_id", resp.RoomID,
 		"alias", m.idMapper.SpaceAlias(alkemioContextID),
 		"alkemio_context_id", alkemioContextID,
-		"members_joined", len(joinedUsers),
+		"members_joined", joinedCount,
 	)
 
 	return resp.RoomID, nil
