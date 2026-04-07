@@ -1,3 +1,4 @@
+//nolint:revive // methods on unexported wrapper must match interface names
 package matrix
 
 import (

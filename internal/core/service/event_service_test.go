@@ -28,11 +28,11 @@ func TestHandleMessage_Success(t *testing.T) {
 	senderID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 	msg := domain.Message{
-		ID:       "$event1:example.com",
-		RoomID:   "!room1:example.com",
-		RoomName: "Test Room",
-		SenderID: senderID,
-		Content:  "Hello, world!",
+		ID:        "$event1:example.com",
+		RoomID:    "!room1:example.com",
+		RoomName:  "Test Room",
+		SenderID:  senderID,
+		Content:   "Hello, world!",
 		Timestamp: now,
 	}
 

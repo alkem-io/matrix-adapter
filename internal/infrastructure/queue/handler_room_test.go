@@ -1,3 +1,4 @@
+//nolint:revive // test file
 package queue
 
 import (
@@ -2053,7 +2054,7 @@ func TestHandleGetRoomState_Success(t *testing.T) {
 	if !exists {
 		t.Fatalf("expected io.alkemio.visibility state key")
 	}
-	if vis["visible"] != true {
+	if v, ok := vis["visible"].(bool); !ok || !v {
 		t.Errorf("expected visible=true, got %v", vis["visible"])
 	}
 }

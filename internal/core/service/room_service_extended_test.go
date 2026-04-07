@@ -287,9 +287,6 @@ func TestCreateRoom_AliasCheckNonNotFoundError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-not-found resolve alias failure")
 	}
-	if !errors.Is(err, errors.Unwrap(err)) {
-		// Just ensure the error message propagates
-	}
 }
 
 func TestCreateRoom_DM_ExistingRoomFound(t *testing.T) {
@@ -821,7 +818,7 @@ func TestListRooms_Success(t *testing.T) {
 
 	matrix := &mockExtendedMatrixPort{
 		getAllJoinedRoomsResult: []id.RoomID{"!room1:test.local"},
-		getRoomDetailsResult:   &domain.Room{ID: "!room1:test.local", Alias: roomAlias},
+		getRoomDetailsResult:    &domain.Room{ID: "!room1:test.local", Alias: roomAlias},
 	}
 	svc := newTestService(matrix)
 

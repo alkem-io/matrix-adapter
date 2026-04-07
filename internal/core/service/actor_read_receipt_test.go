@@ -42,7 +42,7 @@ type arMockMatrixPort struct {
 
 // --- Methods under test ---------------------------------------------------
 
-func (m *arMockMatrixPort) EnsureUser(_ context.Context, actor domain.Actor) (id.UserID, error) {
+func (m *arMockMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (id.UserID, error) {
 	m.ensureUserCalled = true
 	return m.ensureUserResult, m.ensureUserErr
 }
@@ -68,9 +68,9 @@ func (m *arMockMatrixPort) GetUnreadCounts(_ context.Context, _ domain.Actor, _ 
 
 // --- No-op stubs for the rest of the MatrixPort interface ------------------
 
-func (m *arMockMatrixPort) Connect(_ context.Context) error    { return nil }
-func (m *arMockMatrixPort) Disconnect() error                  { return nil }
-func (m *arMockMatrixPort) HomeserverDomain() string           { return "test.local" }
+func (m *arMockMatrixPort) Connect(_ context.Context) error { return nil }
+func (m *arMockMatrixPort) Disconnect() error               { return nil }
+func (m *arMockMatrixPort) HomeserverDomain() string        { return "test.local" }
 func (m *arMockMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, _, _, _, _, _ string, _ map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
 	return "", nil
 }
@@ -228,7 +228,7 @@ func TestActorService_SyncActor_EnsureUserError(t *testing.T) {
 func TestActorService_SyncActor_SetUserProfileError(t *testing.T) {
 	profileErr := errors.New("profile update failed")
 	matrix := &arMockMatrixPort{
-		ensureUserResult: "@user-abc:test.local",
+		ensureUserResult:  "@user-abc:test.local",
 		setUserProfileErr: profileErr,
 	}
 	logger := &mockLogger{}

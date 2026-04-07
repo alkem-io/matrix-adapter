@@ -1,3 +1,4 @@
+//nolint:revive // test file — unused test params are acceptable
 package matrix
 
 import (

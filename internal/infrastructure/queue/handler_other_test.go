@@ -83,8 +83,8 @@ type otherMockMatrixPort struct {
 	findDirectRoomResult  id.RoomID
 	findDirectRoomErr     error
 	setRoomAliasErr       error
-	getAllJoinedRoomsRes   []id.RoomID
-	getAllJoinedRoomsErr   error
+	getAllJoinedRoomsRes  []id.RoomID
+	getAllJoinedRoomsErr  error
 
 	// Space operations
 	createSpaceResult      id.RoomID
@@ -281,9 +281,9 @@ func (m *otherMockMatrixPort) GetBatchUnreadCounts(_ context.Context, _ domain.A
 
 // otherMockReadReceiptService implements ports.ReadReceiptServicePort for testing.
 type otherMockReadReceiptService struct {
-	markMessageReadErr    error
-	getUnreadCountsRes    *domain.UnreadCountSummary
-	getUnreadCountsErr    error
+	markMessageReadErr error
+	getUnreadCountsRes *domain.UnreadCountSummary
+	getUnreadCountsErr error
 }
 
 func (m *otherMockReadReceiptService) MarkMessageRead(_ context.Context, _ uuid.UUID, _ id.RoomID, _ id.EventID, _ *id.EventID) error {
@@ -306,7 +306,7 @@ func otherNewIDMapper() *domain.IDMapper {
 
 func otherNewMatrixPort() *otherMockMatrixPort {
 	return &otherMockMatrixPort{
-		hsDomain:          otherTestHSDomain,
+		hsDomain:            otherTestHSDomain,
 		resolveAliasResults: make(map[string]id.RoomID),
 		resolveAliasErrs:    make(map[string]error),
 	}

@@ -56,7 +56,7 @@ type mockSpaceMatrixPort struct {
 	getAllJoinedRoomsErr    error
 
 	// AddSpaceChild / SetSpaceParent
-	addSpaceChildCalled bool
+	addSpaceChildCalled  bool
 	setSpaceParentCalled bool
 
 	// InviteToSpace
@@ -267,7 +267,7 @@ func mustAlias(contextID uuid.UUID) string {
 func TestCreateSpace_Success(t *testing.T) {
 	contextID := uuid.New()
 	matrix := &mockSpaceMatrixPort{
-		resolveAliasErr: domain.NewSpaceNotFoundError("not found"),
+		resolveAliasErr:   domain.NewSpaceNotFoundError("not found"),
 		createSpaceRoomID: "!newspace:test.local",
 	}
 	svc := newSpaceService(matrix)
@@ -523,8 +523,8 @@ func TestGetSpace_ChildrenError_Graceful(t *testing.T) {
 			ID:    "!space:test.local",
 			Alias: spaceAlias,
 		},
-		getSpaceMembersResult:  []id.UserID{},
-		getSpaceChildrenErr:    errors.New("children unavailable"),
+		getSpaceMembersResult: []id.UserID{},
+		getSpaceChildrenErr:   errors.New("children unavailable"),
 	}
 	svc := newSpaceService(matrix)
 
@@ -794,7 +794,7 @@ func TestSetParent_Success_RoomChild(t *testing.T) {
 
 	matrix := &mockSpaceMatrixPort{
 		resolveAliasResults: map[string]id.RoomID{
-			mustAlias(parentCtxID):  "!parent:test.local",
+			mustAlias(parentCtxID):   "!parent:test.local",
 			mustAlias(childRoomUUID): "!child:test.local",
 		},
 	}

@@ -1,3 +1,4 @@
+//nolint:errcheck,revive // test file — unchecked writes and unused params are acceptable
 package matrix
 
 import (
@@ -57,7 +58,7 @@ func TestGetUser_Success(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"admin": true})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"admin": true})
 	}))
 	defer srv.Close()
 
@@ -75,7 +76,7 @@ func TestGetUser_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_NOT_FOUND",
 			"error":   "User not found",
 		})
@@ -100,10 +101,10 @@ func TestSetUserAdmin_Success(t *testing.T) {
 			t.Errorf("expected PUT, got %s", r.Method)
 		}
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		_, _ = w.Write([]byte("{}"))
 	}))
 	defer srv.Close()
 
@@ -121,9 +122,9 @@ func TestSetUserAdmin_False(t *testing.T) {
 	var receivedBody map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("{}"))
+		_, _ = w.Write([]byte("{}"))
 	}))
 	defer srv.Close()
 
@@ -141,7 +142,7 @@ func TestSetUserAdmin_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_FORBIDDEN",
 			"error":   "Not an admin",
 		})
@@ -169,9 +170,9 @@ func TestDeactivateUser_Success(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("{}"))
+		_, _ = w.Write([]byte("{}"))
 	}))
 	defer srv.Close()
 
@@ -189,9 +190,9 @@ func TestDeactivateUser_NoErase(t *testing.T) {
 	var receivedBody map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("{}"))
+		_, _ = w.Write([]byte("{}"))
 	}))
 	defer srv.Close()
 
@@ -209,7 +210,7 @@ func TestDeactivateUser_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_UNKNOWN",
 			"error":   "Internal error",
 		})
@@ -239,7 +240,7 @@ func TestListRooms_Success(t *testing.T) {
 			t.Errorf("expected limit=10, got %s", r.URL.Query().Get("limit"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"rooms": []map[string]interface{}{
 				{"room_id": "!room1:hs", "room_type": "", "canonical_alias": "#room1:hs"},
 				{"room_id": "!room2:hs", "room_type": "m.space", "canonical_alias": "#space1:hs"},
@@ -271,7 +272,7 @@ func TestListRooms_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_FORBIDDEN",
 			"error":   "Not an admin",
 		})
@@ -299,7 +300,7 @@ func TestGetRoomMembers_Success(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"members": []string{"@alice:hs", "@bob:hs"},
 		})
 	}))
@@ -324,7 +325,7 @@ func TestGetRoomMembers_Success(t *testing.T) {
 func TestGetRoomMembers_EmptyRoom(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"members": []string{},
 		})
 	}))
@@ -344,7 +345,7 @@ func TestGetRoomMembers_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_NOT_FOUND",
 			"error":   "Room not found",
 		})
@@ -365,7 +366,7 @@ func TestGetRoomMembers_Error(t *testing.T) {
 func TestGetRoomMemberIDs_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"members": []string{"@alice:hs", "@bob:hs"},
 		})
 	}))
@@ -391,7 +392,7 @@ func TestGetRoomMemberIDs_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_NOT_FOUND",
 			"error":   "Room not found",
 		})
@@ -422,7 +423,7 @@ func TestGetRoomState_AllEvents(t *testing.T) {
 			t.Error("expected no type query param for all events")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"state": []interface{}{stateEvt1, stateEvt2},
 		})
 	}))
@@ -444,7 +445,7 @@ func TestGetRoomState_FilteredByType(t *testing.T) {
 			t.Errorf("expected type=m.room.name, got %s", r.URL.Query().Get("type"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"state": []interface{}{
 				map[string]interface{}{"type": "m.room.name", "content": map[string]interface{}{"name": "Test"}},
 			},
@@ -466,7 +467,7 @@ func TestGetRoomState_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_FORBIDDEN",
 			"error":   "Access denied",
 		})
@@ -487,7 +488,7 @@ func TestGetRoomState_Error(t *testing.T) {
 func TestGetStateEventContent_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"state": []interface{}{
 				map[string]interface{}{
 					"type":    "m.room.name",
@@ -514,7 +515,7 @@ func TestGetStateEventContent_Success(t *testing.T) {
 func TestGetStateEventContent_NoEvents(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"state": []interface{}{},
 		})
 	}))
@@ -534,7 +535,7 @@ func TestGetStateEventContent_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_UNKNOWN",
 			"error":   "Server error",
 		})
@@ -559,7 +560,7 @@ func TestGetCustomState_SpecificTypes(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		typeFilter := r.URL.Query().Get("type")
 		if typeFilter == "io.alkemio.metadata" {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"state": []interface{}{
 					map[string]interface{}{
 						"type":    "io.alkemio.metadata",
@@ -568,7 +569,7 @@ func TestGetCustomState_SpecificTypes(t *testing.T) {
 				},
 			})
 		} else {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"state": []interface{}{},
 			})
 		}
@@ -591,7 +592,7 @@ func TestGetCustomState_SpecificTypes(t *testing.T) {
 func TestGetCustomState_AllTypes(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"state": []interface{}{
 				map[string]interface{}{
 					"type":    "m.room.create",
@@ -633,7 +634,7 @@ func TestGetCustomState_AllTypes(t *testing.T) {
 func TestGetCustomState_InvalidPrefix(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"state":[]}`))
+		_, _ = w.Write([]byte(`{"state":[]}`))
 	}))
 	defer srv.Close()
 
@@ -651,7 +652,7 @@ func TestGetCustomState_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_FORBIDDEN",
 			"error":   "Forbidden",
 		})
@@ -688,7 +689,7 @@ func TestGetRoomMessages_Success(t *testing.T) {
 			t.Errorf("expected from=t123, got %s", q.Get("from"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"start": "t123",
 			"end":   "t456",
 			"chunk": []map[string]interface{}{
@@ -729,7 +730,7 @@ func TestGetRoomMessages_NoFrom(t *testing.T) {
 			t.Errorf("expected no from param, got %s", r.URL.Query().Get("from"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"start": "",
 			"chunk": []interface{}{},
 		})
@@ -747,7 +748,7 @@ func TestGetRoomMessages_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_NOT_FOUND",
 			"error":   "Room not found",
 		})
@@ -774,7 +775,7 @@ func TestGetEventContext_Success(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"event": map[string]interface{}{
 				"type":             "m.room.message",
 				"event_id":         "$evt1:hs",
@@ -808,7 +809,7 @@ func TestGetEventContext_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_NOT_FOUND",
 			"error":   "Event not found",
 		})
@@ -829,7 +830,7 @@ func TestGetEventContext_Error(t *testing.T) {
 func TestGetEvent_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"event": map[string]interface{}{
 				"type":             "m.room.message",
 				"event_id":         "$evt1:hs",
@@ -866,7 +867,7 @@ func TestGetEvent_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_NOT_FOUND",
 			"error":   "Event not found",
 		})
@@ -897,7 +898,7 @@ func TestGetTimestampToEvent_Success(t *testing.T) {
 			t.Errorf("expected dir=f, got %s", q.Get("dir"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"event_id": "$closest:hs",
 		})
 	}))
@@ -917,7 +918,7 @@ func TestGetTimestampToEvent_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_NOT_FOUND",
 			"error":   "No event found",
 		})
@@ -948,7 +949,7 @@ func TestGetRelations_Success(t *testing.T) {
 			t.Errorf("expected /relations/ in path, got %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"chunk": []map[string]interface{}{
 				{
 					"type":             "m.reaction",
@@ -987,7 +988,7 @@ func TestGetRelations_Success(t *testing.T) {
 func TestGetRelations_Empty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"chunk": []interface{}{},
 		})
 	}))
@@ -1010,7 +1011,7 @@ func TestGetRelations_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_FORBIDDEN",
 			"error":   "Not in room",
 		})
@@ -1041,9 +1042,9 @@ func TestJoinRoom_Success(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("{}"))
+		_, _ = w.Write([]byte("{}"))
 	}))
 	defer srv.Close()
 
@@ -1061,7 +1062,7 @@ func TestJoinRoom_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_FORBIDDEN",
 			"error":   "Not admin",
 		})
@@ -1088,7 +1089,7 @@ func TestGetRegistrationNonce_Success(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"nonce": "abc123nonce",
 		})
 	}))
@@ -1108,7 +1109,7 @@ func TestGetRegistrationNonce_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_UNKNOWN",
 			"error":   "Server error",
 		})
@@ -1136,9 +1137,9 @@ func TestRegisterWithMAC_Success(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"access_token": "new-access-token-123",
 		})
 	}))
@@ -1173,9 +1174,9 @@ func TestRegisterWithMAC_NonAdmin(t *testing.T) {
 	var receivedBody map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"access_token": "token-456",
 		})
 	}))
@@ -1198,7 +1199,7 @@ func TestRegisterWithMAC_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"errcode": "M_UNKNOWN",
 			"error":   "Invalid MAC",
 		})
@@ -1221,7 +1222,7 @@ func TestAccessTokenSentInRequests(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"admin": false})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"admin": false})
 	}))
 	defer srv.Close()
 

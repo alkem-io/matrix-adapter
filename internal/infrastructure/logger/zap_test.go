@@ -47,7 +47,9 @@ func TestZapLogger_ImplementsPortsLogger(t *testing.T) {
 
 	// Compile-time check is implicit (NewZapLogger returns ports.Logger),
 	// but verify at runtime too.
-	var _ ports.Logger = logger
+	// Verify implements ports.Logger interface
+	var iface ports.Logger = logger //nolint:staticcheck // explicit interface check
+	_ = iface
 }
 
 func TestZapLogger_DebugDoesNotPanic(t *testing.T) {

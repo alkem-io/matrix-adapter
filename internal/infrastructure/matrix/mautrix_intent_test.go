@@ -88,29 +88,29 @@ type mockIntentAPI struct {
 	inviteUserCalled       int
 
 	// Captured arguments
-	lastSendTextRoomID          id.RoomID
-	lastSendTextContent         string
-	lastCreateRoomReq           *mautrix.ReqCreateRoom
-	lastCreateAliasAlias        id.RoomAlias
-	lastCreateAliasRoomID       id.RoomID
-	lastKickUserRoomID          id.RoomID
-	lastKickUserReq             *mautrix.ReqKickUser
-	lastLeaveRoomID             id.RoomID
-	lastRedactRoomID            id.RoomID
-	lastRedactEventID           id.EventID
-	lastDisplayName             string
-	lastMakeRequestMethod       string
-	lastMakeRequestURL          string
-	lastSendStateEventRoomID    id.RoomID
-	lastSendStateEventType      event.Type
-	lastSendStateEventStateKey  string
-	lastSendStateEventContent   any
-	lastSendMsgEventRoomID      id.RoomID
-	lastSendMsgEventType        event.Type
-	lastSendMsgEventContent     any
-	lastEnsureJoinedRoomID      id.RoomID
-	lastBuildClientURLParts     []any
-	buildClientURLResult        string
+	lastSendTextRoomID         id.RoomID
+	lastSendTextContent        string
+	lastCreateRoomReq          *mautrix.ReqCreateRoom
+	lastCreateAliasAlias       id.RoomAlias
+	lastCreateAliasRoomID      id.RoomID
+	lastKickUserRoomID         id.RoomID
+	lastKickUserReq            *mautrix.ReqKickUser
+	lastLeaveRoomID            id.RoomID
+	lastRedactRoomID           id.RoomID
+	lastRedactEventID          id.EventID
+	lastDisplayName            string
+	lastMakeRequestMethod      string
+	lastMakeRequestURL         string
+	lastSendStateEventRoomID   id.RoomID
+	lastSendStateEventType     event.Type
+	lastSendStateEventStateKey string
+	lastSendStateEventContent  any
+	lastSendMsgEventRoomID     id.RoomID
+	lastSendMsgEventType       event.Type
+	lastSendMsgEventContent    any
+	lastEnsureJoinedRoomID     id.RoomID
+	lastBuildClientURLParts    []any
+	buildClientURLResult       string
 }
 
 var _ intentAPI = (*mockIntentAPI)(nil)
@@ -300,12 +300,12 @@ func (m *mockAppserviceAPI) Intent(userID id.UserID) intentAPI {
 	return m.botIntent
 }
 
-func (m *mockAppserviceAPI) Start()                         {}
-func (m *mockAppserviceAPI) Stop()                          {}
-func (m *mockAppserviceAPI) HomeserverDomain() string       { return m.homeserverDomain }
-func (m *mockAppserviceAPI) Host() *appservice.HostConfig   { return &appservice.HostConfig{} }
-func (m *mockAppserviceAPI) Router() *http.ServeMux         { return http.NewServeMux() }
-func (m *mockAppserviceAPI) Events() <-chan *event.Event     { return make(<-chan *event.Event) }
+func (m *mockAppserviceAPI) Start()                       {}
+func (m *mockAppserviceAPI) Stop()                        {}
+func (m *mockAppserviceAPI) HomeserverDomain() string     { return m.homeserverDomain }
+func (m *mockAppserviceAPI) Host() *appservice.HostConfig { return &appservice.HostConfig{} }
+func (m *mockAppserviceAPI) Router() *http.ServeMux       { return http.NewServeMux() }
+func (m *mockAppserviceAPI) Events() <-chan *event.Event  { return make(<-chan *event.Event) }
 
 // ============================================================================
 // Test helper

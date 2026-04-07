@@ -1,3 +1,4 @@
+//nolint:unparam // test helpers use fixed values
 package matrix
 
 import (
@@ -635,12 +636,12 @@ func TestExtractSynapseNotificationCount_OnlyMSC2654(t *testing.T) {
 // mockLogger implements ports.Logger for testing purposes.
 type mockLogger struct{}
 
-func (l *mockLogger) Debug(msg string, args ...interface{})  {}
-func (l *mockLogger) Info(msg string, args ...interface{})   {}
-func (l *mockLogger) Warn(msg string, args ...interface{})   {}
-func (l *mockLogger) Error(msg string, args ...interface{})  {}
-func (l *mockLogger) Fatal(msg string, args ...interface{})  {}
-func (l *mockLogger) With(fields ...interface{}) ports.Logger { return l }
+func (l *mockLogger) Debug(_ string, _ ...interface{})   {}
+func (l *mockLogger) Info(_ string, _ ...interface{})    {}
+func (l *mockLogger) Warn(_ string, _ ...interface{})    {}
+func (l *mockLogger) Error(_ string, _ ...interface{})   {}
+func (l *mockLogger) Fatal(_ string, _ ...interface{})   {}
+func (l *mockLogger) With(_ ...interface{}) ports.Logger { return l }
 
 func TestLastMessageStats_Record_Buckets(t *testing.T) {
 	logger := &mockLogger{}
