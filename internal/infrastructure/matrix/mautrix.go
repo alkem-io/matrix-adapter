@@ -182,11 +182,8 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 		m.logger.Info("Matrix AppService connected", "user_id", whoami.UserID)
 	}
 
-	// Step 4: Migration cleanup for existing deployments
-	m.redactCanonicalAliasesFromRooms(ctx)
-	m.leaveBotFromNonSpaceRooms(ctx)
-
-	// Step 5: Set bot display name
+	// Step 4: Set bot display name (before any room operations, so creation
+	// events show the display name instead of the raw UUID).
 	if m.botDisplayName != "" {
 		botIntent := m.as.BotIntent()
 		if err := botIntent.SetDisplayName(ctx, m.botDisplayName); err != nil {
@@ -195,6 +192,10 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 			m.logger.Info("Bot display name set", "display_name", m.botDisplayName)
 		}
 	}
+
+	// Step 5: Migration cleanup for existing deployments
+	m.redactCanonicalAliasesFromRooms(ctx)
+	m.leaveBotFromNonSpaceRooms(ctx)
 
 	return nil
 }
@@ -271,23 +272,32 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 	}
 
 	redactedCount := 0
+	botIntent := m.as.BotIntent()
+	botMXID := m.as.BotMXID()
+
 	for _, room := range rooms {
-		if room.RoomType == "m.space" || room.CanonicalAlias == "" {
+		if room.RoomType == "m.space" || room.CanonicalAlias == "" ||
+			m.idMapper.AlkemioRoomID(room.CanonicalAlias) == uuid.Nil {
 			continue
 		}
 
-		memberIntent := m.findGhostIntentInRoom(ctx, room.RoomID)
-		if memberIntent == nil {
-			m.logger.Warn("No ghost user found in room for alias cleanup",
-				"room_id", room.RoomID)
+		// Join bot via admin API (bypasses join rules), clear alias, then leave.
+		if err := m.admin.JoinRoom(ctx, room.RoomID, botMXID); err != nil {
+			m.logger.Warn("Failed to join room for alias cleanup",
+				"room_id", room.RoomID, "error", err)
 			continue
 		}
 
-		if _, err := memberIntent.SendStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "", map[string]interface{}{}); err != nil {
+		if _, err := botIntent.SendStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "", map[string]interface{}{}); err != nil {
 			m.logger.Warn("Failed to clear canonical alias",
 				"room_id", room.RoomID, "error", err)
 		} else {
 			redactedCount++
+		}
+
+		if _, err := botIntent.LeaveRoom(ctx, room.RoomID); err != nil {
+			m.logger.Warn("Failed to leave room after alias cleanup",
+				"room_id", room.RoomID, "error", err)
 		}
 	}
 
