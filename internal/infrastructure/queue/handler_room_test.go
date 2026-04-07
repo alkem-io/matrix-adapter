@@ -3,7 +3,6 @@ package queue
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -11,362 +10,21 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
 
 // ============================================================================
-// Mock Logger
-// ============================================================================
-
-// queueMockLogger implements ports.Logger for tests.
-type queueMockLogger struct{}
-
-func (l *queueMockLogger) Debug(_ string, _ ...interface{}) {}
-func (l *queueMockLogger) Info(_ string, _ ...interface{})  {}
-func (l *queueMockLogger) Warn(_ string, _ ...interface{})  {}
-func (l *queueMockLogger) Error(_ string, _ ...interface{}) {}
-func (l *queueMockLogger) With(_ ...interface{}) ports.Logger {
-	return l
-}
-
-// ============================================================================
-// Mock MatrixPort
-// ============================================================================
-
-// queueMockMatrixPort implements ports.MatrixPort with configurable return values.
-type queueMockMatrixPort struct {
-	homeserverDomain string
-
-	// ResolveAlias
-	resolveAliasResult id.RoomID
-	resolveAliasErr    error
-
-	// CreateRoomWithAlias
-	createRoomResult id.RoomID
-	createRoomErr    error
-
-	// GetRoomDetails
-	getRoomDetailsResult *domain.Room
-	getRoomDetailsErr    error
-
-	// GetRoomMembers
-	getRoomMembersResult []id.UserID
-	getRoomMembersErr    error
-
-	// UpdateRoomState
-	updateRoomStateErr error
-
-	// SetRoomDirectoryVisibility
-	setRoomDirectoryVisibilityErr error
-
-	// SetCustomState
-	setCustomStateErr error
-
-	// GetCustomState
-	getCustomStateResult map[string]map[string]interface{}
-	getCustomStateErr    error
-
-	// DeleteAlias
-	deleteAliasErr error
-
-	// KickUser
-	kickUserErr error
-
-	// SendMessage
-	sendMessageResult id.EventID
-	sendMessageErr    error
-
-	// SendReply
-	sendReplyResult id.EventID
-	sendReplyErr    error
-
-	// RedactEvent
-	redactEventErr error
-
-	// SendReaction
-	sendReactionResult id.EventID
-	sendReactionErr    error
-
-	// GetMessage
-	getMessageResult *domain.Message
-	getMessageErr    error
-
-	// GetRoomMessages
-	getRoomMessagesResult []domain.Message
-	getRoomMessagesErr    error
-
-	// GetLastMessage
-	getLastMessageResult *domain.Message
-	getLastMessageErr    error
-
-	// GetBatchLastMessages
-	getBatchLastMessagesResults map[id.RoomID]*domain.Message
-	getBatchLastMessagesErrors  map[id.RoomID]error
-
-	// GetReaction
-	getReactionResult *domain.Reaction
-	getReactionErr    error
-
-	// GetThreadMessages
-	getThreadMessagesResult []domain.Message
-	getThreadMessagesErr    error
-
-	// InviteUser
-	inviteUserErr error
-
-	// GetAllJoinedRooms
-	getAllJoinedRoomsResult []id.RoomID
-	getAllJoinedRoomsErr    error
-
-	// GetUnreadCounts
-	getUnreadCountsResult *domain.UnreadCountSummary
-	getUnreadCountsErr    error
-
-	// FindExistingDirectRoom
-	findExistingDirectRoomResult id.RoomID
-	findExistingDirectRoomErr    error
-}
-
-func (m *queueMockMatrixPort) HomeserverDomain() string {
-	return m.homeserverDomain
-}
-
-func (m *queueMockMatrixPort) Connect(_ context.Context) error { return nil }
-func (m *queueMockMatrixPort) Disconnect() error               { return nil }
-
-func (m *queueMockMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (id.UserID, error) {
-	return "", nil
-}
-
-func (m *queueMockMatrixPort) SetUserProfile(_ context.Context, _ domain.Actor) error {
-	return nil
-}
-
-func (m *queueMockMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, _, _, _, _, _ string, _ map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
-	return m.createRoomResult, m.createRoomErr
-}
-
-func (m *queueMockMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor, _ domain.Actor) error {
-	return m.inviteUserErr
-}
-
-func (m *queueMockMatrixPort) GetRoomDetails(_ context.Context, _ id.RoomID) (*domain.Room, error) {
-	return m.getRoomDetailsResult, m.getRoomDetailsErr
-}
-
-func (m *queueMockMatrixPort) GetRoomMembers(_ context.Context, _ id.RoomID) ([]id.UserID, error) {
-	return m.getRoomMembersResult, m.getRoomMembersErr
-}
-
-func (m *queueMockMatrixPort) UpdateRoomState(_ context.Context, _ id.RoomID, _ domain.Actor, _, _, _, _ *string) error {
-	return m.updateRoomStateErr
-}
-
-func (m *queueMockMatrixPort) SetRoomDirectoryVisibility(_ context.Context, _ id.RoomID, _ bool) error {
-	return m.setRoomDirectoryVisibilityErr
-}
-
-func (m *queueMockMatrixPort) SetCustomState(_ context.Context, _ id.RoomID, _ map[string]map[string]interface{}) error {
-	return m.setCustomStateErr
-}
-
-func (m *queueMockMatrixPort) GetCustomState(_ context.Context, _ id.RoomID, _ []string) (map[string]map[string]interface{}, error) {
-	return m.getCustomStateResult, m.getCustomStateErr
-}
-
-func (m *queueMockMatrixPort) ResolveAlias(_ context.Context, _ string) (id.RoomID, error) {
-	return m.resolveAliasResult, m.resolveAliasErr
-}
-
-func (m *queueMockMatrixPort) DeleteAlias(_ context.Context, _ string) error {
-	return m.deleteAliasErr
-}
-
-func (m *queueMockMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
-	return m.kickUserErr
-}
-
-func (m *queueMockMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string) (id.EventID, error) {
-	return m.sendMessageResult, m.sendMessageErr
-}
-
-func (m *queueMockMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID) (id.EventID, error) {
-	return m.sendReplyResult, m.sendReplyErr
-}
-
-func (m *queueMockMatrixPort) RedactEvent(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {
-	return m.redactEventErr
-}
-
-func (m *queueMockMatrixPort) SendReaction(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) (id.EventID, error) {
-	return m.sendReactionResult, m.sendReactionErr
-}
-
-func (m *queueMockMatrixPort) GetMessage(_ context.Context, _ id.RoomID, _ id.EventID) (*domain.Message, error) {
-	return m.getMessageResult, m.getMessageErr
-}
-
-func (m *queueMockMatrixPort) GetRoomMessages(_ context.Context, _ id.RoomID) ([]domain.Message, error) {
-	return m.getRoomMessagesResult, m.getRoomMessagesErr
-}
-
-func (m *queueMockMatrixPort) GetLastMessage(_ context.Context, _ id.RoomID) (*domain.Message, error) {
-	return m.getLastMessageResult, m.getLastMessageErr
-}
-
-func (m *queueMockMatrixPort) GetBatchLastMessages(_ context.Context, _ []id.RoomID) (map[id.RoomID]*domain.Message, map[id.RoomID]error) {
-	return m.getBatchLastMessagesResults, m.getBatchLastMessagesErrors
-}
-
-func (m *queueMockMatrixPort) GetReactionEventID(_ context.Context, _ id.RoomID, _ id.EventID, _ string, _ domain.Actor) (id.EventID, error) {
-	return "", nil
-}
-
-func (m *queueMockMatrixPort) GetReaction(_ context.Context, _ id.RoomID, _ id.EventID) (*domain.Reaction, error) {
-	return m.getReactionResult, m.getReactionErr
-}
-
-func (m *queueMockMatrixPort) GetThreadMessages(_ context.Context, _ id.RoomID, _ id.EventID) ([]domain.Message, error) {
-	return m.getThreadMessagesResult, m.getThreadMessagesErr
-}
-
-func (m *queueMockMatrixPort) FindExistingDirectRoom(_ context.Context, _ domain.Actor, _ domain.Actor) (id.RoomID, error) {
-	return m.findExistingDirectRoomResult, m.findExistingDirectRoomErr
-}
-
-func (m *queueMockMatrixPort) SetRoomAlias(_ context.Context, _ id.RoomID, _ string) error {
-	return nil
-}
-
-func (m *queueMockMatrixPort) GetAllJoinedRooms(_ context.Context) ([]id.RoomID, error) {
-	return m.getAllJoinedRoomsResult, m.getAllJoinedRoomsErr
-}
-
-func (m *queueMockMatrixPort) CreateSpace(_ context.Context, _ uuid.UUID, _, _, _, _ string, _ []domain.Actor) (id.RoomID, error) {
-	return "", nil
-}
-
-func (m *queueMockMatrixPort) GetSpaceDetails(_ context.Context, _ id.RoomID) (*domain.Space, error) {
-	return nil, nil
-}
-
-func (m *queueMockMatrixPort) GetSpaceMembers(_ context.Context, _ id.RoomID) ([]id.UserID, error) {
-	return nil, nil
-}
-
-func (m *queueMockMatrixPort) UpdateSpaceState(_ context.Context, _ id.RoomID, _, _, _, _ *string) error {
-	return nil
-}
-
-func (m *queueMockMatrixPort) GetSpaceChildren(_ context.Context, _ id.RoomID) ([]domain.SpaceChild, error) {
-	return nil, nil
-}
-
-func (m *queueMockMatrixPort) AddSpaceChild(_ context.Context, _ id.RoomID, _ id.RoomID, _ string, _ bool) error {
-	return nil
-}
-
-func (m *queueMockMatrixPort) SetSpaceParent(_ context.Context, _ id.RoomID, _ id.RoomID) error {
-	return nil
-}
-
-func (m *queueMockMatrixPort) InviteToSpace(_ context.Context, _ id.RoomID, _ domain.Actor) error {
-	return nil
-}
-
-func (m *queueMockMatrixPort) KickFromSpace(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
-	return nil
-}
-
-func (m *queueMockMatrixPort) SendReadReceipt(_ context.Context, _ domain.Actor, _ id.RoomID, _ id.EventID, _ *id.EventID) error {
-	return nil
-}
-
-func (m *queueMockMatrixPort) GetUnreadCounts(_ context.Context, _ domain.Actor, _ id.RoomID, _ []id.EventID) (*domain.UnreadCountSummary, error) {
-	return m.getUnreadCountsResult, m.getUnreadCountsErr
-}
-
-func (m *queueMockMatrixPort) GetBatchUnreadCounts(_ context.Context, _ domain.Actor, _ []id.RoomID) (map[id.RoomID]int, map[id.RoomID]error) {
-	return nil, nil
-}
-
-// Compile-time check that queueMockMatrixPort implements ports.MatrixPort.
-var _ ports.MatrixPort = (*queueMockMatrixPort)(nil)
-
-// ============================================================================
 // Test Helper
 // ============================================================================
 
-const testDomain = "matrix.test.local"
-
 // testRoomHandler builds a RoomHandler backed by the given mock.
-func testRoomHandler(mock *queueMockMatrixPort) *RoomHandler {
+func testRoomHandler(mock *testMockMatrixPort) *RoomHandler {
 	mock.homeserverDomain = testDomain
 	idMapper := domain.NewIDMapper(testDomain)
-	logger := &queueMockLogger{}
+	logger := &testMockLogger{}
 	svc := service.NewRoomService(mock, logger, idMapper)
 	return NewRoomHandler(svc, mock, idMapper)
-}
-
-// mustMarshal marshals v to JSON or fails the test.
-func mustMarshal(t *testing.T, v interface{}) []byte {
-	t.Helper()
-	data, err := json.Marshal(v)
-	if err != nil {
-		t.Fatalf("failed to marshal JSON: %v", err)
-	}
-	return data
-}
-
-// assertSuccess checks that result is a type with Success=true.
-func assertSuccess(t *testing.T, result interface{}) {
-	t.Helper()
-	switch v := result.(type) {
-	case dto.BaseResponse:
-		if !v.Success {
-			t.Fatalf("expected success=true, got false; error=%+v", v.Error)
-		}
-	default:
-		// Try to extract BaseResponse from known response types via JSON round-trip
-		data, err := json.Marshal(result)
-		if err != nil {
-			t.Fatalf("failed to marshal result: %v", err)
-		}
-		var base dto.BaseResponse
-		if err := json.Unmarshal(data, &base); err != nil {
-			t.Fatalf("failed to unmarshal base response: %v", err)
-		}
-		if !base.Success {
-			t.Fatalf("expected success=true, got false; error=%+v", base.Error)
-		}
-	}
-}
-
-// assertErrorCode checks that the result is an error response with the given code.
-func assertErrorCode(t *testing.T, result interface{}, expectedCode dto.ErrorCode) {
-	t.Helper()
-	base, ok := result.(dto.BaseResponse)
-	if !ok {
-		// Try JSON round-trip
-		data, err := json.Marshal(result)
-		if err != nil {
-			t.Fatalf("failed to marshal result: %v", err)
-		}
-		if err := json.Unmarshal(data, &base); err != nil {
-			t.Fatalf("failed to unmarshal base response: %v", err)
-		}
-	}
-	if base.Success {
-		t.Fatalf("expected success=false, got true")
-	}
-	if base.Error == nil {
-		t.Fatalf("expected error to be non-nil")
-	}
-	if base.Error.Code != expectedCode {
-		t.Errorf("expected error code=%s, got %s (message=%s)", expectedCode, base.Error.Code, base.Error.Message)
-	}
 }
 
 // ============================================================================
@@ -532,7 +190,7 @@ func TestConvertMemberIDsToDTO(t *testing.T) {
 // ============================================================================
 
 func TestHandleCreateRoom_Success(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasErr:  domain.ErrRoomNotFound, // room does not exist yet
 		createRoomResult: "!newroom:test",
 	}
@@ -555,7 +213,7 @@ func TestHandleCreateRoom_Success(t *testing.T) {
 }
 
 func TestHandleCreateRoom_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleCreateRoom(context.Background(), []byte(`{invalid`))
 	if err != nil {
@@ -565,7 +223,7 @@ func TestHandleCreateRoom_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleCreateRoom_MissingRoomID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.CreateRoomRequest{
 		Type: dto.RoomTypeCommunity,
@@ -589,7 +247,7 @@ func TestHandleGetRoom_Success(t *testing.T) {
 	memberMatrixID := id.NewUserID(memberUUID.String(), testDomain)
 	ts := time.Now()
 
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		getRoomDetailsResult: &domain.Room{
 			ID:   "!room1:test",
@@ -628,7 +286,7 @@ func TestHandleGetRoom_Success(t *testing.T) {
 }
 
 func TestHandleGetRoom_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleGetRoom(context.Background(), []byte(`not-json`))
 	if err != nil {
@@ -638,7 +296,7 @@ func TestHandleGetRoom_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleGetRoom_MissingRoomID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.GetRoomRequest{})
 
@@ -650,7 +308,7 @@ func TestHandleGetRoom_MissingRoomID(t *testing.T) {
 }
 
 func TestHandleGetRoom_RoomNotFound(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasErr: domain.ErrRoomNotFound,
 	}
 	h := testRoomHandler(mock)
@@ -676,7 +334,7 @@ func TestHandleGetRoomAsUser_Success(t *testing.T) {
 	actorMatrixID := id.NewUserID(actorUUID.String(), testDomain)
 	ts := time.Now()
 
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		getRoomDetailsResult: &domain.Room{
 			ID:   "!room1:test",
@@ -724,7 +382,7 @@ func TestHandleGetRoomAsUser_Success(t *testing.T) {
 }
 
 func TestHandleGetRoomAsUser_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleGetRoomAsUser(context.Background(), []byte(`{bad`))
 	if err != nil {
@@ -734,7 +392,7 @@ func TestHandleGetRoomAsUser_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleGetRoomAsUser_MissingActorID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.GetRoomAsUserRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
@@ -753,7 +411,7 @@ func TestHandleGetRoomAsUser_MissingActorID(t *testing.T) {
 // ============================================================================
 
 func TestHandleUpdateRoom_Success(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 	}
 	h := testRoomHandler(mock)
@@ -773,7 +431,7 @@ func TestHandleUpdateRoom_Success(t *testing.T) {
 }
 
 func TestHandleUpdateRoom_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleUpdateRoom(context.Background(), []byte(`!!!`))
 	if err != nil {
@@ -783,7 +441,7 @@ func TestHandleUpdateRoom_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleUpdateRoom_MissingRoomID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	newName := "Test"
 	payload := mustMarshal(t, dto.UpdateRoomRequest{
@@ -798,7 +456,7 @@ func TestHandleUpdateRoom_MissingRoomID(t *testing.T) {
 }
 
 func TestHandleUpdateRoom_WithJoinRule(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 	}
 	h := testRoomHandler(mock)
@@ -822,7 +480,7 @@ func TestHandleUpdateRoom_WithJoinRule(t *testing.T) {
 // ============================================================================
 
 func TestHandleDeleteRoom_Success(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult:   "!room1:test",
 		getRoomMembersResult: []id.UserID{},
 	}
@@ -841,7 +499,7 @@ func TestHandleDeleteRoom_Success(t *testing.T) {
 }
 
 func TestHandleDeleteRoom_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleDeleteRoom(context.Background(), []byte(`{`))
 	if err != nil {
@@ -851,7 +509,7 @@ func TestHandleDeleteRoom_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleDeleteRoom_MissingRoomID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.DeleteRoomRequest{Reason: "test"})
 
@@ -870,7 +528,7 @@ func TestHandleListRooms_Success(t *testing.T) {
 	roomUUID := uuid.New()
 	alias := "#" + roomUUID.String() + ":" + testDomain
 
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		getAllJoinedRoomsResult: []id.RoomID{"!room1:test"},
 		getRoomDetailsResult: &domain.Room{
 			ID:    "!room1:test",
@@ -897,7 +555,7 @@ func TestHandleListRooms_Success(t *testing.T) {
 }
 
 func TestHandleListRooms_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleListRooms(context.Background(), []byte(`{bad`))
 	if err != nil {
@@ -907,7 +565,7 @@ func TestHandleListRooms_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleListRooms_Empty(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		getAllJoinedRoomsResult: []id.RoomID{},
 	}
 	h := testRoomHandler(mock)
@@ -931,7 +589,7 @@ func TestHandleListRooms_Empty(t *testing.T) {
 // ============================================================================
 
 func TestHandleSendMessage_Success(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		sendMessageResult:  "$evt1:test",
 	}
@@ -962,7 +620,7 @@ func TestHandleSendMessage_Success(t *testing.T) {
 }
 
 func TestHandleSendMessage_WithThread(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		sendReplyResult:    "$reply1:test",
 	}
@@ -989,7 +647,7 @@ func TestHandleSendMessage_WithThread(t *testing.T) {
 }
 
 func TestHandleSendMessage_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleSendMessage(context.Background(), []byte(`{`))
 	if err != nil {
@@ -999,7 +657,7 @@ func TestHandleSendMessage_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleSendMessage_MissingSenderID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.SendMessageRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
@@ -1014,7 +672,7 @@ func TestHandleSendMessage_MissingSenderID(t *testing.T) {
 }
 
 func TestHandleSendMessage_EmptyContent(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.SendMessageRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
@@ -1030,7 +688,7 @@ func TestHandleSendMessage_EmptyContent(t *testing.T) {
 }
 
 func TestHandleSendMessage_RoomNotFound(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasErr: domain.ErrRoomNotFound,
 	}
 	h := testRoomHandler(mock)
@@ -1055,7 +713,7 @@ func TestHandleSendMessage_RoomNotFound(t *testing.T) {
 func TestHandleGetMessage_Success(t *testing.T) {
 	senderUUID := uuid.New()
 	ts := time.Now()
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		getMessageResult: &domain.Message{
 			ID:             "$msg1:test",
@@ -1090,7 +748,7 @@ func TestHandleGetMessage_Success(t *testing.T) {
 }
 
 func TestHandleGetMessage_NotFound(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		getMessageResult:   nil, // message not found
 	}
@@ -1109,7 +767,7 @@ func TestHandleGetMessage_NotFound(t *testing.T) {
 }
 
 func TestHandleGetMessage_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleGetMessage(context.Background(), []byte(`xxx`))
 	if err != nil {
@@ -1119,7 +777,7 @@ func TestHandleGetMessage_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleGetMessage_MissingMessageID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.GetMessageRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
@@ -1138,7 +796,7 @@ func TestHandleGetMessage_MissingMessageID(t *testing.T) {
 // ============================================================================
 
 func TestHandleDeleteMessage_Success(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 	}
 	h := testRoomHandler(mock)
@@ -1158,7 +816,7 @@ func TestHandleDeleteMessage_Success(t *testing.T) {
 }
 
 func TestHandleDeleteMessage_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleDeleteMessage(context.Background(), []byte(`[`))
 	if err != nil {
@@ -1168,7 +826,7 @@ func TestHandleDeleteMessage_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleDeleteMessage_MissingFields(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	t.Run("missing room ID", func(t *testing.T) {
 		payload := mustMarshal(t, dto.DeleteMessageRequest{
@@ -1212,7 +870,7 @@ func TestHandleDeleteMessage_MissingFields(t *testing.T) {
 // ============================================================================
 
 func TestHandleAddReaction_Success(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		sendReactionResult: "$reaction1:test",
 	}
@@ -1244,7 +902,7 @@ func TestHandleAddReaction_Success(t *testing.T) {
 }
 
 func TestHandleAddReaction_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleAddReaction(context.Background(), []byte(`{bad`))
 	if err != nil {
@@ -1254,7 +912,7 @@ func TestHandleAddReaction_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleAddReaction_MissingEmoji(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.AddReactionRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
@@ -1271,7 +929,7 @@ func TestHandleAddReaction_MissingEmoji(t *testing.T) {
 }
 
 func TestHandleAddReaction_MissingMessageID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.AddReactionRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
@@ -1291,7 +949,7 @@ func TestHandleAddReaction_MissingMessageID(t *testing.T) {
 // ============================================================================
 
 func TestHandleRemoveReaction_Success(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 	}
 	h := testRoomHandler(mock)
@@ -1310,7 +968,7 @@ func TestHandleRemoveReaction_Success(t *testing.T) {
 }
 
 func TestHandleRemoveReaction_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleRemoveReaction(context.Background(), []byte(`{`))
 	if err != nil {
@@ -1320,7 +978,7 @@ func TestHandleRemoveReaction_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleRemoveReaction_MissingReactionID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.RemoveReactionRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
@@ -1335,7 +993,7 @@ func TestHandleRemoveReaction_MissingReactionID(t *testing.T) {
 }
 
 func TestHandleRemoveReaction_MissingSenderID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.RemoveReactionRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
@@ -1356,7 +1014,7 @@ func TestHandleRemoveReaction_MissingSenderID(t *testing.T) {
 func TestHandleGetReaction_Success(t *testing.T) {
 	senderUUID := uuid.New()
 	ts := time.Now()
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		getReactionResult: &domain.Reaction{
 			ID:        "$reaction1:test",
@@ -1388,7 +1046,7 @@ func TestHandleGetReaction_Success(t *testing.T) {
 }
 
 func TestHandleGetReaction_NotFound(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		getReactionResult:  nil,
 	}
@@ -1407,7 +1065,7 @@ func TestHandleGetReaction_NotFound(t *testing.T) {
 }
 
 func TestHandleGetReaction_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleGetReaction(context.Background(), []byte(`not-json`))
 	if err != nil {
@@ -1417,7 +1075,7 @@ func TestHandleGetReaction_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleGetReaction_MissingReactionID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.GetReactionRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
@@ -1435,7 +1093,7 @@ func TestHandleGetReaction_ResolvesSenderID(t *testing.T) {
 	senderMatrixID := "@" + senderUUID.String() + ":" + testDomain
 	ts := time.Now()
 
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		getReactionResult: &domain.Reaction{
 			ID:             "$reaction1:test",
@@ -1470,7 +1128,7 @@ func TestHandleGetReaction_ResolvesSenderID(t *testing.T) {
 
 func TestHandleBatchAddMember_Success(t *testing.T) {
 	roomID1 := uuid.New()
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 	}
 	h := testRoomHandler(mock)
@@ -1504,7 +1162,7 @@ func TestHandleBatchAddMember_Success(t *testing.T) {
 }
 
 func TestHandleBatchAddMember_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleBatchAddMember(context.Background(), []byte(`{bad`))
 	if err != nil {
@@ -1514,7 +1172,7 @@ func TestHandleBatchAddMember_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleBatchAddMember_MissingActorID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.BatchAddMemberRequest{
 		AlkemioRoomIDs: []dto.AlkemioRoomID{dto.AlkemioRoomID(uuid.New())},
@@ -1528,7 +1186,7 @@ func TestHandleBatchAddMember_MissingActorID(t *testing.T) {
 }
 
 func TestHandleBatchAddMember_EmptyRoomIDs(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.BatchAddMemberRequest{
 		ActorID:        dto.AlkemioActorID(uuid.New()),
@@ -1548,7 +1206,7 @@ func TestHandleBatchAddMember_EmptyRoomIDs(t *testing.T) {
 
 func TestHandleBatchRemoveMember_Success(t *testing.T) {
 	roomID1 := uuid.New()
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 	}
 	h := testRoomHandler(mock)
@@ -1575,7 +1233,7 @@ func TestHandleBatchRemoveMember_Success(t *testing.T) {
 }
 
 func TestHandleBatchRemoveMember_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleBatchRemoveMember(context.Background(), []byte(`{`))
 	if err != nil {
@@ -1585,7 +1243,7 @@ func TestHandleBatchRemoveMember_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleBatchRemoveMember_MissingActorID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.BatchRemoveMemberRequest{
 		AlkemioRoomIDs: []dto.AlkemioRoomID{dto.AlkemioRoomID(uuid.New())},
@@ -1599,7 +1257,7 @@ func TestHandleBatchRemoveMember_MissingActorID(t *testing.T) {
 }
 
 func TestHandleBatchRemoveMember_EmptyRoomIDs(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.BatchRemoveMemberRequest{
 		ActorID:        dto.AlkemioActorID(uuid.New()),
@@ -1621,7 +1279,7 @@ func TestHandleGetRoomMembers_Success(t *testing.T) {
 	memberUUID := uuid.New()
 	memberMatrixID := id.NewUserID(memberUUID.String(), testDomain)
 
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult:   "!room1:test",
 		getRoomMembersResult: []id.UserID{memberMatrixID},
 	}
@@ -1656,7 +1314,7 @@ func TestHandleGetRoomMembers_FiltersNonGhostUsers(t *testing.T) {
 	memberMatrixID := id.NewUserID(memberUUID.String(), testDomain)
 	nonGhostUser := id.UserID("@admin:" + testDomain) // not a valid UUID localpart
 
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult:   "!room1:test",
 		getRoomMembersResult: []id.UserID{memberMatrixID, nonGhostUser},
 	}
@@ -1679,7 +1337,7 @@ func TestHandleGetRoomMembers_FiltersNonGhostUsers(t *testing.T) {
 }
 
 func TestHandleGetRoomMembers_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleGetRoomMembers(context.Background(), []byte(`[]`))
 	if err != nil {
@@ -1689,7 +1347,7 @@ func TestHandleGetRoomMembers_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleGetRoomMembers_MissingRoomID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.GetRoomMembersRequest{})
 
@@ -1708,7 +1366,7 @@ func TestHandleGetThreadMessages_Success(t *testing.T) {
 	senderUUID := uuid.New()
 	ts := time.Now()
 
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		getThreadMessagesResult: []domain.Message{
 			{ID: "$thread_root:test", Content: "Root", SenderMatrixID: "@" + senderUUID.String() + ":" + testDomain, Timestamp: ts},
@@ -1742,7 +1400,7 @@ func TestHandleGetThreadMessages_Success(t *testing.T) {
 }
 
 func TestHandleGetThreadMessages_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleGetThreadMessages(context.Background(), []byte(`{bad`))
 	if err != nil {
@@ -1752,7 +1410,7 @@ func TestHandleGetThreadMessages_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleGetThreadMessages_MissingThreadID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.GetThreadMessagesRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
@@ -1766,7 +1424,7 @@ func TestHandleGetThreadMessages_MissingThreadID(t *testing.T) {
 }
 
 func TestHandleGetThreadMessages_RoomNotFound(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasErr: domain.ErrRoomNotFound,
 	}
 	h := testRoomHandler(mock)
@@ -1791,7 +1449,7 @@ func TestHandleGetLastMessage_Success(t *testing.T) {
 	senderUUID := uuid.New()
 	ts := time.Now()
 
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		getLastMessageResult: &domain.Message{
 			ID:             "$last:test",
@@ -1825,7 +1483,7 @@ func TestHandleGetLastMessage_Success(t *testing.T) {
 }
 
 func TestHandleGetLastMessage_EmptyRoom(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult:   "!room1:test",
 		getLastMessageResult: nil, // no messages
 	}
@@ -1848,7 +1506,7 @@ func TestHandleGetLastMessage_EmptyRoom(t *testing.T) {
 }
 
 func TestHandleGetLastMessage_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleGetLastMessage(context.Background(), []byte(`bad`))
 	if err != nil {
@@ -1858,7 +1516,7 @@ func TestHandleGetLastMessage_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleGetLastMessage_MissingRoomID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.GetLastMessageRequest{})
 
@@ -1886,7 +1544,7 @@ func TestHandleBatchGetLastMessages_Success(t *testing.T) {
 		Timestamp:      ts,
 	}
 
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: matrixRoomID,
 		getBatchLastMessagesResults: map[id.RoomID]*domain.Message{
 			matrixRoomID: msg,
@@ -1925,7 +1583,7 @@ func TestHandleBatchGetLastMessages_Success(t *testing.T) {
 }
 
 func TestHandleBatchGetLastMessages_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleBatchGetLastMessages(context.Background(), []byte(`{`))
 	if err != nil {
@@ -1935,7 +1593,7 @@ func TestHandleBatchGetLastMessages_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleBatchGetLastMessages_EmptyRoomIDs(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.BatchGetLastMessagesRequest{
 		AlkemioRoomIDs: []dto.AlkemioRoomID{},
@@ -1953,7 +1611,7 @@ func TestHandleBatchGetLastMessages_EmptyRoomIDs(t *testing.T) {
 // ============================================================================
 
 func TestHandleSetRoomState_Success(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 	}
 	h := testRoomHandler(mock)
@@ -1973,7 +1631,7 @@ func TestHandleSetRoomState_Success(t *testing.T) {
 }
 
 func TestHandleSetRoomState_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleSetRoomState(context.Background(), []byte(`{bad`))
 	if err != nil {
@@ -1983,7 +1641,7 @@ func TestHandleSetRoomState_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleSetRoomState_MissingRoomID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.SetRoomStateRequest{
 		State: map[string]map[string]interface{}{
@@ -1999,7 +1657,7 @@ func TestHandleSetRoomState_MissingRoomID(t *testing.T) {
 }
 
 func TestHandleSetRoomState_RoomNotFound(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasErr: domain.ErrRoomNotFound,
 	}
 	h := testRoomHandler(mock)
@@ -2026,7 +1684,7 @@ func TestHandleGetRoomState_Success(t *testing.T) {
 	expectedState := map[string]map[string]interface{}{
 		"io.alkemio.visibility": {"visible": true},
 	}
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult:   "!room1:test",
 		getCustomStateResult: expectedState,
 	}
@@ -2060,7 +1718,7 @@ func TestHandleGetRoomState_Success(t *testing.T) {
 }
 
 func TestHandleGetRoomState_WithEventTypeFilter(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		getCustomStateResult: map[string]map[string]interface{}{
 			"io.alkemio.visibility": {"visible": false},
@@ -2081,7 +1739,7 @@ func TestHandleGetRoomState_WithEventTypeFilter(t *testing.T) {
 }
 
 func TestHandleGetRoomState_InvalidJSON(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	result, err := h.HandleGetRoomState(context.Background(), []byte(`{bad`))
 	if err != nil {
@@ -2091,7 +1749,7 @@ func TestHandleGetRoomState_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleGetRoomState_MissingRoomID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	payload := mustMarshal(t, dto.GetRoomStateRequest{})
 
@@ -2107,7 +1765,7 @@ func TestHandleGetRoomState_MissingRoomID(t *testing.T) {
 // ============================================================================
 
 func TestResolveSenderID(t *testing.T) {
-	h := testRoomHandler(&queueMockMatrixPort{})
+	h := testRoomHandler(&testMockMatrixPort{})
 
 	t.Run("empty matrix ID returns Nil", func(t *testing.T) {
 		result := h.resolveSenderID(context.Background(), "")
@@ -2138,7 +1796,7 @@ func TestResolveSenderID(t *testing.T) {
 // ============================================================================
 
 func TestHandleSendMessage_ServiceError(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		sendMessageErr:     domain.ErrForbidden,
 	}
@@ -2158,7 +1816,7 @@ func TestHandleSendMessage_ServiceError(t *testing.T) {
 }
 
 func TestHandleAddReaction_ServiceError(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		sendReactionErr:    domain.ErrRoomNotFound,
 	}
@@ -2179,7 +1837,7 @@ func TestHandleAddReaction_ServiceError(t *testing.T) {
 }
 
 func TestHandleDeleteMessage_ServiceError(t *testing.T) {
-	mock := &queueMockMatrixPort{
+	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
 		redactEventErr:     domain.ErrForbidden,
 	}

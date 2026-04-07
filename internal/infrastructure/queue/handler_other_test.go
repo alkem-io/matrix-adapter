@@ -10,353 +10,23 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
 
 // ============================================================================
-// Mock Types (prefixed with "other" to avoid conflicts with handler_room_test.go)
-// ============================================================================
-
-// otherMockLogger implements ports.Logger for testing.
-type otherMockLogger struct{}
-
-func (l *otherMockLogger) Debug(_ string, _ ...interface{}) {}
-func (l *otherMockLogger) Info(_ string, _ ...interface{})  {}
-func (l *otherMockLogger) Warn(_ string, _ ...interface{})  {}
-func (l *otherMockLogger) Error(_ string, _ ...interface{}) {}
-func (l *otherMockLogger) With(_ ...interface{}) ports.Logger {
-	return l
-}
-
-// otherMockMatrixPort implements ports.MatrixPort for testing.
-type otherMockMatrixPort struct {
-	// Connection
-	connectErr    error
-	disconnectErr error
-	hsDomain      string
-
-	// User operations
-	ensureUserResult id.UserID
-	ensureUserErr    error
-	setProfileErr    error
-
-	// Room operations
-	createRoomResult      id.RoomID
-	createRoomErr         error
-	inviteUserErr         error
-	getRoomDetailsResult  *domain.Room
-	getRoomDetailsErr     error
-	getRoomMembersResult  []id.UserID
-	getRoomMembersErr     error
-	updateRoomStateErr    error
-	setDirVisibilityErr   error
-	setCustomStateErr     error
-	getCustomStateResult  map[string]map[string]interface{}
-	getCustomStateErr     error
-	resolveAliasResults   map[string]id.RoomID
-	resolveAliasErrs      map[string]error
-	deleteAliasErr        error
-	kickUserErr           error
-	sendMessageResult     id.EventID
-	sendMessageErr        error
-	sendReplyResult       id.EventID
-	sendReplyErr          error
-	redactEventErr        error
-	sendReactionResult    id.EventID
-	sendReactionErr       error
-	getMessageResult      *domain.Message
-	getMessageErr         error
-	getRoomMessagesResult []domain.Message
-	getRoomMessagesErr    error
-	getLastMessageResult  *domain.Message
-	getLastMessageErr     error
-	getBatchLastMsgsRes   map[id.RoomID]*domain.Message
-	getBatchLastMsgsErrs  map[id.RoomID]error
-	getReactionEventIDRes id.EventID
-	getReactionEventIDErr error
-	getReactionResult     *domain.Reaction
-	getReactionErr        error
-	getThreadMsgsResult   []domain.Message
-	getThreadMsgsErr      error
-	findDirectRoomResult  id.RoomID
-	findDirectRoomErr     error
-	setRoomAliasErr       error
-	getAllJoinedRoomsRes  []id.RoomID
-	getAllJoinedRoomsErr  error
-
-	// Space operations
-	createSpaceResult      id.RoomID
-	createSpaceErr         error
-	getSpaceDetailsResult  *domain.Space
-	getSpaceDetailsErr     error
-	getSpaceMembersResult  []id.UserID
-	getSpaceMembersErr     error
-	updateSpaceStateErr    error
-	getSpaceChildrenResult []domain.SpaceChild
-	getSpaceChildrenErr    error
-	addSpaceChildErr       error
-	setSpaceParentErr      error
-	inviteToSpaceErr       error
-	kickFromSpaceErr       error
-
-	// Read receipt operations
-	sendReadReceiptErr       error
-	getUnreadCountsResult    *domain.UnreadCountSummary
-	getUnreadCountsErr       error
-	getBatchUnreadCountsRes  map[id.RoomID]int
-	getBatchUnreadCountsErrs map[id.RoomID]error
-}
-
-func (m *otherMockMatrixPort) Connect(_ context.Context) error { return m.connectErr }
-func (m *otherMockMatrixPort) Disconnect() error               { return m.disconnectErr }
-func (m *otherMockMatrixPort) HomeserverDomain() string        { return m.hsDomain }
-
-func (m *otherMockMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (id.UserID, error) {
-	return m.ensureUserResult, m.ensureUserErr
-}
-
-func (m *otherMockMatrixPort) SetUserProfile(_ context.Context, _ domain.Actor) error {
-	return m.setProfileErr
-}
-
-func (m *otherMockMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, _, _, _, _, _ string, _ map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
-	return m.createRoomResult, m.createRoomErr
-}
-
-func (m *otherMockMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _, _ domain.Actor) error {
-	return m.inviteUserErr
-}
-
-func (m *otherMockMatrixPort) GetRoomDetails(_ context.Context, _ id.RoomID) (*domain.Room, error) {
-	return m.getRoomDetailsResult, m.getRoomDetailsErr
-}
-
-func (m *otherMockMatrixPort) GetRoomMembers(_ context.Context, _ id.RoomID) ([]id.UserID, error) {
-	return m.getRoomMembersResult, m.getRoomMembersErr
-}
-
-func (m *otherMockMatrixPort) UpdateRoomState(_ context.Context, _ id.RoomID, _ domain.Actor, _, _, _, _ *string) error {
-	return m.updateRoomStateErr
-}
-
-func (m *otherMockMatrixPort) SetRoomDirectoryVisibility(_ context.Context, _ id.RoomID, _ bool) error {
-	return m.setDirVisibilityErr
-}
-
-func (m *otherMockMatrixPort) SetCustomState(_ context.Context, _ id.RoomID, _ map[string]map[string]interface{}) error {
-	return m.setCustomStateErr
-}
-
-func (m *otherMockMatrixPort) GetCustomState(_ context.Context, _ id.RoomID, _ []string) (map[string]map[string]interface{}, error) {
-	return m.getCustomStateResult, m.getCustomStateErr
-}
-
-func (m *otherMockMatrixPort) ResolveAlias(_ context.Context, alias string) (id.RoomID, error) {
-	if m.resolveAliasResults != nil {
-		if roomID, ok := m.resolveAliasResults[alias]; ok {
-			return roomID, nil
-		}
-	}
-	if m.resolveAliasErrs != nil {
-		if err, ok := m.resolveAliasErrs[alias]; ok {
-			return "", err
-		}
-	}
-	return "", domain.ErrRoomNotFound
-}
-
-func (m *otherMockMatrixPort) DeleteAlias(_ context.Context, _ string) error {
-	return m.deleteAliasErr
-}
-
-func (m *otherMockMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
-	return m.kickUserErr
-}
-
-func (m *otherMockMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string) (id.EventID, error) {
-	return m.sendMessageResult, m.sendMessageErr
-}
-
-func (m *otherMockMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID) (id.EventID, error) {
-	return m.sendReplyResult, m.sendReplyErr
-}
-
-func (m *otherMockMatrixPort) RedactEvent(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {
-	return m.redactEventErr
-}
-
-func (m *otherMockMatrixPort) SendReaction(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) (id.EventID, error) {
-	return m.sendReactionResult, m.sendReactionErr
-}
-
-func (m *otherMockMatrixPort) GetMessage(_ context.Context, _ id.RoomID, _ id.EventID) (*domain.Message, error) {
-	return m.getMessageResult, m.getMessageErr
-}
-
-func (m *otherMockMatrixPort) GetRoomMessages(_ context.Context, _ id.RoomID) ([]domain.Message, error) {
-	return m.getRoomMessagesResult, m.getRoomMessagesErr
-}
-
-func (m *otherMockMatrixPort) GetLastMessage(_ context.Context, _ id.RoomID) (*domain.Message, error) {
-	return m.getLastMessageResult, m.getLastMessageErr
-}
-
-func (m *otherMockMatrixPort) GetBatchLastMessages(_ context.Context, _ []id.RoomID) (map[id.RoomID]*domain.Message, map[id.RoomID]error) {
-	return m.getBatchLastMsgsRes, m.getBatchLastMsgsErrs
-}
-
-func (m *otherMockMatrixPort) GetReactionEventID(_ context.Context, _ id.RoomID, _ id.EventID, _ string, _ domain.Actor) (id.EventID, error) {
-	return m.getReactionEventIDRes, m.getReactionEventIDErr
-}
-
-func (m *otherMockMatrixPort) GetReaction(_ context.Context, _ id.RoomID, _ id.EventID) (*domain.Reaction, error) {
-	return m.getReactionResult, m.getReactionErr
-}
-
-func (m *otherMockMatrixPort) GetThreadMessages(_ context.Context, _ id.RoomID, _ id.EventID) ([]domain.Message, error) {
-	return m.getThreadMsgsResult, m.getThreadMsgsErr
-}
-
-func (m *otherMockMatrixPort) FindExistingDirectRoom(_ context.Context, _, _ domain.Actor) (id.RoomID, error) {
-	return m.findDirectRoomResult, m.findDirectRoomErr
-}
-
-func (m *otherMockMatrixPort) SetRoomAlias(_ context.Context, _ id.RoomID, _ string) error {
-	return m.setRoomAliasErr
-}
-
-func (m *otherMockMatrixPort) GetAllJoinedRooms(_ context.Context) ([]id.RoomID, error) {
-	return m.getAllJoinedRoomsRes, m.getAllJoinedRoomsErr
-}
-
-func (m *otherMockMatrixPort) CreateSpace(_ context.Context, _ uuid.UUID, _, _, _, _ string, _ []domain.Actor) (id.RoomID, error) {
-	return m.createSpaceResult, m.createSpaceErr
-}
-
-func (m *otherMockMatrixPort) GetSpaceDetails(_ context.Context, _ id.RoomID) (*domain.Space, error) {
-	return m.getSpaceDetailsResult, m.getSpaceDetailsErr
-}
-
-func (m *otherMockMatrixPort) GetSpaceMembers(_ context.Context, _ id.RoomID) ([]id.UserID, error) {
-	return m.getSpaceMembersResult, m.getSpaceMembersErr
-}
-
-func (m *otherMockMatrixPort) UpdateSpaceState(_ context.Context, _ id.RoomID, _, _, _, _ *string) error {
-	return m.updateSpaceStateErr
-}
-
-func (m *otherMockMatrixPort) GetSpaceChildren(_ context.Context, _ id.RoomID) ([]domain.SpaceChild, error) {
-	return m.getSpaceChildrenResult, m.getSpaceChildrenErr
-}
-
-func (m *otherMockMatrixPort) AddSpaceChild(_ context.Context, _, _ id.RoomID, _ string, _ bool) error {
-	return m.addSpaceChildErr
-}
-
-func (m *otherMockMatrixPort) SetSpaceParent(_ context.Context, _, _ id.RoomID) error {
-	return m.setSpaceParentErr
-}
-
-func (m *otherMockMatrixPort) InviteToSpace(_ context.Context, _ id.RoomID, _ domain.Actor) error {
-	return m.inviteToSpaceErr
-}
-
-func (m *otherMockMatrixPort) KickFromSpace(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
-	return m.kickFromSpaceErr
-}
-
-func (m *otherMockMatrixPort) SendReadReceipt(_ context.Context, _ domain.Actor, _ id.RoomID, _ id.EventID, _ *id.EventID) error {
-	return m.sendReadReceiptErr
-}
-
-func (m *otherMockMatrixPort) GetUnreadCounts(_ context.Context, _ domain.Actor, _ id.RoomID, _ []id.EventID) (*domain.UnreadCountSummary, error) {
-	return m.getUnreadCountsResult, m.getUnreadCountsErr
-}
-
-func (m *otherMockMatrixPort) GetBatchUnreadCounts(_ context.Context, _ domain.Actor, _ []id.RoomID) (map[id.RoomID]int, map[id.RoomID]error) {
-	return m.getBatchUnreadCountsRes, m.getBatchUnreadCountsErrs
-}
-
-// otherMockReadReceiptService implements ports.ReadReceiptServicePort for testing.
-type otherMockReadReceiptService struct {
-	markMessageReadErr error
-	getUnreadCountsRes *domain.UnreadCountSummary
-	getUnreadCountsErr error
-}
-
-func (m *otherMockReadReceiptService) MarkMessageRead(_ context.Context, _ uuid.UUID, _ id.RoomID, _ id.EventID, _ *id.EventID) error {
-	return m.markMessageReadErr
-}
-
-func (m *otherMockReadReceiptService) GetUnreadCounts(_ context.Context, _ uuid.UUID, _ id.RoomID, _ []id.EventID) (*domain.UnreadCountSummary, error) {
-	return m.getUnreadCountsRes, m.getUnreadCountsErr
-}
-
-// ============================================================================
 // Test Helpers
 // ============================================================================
 
-const otherTestHSDomain = "matrix.example.com"
-
 func otherNewIDMapper() *domain.IDMapper {
-	return domain.NewIDMapper(otherTestHSDomain)
+	return domain.NewIDMapper(testOtherDomain)
 }
 
-func otherNewMatrixPort() *otherMockMatrixPort {
-	return &otherMockMatrixPort{
-		hsDomain:            otherTestHSDomain,
+func otherNewMatrixPort() *testMockMatrixPort {
+	return &testMockMatrixPort{
+		homeserverDomain:    testOtherDomain,
 		resolveAliasResults: make(map[string]id.RoomID),
 		resolveAliasErrs:    make(map[string]error),
-	}
-}
-
-// otherAssertSuccess asserts the response is a success BaseResponse.
-func otherAssertSuccess(t *testing.T, resp interface{}) {
-	t.Helper()
-	switch r := resp.(type) {
-	case dto.BaseResponse:
-		if !r.Success {
-			t.Fatalf("expected success, got error: %+v", r.Error)
-		}
-	default:
-		// Responses embedding BaseResponse - check via JSON roundtrip
-		data, err := json.Marshal(resp)
-		if err != nil {
-			t.Fatalf("failed to marshal response: %v", err)
-		}
-		var base dto.BaseResponse
-		if err := json.Unmarshal(data, &base); err != nil {
-			t.Fatalf("failed to unmarshal base response: %v", err)
-		}
-		if !base.Success {
-			t.Fatalf("expected success, got error: %+v", base.Error)
-		}
-	}
-}
-
-// otherAssertError asserts the response is an error with the given code.
-func otherAssertError(t *testing.T, resp interface{}, expectedCode dto.ErrorCode) {
-	t.Helper()
-	br, ok := resp.(dto.BaseResponse)
-	if !ok {
-		data, err := json.Marshal(resp)
-		if err != nil {
-			t.Fatalf("failed to marshal response: %v", err)
-		}
-		if err := json.Unmarshal(data, &br); err != nil {
-			t.Fatalf("failed to unmarshal base response: %v", err)
-		}
-	}
-	if br.Success {
-		t.Fatalf("expected error with code %s, got success", expectedCode)
-	}
-	if br.Error == nil {
-		t.Fatalf("expected error, got nil")
-	}
-	if br.Error.Code != expectedCode {
-		t.Errorf("expected error code %s, got %s (message: %s)", expectedCode, br.Error.Code, br.Error.Message)
 	}
 }
 
@@ -364,9 +34,9 @@ func otherAssertError(t *testing.T, resp interface{}, expectedCode dto.ErrorCode
 // SpaceHandler Tests
 // ============================================================================
 
-func newTestSpaceHandler(matrix *otherMockMatrixPort) *SpaceHandler {
+func newTestSpaceHandler(matrix *testMockMatrixPort) *SpaceHandler {
 	idMapper := otherNewIDMapper()
-	logger := &otherMockLogger{}
+	logger := &testMockLogger{}
 	svc := service.NewSpaceService(matrix, logger, idMapper)
 	return NewSpaceHandler(svc, matrix, idMapper)
 }
@@ -394,7 +64,7 @@ func TestHandleCreateSpace_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertSuccess(t, resp)
+	assertSuccess(t, resp)
 }
 
 func TestHandleCreateSpace_InvalidJSON(t *testing.T) {
@@ -405,7 +75,7 @@ func TestHandleCreateSpace_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleCreateSpace_MissingContextID(t *testing.T) {
@@ -421,7 +91,7 @@ func TestHandleCreateSpace_MissingContextID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleCreateSpace_MissingName(t *testing.T) {
@@ -438,7 +108,7 @@ func TestHandleCreateSpace_MissingName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleCreateSpace_ServiceError(t *testing.T) {
@@ -461,7 +131,7 @@ func TestHandleCreateSpace_ServiceError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeMatrixError)
+	assertErrorCode(t, resp, dto.ErrCodeMatrixError)
 }
 
 // --- HandleGetSpace ---
@@ -514,7 +184,7 @@ func TestHandleGetSpace_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleGetSpace_MissingContextID(t *testing.T) {
@@ -527,7 +197,7 @@ func TestHandleGetSpace_MissingContextID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleGetSpace_NotFound(t *testing.T) {
@@ -544,7 +214,7 @@ func TestHandleGetSpace_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeSpaceNotFound)
+	assertErrorCode(t, resp, dto.ErrCodeSpaceNotFound)
 }
 
 // --- HandleUpdateSpace ---
@@ -570,7 +240,7 @@ func TestHandleUpdateSpace_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertSuccess(t, resp)
+	assertSuccess(t, resp)
 }
 
 func TestHandleUpdateSpace_InvalidJSON(t *testing.T) {
@@ -581,7 +251,7 @@ func TestHandleUpdateSpace_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleUpdateSpace_MissingContextID(t *testing.T) {
@@ -594,7 +264,7 @@ func TestHandleUpdateSpace_MissingContextID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleUpdateSpace_NotFound(t *testing.T) {
@@ -612,7 +282,7 @@ func TestHandleUpdateSpace_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeSpaceNotFound)
+	assertErrorCode(t, resp, dto.ErrCodeSpaceNotFound)
 }
 
 // --- HandleDeleteSpace ---
@@ -638,7 +308,7 @@ func TestHandleDeleteSpace_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertSuccess(t, resp)
+	assertSuccess(t, resp)
 }
 
 func TestHandleDeleteSpace_InvalidJSON(t *testing.T) {
@@ -649,7 +319,7 @@ func TestHandleDeleteSpace_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleDeleteSpace_MissingContextID(t *testing.T) {
@@ -662,7 +332,7 @@ func TestHandleDeleteSpace_MissingContextID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleDeleteSpace_IdempotentNotFound(t *testing.T) {
@@ -679,14 +349,14 @@ func TestHandleDeleteSpace_IdempotentNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertSuccess(t, resp)
+	assertSuccess(t, resp)
 }
 
 // --- HandleListSpaces ---
 
 func TestHandleListSpaces_Success(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	matrix.getAllJoinedRoomsRes = []id.RoomID{}
+	matrix.getAllJoinedRoomsResult = []id.RoomID{}
 
 	handler := newTestSpaceHandler(matrix)
 
@@ -714,7 +384,7 @@ func TestHandleListSpaces_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleListSpaces_ServiceError(t *testing.T) {
@@ -729,7 +399,7 @@ func TestHandleListSpaces_ServiceError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeMatrixError)
+	assertErrorCode(t, resp, dto.ErrCodeMatrixError)
 }
 
 // --- HandleSetParent ---
@@ -760,7 +430,7 @@ func TestHandleSetParent_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertSuccess(t, resp)
+	assertSuccess(t, resp)
 }
 
 func TestHandleSetParent_InvalidJSON(t *testing.T) {
@@ -771,7 +441,7 @@ func TestHandleSetParent_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleSetParent_MissingChildID(t *testing.T) {
@@ -788,7 +458,7 @@ func TestHandleSetParent_MissingChildID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleSetParent_MissingParentContextID(t *testing.T) {
@@ -804,7 +474,7 @@ func TestHandleSetParent_MissingParentContextID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleSetParent_ParentNotFound(t *testing.T) {
@@ -823,7 +493,7 @@ func TestHandleSetParent_ParentNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeSpaceNotFound)
+	assertErrorCode(t, resp, dto.ErrCodeSpaceNotFound)
 }
 
 // --- HandleBatchAddSpaceMember ---
@@ -876,7 +546,7 @@ func TestHandleBatchAddSpaceMember_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleBatchAddSpaceMember_MissingActorID(t *testing.T) {
@@ -892,7 +562,7 @@ func TestHandleBatchAddSpaceMember_MissingActorID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleBatchAddSpaceMember_EmptyContextIDs(t *testing.T) {
@@ -909,7 +579,7 @@ func TestHandleBatchAddSpaceMember_EmptyContextIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 // --- HandleBatchRemoveSpaceMember ---
@@ -954,7 +624,7 @@ func TestHandleBatchRemoveSpaceMember_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleBatchRemoveSpaceMember_MissingActorID(t *testing.T) {
@@ -970,7 +640,7 @@ func TestHandleBatchRemoveSpaceMember_MissingActorID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleBatchRemoveSpaceMember_EmptyContextIDs(t *testing.T) {
@@ -987,7 +657,7 @@ func TestHandleBatchRemoveSpaceMember_EmptyContextIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 // --- HandleSetSpaceState ---
@@ -1014,7 +684,7 @@ func TestHandleSetSpaceState_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertSuccess(t, resp)
+	assertSuccess(t, resp)
 }
 
 func TestHandleSetSpaceState_InvalidJSON(t *testing.T) {
@@ -1025,7 +695,7 @@ func TestHandleSetSpaceState_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleSetSpaceState_MissingContextID(t *testing.T) {
@@ -1042,7 +712,7 @@ func TestHandleSetSpaceState_MissingContextID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleSetSpaceState_SpaceNotFound(t *testing.T) {
@@ -1061,7 +731,7 @@ func TestHandleSetSpaceState_SpaceNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeSpaceNotFound)
+	assertErrorCode(t, resp, dto.ErrCodeSpaceNotFound)
 }
 
 func TestHandleSetSpaceState_MatrixError(t *testing.T) {
@@ -1087,7 +757,7 @@ func TestHandleSetSpaceState_MatrixError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeMatrixError)
+	assertErrorCode(t, resp, dto.ErrCodeMatrixError)
 }
 
 // --- HandleGetSpaceState ---
@@ -1138,7 +808,7 @@ func TestHandleGetSpaceState_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleGetSpaceState_MissingContextID(t *testing.T) {
@@ -1151,7 +821,7 @@ func TestHandleGetSpaceState_MissingContextID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleGetSpaceState_SpaceNotFound(t *testing.T) {
@@ -1167,7 +837,7 @@ func TestHandleGetSpaceState_SpaceNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeSpaceNotFound)
+	assertErrorCode(t, resp, dto.ErrCodeSpaceNotFound)
 }
 
 func TestHandleGetSpaceState_MatrixError(t *testing.T) {
@@ -1190,15 +860,15 @@ func TestHandleGetSpaceState_MatrixError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeMatrixError)
+	assertErrorCode(t, resp, dto.ErrCodeMatrixError)
 }
 
 // ============================================================================
 // ActorHandler Tests
 // ============================================================================
 
-func newTestActorHandler(matrix *otherMockMatrixPort) *ActorHandler {
-	logger := &otherMockLogger{}
+func newTestActorHandler(matrix *testMockMatrixPort) *ActorHandler {
+	logger := &testMockLogger{}
 	svc := service.NewActorService(matrix, logger)
 	return NewActorHandler(svc)
 }
@@ -1220,7 +890,7 @@ func TestHandleSyncActor_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertSuccess(t, resp)
+	assertSuccess(t, resp)
 }
 
 func TestHandleSyncActor_InvalidJSON(t *testing.T) {
@@ -1231,7 +901,7 @@ func TestHandleSyncActor_InvalidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleSyncActor_MissingActorID(t *testing.T) {
@@ -1246,7 +916,7 @@ func TestHandleSyncActor_MissingActorID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleSyncActor_MissingDisplayName(t *testing.T) {
@@ -1263,7 +933,7 @@ func TestHandleSyncActor_MissingDisplayName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleSyncActor_EnsureUserError(t *testing.T) {
@@ -1282,7 +952,7 @@ func TestHandleSyncActor_EnsureUserError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeMatrixError)
+	assertErrorCode(t, resp, dto.ErrCodeMatrixError)
 }
 
 func TestHandleSyncActor_SetProfileError(t *testing.T) {
@@ -1302,7 +972,7 @@ func TestHandleSyncActor_SetProfileError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeMatrixError)
+	assertErrorCode(t, resp, dto.ErrCodeMatrixError)
 }
 
 // ============================================================================
@@ -1310,11 +980,11 @@ func TestHandleSyncActor_SetProfileError(t *testing.T) {
 // ============================================================================
 
 func newTestReadReceiptHandler(
-	matrix *otherMockMatrixPort,
-	svc *otherMockReadReceiptService,
+	matrix *testMockMatrixPort,
+	svc *testMockReadReceiptService,
 ) *ReadReceiptHandler {
 	idMapper := otherNewIDMapper()
-	logger := &otherMockLogger{}
+	logger := &testMockLogger{}
 	return NewReadReceiptHandler(svc, matrix, idMapper, logger)
 }
 
@@ -1322,7 +992,7 @@ func newTestReadReceiptHandler(
 
 func TestHandleMarkMessageRead_Success(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	idMapper := otherNewIDMapper()
 
 	actorID := uuid.New()
@@ -1344,12 +1014,12 @@ func TestHandleMarkMessageRead_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertSuccess(t, resp)
+	assertSuccess(t, resp)
 }
 
 func TestHandleMarkMessageRead_WithThreadID(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	idMapper := otherNewIDMapper()
 
 	actorID := uuid.New()
@@ -1373,24 +1043,24 @@ func TestHandleMarkMessageRead_WithThreadID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertSuccess(t, resp)
+	assertSuccess(t, resp)
 }
 
 func TestHandleMarkMessageRead_InvalidJSON(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	resp, err := handler.HandleMarkMessageRead(context.Background(), []byte(`invalid`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleMarkMessageRead_MissingActorID(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	roomUUID := uuid.New()
@@ -1403,12 +1073,12 @@ func TestHandleMarkMessageRead_MissingActorID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleMarkMessageRead_MissingRoomID(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	actorID := uuid.New()
@@ -1421,12 +1091,12 @@ func TestHandleMarkMessageRead_MissingRoomID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleMarkMessageRead_MissingMessageID(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	actorID := uuid.New()
@@ -1441,12 +1111,12 @@ func TestHandleMarkMessageRead_MissingMessageID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleMarkMessageRead_RoomNotFound(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	actorID := uuid.New()
@@ -1462,12 +1132,12 @@ func TestHandleMarkMessageRead_RoomNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeRoomNotFound)
+	assertErrorCode(t, resp, dto.ErrCodeRoomNotFound)
 }
 
 func TestHandleMarkMessageRead_ServiceError(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{
+	svc := &testMockReadReceiptService{
 		markMessageReadErr: errors.New("receipt send failed"), //nolint:err113
 	}
 	idMapper := otherNewIDMapper()
@@ -1491,7 +1161,7 @@ func TestHandleMarkMessageRead_ServiceError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeMatrixError)
+	assertErrorCode(t, resp, dto.ErrCodeMatrixError)
 }
 
 // --- HandleGetUnreadCounts ---
@@ -1499,7 +1169,7 @@ func TestHandleMarkMessageRead_ServiceError(t *testing.T) {
 func TestHandleGetUnreadCounts_Success(t *testing.T) {
 	matrix := otherNewMatrixPort()
 	threadEventID := id.EventID("$thread1:matrix.example.com")
-	svc := &otherMockReadReceiptService{
+	svc := &testMockReadReceiptService{
 		getUnreadCountsRes: &domain.UnreadCountSummary{
 			RoomUnreadCount: 5,
 			ThreadUnreadCounts: map[id.EventID]int{
@@ -1546,19 +1216,19 @@ func TestHandleGetUnreadCounts_Success(t *testing.T) {
 
 func TestHandleGetUnreadCounts_InvalidJSON(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	resp, err := handler.HandleGetUnreadCounts(context.Background(), []byte(`!!!`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleGetUnreadCounts_MissingActorID(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	roomUUID := uuid.New()
@@ -1570,12 +1240,12 @@ func TestHandleGetUnreadCounts_MissingActorID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleGetUnreadCounts_MissingRoomID(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	actorID := uuid.New()
@@ -1587,12 +1257,12 @@ func TestHandleGetUnreadCounts_MissingRoomID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleGetUnreadCounts_RoomNotFound(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	actorID := uuid.New()
@@ -1606,12 +1276,12 @@ func TestHandleGetUnreadCounts_RoomNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeRoomNotFound)
+	assertErrorCode(t, resp, dto.ErrCodeRoomNotFound)
 }
 
 func TestHandleGetUnreadCounts_ServiceError(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{
+	svc := &testMockReadReceiptService{
 		getUnreadCountsErr: errors.New("sync failed"), //nolint:err113
 	}
 	idMapper := otherNewIDMapper()
@@ -1634,7 +1304,7 @@ func TestHandleGetUnreadCounts_ServiceError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeMatrixError)
+	assertErrorCode(t, resp, dto.ErrCodeMatrixError)
 }
 
 // --- HandleBatchGetUnreadCounts ---
@@ -1659,7 +1329,7 @@ func TestHandleBatchGetUnreadCounts_Success(t *testing.T) {
 	}
 	matrix.getBatchUnreadCountsErrs = map[id.RoomID]error{}
 
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	payload, _ := json.Marshal(dto.BatchGetUnreadCountsRequest{
@@ -1695,19 +1365,19 @@ func TestHandleBatchGetUnreadCounts_Success(t *testing.T) {
 
 func TestHandleBatchGetUnreadCounts_InvalidJSON(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	resp, err := handler.HandleBatchGetUnreadCounts(context.Background(), []byte(`{bad`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleBatchGetUnreadCounts_MissingActorID(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	roomUUID := uuid.New()
@@ -1719,12 +1389,12 @@ func TestHandleBatchGetUnreadCounts_MissingActorID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleBatchGetUnreadCounts_EmptyRoomIDs(t *testing.T) {
 	matrix := otherNewMatrixPort()
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	actorID := uuid.New()
@@ -1737,7 +1407,7 @@ func TestHandleBatchGetUnreadCounts_EmptyRoomIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	otherAssertError(t, resp, dto.ErrCodeInvalidParam)
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
 }
 
 func TestHandleBatchGetUnreadCounts_PartialErrors(t *testing.T) {
@@ -1759,7 +1429,7 @@ func TestHandleBatchGetUnreadCounts_PartialErrors(t *testing.T) {
 	}
 	matrix.getBatchUnreadCountsErrs = map[id.RoomID]error{}
 
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	payload, _ := json.Marshal(dto.BatchGetUnreadCountsRequest{
@@ -1814,7 +1484,7 @@ func TestHandleBatchGetUnreadCounts_MatrixBatchErrors(t *testing.T) {
 		matrixRoomID1: errors.New("sync error for room"), //nolint:err113
 	}
 
-	svc := &otherMockReadReceiptService{}
+	svc := &testMockReadReceiptService{}
 	handler := newTestReadReceiptHandler(matrix, svc)
 
 	payload, _ := json.Marshal(dto.BatchGetUnreadCountsRequest{
