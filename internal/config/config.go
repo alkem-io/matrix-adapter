@@ -46,7 +46,7 @@ func Load() (*Config, error) {
 		configPath = "config.yaml"
 	}
 
-	if _, err := os.Stat(configPath); err == nil {
+	if _, err := os.Stat(configPath); err == nil { //nolint:gosec // config path from env var
 		//nolint:gosec // Config file path is controlled by environment variable
 		f, err := os.Open(configPath)
 		if err != nil {

@@ -1607,14 +1607,16 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 	// Use bot intent for creating rooms
 	intent := m.as.BotIntent()
 
-	// Prepare initial invites
-	invites := make([]id.UserID, 0, len(initialMembers))
+	// Ensure all members exist in Matrix (register ghost users).
+	// Members are joined individually after room creation to avoid
+	// Synapse's per-room invite rate limit (default burst_count: 10).
+	memberUserIDs := make([]id.UserID, 0, len(initialMembers))
 	for _, member := range initialMembers {
 		userID, err := m.EnsureUser(ctx, member)
 		if err != nil {
 			return "", fmt.Errorf("failed to ensure member %s: %w", member.ID, err)
 		}
-		invites = append(invites, userID)
+		memberUserIDs = append(memberUserIDs, userID)
 	}
 
 	// Determine preset based on room type
@@ -1636,7 +1638,6 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		Topic:    topic,
 		Preset:   preset,
 		IsDirect: isDirect,
-		Invite:   invites,
 	}
 
 	// Add join rule state event if provided (following CreateSpace pattern)
@@ -1684,7 +1685,7 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		return "", fmt.Errorf("failed to set alias on room %s (%s): %w", resp.RoomID, fullAlias, err)
 	}
 
-	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, invites)
+	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, memberUserIDs)
 
 	// Bot leaves only if other members are present — an empty room becomes
 	// unreachable if the last member leaves (Synapse loses server tracking).
@@ -1894,15 +1895,17 @@ func (m *MautrixAdapter) CreateSpace(
 
 	intent := m.as.BotIntent()
 
-	// Prepare initial invites
-	invites := make([]id.UserID, 0, len(initialMembers))
+	// Ensure all members exist in Matrix (register ghost users).
+	// Members are joined individually after creation to avoid
+	// Synapse's per-room invite rate limit (default burst_count: 10).
+	memberUserIDs := make([]id.UserID, 0, len(initialMembers))
 	for _, member := range initialMembers {
 		userID, err := m.EnsureUser(ctx, member)
 		if err != nil {
-			m.logger.Warn("Failed to ensure member for space invite", "member_id", member.ID, "error", err)
+			m.logger.Warn("Failed to ensure member for space", "member_id", member.ID, "error", err)
 			continue
 		}
-		invites = append(invites, userID)
+		memberUserIDs = append(memberUserIDs, userID)
 	}
 
 	// Map join rule to Matrix preset
@@ -1917,7 +1920,6 @@ func (m *MautrixAdapter) CreateSpace(
 		Topic:         topic,
 		Preset:        preset,
 		RoomAliasName: aliasLocalpart,
-		Invite:        invites,
 		CreationContent: map[string]interface{}{
 			"type": "m.space",
 		},
@@ -1961,41 +1963,14 @@ func (m *MautrixAdapter) CreateSpace(
 		return "", fmt.Errorf("failed to create space: %w", err)
 	}
 
-	// Auto-join initial members (they were only invited, need to accept)
-	joinedUsers := make([]id.UserID, 0, len(invites))
-	for _, memberUserID := range invites {
-		memberIntent := m.as.Intent(memberUserID)
-		if err := memberIntent.EnsureJoined(ctx, resp.RoomID); err != nil {
-			m.logger.Warn("Failed to auto-join member to space",
-				"room_id", resp.RoomID,
-				"user_id", memberUserID,
-				"error", err,
-			)
-			// Continue with other members, don't fail the whole operation
-		} else {
-			joinedUsers = append(joinedUsers, memberUserID)
-		}
-	}
-
-	// Mark space as read for all joined users to clear invite notifications
-	// Optimized: get latest event once, send receipts for all users
-	if len(joinedUsers) > 0 {
-		if latestEventID, err := m.getLatestEventID(ctx, resp.RoomID); err != nil {
-			m.logger.Warn("Failed to get latest event for read receipts",
-				"room_id", resp.RoomID,
-				"error", err,
-			)
-		} else {
-			m.markRoomAsReadForUsers(ctx, resp.RoomID, joinedUsers, latestEventID)
-		}
-	}
+	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, memberUserIDs)
 
 	m.logger.Info(
 		"Space created",
 		"room_id", resp.RoomID,
 		"alias", m.idMapper.SpaceAlias(alkemioContextID),
 		"alkemio_context_id", alkemioContextID,
-		"members_joined", len(joinedUsers),
+		"members_joined", joinedCount,
 	)
 
 	return resp.RoomID, nil

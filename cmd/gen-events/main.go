@@ -24,7 +24,7 @@ func main() {
 	outputDir := os.Args[1]
 
 	// Ensure output directory exists
-	if err := os.MkdirAll(outputDir, 0750); err != nil {
+	if err := os.MkdirAll(filepath.Clean(outputDir), 0750); err != nil { //nolint:gosec // outputDir is a CLI argument, not user-tainted input
 		fmt.Printf("Error creating output directory: %v\n", err)
 		os.Exit(1)
 	}
@@ -55,7 +55,7 @@ func main() {
 	eventContent := generateTSContent(allEvents)
 
 	// 4. Write event type file
-	err = os.WriteFile(eventTypeFile, []byte(eventContent), 0600)
+	err = os.WriteFile(filepath.Clean(eventTypeFile), []byte(eventContent), 0600) //nolint:gosec // build-time codegen tool
 	if err != nil {
 		fmt.Printf("Error writing event type file: %v\n", err)
 		os.Exit(1)
@@ -72,7 +72,7 @@ func main() {
 	// 7. Generate commands.ts
 	commandsFile := filepath.Join(outputDir, "commands.ts")
 	commandsContent := generateCommandsTS(commands)
-	err = os.WriteFile(commandsFile, []byte(commandsContent), 0600)
+	err = os.WriteFile(filepath.Clean(commandsFile), []byte(commandsContent), 0600) //nolint:gosec // build-time codegen tool
 	if err != nil {
 		fmt.Printf("Error writing commands file: %v\n", err)
 		os.Exit(1)
@@ -278,7 +278,7 @@ func generateCommandsTS(commands []CommandDef) string {
 	sort.Strings(typeList)
 
 	for _, t := range typeList {
-		sb.WriteString(fmt.Sprintf("  %s,\n", t))
+		fmt.Fprintf(&sb, "  %s,\n", t)
 	}
 	sb.WriteString("} from './dto';\n\n")
 
@@ -308,9 +308,9 @@ func generateCommandsTS(commands []CommandDef) string {
 	)
 
 	for _, cmd := range cmdList {
-		sb.WriteString(fmt.Sprintf("  '%s': {\n", cmd.Topic))
-		sb.WriteString(fmt.Sprintf("    request: {} as %s,\n", cmd.RequestType))
-		sb.WriteString(fmt.Sprintf("    response: {} as %s,\n", cmd.ResponseType))
+		fmt.Fprintf(&sb, "  '%s': {\n", cmd.Topic)
+		fmt.Fprintf(&sb, "    request: {} as %s,\n", cmd.RequestType)
+		fmt.Fprintf(&sb, "    response: {} as %s,\n", cmd.ResponseType)
 		sb.WriteString("  },\n")
 	}
 
@@ -330,8 +330,8 @@ func generateCommandsTS(commands []CommandDef) string {
 		)
 
 		for _, evt := range eventList {
-			sb.WriteString(fmt.Sprintf("  '%s': {\n", evt.Topic))
-			sb.WriteString(fmt.Sprintf("    payload: {} as %s,\n", evt.ResponseType))
+			fmt.Fprintf(&sb, "  '%s': {\n", evt.Topic)
+			fmt.Fprintf(&sb, "    payload: {} as %s,\n", evt.ResponseType)
 			sb.WriteString("  },\n")
 		}
 
@@ -475,7 +475,7 @@ func generateTSContent(events map[string]string) string {
 	)
 
 	for _, p := range pairs {
-		sb.WriteString(fmt.Sprintf("  %s = '%s',\n", p.Key, p.Value))
+		fmt.Fprintf(&sb, "  %s = '%s',\n", p.Key, p.Value)
 	}
 
 	sb.WriteString("\n}\n")
