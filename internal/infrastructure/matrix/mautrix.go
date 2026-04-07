@@ -169,8 +169,7 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 		m.logger.Warn("AppService HTTP server stopped")
 	}()
 
-	startedCh := make(chan error, 1)
-	if err := m.waitForServerReady(ctx, startedCh); err != nil {
+	if err := m.waitForServerReady(ctx); err != nil {
 		return fmt.Errorf("appservice failed to start: %w", err)
 	}
 
@@ -500,7 +499,7 @@ func (m *MautrixAdapter) registerSharedSecretUser(
 }
 
 // waitForServerReady probes the AppService HTTP server until it's ready or times out.
-func (m *MautrixAdapter) waitForServerReady(ctx context.Context, _ chan error) error {
+func (m *MautrixAdapter) waitForServerReady(ctx context.Context) error {
 	const (
 		timeout      = 5 * time.Second
 		pollInterval = 25 * time.Millisecond
