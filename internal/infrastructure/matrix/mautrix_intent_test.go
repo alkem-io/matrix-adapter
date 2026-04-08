@@ -276,10 +276,12 @@ func (m *mockIntentAPI) MakeRequest(_ context.Context, method string, httpURL st
 // ============================================================================
 
 type mockAppserviceAPI struct {
-	botIntent        intentAPI
-	intents          map[id.UserID]intentAPI
-	botMXID          id.UserID
-	homeserverDomain string
+	botIntent          intentAPI
+	intents            map[id.UserID]intentAPI
+	botMXID            id.UserID
+	homeserverDomain   string
+	setMembershipCalls []setMembershipCall
+	setMembershipErr   error
 }
 
 var _ appserviceAPI = (*mockAppserviceAPI)(nil)
@@ -306,8 +308,15 @@ func (m *mockAppserviceAPI) HomeserverDomain() string     { return m.homeserverD
 func (m *mockAppserviceAPI) Host() *appservice.HostConfig { return &appservice.HostConfig{} }
 func (m *mockAppserviceAPI) Router() *http.ServeMux       { return http.NewServeMux() }
 func (m *mockAppserviceAPI) Events() <-chan *event.Event  { return make(<-chan *event.Event) }
-func (m *mockAppserviceAPI) SetMembership(_ context.Context, _ id.RoomID, _ id.UserID, _ event.Membership) error {
-	return nil
+func (m *mockAppserviceAPI) SetMembership(_ context.Context, roomID id.RoomID, userID id.UserID, membership event.Membership) error {
+	m.setMembershipCalls = append(m.setMembershipCalls, setMembershipCall{roomID, userID, membership})
+	return m.setMembershipErr
+}
+
+type setMembershipCall struct {
+	RoomID     id.RoomID
+	UserID     id.UserID
+	Membership event.Membership
 }
 
 // ============================================================================
@@ -1602,6 +1611,10 @@ func TestGetIntentForRoom_AdminJoinFallback(t *testing.T) {
 	intent := a.getIntentForRoom(context.Background(), "!room:test.local")
 	assert.Equal(t, botIntent, intent, "should return bot intent as last resort after admin-join")
 	assert.Equal(t, 1, len(admin.joinRoomCalls), "should admin-join the bot")
+	// Verify StateStore was synced to prevent EnsureJoined from creating duplicate join
+	assert.Equal(t, 1, len(as.setMembershipCalls), "should sync StateStore after admin join")
+	assert.Equal(t, id.RoomID("!room:test.local"), as.setMembershipCalls[0].RoomID)
+	assert.Equal(t, event.MembershipJoin, as.setMembershipCalls[0].Membership)
 }
 
 // ============================================================================

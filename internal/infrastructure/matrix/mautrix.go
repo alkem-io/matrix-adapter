@@ -288,7 +288,11 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 			continue
 		}
 		// Sync StateStore so EnsureJoined (inside SendStateEvent) doesn't duplicate the join.
-		_ = m.as.SetMembership(ctx, room.RoomID, botMXID, event.MembershipJoin)
+		if err := m.as.SetMembership(ctx, room.RoomID, botMXID, event.MembershipJoin); err != nil {
+			m.logger.Warn("Failed to sync StateStore after join, skipping room to avoid duplicate join",
+				"room_id", room.RoomID, "error", err)
+			continue
+		}
 
 		if _, err := botIntent.SendStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "", map[string]interface{}{}); err != nil {
 			m.logger.Warn("Failed to clear canonical alias",
@@ -1206,7 +1210,7 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID,
 		// Sync the StateStore so EnsureJoined (called by SendStateEvent, etc.)
 		// sees the bot as already joined and doesn't create a duplicate join event.
 		if err := m.as.SetMembership(ctx, roomID, m.as.BotMXID(), event.MembershipJoin); err != nil {
-			m.logger.Debug("getIntentForRoom: failed to sync StateStore",
+			m.logger.Error("getIntentForRoom: failed to sync StateStore after admin join — risk of duplicate join",
 				"room_id", roomID, "error", err)
 		}
 	}
