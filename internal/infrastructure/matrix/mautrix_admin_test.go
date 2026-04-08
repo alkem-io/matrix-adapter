@@ -1336,12 +1336,12 @@ func TestAdminAPI_FindReaction_WrongEmoji(t *testing.T) {
 // getIntentForRoom admin-join fallback (exercises admin.JoinRoom)
 // ============================================================================
 
-func TestAdminAPI_GetIntentForRoom_AdminJoinFallback(t *testing.T) {
+func TestAdminAPI_GetIntentForRoom_NoGhostReturnsBotIntent(t *testing.T) {
 	// Scenario: bot is NOT a member and no ghost users exist.
-	// getIntentForRoom should admin-join the bot as a last resort.
+	// getIntentForRoom should return botIntent without admin-joining
+	// (admin.JoinRoom bypasses StateStore, causing duplicate join events).
 	botIntent := &mockIntentAPI{}
 	mock := &mockAdminAPI{
-		// GetRoomMembers returns members without the bot → bot not in room.
 		getRoomMembersResult: []string{"@other:test.local"},
 	}
 	as := &mockAppserviceAPI{
@@ -1356,15 +1356,12 @@ func TestAdminAPI_GetIntentForRoom_AdminJoinFallback(t *testing.T) {
 		idMapper: domain.NewIDMapper("test.local"),
 		logger:   &adapterMockLogger{},
 	}
-	_ = a.getIntentForRoom(context.Background(), "!room:test.local")
-	if len(mock.joinRoomCalls) != 1 {
-		t.Fatalf("expected 1 admin JoinRoom call, got %d", len(mock.joinRoomCalls))
+	result := a.getIntentForRoom(context.Background(), "!room:test.local")
+	if result != botIntent {
+		t.Error("expected botIntent to be returned")
 	}
-	if mock.joinRoomCalls[0].RoomID != "!room:test.local" {
-		t.Errorf("expected room '!room:test.local', got %q", mock.joinRoomCalls[0].RoomID)
-	}
-	if mock.joinRoomCalls[0].UserID != "@bot:test.local" {
-		t.Errorf("expected user '@bot:test.local', got %q", mock.joinRoomCalls[0].UserID)
+	if len(mock.joinRoomCalls) != 0 {
+		t.Errorf("expected 0 admin JoinRoom calls, got %d", len(mock.joinRoomCalls))
 	}
 }
 

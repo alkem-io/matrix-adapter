@@ -273,7 +273,6 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 
 	redactedCount := 0
 	botIntent := m.as.BotIntent()
-	botMXID := m.as.BotMXID()
 
 	for _, room := range rooms {
 		if room.RoomType == "m.space" || room.CanonicalAlias == "" ||
@@ -281,13 +280,11 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 			continue
 		}
 
-		// Join bot via admin API (bypasses join rules), clear alias, then leave.
-		if err := m.admin.JoinRoom(ctx, room.RoomID, botMXID); err != nil {
-			m.logger.Warn("Failed to join room for alias cleanup",
-				"room_id", room.RoomID, "error", err)
-			continue
-		}
-
+		// Clear canonical alias via bot intent. SendStateEvent's built-in
+		// EnsureJoined handles joining the room (single join, no duplication).
+		// Do NOT use admin.JoinRoom here — it bypasses the mautrix StateStore
+		// cache, causing EnsureJoined to create a duplicate join event which
+		// corrupts the room's event DAG.
 		if _, err := botIntent.SendStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "", map[string]interface{}{}); err != nil {
 			m.logger.Warn("Failed to clear canonical alias",
 				"room_id", room.RoomID, "error", err)
@@ -1188,18 +1185,18 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID,
 		return intent
 	}
 
-	// No ghost with sufficient PL — admin-join the bot (PL 100 as room creator).
-	// The bot will leave once a real member is added (via leaveBotIfNotNeeded).
+	// No ghost with sufficient PL — return bot intent.
+	// The caller's SendStateEvent will call EnsureJoined automatically,
+	// which handles joining via a single join event (no StateStore desync).
+	// Do NOT use admin.JoinRoom here — it bypasses the mautrix StateStore,
+	// causing EnsureJoined to create a duplicate join event which corrupts
+	// the room's event DAG.
 	if intent != nil {
-		m.logger.Debug("getIntentForRoom: ghost PL too low, admin-joining bot",
+		m.logger.Debug("getIntentForRoom: ghost PL too low, using bot intent",
 			"room_id", roomID, "ghost_pl", pl)
 	} else {
-		m.logger.Debug("getIntentForRoom: no ghost user found, admin-joining bot",
+		m.logger.Debug("getIntentForRoom: no ghost user found, using bot intent",
 			"room_id", roomID)
-	}
-	if err := m.admin.JoinRoom(ctx, roomID, m.as.BotMXID()); err != nil {
-		m.logger.Debug("getIntentForRoom: admin join failed",
-			"room_id", roomID, "error", err)
 	}
 	return botIntent
 }

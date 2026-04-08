@@ -1584,7 +1584,7 @@ func TestGetIntentForRoom_FallbackToGhost(t *testing.T) {
 	assert.Equal(t, ghostIntent, intent, "should return ghost intent when bot is not in room")
 }
 
-func TestGetIntentForRoom_AdminJoinFallback(t *testing.T) {
+func TestGetIntentForRoom_NoGhostReturnsBotWithoutAdminJoin(t *testing.T) {
 	botIntent := &mockIntentAPI{}
 	admin := &mockAdminAPI{
 		// No members at all (or only non-ghost external users)
@@ -1597,8 +1597,8 @@ func TestGetIntentForRoom_AdminJoinFallback(t *testing.T) {
 	a := newFullTestAdapter(as, admin)
 
 	intent := a.getIntentForRoom(context.Background(), "!room:test.local")
-	assert.Equal(t, botIntent, intent, "should return bot intent as last resort after admin-join")
-	assert.Equal(t, 1, len(admin.joinRoomCalls), "should admin-join the bot")
+	assert.Equal(t, botIntent, intent, "should return bot intent without admin-join")
+	assert.Empty(t, admin.joinRoomCalls, "should NOT admin-join (causes DAG corruption)")
 }
 
 // ============================================================================
@@ -2021,7 +2021,7 @@ func TestFindGhostIntentInRoom_MemberFetchError(t *testing.T) {
 	assert.Equal(t, float64(-1), pl)
 }
 
-func TestGetIntentForRoom_LowPLGhost_AdminJoinFallback(t *testing.T) {
+func TestGetIntentForRoom_LowPLGhost_ReturnsBotWithoutAdminJoin(t *testing.T) {
 	botIntent := &mockIntentAPI{}
 	ghostIntent := &mockIntentAPI{}
 	ghostUserID := expectedUserID(testActorID)
@@ -2041,8 +2041,8 @@ func TestGetIntentForRoom_LowPLGhost_AdminJoinFallback(t *testing.T) {
 	a := newFullTestAdapter(as, admin)
 
 	intent := a.getIntentForRoom(context.Background(), "!room:test.local")
-	assert.Equal(t, botIntent, intent, "should admin-join bot when ghost PL < 50")
-	assert.Len(t, admin.joinRoomCalls, 1)
+	assert.Equal(t, botIntent, intent, "should return bot intent when ghost PL < 50")
+	assert.Empty(t, admin.joinRoomCalls, "should NOT admin-join (causes DAG corruption)")
 }
 
 func TestGetIntentForRoom_CustomMinPL(t *testing.T) {
