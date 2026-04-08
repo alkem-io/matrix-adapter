@@ -1989,8 +1989,9 @@ func TestFindGhostIntentInRoom_FindsHighestPL(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, admin)
 
-	intent := a.findGhostIntentInRoom(context.Background(), "!room:test.local")
+	intent, pl := a.findGhostIntentInRoom(context.Background(), "!room:test.local")
 	assert.Equal(t, ghost2Intent, intent, "should return ghost with highest power level")
+	assert.Equal(t, float64(100), pl)
 }
 
 func TestFindGhostIntentInRoom_NoGhosts(t *testing.T) {
@@ -2003,8 +2004,9 @@ func TestFindGhostIntentInRoom_NoGhosts(t *testing.T) {
 	as := newMockAS(&mockIntentAPI{}, nil)
 	a := newFullTestAdapter(as, admin)
 
-	intent := a.findGhostIntentInRoom(context.Background(), "!room:test.local")
+	intent, pl := a.findGhostIntentInRoom(context.Background(), "!room:test.local")
 	assert.Nil(t, intent, "should return nil when no ghost users")
+	assert.Equal(t, float64(-1), pl)
 }
 
 func TestFindGhostIntentInRoom_MemberFetchError(t *testing.T) {
@@ -2014,6 +2016,7 @@ func TestFindGhostIntentInRoom_MemberFetchError(t *testing.T) {
 	as := newMockAS(&mockIntentAPI{}, nil)
 	a := newFullTestAdapter(as, admin)
 
-	intent := a.findGhostIntentInRoom(context.Background(), "!room:test.local")
+	intent, pl := a.findGhostIntentInRoom(context.Background(), "!room:test.local")
 	assert.Nil(t, intent)
+	assert.Equal(t, float64(-1), pl)
 }
