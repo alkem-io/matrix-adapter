@@ -66,6 +66,9 @@ type appserviceAPI interface {
 	Host() *appservice.HostConfig
 	Router() *http.ServeMux
 	Events() <-chan *event.Event
+	// SetMembership updates the StateStore cache for a user's membership in a room.
+	// Must be called after admin.JoinRoom to prevent EnsureJoined from creating duplicate joins.
+	SetMembership(ctx context.Context, roomID id.RoomID, userID id.UserID, membership event.Membership) error
 }
 
 // appserviceWrapper wraps *appservice.AppService to satisfy appserviceAPI.
@@ -112,4 +115,8 @@ func (w *appserviceWrapper) Router() *http.ServeMux {
 
 func (w *appserviceWrapper) Events() <-chan *event.Event {
 	return w.as.Events
+}
+
+func (w *appserviceWrapper) SetMembership(ctx context.Context, roomID id.RoomID, userID id.UserID, membership event.Membership) error {
+	return w.as.StateStore.SetMembership(ctx, roomID, userID, membership)
 }

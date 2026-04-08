@@ -306,6 +306,9 @@ func (m *mockAppserviceAPI) HomeserverDomain() string     { return m.homeserverD
 func (m *mockAppserviceAPI) Host() *appservice.HostConfig { return &appservice.HostConfig{} }
 func (m *mockAppserviceAPI) Router() *http.ServeMux       { return http.NewServeMux() }
 func (m *mockAppserviceAPI) Events() <-chan *event.Event  { return make(<-chan *event.Event) }
+func (m *mockAppserviceAPI) SetMembership(_ context.Context, _ id.RoomID, _ id.UserID, _ event.Membership) error {
+	return nil
+}
 
 // ============================================================================
 // Test helper
