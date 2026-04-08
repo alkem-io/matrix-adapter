@@ -307,11 +307,11 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 }
 
 // findGhostIntentInRoom finds the ghost user with the highest power level in a room.
-// Returns their intent, or nil if no ghost users are found.
-func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.RoomID) intentAPI {
+// Returns their intent and PL, or nil if no ghost users are found.
+func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.RoomID) (intentAPI, float64) {
 	members, err := m.admin.GetRoomMembers(ctx, roomID)
 	if err != nil {
-		return nil
+		return nil, -1
 	}
 
 	// Get power levels to find the most privileged ghost
@@ -352,7 +352,7 @@ func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.Ro
 		}
 	}
 
-	return bestIntent
+	return bestIntent, bestPL
 }
 
 // leaveBotFromNonSpaceRooms removes the bot from all rooms that are not spaces.
@@ -1158,10 +1158,15 @@ func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, s
 	return nil
 }
 
-// getIntentForRoom returns an intent that has access to a room.
-// Tries BotIntent first (for spaces where bot is a member), then falls back
-// to finding a joined ghost user via the admin API.
-func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID) intentAPI {
+// getIntentForRoom returns an intent that has access to a room with at least
+// the given power level. Tries BotIntent first (for spaces where bot is a member),
+// then falls back to finding a joined ghost user with sufficient PL.
+// If no suitable intent is found, admin-joins the bot (PL 100 as room creator).
+func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID, minPL ...float64) intentAPI {
+	requiredPL := float64(50) // default: state events require PL 50
+	if len(minPL) > 0 {
+		requiredPL = minPL[0]
+	}
 	botIntent := m.as.BotIntent()
 
 	// Check if bot is in the room via admin API
@@ -1176,16 +1181,22 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID)
 		}
 	}
 
-	// Bot not in room — find a ghost user
-	intent := m.findGhostIntentInRoom(ctx, roomID)
-	if intent != nil {
-		m.logger.Debug("getIntentForRoom: using ghost user", "room_id", roomID)
+	// Bot not in room — find a ghost user with sufficient PL
+	intent, pl := m.findGhostIntentInRoom(ctx, roomID)
+	if intent != nil && pl >= requiredPL {
+		m.logger.Debug("getIntentForRoom: using ghost user", "room_id", roomID, "power_level", pl)
 		return intent
 	}
 
-	// Last resort — admin-join the bot so it can perform the write.
+	// No ghost with sufficient PL — admin-join the bot (PL 100 as room creator).
 	// The bot will leave once a real member is added (via leaveBotIfNotNeeded).
-	m.logger.Debug("getIntentForRoom: no ghost user found, admin-joining bot", "room_id", roomID)
+	if intent != nil {
+		m.logger.Debug("getIntentForRoom: ghost PL too low, admin-joining bot",
+			"room_id", roomID, "ghost_pl", pl)
+	} else {
+		m.logger.Debug("getIntentForRoom: no ghost user found, admin-joining bot",
+			"room_id", roomID)
+	}
 	if err := m.admin.JoinRoom(ctx, roomID, m.as.BotMXID()); err != nil {
 		m.logger.Debug("getIntentForRoom: admin join failed",
 			"room_id", roomID, "error", err)
