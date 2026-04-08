@@ -1158,10 +1158,15 @@ func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, s
 	return nil
 }
 
-// getIntentForRoom returns an intent that has access to a room.
-// Tries BotIntent first (for spaces where bot is a member), then falls back
-// to finding a joined ghost user via the admin API.
-func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID) intentAPI {
+// getIntentForRoom returns an intent that has access to a room with at least
+// the given power level. Tries BotIntent first (for spaces where bot is a member),
+// then falls back to finding a joined ghost user with sufficient PL.
+// If no suitable intent is found, admin-joins the bot (PL 100 as room creator).
+func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID, minPL ...float64) intentAPI {
+	requiredPL := float64(50) // default: state events require PL 50
+	if len(minPL) > 0 {
+		requiredPL = minPL[0]
+	}
 	botIntent := m.as.BotIntent()
 
 	// Check if bot is in the room via admin API
@@ -1176,9 +1181,9 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID)
 		}
 	}
 
-	// Bot not in room — find a ghost user with sufficient PL for state events (>= 50)
+	// Bot not in room — find a ghost user with sufficient PL
 	intent, pl := m.findGhostIntentInRoom(ctx, roomID)
-	if intent != nil && pl >= 50 {
+	if intent != nil && pl >= requiredPL {
 		m.logger.Debug("getIntentForRoom: using ghost user", "room_id", roomID, "power_level", pl)
 		return intent
 	}

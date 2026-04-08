@@ -2020,3 +2020,52 @@ func TestFindGhostIntentInRoom_MemberFetchError(t *testing.T) {
 	assert.Nil(t, intent)
 	assert.Equal(t, float64(-1), pl)
 }
+
+func TestGetIntentForRoom_LowPLGhost_AdminJoinFallback(t *testing.T) {
+	botIntent := &mockIntentAPI{}
+	ghostIntent := &mockIntentAPI{}
+	ghostUserID := expectedUserID(testActorID)
+	admin := &mockAdminAPI{
+		getRoomMembersResult: []string{
+			ghostUserID.String(),
+		},
+		getStateEventContentResult: map[string]interface{}{
+			"users": map[string]interface{}{
+				ghostUserID.String(): float64(10),
+			},
+		},
+	}
+	as := newMockAS(botIntent, map[id.UserID]intentAPI{
+		ghostUserID: ghostIntent,
+	})
+	a := newFullTestAdapter(as, admin)
+
+	intent := a.getIntentForRoom(context.Background(), "!room:test.local")
+	assert.Equal(t, botIntent, intent, "should admin-join bot when ghost PL < 50")
+	assert.Len(t, admin.joinRoomCalls, 1)
+}
+
+func TestGetIntentForRoom_CustomMinPL(t *testing.T) {
+	botIntent := &mockIntentAPI{}
+	ghostIntent := &mockIntentAPI{}
+	ghostUserID := expectedUserID(testActorID)
+	admin := &mockAdminAPI{
+		getRoomMembersResult: []string{
+			ghostUserID.String(),
+		},
+		getStateEventContentResult: map[string]interface{}{
+			"users": map[string]interface{}{
+				ghostUserID.String(): float64(10),
+			},
+		},
+	}
+	as := newMockAS(botIntent, map[id.UserID]intentAPI{
+		ghostUserID: ghostIntent,
+	})
+	a := newFullTestAdapter(as, admin)
+
+	// Ghost has PL 10 — sufficient if caller only needs PL 0
+	intent := a.getIntentForRoom(context.Background(), "!room:test.local", 0)
+	assert.Equal(t, ghostIntent, intent, "should use ghost when PL >= minPL")
+	assert.Len(t, admin.joinRoomCalls, 0, "should not admin-join bot")
+}
