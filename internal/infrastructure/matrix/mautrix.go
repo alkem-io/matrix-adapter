@@ -1220,6 +1220,11 @@ func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
 // KickUser kicks a user from a room.
 func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
 	intent := m.getIntentForRoom(ctx, roomID)
+	// KickUser (unlike SendStateEvent) does not call EnsureJoined internally,
+	// so we must ensure the intent is joined before kicking.
+	if err := intent.EnsureJoined(ctx, roomID); err != nil {
+		return fmt.Errorf("failed to ensure joined for kick in room %s: %w", roomID, err)
+	}
 	_, err := intent.KickUser(
 		ctx, roomID, &mautrix.ReqKickUser{
 			UserID: userID,
