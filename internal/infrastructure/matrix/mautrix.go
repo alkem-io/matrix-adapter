@@ -305,7 +305,10 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 			m.logger.Warn("Failed to leave room after alias cleanup",
 				"room_id", room.RoomID, "error", err)
 		} else {
-			_ = m.as.SetMembership(ctx, room.RoomID, botMXID, event.MembershipLeave)
+			if err := m.as.SetMembership(ctx, room.RoomID, botMXID, event.MembershipLeave); err != nil {
+				m.logger.Warn("Failed to sync StateStore after leave",
+					"room_id", room.RoomID, "error", err)
+			}
 		}
 	}
 
