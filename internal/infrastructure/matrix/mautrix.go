@@ -1874,6 +1874,9 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		Topic:    topic,
 		Preset:   preset,
 		IsDirect: isDirect,
+		PowerLevelOverride: &event.PowerLevelsEventContent{
+			UsersDefault: 50,
+		},
 	}
 
 	// Add join rule state event if provided (following CreateSpace pattern)
@@ -2158,6 +2161,9 @@ func (m *MautrixAdapter) CreateSpace(
 		RoomAliasName: aliasLocalpart,
 		CreationContent: map[string]interface{}{
 			"type": "m.space",
+		},
+		PowerLevelOverride: &event.PowerLevelsEventContent{
+			UsersDefault: 50,
 		},
 	}
 
