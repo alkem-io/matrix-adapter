@@ -425,48 +425,65 @@ func (m *MautrixAdapter) isBotInRoom(ctx context.Context, roomID id.RoomID, botM
 	return false
 }
 
-// clearCanonicalAliasForRoom clears the canonical alias in a room using the bot.
-// If the bot is not already a member, it admin-joins briefly and leaves after.
+// clearCanonicalAliasForRoom clears the canonical alias in a room.
+//
+// Strategy:
+//  1. If the bot is already a member → use bot intent directly.
+//  2. Otherwise try admin-join → use bot intent → leave.
+//  3. If admin-join fails (e.g. invite-only room where Synapse's
+//     internal invite is rejected because the bot isn't a member),
+//     fall back to a ghost user already in the room.
+//
 // Returns true on success.
 func (m *MautrixAdapter) clearCanonicalAliasForRoom(ctx context.Context, roomID id.RoomID, botIsMember bool) bool {
-	botIntent := m.as.BotIntent()
 	botMXID := m.as.BotMXID()
 
-	if !botIsMember {
-		// Bot is not a member — admin-join briefly so it can send state events.
-		if err := m.admin.JoinRoom(ctx, roomID, botMXID); err != nil {
-			m.logger.Warn("Failed to admin-join room for alias cleanup",
-				"room_id", roomID, "error", err)
-			return false
-		}
-		// Sync StateStore so EnsureJoined (inside SendStateEvent) doesn't duplicate the join.
+	if botIsMember {
+		// Bot is already in the room — use it directly.
+		return m.sendClearCanonicalAlias(ctx, roomID, m.as.BotIntent())
+	}
+
+	// Try admin-join.
+	if err := m.admin.JoinRoom(ctx, roomID, botMXID); err == nil {
+		// Sync StateStore so EnsureJoined (inside SendStateEvent) doesn't duplicate.
 		if err := m.as.SetMembership(ctx, roomID, botMXID, event.MembershipJoin); err != nil {
 			m.logger.Warn("Failed to sync StateStore after admin-join",
 				"room_id", roomID, "error", err)
-			return false
 		}
-	}
-
-	success := true
-	if _, err := botIntent.SendStateEvent(ctx, roomID, event.StateCanonicalAlias, "", map[string]interface{}{}); err != nil {
-		m.logger.Warn("Failed to clear canonical alias",
-			"room_id", roomID, "error", err)
-		success = false
-	}
-
-	// Only leave if we admin-joined — don't leave rooms where the bot was already a member
-	// (leaveBotFromNonSpaceRooms handles cleanup of stale memberships separately).
-	if !botIsMember {
-		if _, err := botIntent.LeaveRoom(ctx, roomID); err != nil {
+		ok := m.sendClearCanonicalAlias(ctx, roomID, m.as.BotIntent())
+		// Leave — bot shouldn't stay in non-space rooms.
+		if _, err := m.as.BotIntent().LeaveRoom(ctx, roomID); err != nil {
 			m.logger.Warn("Failed to leave room after alias cleanup",
 				"room_id", roomID, "error", err)
 		} else if err := m.as.SetMembership(ctx, roomID, botMXID, event.MembershipLeave); err != nil {
 			m.logger.Warn("Failed to sync StateStore after leave",
 				"room_id", roomID, "error", err)
 		}
+		return ok
 	}
 
-	return success
+	// Admin-join failed — fall back to a ghost user in the room.
+	{
+		intent, pl := m.findGhostIntentInRoom(ctx, roomID)
+		if intent != nil && pl >= 50 {
+			m.logger.Info("Admin-join failed, using ghost intent for alias cleanup",
+				"room_id", roomID, "ghost_pl", pl)
+			return m.sendClearCanonicalAlias(ctx, roomID, intent)
+		}
+		m.logger.Warn("No way to clear canonical alias: admin-join failed and no ghost with PL>=50",
+			"room_id", roomID)
+	}
+	return false
+}
+
+// sendClearCanonicalAlias sends an empty m.room.canonical_alias state event.
+func (m *MautrixAdapter) sendClearCanonicalAlias(ctx context.Context, roomID id.RoomID, intent intentAPI) bool {
+	if _, err := intent.SendStateEvent(ctx, roomID, event.StateCanonicalAlias, "", map[string]interface{}{}); err != nil {
+		m.logger.Warn("Failed to clear canonical alias",
+			"room_id", roomID, "error", err)
+		return false
+	}
+	return true
 }
 
 // findGhostIntentInRoom finds the ghost user with the highest power level in a room.
