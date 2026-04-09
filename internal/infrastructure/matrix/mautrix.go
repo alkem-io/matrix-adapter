@@ -158,45 +158,50 @@ func safePrefix(s string, n int) string {
 
 // Connect initializes the connection to the Matrix homeserver.
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
-	// Step 1: Try to ensure bot is admin (quick path — works on restarts).
+	m.logger.Info("[Connect] Step 1/6: ensuring bot admin status")
 	m.ensureBotAdmin(ctx)
+	m.logger.Info("[Connect] Step 1/6: complete")
 
-	// Step 2: Start the AppService
-	m.logger.Info("Initializing Matrix AppService connection")
-
+	m.logger.Info("[Connect] Step 2/6: starting AppService HTTP listener")
 	go func() {
 		m.as.Start()
 		m.logger.Warn("AppService HTTP server stopped")
 	}()
-
 	if err := m.waitForServerReady(ctx); err != nil {
 		return fmt.Errorf("appservice failed to start: %w", err)
 	}
+	m.logger.Info("[Connect] Step 2/6: complete")
 
-	// Step 3: Verify bot connection
+	m.logger.Info("[Connect] Step 3/6: verifying bot connection (Whoami)")
 	botIntent := m.as.BotIntent()
 	whoami, err := botIntent.Whoami(ctx)
 	if err != nil {
-		m.logger.Warn("Failed to verify bot connection (Whoami)", "error", err)
+		m.logger.Warn("[Connect] Step 3/6: Whoami failed", "error", err)
 	} else {
-		m.logger.Info("Matrix AppService connected", "user_id", whoami.UserID)
+		m.logger.Info("[Connect] Step 3/6: complete", "user_id", whoami.UserID)
 	}
 
-	// Step 4: Set bot display name (before any room operations, so creation
-	// events show the display name instead of the raw UUID).
+	m.logger.Info("[Connect] Step 4/6: setting bot display name")
 	if m.botDisplayName != "" {
-		botIntent := m.as.BotIntent()
-		if err := botIntent.SetDisplayName(ctx, m.botDisplayName); err != nil {
-			m.logger.Warn("Failed to set bot display name", "display_name", m.botDisplayName, "error", err)
+		if err := m.as.BotIntent().SetDisplayName(ctx, m.botDisplayName); err != nil {
+			m.logger.Warn("[Connect] Step 4/6: SetDisplayName failed (continuing anyway)",
+				"display_name", m.botDisplayName, "error", err)
 		} else {
-			m.logger.Info("Bot display name set", "display_name", m.botDisplayName)
+			m.logger.Info("[Connect] Step 4/6: complete", "display_name", m.botDisplayName)
 		}
+	} else {
+		m.logger.Info("[Connect] Step 4/6: skipped (no display name configured)")
 	}
 
-	// Step 5: Migration cleanup for existing deployments
+	m.logger.Info("[Connect] Step 5/6: running redactCanonicalAliasesFromRooms migration")
 	m.redactCanonicalAliasesFromRooms(ctx)
-	m.leaveBotFromNonSpaceRooms(ctx)
+	m.logger.Info("[Connect] Step 5/6: complete")
 
+	m.logger.Info("[Connect] Step 6/6: running leaveBotFromNonSpaceRooms migration")
+	m.leaveBotFromNonSpaceRooms(ctx)
+	m.logger.Info("[Connect] Step 6/6: complete")
+
+	m.logger.Info("[Connect] all steps complete")
 	return nil
 }
 
@@ -265,15 +270,28 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 // This is a migration cleanup for existing deployments where canonical alias
 // was set, causing clients to show UUID aliases instead of member names.
 func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
+	m.logger.Info("redactCanonicalAliasesFromRooms: listing rooms")
 	rooms, err := m.admin.ListRooms(ctx, 10000)
 	if err != nil {
 		m.logger.Warn("Failed to list rooms for canonical alias cleanup", "error", err)
 		return
 	}
+	m.logger.Info("redactCanonicalAliasesFromRooms: rooms listed", "total_rooms", len(rooms))
+
+	// Pre-filter to find rooms that actually need processing
+	toProcess := 0
+	for _, room := range rooms {
+		if room.RoomType != "m.space" && room.CanonicalAlias != "" &&
+			m.idMapper.AlkemioRoomID(room.CanonicalAlias) != uuid.Nil {
+			toProcess++
+		}
+	}
+	m.logger.Info("redactCanonicalAliasesFromRooms: candidates to process", "count", toProcess)
 
 	redactedCount := 0
-	botIntent := m.as.BotIntent()
-	botMXID := m.as.BotMXID()
+	failedCount := 0
+	processed := 0
+	botMXIDStr := m.as.BotMXID().String()
 
 	for _, room := range rooms {
 		if room.RoomType == "m.space" || room.CanonicalAlias == "" ||
@@ -281,40 +299,88 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 			continue
 		}
 
-		// Join bot via admin API (bypasses join rules), clear alias, then leave.
-		if err := m.admin.JoinRoom(ctx, room.RoomID, botMXID); err != nil {
-			m.logger.Warn("Failed to join room for alias cleanup",
-				"room_id", room.RoomID, "error", err)
-			continue
+		processed++
+		if processed%100 == 0 {
+			m.logger.Info("redactCanonicalAliasesFromRooms: progress",
+				"processed", processed, "total", toProcess,
+				"redacted", redactedCount, "failed", failedCount)
+		}
+
+		// Check if the bot is already a member — if so, just clear the alias
+		// without admin-join (which would create a duplicate join event).
+		botIsMember := m.isBotInRoom(ctx, room.RoomID, botMXIDStr)
+
+		if m.clearCanonicalAliasForRoom(ctx, room.RoomID, botIsMember) {
+			redactedCount++
+		} else {
+			failedCount++
+		}
+	}
+
+	m.logger.Info("redactCanonicalAliasesFromRooms: done",
+		"total_candidates", toProcess,
+		"processed", processed,
+		"redacted", redactedCount,
+		"failed", failedCount)
+}
+
+// isBotInRoom checks via admin API whether the bot is currently a member of the room.
+func (m *MautrixAdapter) isBotInRoom(ctx context.Context, roomID id.RoomID, botMXIDStr string) bool {
+	members, err := m.admin.GetRoomMembers(ctx, roomID)
+	if err != nil {
+		m.logger.Warn("Failed to check room members", "room_id", roomID, "error", err)
+		return false
+	}
+	for _, member := range members {
+		if member == botMXIDStr {
+			return true
+		}
+	}
+	return false
+}
+
+// clearCanonicalAliasForRoom clears the canonical alias in a room using the bot.
+// If the bot is not already a member, it admin-joins briefly and leaves after.
+// Returns true on success.
+func (m *MautrixAdapter) clearCanonicalAliasForRoom(ctx context.Context, roomID id.RoomID, botIsMember bool) bool {
+	botIntent := m.as.BotIntent()
+	botMXID := m.as.BotMXID()
+
+	if !botIsMember {
+		// Bot is not a member — admin-join briefly so it can send state events.
+		if err := m.admin.JoinRoom(ctx, roomID, botMXID); err != nil {
+			m.logger.Warn("Failed to admin-join room for alias cleanup",
+				"room_id", roomID, "error", err)
+			return false
 		}
 		// Sync StateStore so EnsureJoined (inside SendStateEvent) doesn't duplicate the join.
-		if err := m.as.SetMembership(ctx, room.RoomID, botMXID, event.MembershipJoin); err != nil {
-			m.logger.Warn("Failed to sync StateStore after join, skipping room to avoid duplicate join",
-				"room_id", room.RoomID, "error", err)
-			continue
+		if err := m.as.SetMembership(ctx, roomID, botMXID, event.MembershipJoin); err != nil {
+			m.logger.Warn("Failed to sync StateStore after admin-join",
+				"room_id", roomID, "error", err)
+			return false
 		}
+	}
 
-		if _, err := botIntent.SendStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "", map[string]interface{}{}); err != nil {
-			m.logger.Warn("Failed to clear canonical alias",
-				"room_id", room.RoomID, "error", err)
-		} else {
-			redactedCount++
-		}
+	success := true
+	if _, err := botIntent.SendStateEvent(ctx, roomID, event.StateCanonicalAlias, "", map[string]interface{}{}); err != nil {
+		m.logger.Warn("Failed to clear canonical alias",
+			"room_id", roomID, "error", err)
+		success = false
+	}
 
-		if _, err := botIntent.LeaveRoom(ctx, room.RoomID); err != nil {
+	// Only leave if we admin-joined — don't leave rooms where the bot was already a member
+	// (leaveBotFromNonSpaceRooms handles cleanup of stale memberships separately).
+	if !botIsMember {
+		if _, err := botIntent.LeaveRoom(ctx, roomID); err != nil {
 			m.logger.Warn("Failed to leave room after alias cleanup",
-				"room_id", room.RoomID, "error", err)
-		} else {
-			if err := m.as.SetMembership(ctx, room.RoomID, botMXID, event.MembershipLeave); err != nil {
-				m.logger.Warn("Failed to sync StateStore after leave",
-					"room_id", room.RoomID, "error", err)
-			}
+				"room_id", roomID, "error", err)
+		} else if err := m.as.SetMembership(ctx, roomID, botMXID, event.MembershipLeave); err != nil {
+			m.logger.Warn("Failed to sync StateStore after leave",
+				"room_id", roomID, "error", err)
 		}
 	}
 
-	if redactedCount > 0 {
-		m.logger.Info("Redacted canonical aliases (migration cleanup)", "rooms_redacted", redactedCount)
-	}
+	return success
 }
 
 // findGhostIntentInRoom finds the ghost user with the highest power level in a room.
@@ -368,29 +434,43 @@ func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.Ro
 
 // leaveBotFromNonSpaceRooms removes the bot from all rooms that are not spaces.
 func (m *MautrixAdapter) leaveBotFromNonSpaceRooms(ctx context.Context) {
+	m.logger.Info("leaveBotFromNonSpaceRooms: fetching joined rooms")
 	intent := m.as.BotIntent()
 	resp, err := intent.JoinedRooms(ctx)
 	if err != nil {
 		m.logger.Warn("Failed to get bot's joined rooms for cleanup", "error", err)
 		return
 	}
+	m.logger.Info("leaveBotFromNonSpaceRooms: joined rooms fetched",
+		"total_joined", len(resp.JoinedRooms))
 
 	leftCount := 0
-	for _, roomID := range resp.JoinedRooms {
+	skippedSpaces := 0
+	failedCount := 0
+	for i, roomID := range resp.JoinedRooms {
+		if i > 0 && i%100 == 0 {
+			m.logger.Info("leaveBotFromNonSpaceRooms: progress",
+				"processed", i, "total", len(resp.JoinedRooms),
+				"left", leftCount, "skipped_spaces", skippedSpaces, "failed", failedCount)
+		}
 		if isSpace, _ := m.isSpaceRoom(ctx, roomID); isSpace {
+			skippedSpaces++
 			continue
 		}
 		if _, err := intent.LeaveRoom(ctx, roomID); err != nil {
 			m.logger.Warn("Failed to leave room during cleanup",
 				"room_id", roomID, "error", err)
+			failedCount++
 		} else {
 			leftCount++
 		}
 	}
 
-	if leftCount > 0 {
-		m.logger.Info("Bot left non-space rooms (migration cleanup)", "rooms_left", leftCount)
-	}
+	m.logger.Info("leaveBotFromNonSpaceRooms: done",
+		"total_joined", len(resp.JoinedRooms),
+		"left", leftCount,
+		"skipped_spaces", skippedSpaces,
+		"failed", failedCount)
 }
 
 // waitForSynapse retries connecting to Synapse until it responds or context is cancelled.
