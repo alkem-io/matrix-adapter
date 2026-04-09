@@ -304,6 +304,8 @@ func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
 		if _, err := botIntent.LeaveRoom(ctx, room.RoomID); err != nil {
 			m.logger.Warn("Failed to leave room after alias cleanup",
 				"room_id", room.RoomID, "error", err)
+		} else {
+			_ = m.as.SetMembership(ctx, room.RoomID, botMXID, event.MembershipLeave)
 		}
 	}
 
@@ -1212,6 +1214,9 @@ func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID,
 		if err := m.as.SetMembership(ctx, roomID, m.as.BotMXID(), event.MembershipJoin); err != nil {
 			m.logger.Error("getIntentForRoom: failed to sync StateStore after admin join — risk of duplicate join",
 				"room_id", roomID, "error", err)
+			if intent != nil {
+				return intent // fall back to ghost to avoid duplicate-join risk
+			}
 		}
 	}
 	return botIntent
