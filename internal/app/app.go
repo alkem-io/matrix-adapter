@@ -113,12 +113,11 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 // Start starts the application adapters and servers.
 //
-// Ordering is deliberate. Matrix mutating operations (migrations, display
-// name) run while the AppService HTTP listener is still down, so any
-// events they generate queue in Synapse's `application_services_txns`
-// instead of fanning into our event loop mid-mutation. The listener
-// comes up only once the outgoing queue is connected and routes are
-// registered; at that point Synapse drains its queue in order.
+// The HTTP listener starts in Connect with a transaction gate that drops
+// Synapse event deliveries (200 OK, body discarded). This keeps k8s
+// probes happy while migrations and bot setup run. Once the outgoing
+// queue is connected and routes are registered, EnableEventDelivery
+// opens the gate so real events flow through.
 //
 // RunMigrations runs BEFORE SetBotProfile so the leave-non-space-rooms
 // migration shrinks the bot's joined-room set first, which dramatically
@@ -126,7 +125,8 @@ func NewApp(cfg *config.Config) (*App, error) {
 func (a *App) Start(ctx context.Context) error {
 	a.logger.Info("Starting adapters...")
 
-	// 1. Bot admin + Whoami. No room state touched yet.
+	// 1. HTTP listener (gate closed) + bot admin + Whoami.
+	//    Health probes pass from this point; transactions are dropped.
 	if err := a.matrixAdapter.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect to Matrix: %w", err)
 	}
@@ -147,12 +147,9 @@ func (a *App) Start(ctx context.Context) error {
 	// 5. Subscribe queue handlers (incoming commands from Alkemio Server).
 	queue.RegisterRoutes(a.queueAdapter, a.roomHandler, a.actorHandler, a.spaceHandler, a.readReceiptHandler, a.logger)
 
-	// 6. Bring the AppService HTTP listener online. Synapse will start
-	//    delivering everything it queued during steps 1-3, and our event
-	//    loop (already running, sitting on an empty channel) will drain it.
-	if err := a.matrixAdapter.StartListener(ctx); err != nil {
-		return fmt.Errorf("failed to start Matrix listener: %w", err)
-	}
+	// 6. Open the transaction gate. From this point, Synapse deliveries
+	//    reach mautrix's PutTransaction and flow into the event loop.
+	a.matrixAdapter.EnableEventDelivery()
 
 	return nil
 }

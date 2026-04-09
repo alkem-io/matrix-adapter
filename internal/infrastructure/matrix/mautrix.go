@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +36,8 @@ type MautrixAdapter struct {
 	botDisplayName string
 	eventHandlers  EventHandlers
 	eventLoopOnce  sync.Once
+	server         *http.Server // our own HTTP server wrapping as.Router
+	gateOpen       atomic.Bool  // when false, transactions are ack'd and dropped
 }
 
 // NewMautrixAdapter creates a new instance of MautrixAdapter.
@@ -126,8 +129,13 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		return nil, fmt.Errorf("failed to create appservice: %w", err)
 	}
 
-	// Enable zerolog for mautrix-go internal logging
-	as.Log = zerolog.New(zerolog.NewConsoleWriter()).With().Timestamp().Str("component", "mautrix").Logger()
+	// Enable zerolog for mautrix-go internal logging.
+	// Level=Info suppresses the per-request DEBUG firehose (every join/state
+	// event during migration) while still surfacing 429-retry WARNs and
+	// real errors. Our own progress logging covers what mautrix DEBUG used
+	// to provide.
+	as.Log = zerolog.New(zerolog.NewConsoleWriter()).Level(zerolog.InfoLevel).
+		With().Timestamp().Str("component", "mautrix").Logger()
 
 	admin, err := NewSynapseAdmin(cfg.Matrix.HomeserverURL, cfg.Matrix.AppServiceToken)
 	if err != nil {
@@ -156,35 +164,79 @@ func safePrefix(s string, n int) string {
 // Core / Connection
 // ============================================================================
 
-// Connect performs the bare-minimum bot setup needed before any other
-// adapter operation: it ensures the bot user exists and is a Synapse
-// admin, and verifies connectivity with Whoami. It does NOT touch room
-// state, set the display name, or start the HTTP listener — those are
-// separate, individually-callable phases so the orchestrator can sequence
-// them around the migration / fan-out problem.
+// Connect boots the adapter: starts the HTTP server with a transaction
+// gate (so k8s probes work immediately), ensures the bot is a Synapse
+// admin, and verifies connectivity.
+//
+// While the gate is closed, incoming Synapse transactions
+// (PUT /_matrix/app/v1/transactions/*) are acknowledged with 200 OK and
+// dropped — the events they carry are migration noise that needs no
+// processing. Everything else (health probes, mautrix query handlers)
+// passes through normally.
 //
 // Lifecycle on app.Start():
 //
-//	Connect             → bot admin + Whoami
-//	RunMigrations       → optional one-time room state cleanups
+//	Connect             → HTTP listener (gate closed) + bot admin + Whoami
+//	RunMigrations       → one-time room state cleanups
 //	SetBotProfile       → display name (after migrations to minimise fan-out)
-//	StartListener       → HTTP listener; Synapse begins draining its txn queue
+//	EnableEventDelivery → opens the gate; Synapse transactions reach mautrix
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
-	m.logger.Info("[Connect] Step 1/2: ensuring bot admin status")
-	m.ensureBotAdmin(ctx)
-	m.logger.Info("[Connect] Step 1/2: complete")
+	// Start HTTP server immediately so k8s liveness/readiness probes pass.
+	// The gate handler drops Synapse transactions until EnableEventDelivery.
+	m.logger.Info("[Connect] Step 1/3: starting HTTP listener (transaction gate closed)")
+	if err := m.startGatedServer(ctx); err != nil {
+		return fmt.Errorf("failed to start HTTP server: %w", err)
+	}
+	m.logger.Info("[Connect] Step 1/3: complete")
 
-	m.logger.Info("[Connect] Step 2/2: verifying bot connection (Whoami)")
+	m.logger.Info("[Connect] Step 2/3: ensuring bot admin status")
+	m.ensureBotAdmin(ctx)
+	m.logger.Info("[Connect] Step 2/3: complete")
+
+	m.logger.Info("[Connect] Step 3/3: verifying bot connection (Whoami)")
 	botIntent := m.as.BotIntent()
 	whoami, err := botIntent.Whoami(ctx)
 	if err != nil {
-		m.logger.Warn("[Connect] Step 2/2: Whoami failed", "error", err)
+		m.logger.Warn("[Connect] Step 3/3: Whoami failed", "error", err)
 	} else {
-		m.logger.Info("[Connect] Step 2/2: complete", "user_id", whoami.UserID)
+		m.logger.Info("[Connect] Step 3/3: complete", "user_id", whoami.UserID)
 	}
 
-	m.logger.Info("[Connect] complete; HTTP listener still down")
+	m.logger.Info("[Connect] complete; transaction gate still closed")
 	return nil
+}
+
+// startGatedServer starts our own http.Server using the mautrix Router
+// (which already has all handlers registered) wrapped in a gate that
+// drops transaction PUTs while closed. We never call as.Start() —
+// we own the listener.
+func (m *MautrixAdapter) startGatedServer(ctx context.Context) error {
+	addr := m.as.Host().Address()
+	if addr == "" {
+		return fmt.Errorf("appservice host not configured")
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// While gate is closed, ack Synapse transactions with 200 and drop.
+		if !m.gateOpen.Load() && r.Method == http.MethodPut &&
+			strings.HasPrefix(r.URL.Path, "/_matrix/app/v1/transactions/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("{}"))
+			return
+		}
+		// Everything else (health, mautrix query handlers, transactions
+		// after gate opens) goes straight to the mautrix router.
+		m.as.Router().ServeHTTP(w, r)
+	})
+
+	m.server = &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		if err := m.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			m.logger.Error("HTTP listener error", "error", err)
+		}
+	}()
+	return m.waitForServerReady(ctx)
 }
 
 // RunMigrations executes one-time room state cleanups against the
@@ -197,10 +249,8 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 // trims the working set for any subsequent operation and shrinks the
 // fan-out radius of the next SetBotProfile call.
 //
-// MUST be called before SetBotProfile and before StartListener so the
-// events generated by these migrations queue in Synapse's
-// `application_services_txns` instead of fanning out into our event loop
-// mid-mutation.
+// The transaction gate is closed during this phase, so events generated
+// by these migrations are ack'd and dropped by the HTTP handler.
 func (m *MautrixAdapter) RunMigrations(ctx context.Context) {
 	m.logger.Info("[RunMigrations] Step 1/2: redactCanonicalAliasesFromRooms")
 	m.redactCanonicalAliasesFromRooms(ctx)
@@ -232,23 +282,13 @@ func (m *MautrixAdapter) SetBotProfile(ctx context.Context) {
 	m.logger.Info("[SetBotProfile] complete", "display_name", m.botDisplayName)
 }
 
-// StartListener starts the AppService HTTP listener. This is the moment
-// Synapse first sees the AS as reachable and begins draining any
-// transactions that piled up in `application_services_txns` during the
-// preceding offline phases. Must be called only after the downstream
-// queue (RabbitMQ) is connected and event handlers are registered, or
-// the resulting event storm will hit a non-functional pipeline.
-func (m *MautrixAdapter) StartListener(ctx context.Context) error {
-	m.logger.Info("[StartListener] starting AppService HTTP listener")
-	go func() {
-		m.as.Start()
-		m.logger.Warn("AppService HTTP server stopped")
-	}()
-	if err := m.waitForServerReady(ctx); err != nil {
-		return fmt.Errorf("appservice failed to start: %w", err)
-	}
-	m.logger.Info("[StartListener] complete; Synapse will now drain queued transactions")
-	return nil
+// EnableEventDelivery opens the transaction gate so that Synapse
+// transactions reach mautrix's PutTransaction handler and flow into
+// the event loop. Must be called only after the downstream queue
+// (RabbitMQ) is connected and event handlers are registered.
+func (m *MautrixAdapter) EnableEventDelivery() {
+	m.gateOpen.Store(true)
+	m.logger.Info("[EnableEventDelivery] transaction gate open; events flowing")
 }
 
 // ensureBotAdmin ensures the bot user exists and is a Synapse server admin.
@@ -705,8 +745,11 @@ func (m *MautrixAdapter) probeServer(addr string) error {
 
 // Disconnect closes the connection to the Matrix homeserver.
 func (m *MautrixAdapter) Disconnect() error {
-	// Stop the AppService HTTP server if running
-	m.as.Stop()
+	if m.server != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return m.server.Shutdown(ctx)
+	}
 	return nil
 }
 
