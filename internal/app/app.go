@@ -115,13 +115,11 @@ func NewApp(cfg *config.Config) (*App, error) {
 //
 // The HTTP listener starts in Connect with a transaction gate that drops
 // Synapse event deliveries (200 OK, body discarded). This keeps k8s
-// probes happy while migrations and bot setup run. Once the outgoing
-// queue is connected and routes are registered, EnableEventDelivery
-// opens the gate so real events flow through.
+// probes happy while bot setup runs. Once the outgoing queue is connected
+// and routes are registered, EnableEventDelivery opens the gate so real
+// events flow through.
 //
-// RunMigrations runs BEFORE SetBotProfile so the leave-non-space-rooms
-// migration shrinks the bot's joined-room set first, which dramatically
-// reduces the display-name fan-out radius.
+// Migrations are NOT run here — use cmd/migrate for one-time operations.
 func (a *App) Start(ctx context.Context) error {
 	a.logger.Info("Starting adapters...")
 
@@ -131,23 +129,18 @@ func (a *App) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to Matrix: %w", err)
 	}
 
-	// 2. One-time room state migrations. Disable/replace this call
-	//    once the deployment is known to be clean.
-	a.matrixAdapter.RunMigrations(ctx)
-
-	// 3. Apply bot profile (display name). Done after migrations so the
-	//    fan-out only hits the rooms the bot is still in (spaces).
+	// 2. Apply bot profile (display name).
 	a.matrixAdapter.SetBotProfile(ctx)
 
-	// 4. Connect to RabbitMQ so the event loop has somewhere to publish.
+	// 3. Connect to RabbitMQ so the event loop has somewhere to publish.
 	if err := a.queueAdapter.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect to Queue: %w", err)
 	}
 
-	// 5. Subscribe queue handlers (incoming commands from Alkemio Server).
+	// 4. Subscribe queue handlers (incoming commands from Alkemio Server).
 	queue.RegisterRoutes(a.queueAdapter, a.roomHandler, a.actorHandler, a.spaceHandler, a.readReceiptHandler, a.logger)
 
-	// 6. Open the transaction gate. From this point, Synapse deliveries
+	// 5. Open the transaction gate. From this point, Synapse deliveries
 	//    reach mautrix's PutTransaction and flow into the event loop.
 	a.matrixAdapter.EnableEventDelivery()
 
