@@ -28,7 +28,6 @@
 --   4. Restart Synapse (to clear in-memory state caches).
 --   5. Restart the adapter.
 -- ----------------------------------------------------------------------------
--- DO NOT COMMIT THIS FILE TO GIT.
 -- ============================================================================
 
 BEGIN;
