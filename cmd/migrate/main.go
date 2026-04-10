@@ -32,6 +32,7 @@ import (
 	"os"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/config"
+	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter-go/internal/infrastructure/logger"
 	"github.com/alkem-io/matrix-adapter-go/internal/infrastructure/matrix"
 )
@@ -78,10 +79,18 @@ func main() {
 
 	ctx := context.Background()
 
-	// Connect (bot admin + Whoami only — no listener, no events)
-	if err := adapter.Connect(ctx); err != nil {
-		log.Error("Failed to connect", "error", err)
+	if err := runMigrations(ctx, adapter, log, *redactAliases, *leaveConversations, *fixPowerLevels, *dryRun); err != nil {
+		log.Error("Migration failed", "error", err)
 		os.Exit(1)
+	}
+
+	log.Info("Migration tool finished")
+}
+
+func runMigrations(ctx context.Context, adapter *matrix.MautrixAdapter, log ports.Logger,
+	redactAliases, leaveConversations, fixPowerLevels, dryRun bool) error {
+	if err := adapter.Connect(ctx); err != nil {
+		return fmt.Errorf("connect: %w", err)
 	}
 	defer func() {
 		if err := adapter.Disconnect(); err != nil {
@@ -93,29 +102,29 @@ func main() {
 
 	// --- Migrations ---
 
-	if *redactAliases {
+	if redactAliases {
 		log.Info("=== Migration: redact canonical aliases ===")
 		// TODO: move redactCanonicalAliasesFromRooms logic here
 		// - Use ghost intent fallback when admin-join fails
 		// - Skip rooms with no state
-		log.Warn("redact-canonical-aliases: not yet implemented in migration tool")
+		return fmt.Errorf("redact-canonical-aliases: not yet implemented")
 	}
 
-	if *leaveConversations {
+	if leaveConversations {
 		log.Info("=== Migration: leave conversation rooms ===")
 		// TODO: move leaveBotFromNonSpaceRooms logic here, but ONLY for rooms
 		// where other members are joined (conversation rooms).
 		// Do NOT leave rooms where bot is the only member (callout, updates, post rooms).
-		log.Warn("leave-conversations: not yet implemented in migration tool")
+		return fmt.Errorf("leave-conversations: not yet implemented")
 	}
 
-	if *fixPowerLevels {
+	if fixPowerLevels {
 		log.Info("=== Migration: fix power levels ===")
 		// TODO: for each room where users_default < 50, send a new
 		// m.room.power_levels state event with users_default=50.
 		// Use getIntentForRoom to find an intent that can send it.
-		log.Warn("fix-power-levels: not yet implemented in migration tool")
+		return fmt.Errorf("fix-power-levels: not yet implemented")
 	}
 
-	log.Info("Migration tool finished")
+	return nil
 }

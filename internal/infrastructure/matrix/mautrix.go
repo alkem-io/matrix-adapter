@@ -196,10 +196,9 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	botIntent := m.as.BotIntent()
 	whoami, err := botIntent.Whoami(ctx)
 	if err != nil {
-		m.logger.Warn("[Connect] Step 3/3: Whoami failed", "error", err)
-	} else {
-		m.logger.Info("[Connect] Step 3/3: complete", "user_id", whoami.UserID)
+		return fmt.Errorf("connect preflight failed: whoami: %w", err)
 	}
+	m.logger.Info("[Connect] Step 3/3: complete", "user_id", whoami.UserID)
 
 	m.logger.Info("[Connect] complete; transaction gate still closed")
 	return nil
@@ -235,7 +234,13 @@ func (m *MautrixAdapter) startGatedServer(ctx context.Context) error {
 			m.logger.Error("HTTP listener error", "error", err)
 		}
 	}()
-	return m.waitForServerReady(ctx)
+	if err := m.waitForServerReady(ctx); err != nil {
+		shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = m.server.Shutdown(shutCtx)
+		return err
+	}
+	return nil
 }
 
 // SetBotProfile applies the configured bot display name. This is
