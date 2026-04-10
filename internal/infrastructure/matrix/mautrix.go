@@ -129,12 +129,21 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		return nil, fmt.Errorf("failed to create appservice: %w", err)
 	}
 
-	// Enable zerolog for mautrix-go internal logging.
-	// Level=Info suppresses the per-request DEBUG firehose (every join/state
-	// event during migration) while still surfacing 429-retry WARNs and
-	// real errors. Our own progress logging covers what mautrix DEBUG used
-	// to provide.
-	as.Log = zerolog.New(zerolog.NewConsoleWriter()).Level(zerolog.InfoLevel).
+	// Enable zerolog for mautrix-go internal logging, inheriting the
+	// adapter's configured log level so operators can enable DEBUG when
+	// investigating Matrix protocol issues.
+	var mautrixLogLevel zerolog.Level
+	switch strings.ToLower(cfg.App.LogLevel) {
+	case "debug":
+		mautrixLogLevel = zerolog.DebugLevel
+	case "warn", "warning":
+		mautrixLogLevel = zerolog.WarnLevel
+	case "error":
+		mautrixLogLevel = zerolog.ErrorLevel
+	default:
+		mautrixLogLevel = zerolog.InfoLevel
+	}
+	as.Log = zerolog.New(zerolog.NewConsoleWriter()).Level(mautrixLogLevel).
 		With().Timestamp().Str("component", "mautrix").Logger()
 
 	admin, err := NewSynapseAdmin(cfg.Matrix.HomeserverURL, cfg.Matrix.AppServiceToken)
@@ -180,6 +189,8 @@ func safePrefix(s string, n int) string {
 //	SetBotProfile       → display name
 //	EnableEventDelivery → opens the gate; Synapse transactions reach mautrix
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
+	m.gateOpen.Store(false)
+
 	// Start HTTP server immediately so k8s liveness/readiness probes pass.
 	// The gate handler drops Synapse transactions until EnableEventDelivery.
 	m.logger.Info("[Connect] Step 1/3: starting HTTP listener (transaction gate closed)")
@@ -188,19 +199,28 @@ func (m *MautrixAdapter) Connect(ctx context.Context) error {
 	}
 	m.logger.Info("[Connect] Step 1/3: complete")
 
-	m.logger.Info("[Connect] Step 2/3: ensuring bot admin status")
-	m.ensureBotAdmin(ctx)
-	m.logger.Info("[Connect] Step 2/3: complete")
+	return m.connectCore(ctx)
+}
 
-	m.logger.Info("[Connect] Step 3/3: verifying bot connection (Whoami)")
+// ConnectWithoutListener performs bot admin setup and Whoami verification
+// without starting the HTTP listener. Intended for CLI tools (cmd/migrate)
+// that don't need k8s probes or event delivery.
+func (m *MautrixAdapter) ConnectWithoutListener(ctx context.Context) error {
+	return m.connectCore(ctx)
+}
+
+func (m *MautrixAdapter) connectCore(ctx context.Context) error {
+	m.logger.Info("[Connect] ensuring bot admin status")
+	m.ensureBotAdmin(ctx)
+
+	m.logger.Info("[Connect] verifying bot connection (Whoami)")
 	botIntent := m.as.BotIntent()
 	whoami, err := botIntent.Whoami(ctx)
 	if err != nil {
 		return fmt.Errorf("connect preflight failed: whoami: %w", err)
 	}
-	m.logger.Info("[Connect] Step 3/3: complete", "user_id", whoami.UserID)
+	m.logger.Info("[Connect] complete", "user_id", whoami.UserID)
 
-	m.logger.Info("[Connect] complete; transaction gate still closed")
 	return nil
 }
 
@@ -229,16 +249,28 @@ func (m *MautrixAdapter) startGatedServer(ctx context.Context) error {
 	})
 
 	m.server = &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	startErrCh := make(chan error, 1)
 	go func() {
 		if err := m.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			m.logger.Error("HTTP listener error", "error", err)
+			startErrCh <- err
 		}
 	}()
-	if err := m.waitForServerReady(ctx); err != nil {
-		shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = m.server.Shutdown(shutCtx)
-		return err
+
+	// Wait for either successful readiness or a fast startup failure
+	// (e.g. port already in use).
+	readyCh := make(chan error, 1)
+	go func() { readyCh <- m.waitForServerReady(ctx) }()
+
+	select {
+	case err := <-startErrCh:
+		return fmt.Errorf("HTTP listener failed to start: %w", err)
+	case err := <-readyCh:
+		if err != nil {
+			shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = m.server.Shutdown(shutCtx)
+			return err
+		}
 	}
 	return nil
 }

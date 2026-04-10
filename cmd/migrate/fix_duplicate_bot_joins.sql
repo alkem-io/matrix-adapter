@@ -19,15 +19,13 @@
 -- ----------------------------------------------------------------------------
 -- USAGE
 --   1. Stop the matrix adapter (kubectl scale ... --replicas=0).
---   2. EDIT the bot user ID below for the target homeserver:
---        acc:  '@00000000-0000-0000-0000-000000000000:matrix-acc.alkem.io'
---        prod: '@00000000-0000-0000-0000-000000000000:matrix.alkem.io'
---      Replace the literal in EVERY occurrence (steps 1, 2, 3, 5).
---   3. Run inside a single transaction (BEGIN/COMMIT are explicit below).
+--   2. Set the bot user ID for your environment:
+--        acc:  \set bot_mxid '@00000000-0000-0000-0000-000000000000:matrix-acc.alkem.io'
+--        prod: \set bot_mxid '@00000000-0000-0000-0000-000000000000:matrix.alkem.io'
+--   3. Run: psql -U synapse-db -d synapse -v bot_mxid="'@00000000-...'" -f fix_duplicate_bot_joins.sql
 --   4. Step 5 must report 0 / 0 before COMMIT. If it doesn't, ROLLBACK
 --      and investigate.
 --   5. Restart the adapter.
--- ----------------------------------------------------------------------------
 -- ============================================================================
 
 BEGIN;
@@ -38,7 +36,7 @@ SELECT DISTINCT ON (e.room_id) e.room_id, e.event_id AS original_event_id
 FROM events e
 JOIN event_json ej ON e.event_id = ej.event_id
 WHERE e.type = 'm.room.member'
-  AND e.state_key = '@00000000-0000-0000-0000-000000000000:matrix-acc.alkem.io'
+  AND e.state_key = :'bot_mxid'
   AND ej.json::jsonb->'content'->>'membership' = 'join'
 ORDER BY e.room_id, e.origin_server_ts;
 
@@ -49,7 +47,7 @@ FROM events e
 JOIN event_json ej ON e.event_id = ej.event_id
 JOIN bot_originals o ON e.room_id = o.room_id
 WHERE e.type = 'm.room.member'
-  AND e.state_key = '@00000000-0000-0000-0000-000000000000:matrix-acc.alkem.io'
+  AND e.state_key = :'bot_mxid'
   AND ej.json::jsonb->'content'->>'membership' = 'join'
   AND e.event_id != o.original_event_id;
 
@@ -59,7 +57,7 @@ SET event_id = d.original_event_id
 FROM bot_duplicates d
 WHERE sgs.event_id = d.dup_event_id
   AND sgs.type = 'm.room.member'
-  AND sgs.state_key = '@00000000-0000-0000-0000-000000000000:matrix-acc.alkem.io';
+  AND sgs.state_key = :'bot_mxid';
 
 -- Step 4a: drop event_auth rows that would otherwise collide with the
 --          (event_id, auth_id) unique constraint when we update them in 4b.
@@ -83,7 +81,7 @@ SELECT 'state_groups_state remaining:' AS check, count(*) AS count
 FROM state_groups_state sgs
 JOIN bot_duplicates d ON sgs.event_id = d.dup_event_id
 WHERE sgs.type = 'm.room.member'
-  AND sgs.state_key = '@00000000-0000-0000-0000-000000000000:matrix-acc.alkem.io'
+  AND sgs.state_key = :'bot_mxid'
 UNION ALL
 SELECT 'event_auth remaining:', count(*)
 FROM event_auth ea

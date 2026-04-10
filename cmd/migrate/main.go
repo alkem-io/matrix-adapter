@@ -89,7 +89,7 @@ func main() {
 
 func runMigrations(ctx context.Context, adapter *matrix.MautrixAdapter, log ports.Logger,
 	redactAliases, leaveConversations, fixPowerLevels, dryRun bool) error {
-	if err := adapter.Connect(ctx); err != nil {
+	if err := adapter.ConnectWithoutListener(ctx); err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
 	defer func() {
