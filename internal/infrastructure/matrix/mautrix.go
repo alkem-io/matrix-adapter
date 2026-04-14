@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +36,8 @@ type MautrixAdapter struct {
 	botDisplayName string
 	eventHandlers  EventHandlers
 	eventLoopOnce  sync.Once
+	server         *http.Server // our own HTTP server wrapping as.Router
+	gateOpen       atomic.Bool  // when false, transactions are ack'd and dropped
 }
 
 // NewMautrixAdapter creates a new instance of MautrixAdapter.
@@ -126,8 +129,22 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		return nil, fmt.Errorf("failed to create appservice: %w", err)
 	}
 
-	// Enable zerolog for mautrix-go internal logging
-	as.Log = zerolog.New(zerolog.NewConsoleWriter()).With().Timestamp().Str("component", "mautrix").Logger()
+	// Enable zerolog for mautrix-go internal logging, inheriting the
+	// adapter's configured log level so operators can enable DEBUG when
+	// investigating Matrix protocol issues.
+	var mautrixLogLevel zerolog.Level
+	switch strings.ToLower(cfg.App.LogLevel) {
+	case "debug":
+		mautrixLogLevel = zerolog.DebugLevel
+	case "warn", "warning":
+		mautrixLogLevel = zerolog.WarnLevel
+	case "error":
+		mautrixLogLevel = zerolog.ErrorLevel
+	default:
+		mautrixLogLevel = zerolog.InfoLevel
+	}
+	as.Log = zerolog.New(zerolog.NewConsoleWriter()).Level(mautrixLogLevel).
+		With().Timestamp().Str("component", "mautrix").Logger()
 
 	admin, err := NewSynapseAdmin(cfg.Matrix.HomeserverURL, cfg.Matrix.AppServiceToken)
 	if err != nil {
@@ -156,48 +173,133 @@ func safePrefix(s string, n int) string {
 // Core / Connection
 // ============================================================================
 
-// Connect initializes the connection to the Matrix homeserver.
+// Connect boots the adapter: starts the HTTP server with a transaction
+// gate (so k8s probes work immediately), ensures the bot is a Synapse
+// admin, and verifies connectivity.
+//
+// While the gate is closed, incoming Synapse transactions
+// (PUT /_matrix/app/v1/transactions/*) are acknowledged with 200 OK and
+// dropped — the events they carry are migration noise that needs no
+// processing. Everything else (health probes, mautrix query handlers)
+// passes through normally.
+//
+// Lifecycle on app.Start():
+//
+//	Connect             → HTTP listener (gate closed) + bot admin + Whoami
+//	SetBotProfile       → display name
+//	EnableEventDelivery → opens the gate; Synapse transactions reach mautrix
 func (m *MautrixAdapter) Connect(ctx context.Context) error {
-	// Step 1: Try to ensure bot is admin (quick path — works on restarts).
+	m.gateOpen.Store(false)
+
+	// Start HTTP server immediately so k8s liveness/readiness probes pass.
+	// The gate handler drops Synapse transactions until EnableEventDelivery.
+	m.logger.Info("[Connect] Step 1/3: starting HTTP listener (transaction gate closed)")
+	if err := m.startGatedServer(ctx); err != nil {
+		return fmt.Errorf("failed to start HTTP server: %w", err)
+	}
+	m.logger.Info("[Connect] Step 1/3: complete")
+
+	return m.connectCore(ctx)
+}
+
+// ConnectWithoutListener performs bot admin setup and Whoami verification
+// without starting the HTTP listener. Intended for CLI tools (cmd/migrate)
+// that don't need k8s probes or event delivery.
+func (m *MautrixAdapter) ConnectWithoutListener(ctx context.Context) error {
+	return m.connectCore(ctx)
+}
+
+func (m *MautrixAdapter) connectCore(ctx context.Context) error {
+	m.logger.Info("[Connect] ensuring bot admin status")
 	m.ensureBotAdmin(ctx)
 
-	// Step 2: Start the AppService
-	m.logger.Info("Initializing Matrix AppService connection")
-
-	go func() {
-		m.as.Start()
-		m.logger.Warn("AppService HTTP server stopped")
-	}()
-
-	if err := m.waitForServerReady(ctx); err != nil {
-		return fmt.Errorf("appservice failed to start: %w", err)
-	}
-
-	// Step 3: Verify bot connection
+	m.logger.Info("[Connect] verifying bot connection (Whoami)")
 	botIntent := m.as.BotIntent()
 	whoami, err := botIntent.Whoami(ctx)
 	if err != nil {
-		m.logger.Warn("Failed to verify bot connection (Whoami)", "error", err)
-	} else {
-		m.logger.Info("Matrix AppService connected", "user_id", whoami.UserID)
+		return fmt.Errorf("connect preflight failed: whoami: %w", err)
 	}
-
-	// Step 4: Set bot display name (before any room operations, so creation
-	// events show the display name instead of the raw UUID).
-	if m.botDisplayName != "" {
-		botIntent := m.as.BotIntent()
-		if err := botIntent.SetDisplayName(ctx, m.botDisplayName); err != nil {
-			m.logger.Warn("Failed to set bot display name", "display_name", m.botDisplayName, "error", err)
-		} else {
-			m.logger.Info("Bot display name set", "display_name", m.botDisplayName)
-		}
-	}
-
-	// Step 5: Migration cleanup for existing deployments
-	m.redactCanonicalAliasesFromRooms(ctx)
-	m.leaveBotFromNonSpaceRooms(ctx)
+	m.logger.Info("[Connect] complete", "user_id", whoami.UserID)
 
 	return nil
+}
+
+// startGatedServer starts our own http.Server using the mautrix Router
+// (which already has all handlers registered) wrapped in a gate that
+// drops transaction PUTs while closed. We never call as.Start() —
+// we own the listener.
+func (m *MautrixAdapter) startGatedServer(ctx context.Context) error {
+	addr := m.as.Host().Address()
+	if addr == "" {
+		return fmt.Errorf("appservice host not configured")
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// While gate is closed, ack Synapse transactions with 200 and drop.
+		if !m.gateOpen.Load() && r.Method == http.MethodPut &&
+			strings.HasPrefix(r.URL.Path, "/_matrix/app/v1/transactions/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("{}"))
+			return
+		}
+		// Everything else (health, mautrix query handlers, transactions
+		// after gate opens) goes straight to the mautrix router.
+		m.as.Router().ServeHTTP(w, r)
+	})
+
+	m.server = &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	startErrCh := make(chan error, 1)
+	go func() {
+		if err := m.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			startErrCh <- err
+		}
+	}()
+
+	// Wait for either successful readiness or a fast startup failure
+	// (e.g. port already in use).
+	readyCh := make(chan error, 1)
+	go func() { readyCh <- m.waitForServerReady(ctx) }()
+
+	select {
+	case err := <-startErrCh:
+		return fmt.Errorf("HTTP listener failed to start: %w", err)
+	case err := <-readyCh:
+		if err != nil {
+			shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = m.server.Shutdown(shutCtx)
+			return err
+		}
+	}
+	return nil
+}
+
+// SetBotProfile applies the configured bot display name. This is
+// intentionally a separate phase: changing the display name fans out an `m.room.member`
+// event into every room the bot is currently joined to, so we want
+// the joined-room set to be as small as possible (only spaces, after
+// leaveBotFromNonSpaceRooms) when this runs.
+func (m *MautrixAdapter) SetBotProfile(ctx context.Context) {
+	if m.botDisplayName == "" {
+		m.logger.Info("[SetBotProfile] skipped (no display name configured)")
+		return
+	}
+	if err := m.as.BotIntent().SetDisplayName(ctx, m.botDisplayName); err != nil {
+		m.logger.Warn("[SetBotProfile] SetDisplayName failed (continuing anyway)",
+			"display_name", m.botDisplayName, "error", err)
+		return
+	}
+	m.logger.Info("[SetBotProfile] complete", "display_name", m.botDisplayName)
+}
+
+// EnableEventDelivery opens the transaction gate so that Synapse
+// transactions reach mautrix's PutTransaction handler and flow into
+// the event loop. Must be called only after the downstream queue
+// (RabbitMQ) is connected and event handlers are registered.
+func (m *MautrixAdapter) EnableEventDelivery() {
+	m.gateOpen.Store(true)
+	m.logger.Info("[EnableEventDelivery] transaction gate open; events flowing")
 }
 
 // ensureBotAdmin ensures the bot user exists and is a Synapse server admin.
@@ -257,66 +359,6 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 	}
 }
 
-// leaveBotFromNonSpaceRooms is a one-time migration step that removes the bot
-// from all rooms that are not spaces. This cleans up existing deployments where
-// the bot was previously a member of all rooms including DMs.
-// redactCanonicalAliasesFromRooms redacts m.room.canonical_alias from all
-// non-space rooms. Uses admin API to list rooms (works even if bot has left).
-// This is a migration cleanup for existing deployments where canonical alias
-// was set, causing clients to show UUID aliases instead of member names.
-func (m *MautrixAdapter) redactCanonicalAliasesFromRooms(ctx context.Context) {
-	rooms, err := m.admin.ListRooms(ctx, 10000)
-	if err != nil {
-		m.logger.Warn("Failed to list rooms for canonical alias cleanup", "error", err)
-		return
-	}
-
-	redactedCount := 0
-	botIntent := m.as.BotIntent()
-	botMXID := m.as.BotMXID()
-
-	for _, room := range rooms {
-		if room.RoomType == "m.space" || room.CanonicalAlias == "" ||
-			m.idMapper.AlkemioRoomID(room.CanonicalAlias) == uuid.Nil {
-			continue
-		}
-
-		// Join bot via admin API (bypasses join rules), clear alias, then leave.
-		if err := m.admin.JoinRoom(ctx, room.RoomID, botMXID); err != nil {
-			m.logger.Warn("Failed to join room for alias cleanup",
-				"room_id", room.RoomID, "error", err)
-			continue
-		}
-		// Sync StateStore so EnsureJoined (inside SendStateEvent) doesn't duplicate the join.
-		if err := m.as.SetMembership(ctx, room.RoomID, botMXID, event.MembershipJoin); err != nil {
-			m.logger.Warn("Failed to sync StateStore after join, skipping room to avoid duplicate join",
-				"room_id", room.RoomID, "error", err)
-			continue
-		}
-
-		if _, err := botIntent.SendStateEvent(ctx, room.RoomID, event.StateCanonicalAlias, "", map[string]interface{}{}); err != nil {
-			m.logger.Warn("Failed to clear canonical alias",
-				"room_id", room.RoomID, "error", err)
-		} else {
-			redactedCount++
-		}
-
-		if _, err := botIntent.LeaveRoom(ctx, room.RoomID); err != nil {
-			m.logger.Warn("Failed to leave room after alias cleanup",
-				"room_id", room.RoomID, "error", err)
-		} else {
-			if err := m.as.SetMembership(ctx, room.RoomID, botMXID, event.MembershipLeave); err != nil {
-				m.logger.Warn("Failed to sync StateStore after leave",
-					"room_id", room.RoomID, "error", err)
-			}
-		}
-	}
-
-	if redactedCount > 0 {
-		m.logger.Info("Redacted canonical aliases (migration cleanup)", "rooms_redacted", redactedCount)
-	}
-}
-
 // findGhostIntentInRoom finds the ghost user with the highest power level in a room.
 // Returns their intent and PL, or nil if no ghost users are found.
 func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.RoomID) (intentAPI, float64) {
@@ -364,33 +406,6 @@ func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.Ro
 	}
 
 	return bestIntent, bestPL
-}
-
-// leaveBotFromNonSpaceRooms removes the bot from all rooms that are not spaces.
-func (m *MautrixAdapter) leaveBotFromNonSpaceRooms(ctx context.Context) {
-	intent := m.as.BotIntent()
-	resp, err := intent.JoinedRooms(ctx)
-	if err != nil {
-		m.logger.Warn("Failed to get bot's joined rooms for cleanup", "error", err)
-		return
-	}
-
-	leftCount := 0
-	for _, roomID := range resp.JoinedRooms {
-		if isSpace, _ := m.isSpaceRoom(ctx, roomID); isSpace {
-			continue
-		}
-		if _, err := intent.LeaveRoom(ctx, roomID); err != nil {
-			m.logger.Warn("Failed to leave room during cleanup",
-				"room_id", roomID, "error", err)
-		} else {
-			leftCount++
-		}
-	}
-
-	if leftCount > 0 {
-		m.logger.Info("Bot left non-space rooms (migration cleanup)", "rooms_left", leftCount)
-	}
 }
 
 // waitForSynapse retries connecting to Synapse until it responds or context is cancelled.
@@ -579,8 +594,11 @@ func (m *MautrixAdapter) probeServer(addr string) error {
 
 // Disconnect closes the connection to the Matrix homeserver.
 func (m *MautrixAdapter) Disconnect() error {
-	// Stop the AppService HTTP server if running
-	m.as.Stop()
+	if m.server != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return m.server.Shutdown(ctx)
+	}
 	return nil
 }
 
@@ -1688,6 +1706,9 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		Topic:    topic,
 		Preset:   preset,
 		IsDirect: isDirect,
+		PowerLevelOverride: &event.PowerLevelsEventContent{
+			UsersDefault: 50,
+		},
 	}
 
 	// Add join rule state event if provided (following CreateSpace pattern)
@@ -1972,6 +1993,9 @@ func (m *MautrixAdapter) CreateSpace(
 		RoomAliasName: aliasLocalpart,
 		CreationContent: map[string]interface{}{
 			"type": "m.space",
+		},
+		PowerLevelOverride: &event.PowerLevelsEventContent{
+			UsersDefault: 50,
 		},
 	}
 

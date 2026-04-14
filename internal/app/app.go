@@ -112,19 +112,37 @@ func NewApp(cfg *config.Config) (*App, error) {
 }
 
 // Start starts the application adapters and servers.
+//
+// The HTTP listener starts in Connect with a transaction gate that drops
+// Synapse event deliveries (200 OK, body discarded). This keeps k8s
+// probes happy while bot setup runs. Once the outgoing queue is connected
+// and routes are registered, EnableEventDelivery opens the gate so real
+// events flow through.
+//
+// Migrations are NOT run here — use cmd/migrate for one-time operations.
 func (a *App) Start(ctx context.Context) error {
 	a.logger.Info("Starting adapters...")
 
+	// 1. HTTP listener (gate closed) + bot admin + Whoami.
+	//    Health probes pass from this point; transactions are dropped.
 	if err := a.matrixAdapter.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect to Matrix: %w", err)
 	}
 
+	// 2. Apply bot profile (display name).
+	a.matrixAdapter.SetBotProfile(ctx)
+
+	// 3. Connect to RabbitMQ so the event loop has somewhere to publish.
 	if err := a.queueAdapter.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect to Queue: %w", err)
 	}
 
-	// Wire up Queue Subscribers
+	// 4. Subscribe queue handlers (incoming commands from Alkemio Server).
 	queue.RegisterRoutes(a.queueAdapter, a.roomHandler, a.actorHandler, a.spaceHandler, a.readReceiptHandler, a.logger)
+
+	// 5. Open the transaction gate. From this point, Synapse deliveries
+	//    reach mautrix's PutTransaction and flow into the event loop.
+	a.matrixAdapter.EnableEventDelivery()
 
 	return nil
 }
