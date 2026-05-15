@@ -52,11 +52,9 @@ esac
 
 case "$ENV" in
   acc)
-    BOT_MXID="@00000000-0000-0000-0000-000000000000:matrix-acc.alkem.io"
     EXPECTED_CONTEXT="k8s-scaleway-acceptance"
     ;;
   prod)
-    BOT_MXID="@00000000-0000-0000-0000-000000000000:matrix.alkem.io"
     EXPECTED_CONTEXT="k8s-scaleway-production"
     ;;
   *)
@@ -86,12 +84,18 @@ fi
 REGISTRATION_PATH="/data/matrix-adapter.yaml"
 echo ">>> Fetching appservice as_token from $REGISTRATION_PATH on synapse pod..."
 AS_TOKEN="$(kubectl exec -n "$NAMESPACE" deploy/synapse-deployment -- \
-  grep -E '^as_token:' "$REGISTRATION_PATH" | awk '{print $2}' | tr -d ' \r\n')"
+  grep -E '^as_token:' "$REGISTRATION_PATH" | awk '{print $2}' | tr -d ' \r\n"')"
 if [ -z "$AS_TOKEN" ]; then
   echo "ERROR: could not retrieve as_token from $REGISTRATION_PATH"
   exit 1
 fi
 echo "    got token (${AS_TOKEN:0:8}...)"
+
+BOT_SENDER=$(kubectl exec -n "$NAMESPACE" deploy/synapse-deployment -- \
+  grep -E '^sender_localpart:' "$REGISTRATION_PATH" | awk '{print $2}' | tr -d ' \r\n"')
+SERVER_NAME=$(kubectl exec -n "$NAMESPACE" deploy/synapse-deployment -- \
+  grep -E '^server_name:' /data/homeserver.yaml | awk '{print $2}' | tr -d ' \r\n"')
+BOT_MXID="@${BOT_SENDER}:${SERVER_NAME}"
 
 # ---- 2. Open a local port-forward to Synapse --------------------------------
 
