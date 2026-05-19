@@ -190,20 +190,26 @@ set_m_direct() {
   local USER_URI OTHER_KEY
   USER_URI=$(printf '%s' "$USER" | jq -sRr @uri)
 
-  # GET current m.direct
-  local CURRENT
-  CURRENT=$(curl -fsS \
+  # GET current m.direct — distinguish 404 (no data yet) from transient errors
+  local CURRENT HTTP_CODE
+  HTTP_CODE=$(curl -sS -o /tmp/mdirect_resp -w '%{http_code}' \
     "${SYNAPSE_URL}/_matrix/client/v3/user/${USER_URI}/account_data/m.direct?user_id=${USER_URI}" \
-    -H "Authorization: Bearer $AS_TOKEN" 2>/dev/null || echo '{}')
+    -H "Authorization: Bearer $AS_TOKEN" 2>/dev/null || echo "000")
+  CURRENT=$(cat /tmp/mdirect_resp 2>/dev/null || echo '')
 
-  # If error response or empty, start fresh
-  if ! echo "$CURRENT" | jq -e '.' >/dev/null 2>&1; then
-    CURRENT='{}'
-  fi
-  # Strip errcode responses (404 when no account data exists)
-  if echo "$CURRENT" | jq -e '.errcode' >/dev/null 2>&1; then
-    CURRENT='{}'
-  fi
+  case "$HTTP_CODE" in
+    200)
+      if ! echo "$CURRENT" | jq -e '.' >/dev/null 2>&1; then
+        CURRENT='{}'
+      fi
+      ;;
+    404)
+      CURRENT='{}'
+      ;;
+    *)
+      return 2
+      ;;
+  esac
 
   # Check if room already listed under the other user
   local ALREADY

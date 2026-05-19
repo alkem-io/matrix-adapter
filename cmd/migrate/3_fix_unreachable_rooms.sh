@@ -118,13 +118,14 @@ echo "    admin auth OK"
 echo ">>> Querying unreachable rooms (users_default=0, no joined user with PL >= 50) ..."
 ROOMS_RAW=$(kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- psql -U synapse-db -d synapse -tAc "
 SELECT cse.room_id || '|' || COALESCE(
-  -- Pick any joined user
+  -- Pick any joined appservice ghost user (UUID-format localpart)
   (SELECT cse_m.state_key
    FROM current_state_events cse_m
    JOIN event_json ej_m ON ej_m.event_id = cse_m.event_id
    WHERE cse_m.room_id = cse.room_id
      AND cse_m.type = 'm.room.member'
      AND ej_m.json::jsonb->'content'->>'membership' = 'join'
+     AND cse_m.state_key ~ '^@[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:'
    LIMIT 1),
   ''
 ) || '|' || COALESCE(
@@ -188,8 +189,19 @@ SKIP=0
 ALIAS_OK=0
 declare -a FAILED_ROOMS=()
 
+leave_bot() {
+  local ROOM_URI="$1"
+  sleep 0.2
+  curl -fsS -X POST \
+    "${SYNAPSE_URL}/_matrix/client/v3/rooms/${ROOM_URI}/leave?user_id=${BOT_URI}" \
+    -H "Authorization: Bearer $AS_TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d '{}' >/dev/null 2>&1 || true
+}
+
 while IFS='|' read -r ROOM_ID GHOST ALIAS; do
   [ -z "$ROOM_ID" ] && continue
+  BOT_JOINED=false
 
   if [ -z "$GHOST" ]; then
     FAIL=$((FAIL+1))
@@ -212,6 +224,7 @@ while IFS='|' read -r ROOM_ID GHOST ALIAS; do
     FAILED_ROOMS+=("$ROOM_ID|admin_join|$(printf '%s' "$JOIN_RESP" | head -c 160)")
     continue
   fi
+  BOT_JOINED=true
 
   sleep 0.3
 
@@ -225,6 +238,7 @@ while IFS='|' read -r ROOM_ID GHOST ALIAS; do
   if echo "$ADMIN_RESP" | jq -e '.errcode' >/dev/null 2>&1; then
     FAIL=$((FAIL+1))
     FAILED_ROOMS+=("$ROOM_ID|make_admin|ghost=$GHOST|$(printf '%s' "$ADMIN_RESP" | head -c 160)")
+    leave_bot "$ROOM_URI"
     continue
   fi
 
@@ -238,6 +252,7 @@ while IFS='|' read -r ROOM_ID GHOST ALIAS; do
   if [ -z "$CURRENT_PL" ] || ! echo "$CURRENT_PL" | jq -e . >/dev/null 2>&1; then
     FAIL=$((FAIL+1))
     FAILED_ROOMS+=("$ROOM_ID|get_pl|ghost=$GHOST|$(printf '%s' "$CURRENT_PL" | head -c 160)")
+    leave_bot "$ROOM_URI"
     continue
   fi
 
@@ -252,6 +267,7 @@ while IFS='|' read -r ROOM_ID GHOST ALIAS; do
   if ! echo "$PUT_RESP" | jq -e '.event_id' >/dev/null 2>&1; then
     FAIL=$((FAIL+1))
     FAILED_ROOMS+=("$ROOM_ID|put_pl|ghost=$GHOST|$(printf '%s' "$PUT_RESP" | head -c 160)")
+    leave_bot "$ROOM_URI"
     continue
   fi
 
@@ -274,12 +290,7 @@ while IFS='|' read -r ROOM_ID GHOST ALIAS; do
   fi
 
   # 4f. Bot leaves the room (was only joined to enable make_room_admin)
-  sleep 0.2
-  curl -fsS -X POST \
-    "${SYNAPSE_URL}/_matrix/client/v3/rooms/${ROOM_URI}/leave?user_id=${BOT_URI}" \
-    -H "Authorization: Bearer $AS_TOKEN" \
-    -H 'Content-Type: application/json' \
-    -d '{}' >/dev/null 2>&1 || true
+  leave_bot "$ROOM_URI"
 
   sleep 0.2
 done <<< "$ROOMS_RAW"
