@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha1" //nolint:gosec // Required by Synapse shared secret registration API (HMAC-SHA1)
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -1922,6 +1923,14 @@ func (m *MautrixAdapter) setDirectRoomAccountData(
 
 	var directContent map[string][]id.RoomID
 	if err := userIntent.GetAccountData(ctx, "m.direct", &directContent); err != nil {
+		if !errors.Is(err, mautrix.MNotFound) {
+			m.logger.Warn("Failed to read m.direct account data",
+				"user_id", userID, "other_user_id", otherUserID, "error", err)
+			return
+		}
+		directContent = make(map[string][]id.RoomID)
+	}
+	if directContent == nil {
 		directContent = make(map[string][]id.RoomID)
 	}
 
