@@ -1867,33 +1867,28 @@ func (m *MautrixAdapter) FindExistingDirectRoom(
 	intent := m.as.Intent(user1ID)
 
 	// Fetch the m.direct account data
-	var directContent map[string][]string
+	var directContent map[string][]id.RoomID
 	err = intent.GetAccountData(ctx, "m.direct", &directContent)
 	if err != nil {
-		// No m.direct data means no direct rooms
 		m.logger.Debug("No m.direct account data for user", "user_id", user1ID)
 		return "", nil
 	}
 
-	// Look for rooms with user2
 	directRooms, exists := directContent[user2ID.String()]
 	if !exists || len(directRooms) == 0 {
 		return "", nil
 	}
 
-	// Check each direct room to find one where both users are members
 	return m.findRoomWithBothUsers(ctx, directRooms, user1ID, user2ID)
 }
 
 // findRoomWithBothUsers checks a list of room IDs to find one where both users are members.
 func (m *MautrixAdapter) findRoomWithBothUsers(
 	ctx context.Context,
-	roomIDs []string,
+	roomIDs []id.RoomID,
 	user1ID, user2ID id.UserID,
 ) (id.RoomID, error) {
-	for _, roomIDStr := range roomIDs {
-		roomID := id.RoomID(roomIDStr)
-
+	for _, roomID := range roomIDs {
 		if m.roomContainsBothUsers(ctx, roomID, user1ID, user2ID) {
 			m.logger.Info(
 				"Found existing direct room between users",
