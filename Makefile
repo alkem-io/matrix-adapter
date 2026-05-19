@@ -46,12 +46,7 @@ test-coverage:
 lint:
 	@echo "Linting..."
 	$(GOVET) ./...
-	# Check if golangci-lint is installed
-	@if command -v golangci-lint >/dev/null; then \
-		golangci-lint run; \
-	else \
-		echo "golangci-lint not found, skipping advanced linting"; \
-	fi
+	$(GO) tool golangci-lint run
 
 # Lint markdown files
 .PHONY: lint-md

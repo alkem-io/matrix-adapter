@@ -26,11 +26,5 @@ jobs:
       - name: Test
         run: make test
 
-      - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          args: --timeout=5m
-          verify: false
-
-      - name: Vet
-        run: go vet ./...
+      - name: Lint
+        run: make lint
