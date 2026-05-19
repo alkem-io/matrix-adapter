@@ -56,6 +56,7 @@ type mockIntentAPI struct {
 	sendReceiptErr         error
 	setReadMarkersErr      error
 	getAccountDataErr      error
+	setAccountDataErr      error
 	getRoomAccountDataErr  error
 	createFilterResult     *mautrix.RespCreateFilter
 	createFilterErr        error
@@ -85,6 +86,7 @@ type mockIntentAPI struct {
 	ensureJoinedCalled     int
 	sendReceiptCalled      int
 	setReadMarkersCalled   int
+	setAccountDataCalled   int
 	inviteUserCalled       int
 
 	// Captured arguments
@@ -109,6 +111,8 @@ type mockIntentAPI struct {
 	lastSendMsgEventType       event.Type
 	lastSendMsgEventContent    any
 	lastEnsureJoinedRoomID     id.RoomID
+	lastSetAccountDataName     string
+	lastSetAccountDataContent  interface{}
 	lastBuildClientURLParts    []any
 	buildClientURLResult       string
 }
@@ -235,8 +239,11 @@ func (m *mockIntentAPI) GetAccountData(_ context.Context, _ string, _ interface{
 	return m.getAccountDataErr
 }
 
-func (m *mockIntentAPI) SetAccountData(_ context.Context, _ string, _ interface{}) error {
-	return nil
+func (m *mockIntentAPI) SetAccountData(_ context.Context, name string, data interface{}) error {
+	m.setAccountDataCalled++
+	m.lastSetAccountDataName = name
+	m.lastSetAccountDataContent = data
+	return m.setAccountDataErr
 }
 
 func (m *mockIntentAPI) GetRoomAccountData(_ context.Context, _ id.RoomID, _ string, _ interface{}) error {
