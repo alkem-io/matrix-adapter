@@ -1757,12 +1757,7 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		return "", fmt.Errorf("failed to set alias on room %s (%s): %w", resp.RoomID, fullAlias, err)
 	}
 
-	// For direct rooms, register the room in each participant's m.direct account data
-	// so Element and other clients bucket it under "People" / DM list.
-	if isDirect && len(memberUserIDs) == 2 {
-		m.setDirectRoomAccountData(ctx, resp.RoomID, memberUserIDs[0], memberUserIDs[1])
-		m.setDirectRoomAccountData(ctx, resp.RoomID, memberUserIDs[1], memberUserIDs[0])
-	}
+	m.registerDirectRoomParticipants(ctx, resp.RoomID, isDirect, memberUserIDs)
 
 	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, memberUserIDs)
 
@@ -1910,6 +1905,16 @@ func (m *MautrixAdapter) findRoomWithBothUsers(
 		}
 	}
 	return "", nil
+}
+
+func (m *MautrixAdapter) registerDirectRoomParticipants(
+	ctx context.Context, roomID id.RoomID, isDirect bool, memberUserIDs []id.UserID,
+) {
+	if !isDirect || len(memberUserIDs) != 2 {
+		return
+	}
+	m.setDirectRoomAccountData(ctx, roomID, memberUserIDs[0], memberUserIDs[1])
+	m.setDirectRoomAccountData(ctx, roomID, memberUserIDs[1], memberUserIDs[0])
 }
 
 // setDirectRoomAccountData adds a room to a user's m.direct account data,
