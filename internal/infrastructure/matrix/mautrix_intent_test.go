@@ -56,6 +56,8 @@ type mockIntentAPI struct {
 	sendReceiptErr         error
 	setReadMarkersErr      error
 	getAccountDataErr      error
+	getAccountDataByKey    map[string]error
+	setAccountDataErr      error
 	getRoomAccountDataErr  error
 	createFilterResult     *mautrix.RespCreateFilter
 	createFilterErr        error
@@ -85,6 +87,7 @@ type mockIntentAPI struct {
 	ensureJoinedCalled     int
 	sendReceiptCalled      int
 	setReadMarkersCalled   int
+	setAccountDataCalled   int
 	inviteUserCalled       int
 
 	// Captured arguments
@@ -109,6 +112,8 @@ type mockIntentAPI struct {
 	lastSendMsgEventType       event.Type
 	lastSendMsgEventContent    any
 	lastEnsureJoinedRoomID     id.RoomID
+	lastSetAccountDataName     string
+	lastSetAccountDataContent  interface{}
 	lastBuildClientURLParts    []any
 	buildClientURLResult       string
 }
@@ -231,8 +236,20 @@ func (m *mockIntentAPI) SetReadMarkers(_ context.Context, _ id.RoomID, _ interfa
 	return m.setReadMarkersErr
 }
 
-func (m *mockIntentAPI) GetAccountData(_ context.Context, _ string, _ interface{}) error {
+func (m *mockIntentAPI) GetAccountData(_ context.Context, name string, _ interface{}) error {
+	if m.getAccountDataByKey != nil {
+		if err, ok := m.getAccountDataByKey[name]; ok {
+			return err
+		}
+	}
 	return m.getAccountDataErr
+}
+
+func (m *mockIntentAPI) SetAccountData(_ context.Context, name string, data interface{}) error {
+	m.setAccountDataCalled++
+	m.lastSetAccountDataName = name
+	m.lastSetAccountDataContent = data
+	return m.setAccountDataErr
 }
 
 func (m *mockIntentAPI) GetRoomAccountData(_ context.Context, _ id.RoomID, _ string, _ interface{}) error {
@@ -1237,6 +1254,137 @@ func TestCreateRoomWithAlias_DirectRoom(t *testing.T) {
 	require.NotNil(t, botIntent.lastCreateRoomReq)
 	assert.Equal(t, "trusted_private_chat", botIntent.lastCreateRoomReq.Preset)
 	assert.True(t, botIntent.lastCreateRoomReq.IsDirect)
+}
+
+func TestCreateRoomWithAlias_DirectRoom_SetsAccountData(t *testing.T) {
+	user1ID := expectedUserID(testActorID)
+	user2ID := expectedUserID(testActorID2)
+
+	user1Intent := &mockIntentAPI{
+		getAccountDataByKey: map[string]error{
+			"m.direct": mautrix.MNotFound,
+		},
+	}
+	user2Intent := &mockIntentAPI{
+		getAccountDataByKey: map[string]error{
+			"m.direct": mautrix.MNotFound,
+		},
+	}
+	botIntent := &mockIntentAPI{
+		createRoomResult: &mautrix.RespCreateRoom{RoomID: "!dm:test.local"},
+	}
+	admin := &mockAdminAPI{
+		getRoomMessagesResult: &mautrix.RespMessages{
+			Chunk: []*event.Event{{ID: "$latest1"}},
+		},
+	}
+	as := newMockAS(botIntent, map[id.UserID]intentAPI{
+		user1ID: user1Intent,
+		user2ID: user2Intent,
+	})
+	a := newFullTestAdapter(as, admin)
+
+	alkemioRoomID := uuid.MustParse("880e8400-e29b-41d4-a716-446655440003")
+	members := []domain.Actor{
+		testActor(testActorID, "Alice"),
+		testActor(testActorID2, "Bob"),
+	}
+
+	roomID, err := a.CreateRoomWithAlias(
+		context.Background(), alkemioRoomID, "direct",
+		"", "", "", "", nil, members,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, id.RoomID("!dm:test.local"), roomID)
+
+	assert.Equal(t, 1, user1Intent.setAccountDataCalled)
+	assert.Equal(t, "m.direct", user1Intent.lastSetAccountDataName)
+
+	assert.Equal(t, 1, user2Intent.setAccountDataCalled)
+	assert.Equal(t, "m.direct", user2Intent.lastSetAccountDataName)
+}
+
+func TestCreateRoomWithAlias_DirectRoom_AccountDataIdempotent(t *testing.T) {
+	user1ID := expectedUserID(testActorID)
+	user2ID := expectedUserID(testActorID2)
+
+	user1Intent := &mockIntentAPI{}
+	user2Intent := &mockIntentAPI{}
+	botIntent := &mockIntentAPI{
+		createRoomResult: &mautrix.RespCreateRoom{RoomID: "!dm:test.local"},
+	}
+	admin := &mockAdminAPI{
+		getRoomMessagesResult: &mautrix.RespMessages{
+			Chunk: []*event.Event{{ID: "$latest1"}},
+		},
+	}
+	as := newMockAS(botIntent, map[id.UserID]intentAPI{
+		user1ID: user1Intent,
+		user2ID: user2Intent,
+	})
+	a := newFullTestAdapter(as, admin)
+
+	alkemioRoomID := uuid.MustParse("880e8400-e29b-41d4-a716-446655440003")
+	members := []domain.Actor{
+		testActor(testActorID, "Alice"),
+		testActor(testActorID2, "Bob"),
+	}
+
+	_, err := a.CreateRoomWithAlias(
+		context.Background(), alkemioRoomID, "direct",
+		"", "", "", "", nil, members,
+	)
+	require.NoError(t, err)
+
+	// GetAccountData returns nil error (success) with empty data, so the room
+	// is not a duplicate — SetAccountData should still be called.
+	assert.Equal(t, 1, user1Intent.setAccountDataCalled)
+	assert.Equal(t, 1, user2Intent.setAccountDataCalled)
+}
+
+func TestCreateRoomWithAlias_DirectRoom_TransientError_NoWrite(t *testing.T) {
+	user1ID := expectedUserID(testActorID)
+	user2ID := expectedUserID(testActorID2)
+
+	user1Intent := &mockIntentAPI{
+		getAccountDataByKey: map[string]error{
+			"m.direct": mautrix.MForbidden,
+		},
+	}
+	user2Intent := &mockIntentAPI{
+		getAccountDataByKey: map[string]error{
+			"m.direct": mautrix.MForbidden,
+		},
+	}
+	botIntent := &mockIntentAPI{
+		createRoomResult: &mautrix.RespCreateRoom{RoomID: "!dm:test.local"},
+	}
+	admin := &mockAdminAPI{
+		getRoomMessagesResult: &mautrix.RespMessages{
+			Chunk: []*event.Event{{ID: "$latest1"}},
+		},
+	}
+	as := newMockAS(botIntent, map[id.UserID]intentAPI{
+		user1ID: user1Intent,
+		user2ID: user2Intent,
+	})
+	a := newFullTestAdapter(as, admin)
+
+	alkemioRoomID := uuid.MustParse("880e8400-e29b-41d4-a716-446655440003")
+	members := []domain.Actor{
+		testActor(testActorID, "Alice"),
+		testActor(testActorID2, "Bob"),
+	}
+
+	_, err := a.CreateRoomWithAlias(
+		context.Background(), alkemioRoomID, "direct",
+		"", "", "", "", nil, members,
+	)
+	require.NoError(t, err)
+
+	// Transient error on GetAccountData → should NOT write to avoid data loss
+	assert.Equal(t, 0, user1Intent.setAccountDataCalled)
+	assert.Equal(t, 0, user2Intent.setAccountDataCalled)
 }
 
 // ============================================================================

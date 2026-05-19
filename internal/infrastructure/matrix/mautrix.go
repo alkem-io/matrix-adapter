@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha1" //nolint:gosec // Required by Synapse shared secret registration API (HMAC-SHA1)
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -1756,6 +1757,8 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		return "", fmt.Errorf("failed to set alias on room %s (%s): %w", resp.RoomID, fullAlias, err)
 	}
 
+	m.registerDirectRoomParticipants(ctx, resp.RoomID, isDirect, memberUserIDs)
+
 	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, memberUserIDs)
 
 	// Bot leaves only if other members are present — an empty room becomes
@@ -1864,33 +1867,28 @@ func (m *MautrixAdapter) FindExistingDirectRoom(
 	intent := m.as.Intent(user1ID)
 
 	// Fetch the m.direct account data
-	var directContent map[string][]string
+	var directContent map[string][]id.RoomID
 	err = intent.GetAccountData(ctx, "m.direct", &directContent)
 	if err != nil {
-		// No m.direct data means no direct rooms
 		m.logger.Debug("No m.direct account data for user", "user_id", user1ID)
 		return "", nil
 	}
 
-	// Look for rooms with user2
 	directRooms, exists := directContent[user2ID.String()]
 	if !exists || len(directRooms) == 0 {
 		return "", nil
 	}
 
-	// Check each direct room to find one where both users are members
 	return m.findRoomWithBothUsers(ctx, directRooms, user1ID, user2ID)
 }
 
 // findRoomWithBothUsers checks a list of room IDs to find one where both users are members.
 func (m *MautrixAdapter) findRoomWithBothUsers(
 	ctx context.Context,
-	roomIDs []string,
+	roomIDs []id.RoomID,
 	user1ID, user2ID id.UserID,
 ) (id.RoomID, error) {
-	for _, roomIDStr := range roomIDs {
-		roomID := id.RoomID(roomIDStr)
-
+	for _, roomID := range roomIDs {
 		if m.roomContainsBothUsers(ctx, roomID, user1ID, user2ID) {
 			m.logger.Info(
 				"Found existing direct room between users",
@@ -1902,6 +1900,52 @@ func (m *MautrixAdapter) findRoomWithBothUsers(
 		}
 	}
 	return "", nil
+}
+
+func (m *MautrixAdapter) registerDirectRoomParticipants(
+	ctx context.Context, roomID id.RoomID, isDirect bool, memberUserIDs []id.UserID,
+) {
+	if !isDirect || len(memberUserIDs) != 2 {
+		return
+	}
+	m.setDirectRoomAccountData(ctx, roomID, memberUserIDs[0], memberUserIDs[1])
+	m.setDirectRoomAccountData(ctx, roomID, memberUserIDs[1], memberUserIDs[0])
+}
+
+// setDirectRoomAccountData adds a room to a user's m.direct account data,
+// registering the other user as the DM counterpart.
+func (m *MautrixAdapter) setDirectRoomAccountData(
+	ctx context.Context,
+	roomID id.RoomID,
+	userID, otherUserID id.UserID,
+) {
+	userIntent := m.as.Intent(userID)
+
+	var directContent map[string][]id.RoomID
+	if err := userIntent.GetAccountData(ctx, "m.direct", &directContent); err != nil {
+		if !errors.Is(err, mautrix.MNotFound) {
+			m.logger.Warn("Failed to read m.direct account data",
+				"user_id", userID, "other_user_id", otherUserID, "error", err)
+			return
+		}
+		directContent = make(map[string][]id.RoomID)
+	}
+	if directContent == nil {
+		directContent = make(map[string][]id.RoomID)
+	}
+
+	otherKey := otherUserID.String()
+	for _, existingID := range directContent[otherKey] {
+		if existingID == roomID {
+			return
+		}
+	}
+	directContent[otherKey] = append(directContent[otherKey], roomID)
+
+	if err := userIntent.SetAccountData(ctx, "m.direct", directContent); err != nil {
+		m.logger.Warn("Failed to set m.direct account data",
+			"user_id", userID, "other_user_id", otherUserID, "room_id", roomID, "error", err)
+	}
 }
 
 // roomContainsBothUsers checks if a room contains both specified users.
