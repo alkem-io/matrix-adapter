@@ -235,6 +235,10 @@ func (m *mockIntentAPI) GetAccountData(_ context.Context, _ string, _ interface{
 	return m.getAccountDataErr
 }
 
+func (m *mockIntentAPI) SetAccountData(_ context.Context, _ string, _ interface{}) error {
+	return nil
+}
+
 func (m *mockIntentAPI) GetRoomAccountData(_ context.Context, _ id.RoomID, _ string, _ interface{}) error {
 	return m.getRoomAccountDataErr
 }

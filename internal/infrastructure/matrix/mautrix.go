@@ -1756,6 +1756,13 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		return "", fmt.Errorf("failed to set alias on room %s (%s): %w", resp.RoomID, fullAlias, err)
 	}
 
+	// For direct rooms, register the room in each participant's m.direct account data
+	// so Element and other clients bucket it under "People" / DM list.
+	if isDirect && len(memberUserIDs) == 2 {
+		m.setDirectRoomAccountData(ctx, resp.RoomID, memberUserIDs[0], memberUserIDs[1])
+		m.setDirectRoomAccountData(ctx, resp.RoomID, memberUserIDs[1], memberUserIDs[0])
+	}
+
 	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, memberUserIDs)
 
 	// Bot leaves only if other members are present — an empty room becomes
@@ -1902,6 +1909,34 @@ func (m *MautrixAdapter) findRoomWithBothUsers(
 		}
 	}
 	return "", nil
+}
+
+// setDirectRoomAccountData adds a room to a user's m.direct account data,
+// registering the other user as the DM counterpart.
+func (m *MautrixAdapter) setDirectRoomAccountData(
+	ctx context.Context,
+	roomID id.RoomID,
+	userID, otherUserID id.UserID,
+) {
+	userIntent := m.as.Intent(userID)
+
+	var directContent map[string][]id.RoomID
+	if err := userIntent.GetAccountData(ctx, "m.direct", &directContent); err != nil {
+		directContent = make(map[string][]id.RoomID)
+	}
+
+	otherKey := otherUserID.String()
+	for _, existingID := range directContent[otherKey] {
+		if existingID == roomID {
+			return
+		}
+	}
+	directContent[otherKey] = append(directContent[otherKey], roomID)
+
+	if err := userIntent.SetAccountData(ctx, "m.direct", directContent); err != nil {
+		m.logger.Warn("Failed to set m.direct account data",
+			"user_id", userID, "other_user_id", otherUserID, "room_id", roomID, "error", err)
+	}
 }
 
 // roomContainsBothUsers checks if a room contains both specified users.

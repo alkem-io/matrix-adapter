@@ -43,6 +43,7 @@ type intentAPI interface {
 	SendReceipt(ctx context.Context, roomID id.RoomID, eventID id.EventID, receiptType event.ReceiptType, content interface{}) error
 	SetReadMarkers(ctx context.Context, roomID id.RoomID, content interface{}) error
 	GetAccountData(ctx context.Context, name string, output interface{}) error
+	SetAccountData(ctx context.Context, name string, data interface{}) error
 	GetRoomAccountData(ctx context.Context, roomID id.RoomID, name string, output interface{}) error
 	Messages(ctx context.Context, roomID id.RoomID, from, to string, dir mautrix.Direction, filter *mautrix.FilterPart, limit int) (*mautrix.RespMessages, error)
 	CreateFilter(ctx context.Context, filter *mautrix.Filter) (*mautrix.RespCreateFilter, error)
