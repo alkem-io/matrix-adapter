@@ -56,7 +56,7 @@ func Load() (*Config, error) {
 			_ = f.Close()
 		}()
 
-		decoder := yaml.NewDecoder(f)
+		decoder := yaml.NewDecoder(f) //nolint:gosec // Config file path is operator-controlled
 		if err := decoder.Decode(cfg); err != nil {
 			return nil, err
 		}
