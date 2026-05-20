@@ -3,6 +3,7 @@ package httpinfra
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -92,5 +93,8 @@ func (h *CheckRoomHandler) handleCheckRoom(w http.ResponseWriter, r *http.Reques
 }
 
 func isTimeout(err error) bool {
-	return strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), context.DeadlineExceeded.Error())
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return strings.Contains(err.Error(), "timeout")
 }

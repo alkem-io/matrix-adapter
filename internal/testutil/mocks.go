@@ -10,9 +10,11 @@ import (
 
 // MockQueuePort is a test double for ports.QueuePort that records the last published topic and payload.
 type MockQueuePort struct {
-	PublishedTopic   string
-	PublishedPayload interface{}
-	PublishError     error
+	PublishedTopic         string
+	PublishedPayload       interface{}
+	PublishError           error
+	PublishAndWaitResponse []byte
+	PublishAndWaitError    error
 }
 
 var _ ports.QueuePort = (*MockQueuePort)(nil)
@@ -28,7 +30,7 @@ func (m *MockQueuePort) Subscribe(_ string, _ ports.MessageHandler) error { //no
 	return nil
 }
 func (m *MockQueuePort) PublishAndWait(_ context.Context, _ string, _ interface{}, _ time.Duration) ([]byte, error) { //nolint:revive
-	return nil, nil
+	return m.PublishAndWaitResponse, m.PublishAndWaitError
 }
 
 // MockLogger is a no-op test double for ports.Logger.

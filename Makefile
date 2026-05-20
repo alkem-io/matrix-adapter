@@ -68,7 +68,7 @@ fmt:
 
 # Generate all artifacts
 .PHONY: generate
-generate: generate-go generate-events
+generate: generate-go generate-events openapi
 
 # Generate Go code (DTOs, mocks)
 .PHONY: generate-go
