@@ -230,6 +230,14 @@ func TestValidateBearerToken(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("empty expected token rejects", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set("Authorization", "Bearer ")
+		if ValidateBearerToken(req, "") {
+			t.Error("expected false when expected token is empty")
+		}
+	})
 }
 
 func TestExtractActorID(t *testing.T) {

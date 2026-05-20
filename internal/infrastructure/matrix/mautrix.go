@@ -2015,6 +2015,10 @@ func (m *MautrixAdapter) ReconcileRoom(
 	m.logger.Info("Starting room reconciliation",
 		"room_id", roomID, "alkemio_room_id", alkemioRoomID, "creator", creatorUserID)
 
+	if m.queuePort == nil {
+		return fmt.Errorf("reconcile: queue port not configured")
+	}
+
 	creatorIntent := m.as.Intent(creatorUserID)
 
 	// 1. Get room info from server

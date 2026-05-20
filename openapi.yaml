@@ -36,6 +36,11 @@ components:
         - inviter
         - invitee
       type: object
+  securitySchemes:
+    apiKeyAuth:
+      in: header
+      name: Authorization
+      type: apiKey
 info:
   contact:
     email: info@alkem.io
@@ -55,11 +60,6 @@ paths:
   /_matrix/app/alkemio/check-room:
     post:
       operationId: CheckRoomHandler.handleCheckRoom
-      parameters:
-        - in: header
-          name: Authorization
-          schema:
-            type: string
       requestBody:
         content:
           application/json:
@@ -105,14 +105,11 @@ paths:
                   type: string
                 type: object
           description: Gateway Timeout
+      security:
+        - apiKeyAuth: []
   /_matrix/app/alkemio/dm-request:
     post:
       operationId: DMWebhookHandler.handleDMRequest
-      parameters:
-        - in: header
-          name: Authorization
-          schema:
-            type: string
       requestBody:
         content:
           application/json:
@@ -148,6 +145,8 @@ paths:
                   type: string
                 type: object
           description: Internal Server Error
+      security:
+        - apiKeyAuth: []
   /health/live:
     get:
       operationId: app.go:76:40

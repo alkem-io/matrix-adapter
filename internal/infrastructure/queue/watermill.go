@@ -242,14 +242,17 @@ func (w *WatermillAdapter) logErrorResponse(msg *message.Message, resp interface
 // on a temporary exclusive AMQP queue. Uses raw amqp091-go for the reply consumer since
 // Watermill's subscriber creates durable queues unsuitable for ephemeral RPC replies.
 func (w *WatermillAdapter) PublishAndWait(ctx context.Context, topic string, payload interface{}, timeout time.Duration) ([]byte, error) {
+	if w.rpcConn == nil || w.rpcConn.IsClosed() {
+		return nil, fmt.Errorf("RPC connection not available")
+	}
+
 	ch, err := w.rpcConn.Channel()
 	if err != nil {
 		return nil, fmt.Errorf("failed to open RPC channel: %w", err)
 	}
 	defer func() { _ = ch.Close() }()
 
-	// Declare exclusive auto-delete reply queue (server assigns unique name)
-	replyQueue, err := ch.QueueDeclare("", false, false, true, false, nil)
+	replyQueue, err := ch.QueueDeclare("", false, true, true, false, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to declare reply queue: %w", err)
 	}

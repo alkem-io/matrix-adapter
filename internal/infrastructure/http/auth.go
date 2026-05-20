@@ -10,6 +10,9 @@ import (
 // ValidateBearerToken checks the Authorization header for a valid Bearer token
 // using constant-time comparison to prevent timing attacks.
 func ValidateBearerToken(r *http.Request, expected string) bool {
+	if expected == "" {
+		return false
+	}
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
 		return false
