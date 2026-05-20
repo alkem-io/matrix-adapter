@@ -548,7 +548,7 @@ func (m *MautrixAdapter) resolveOrReconcile(ctx context.Context, roomID id.RoomI
 		name, topic := m.getRoomNameAndTopic(reconcileCtx, roomID)
 
 		if m.eventHandlers.OnRoomCreated != nil {
-			if err := m.eventHandlers.OnRoomCreated(domain.RoomCreatedEvent{
+			evt := domain.RoomCreatedEvent{
 				AlkemioRoomID: pendingUUID,
 				MatrixRoomID:  roomID,
 				CreatorID:     creatorActorID,
@@ -556,9 +556,17 @@ func (m *MautrixAdapter) resolveOrReconcile(ctx context.Context, roomID id.RoomI
 				Name:          name,
 				Topic:         topic,
 				Timestamp:     time.Now(),
-			}); err != nil {
-				m.logger.Error("resolveOrReconcile: failed to emit RoomCreatedEvent",
-					"room_id", roomID, "error", err)
+			}
+			for attempt := 1; attempt <= 3; attempt++ {
+				if err := m.eventHandlers.OnRoomCreated(evt); err != nil {
+					m.logger.Error("resolveOrReconcile: failed to emit RoomCreatedEvent",
+						"room_id", roomID, "attempt", attempt, "error", err)
+					if attempt < 3 {
+						time.Sleep(time.Duration(attempt) * time.Second)
+						continue
+					}
+				}
+				break
 			}
 		}
 

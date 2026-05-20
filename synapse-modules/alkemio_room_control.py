@@ -351,6 +351,13 @@ class AlkemioRoomControl:
             raise SynapseError(403, reason, Codes.FORBIDDEN)
 
         alkemio_room_id = resp.get("alkemio_room_id", "")
+        if not isinstance(alkemio_room_id, str) or not alkemio_room_id:
+            logger.error("Room check approved without alkemio_room_id: %s", resp)
+            raise SynapseError(
+                503,
+                "Service temporarily unavailable",
+                Codes.UNKNOWN,
+            )
         logger.info(
             "Room check approved: %s, alkemio_room_id=%s",
             user_id,

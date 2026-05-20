@@ -2041,9 +2041,7 @@ func (m *MautrixAdapter) ReconcileRoom(
 	for _, member := range roomInfo.Members {
 		actorUUID, err := uuid.Parse(member.ActorID)
 		if err != nil {
-			m.logger.Warn("reconcile: skipping member with invalid actor ID",
-				"actor_id", member.ActorID, "error", err)
-			continue
+			return fmt.Errorf("reconcile: invalid actor ID %q: %w", member.ActorID, err)
 		}
 
 		actor := domain.Actor{
@@ -2052,9 +2050,7 @@ func (m *MautrixAdapter) ReconcileRoom(
 		}
 		userID, err := m.EnsureUser(ctx, actor)
 		if err != nil {
-			m.logger.Error("reconcile: EnsureUser failed",
-				"actor_id", member.ActorID, "error", err)
-			continue
+			return fmt.Errorf("reconcile: EnsureUser failed for %s: %w", member.ActorID, err)
 		}
 
 		if userID != creatorUserID {
