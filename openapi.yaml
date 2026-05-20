@@ -87,7 +87,11 @@ paths:
           description: Bad Request
         "401":
           content:
-            application/json: {}
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
           description: Unauthorized
         "500":
           content:
@@ -135,7 +139,11 @@ paths:
           description: Bad Request
         "401":
           content:
-            application/json: {}
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
           description: Unauthorized
         "500":
           content:
