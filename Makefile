@@ -19,7 +19,7 @@ all: deps fmt lint test build
 .PHONY: openapi
 openapi:
 	@echo "Generating OpenAPI spec..."
-	$(GO) run github.com/antst/go-apispec/cmd/apispec@v0.4.10 --dir . --output openapi.yaml --config apispec.yaml
+	$(GO) run github.com/antst/go-apispec/cmd/apispec@v0.4.11 --dir . --output openapi.yaml --config apispec.yaml
 
 # Build the application
 .PHONY: build
