@@ -45,7 +45,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Install apispec
-        run: go install github.com/antst/go-apispec/cmd/apispec@v0.4.9
+        run: go install github.com/antst/go-apispec/cmd/apispec@v0.4.10
 
       - name: Generate OpenAPI spec
         run: make openapi
