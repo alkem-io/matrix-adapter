@@ -1,0 +1,18 @@
+defaults:
+  requestContentType: application/json
+  responseContentType: application/json
+  responseStatus: 200
+info:
+  title: Alkemio Matrix Adapter
+  description: |
+    Matrix Adapter service for the Alkemio platform. Bridges the Alkemio Server
+    and Matrix Homeserver using mautrix-go and RabbitMQ. Provides AppService
+    transaction handling, room creation check endpoints, and health probes.
+  version: 1.0.0
+  contact:
+    name: Alkemio Foundation
+    url: https://alkem.io
+    email: info@alkem.io
+  license:
+    name: EUPL-1.2
+    url: https://opensource.org/licenses/EUPL-1.2

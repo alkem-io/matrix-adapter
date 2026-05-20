@@ -206,19 +206,19 @@ export const TopicSpaceMemberBatchAdd = "communication.space.member.batch.add";
  */
 export const TopicSpaceMemberBatchRemove = "communication.space.member.batch.remove";
 /**
- * Custom state API
+ * Custom state API topics (io.alkemio.* state events)
  */
 export const TopicRoomStateSet = "communication.room.state.set";
 /**
- * Space batch member command topics
+ * Custom state API topics (io.alkemio.* state events)
  */
 export const TopicRoomStateGet = "communication.room.state.get";
 /**
- * Space batch member command topics
+ * Custom state API topics (io.alkemio.* state events)
  */
 export const TopicSpaceStateSet = "communication.space.state.set";
 /**
- * Space batch member command topics
+ * Custom state API topics (io.alkemio.* state events)
  */
 export const TopicSpaceStateGet = "communication.space.state.get";
 /**
@@ -266,6 +266,14 @@ export const TopicLastMessageGet = "communication.room.last_message.get";
  */
 export const TopicBatchLastMessagesGet = "communication.room.batch.last_messages.get";
 /**
+ * TopicRoomCheck is the topic for room creation check commands (consent, dedup).
+ */
+export const TopicRoomCheck = "communication.room.check";
+/**
+ * TopicRoomInfo is the topic for retrieving server-side room info during reconciliation.
+ */
+export const TopicRoomInfo = "communication.room.info";
+/**
  * TopicReadReceiptUpdated is the topic for read receipt update events.
  */
 export const TopicReadReceiptUpdated = "communication.room.receipt.updated";
@@ -310,9 +318,10 @@ Package dto provides Data Transfer Objects for the Matrix Adapter.
 */
 
 /**
- * DMRequestedEvent represents the event published when Synapse requests approval
+ * Deprecated: DMRequestedEvent represents the event published when Synapse requests approval
  * for a DM room creation between two Alkemio users.
  * This is published to the communication.room.dm.requested topic.
+ * Replaced by CheckRoomHTTPRequest/CheckRoomHTTPResponse and the synchronous check-room flow.
  */
 export interface DMRequestedEvent {
   /**
@@ -330,8 +339,9 @@ export interface DMRequestedEvent {
   timestamp: number /* int64 */;
 }
 /**
- * DMWebhookPayload represents the payload received from Synapse's DM request webhook.
+ * Deprecated: DMWebhookPayload represents the payload received from Synapse's DM request webhook.
  * The spam checker module sends this when a user attempts to create a DM room.
+ * Replaced by CheckRoomHTTPRequest and the synchronous check-room flow.
  */
 export interface DMWebhookPayload {
   /**
@@ -854,6 +864,64 @@ export interface GetRoomAsUserResponse extends BaseResponse {
  */
 export interface MessageWithReadStateDto extends MessageDto {
   is_read: boolean; // Has the requesting user read this message?
+}
+
+//////////
+// source: room_check.go
+
+/**
+ * CheckRoomHTTPRequest is the JSON body sent by the Synapse module to the adapter's check endpoint.
+ */
+export interface CheckRoomHTTPRequest {
+  creator: string;
+  members: string[];
+  is_direct: boolean;
+}
+/**
+ * CheckRoomHTTPResponse is the JSON body returned by the adapter's check endpoint to the Synapse module.
+ */
+export interface CheckRoomHTTPResponse {
+  allow: boolean;
+  alkemio_room_id?: string;
+  reason?: string;
+}
+/**
+ * CheckRoomRequest is the RabbitMQ payload sent from adapter to server for room creation consent/dedup check.
+ */
+export interface CheckRoomRequest {
+  creator_actor_id: string;
+  member_actor_ids: string[];
+  is_direct: boolean;
+}
+/**
+ * CheckRoomResponse is the RabbitMQ payload returned from server to adapter after the room check.
+ */
+export interface CheckRoomResponse {
+  allow: boolean;
+  alkemio_room_id?: string;
+  reason?: string;
+}
+/**
+ * GetRoomInfoRequest is the RabbitMQ payload sent from adapter to server to retrieve room info during reconciliation.
+ */
+export interface GetRoomInfoRequest {
+  alkemio_room_id: string;
+}
+/**
+ * GetRoomInfoResponse is the RabbitMQ payload returned from server with room details.
+ */
+export interface GetRoomInfoResponse {
+  alkemio_room_id: string;
+  type: string;
+  is_direct: boolean;
+  members: RoomInfoMember[];
+}
+/**
+ * RoomInfoMember represents a member in the server-side room info response.
+ */
+export interface RoomInfoMember {
+  actor_id: string;
+  display_name: string;
 }
 
 //////////

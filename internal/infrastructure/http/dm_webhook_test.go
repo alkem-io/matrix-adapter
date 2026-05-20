@@ -10,12 +10,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
+	"github.com/alkem-io/matrix-adapter-go/internal/testutil"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
 
-// Test constants
 const (
 	testHSToken          = "test-homeserver-token"
 	testHomeserverDomain = "matrix.alkemio.org"
@@ -23,42 +22,15 @@ const (
 	testTargetUUID       = "660e8400-e29b-41d4-a716-446655440002"
 )
 
-// mockQueuePort is a test double for QueuePort.
-type mockQueuePort struct {
-	publishedTopic   string
-	publishedPayload interface{}
-	publishError     error
-}
-
-func (m *mockQueuePort) Connect(_ context.Context) error { return nil }
-func (m *mockQueuePort) Close() error                    { return nil }
-func (m *mockQueuePort) Publish(topic string, payload interface{}) error {
-	m.publishedTopic = topic
-	m.publishedPayload = payload
-	return m.publishError
-}
-func (m *mockQueuePort) Subscribe(_ string, _ ports.MessageHandler) error {
-	return nil
-}
-
-// mockLogger is a test double for Logger.
-type mockLogger struct{}
-
-func (m *mockLogger) Debug(_ string, _ ...interface{})   {}
-func (m *mockLogger) Info(_ string, _ ...interface{})    {}
-func (m *mockLogger) Warn(_ string, _ ...interface{})    {}
-func (m *mockLogger) Error(_ string, _ ...interface{})   {}
-func (m *mockLogger) With(_ ...interface{}) ports.Logger { return m }
-
-func newTestHandler(queue *mockQueuePort) *DMWebhookHandler {
-	logger := &mockLogger{}
+func newTestHandler(queue *testutil.MockQueuePort) *DMWebhookHandler {
+	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper(testHomeserverDomain)
-	dmService := service.NewDMService(queue, logger)
+	dmService := service.NewDMService(queue, logger) //nolint:staticcheck // deprecated but kept during transition
 	return NewDMWebhookHandler(dmService, idMapper, testHSToken, logger)
 }
 
 func TestDMWebhook_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	handler := newTestHandler(queue)
 
 	body := `{"inviter":"@` + testInitiatorUUID + `:` + testHomeserverDomain + `","invitee":"@` + testTargetUUID + `:` + testHomeserverDomain + `"}`
@@ -73,13 +45,13 @@ func TestDMWebhook_Success(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
 	}
 
-	if queue.publishedTopic != dto.TopicRoomDMRequested {
-		t.Errorf("expected topic %s, got %s", dto.TopicRoomDMRequested, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicRoomDMRequested {
+		t.Errorf("expected topic %s, got %s", dto.TopicRoomDMRequested, queue.PublishedTopic)
 	}
 
-	event, ok := queue.publishedPayload.(dto.DMRequestedEvent)
+	event, ok := queue.PublishedPayload.(dto.DMRequestedEvent) //nolint:staticcheck // deprecated but kept during transition
 	if !ok {
-		t.Fatalf("expected DMRequestedEvent payload, got %T", queue.publishedPayload)
+		t.Fatalf("expected DMRequestedEvent payload, got %T", queue.PublishedPayload)
 	}
 
 	if event.InitiatorActorID != testInitiatorUUID {
@@ -91,7 +63,7 @@ func TestDMWebhook_Success(t *testing.T) {
 }
 
 func TestDMWebhook_Unauthorized_NoHeader(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	handler := newTestHandler(queue)
 
 	body := `{"inviter":"@` + testInitiatorUUID + `:` + testHomeserverDomain + `","invitee":"@` + testTargetUUID + `:` + testHomeserverDomain + `"}`
@@ -105,13 +77,13 @@ func TestDMWebhook_Unauthorized_NoHeader(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, rr.Code)
 	}
 
-	if queue.publishedTopic != "" {
+	if queue.PublishedTopic != "" {
 		t.Error("should not publish when unauthorized")
 	}
 }
 
 func TestDMWebhook_Unauthorized_WrongToken(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	handler := newTestHandler(queue)
 
 	body := `{"inviter":"@` + testInitiatorUUID + `:` + testHomeserverDomain + `","invitee":"@` + testTargetUUID + `:` + testHomeserverDomain + `"}`
@@ -126,13 +98,13 @@ func TestDMWebhook_Unauthorized_WrongToken(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, rr.Code)
 	}
 
-	if queue.publishedTopic != "" {
+	if queue.PublishedTopic != "" {
 		t.Error("should not publish when token is wrong")
 	}
 }
 
 func TestDMWebhook_InvalidJSON(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	handler := newTestHandler(queue)
 
 	req := httptest.NewRequest(http.MethodPost, "/_matrix/app/alkemio/dm-request", bytes.NewBufferString("not json"))
@@ -148,7 +120,7 @@ func TestDMWebhook_InvalidJSON(t *testing.T) {
 }
 
 func TestDMWebhook_MissingInviter(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	handler := newTestHandler(queue)
 
 	body := `{"invitee":"@` + testTargetUUID + `:` + testHomeserverDomain + `"}`
@@ -165,7 +137,7 @@ func TestDMWebhook_MissingInviter(t *testing.T) {
 }
 
 func TestDMWebhook_MissingInvitee(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	handler := newTestHandler(queue)
 
 	body := `{"inviter":"@` + testInitiatorUUID + `:` + testHomeserverDomain + `"}`
@@ -182,7 +154,7 @@ func TestDMWebhook_MissingInvitee(t *testing.T) {
 }
 
 func TestDMWebhook_InvalidInviterFormat(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	handler := newTestHandler(queue)
 
 	body := `{"inviter":"@not-a-uuid:` + testHomeserverDomain + `","invitee":"@` + testTargetUUID + `:` + testHomeserverDomain + `"}`
@@ -199,7 +171,7 @@ func TestDMWebhook_InvalidInviterFormat(t *testing.T) {
 }
 
 func TestDMWebhook_InvalidInviteeFormat(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	handler := newTestHandler(queue)
 
 	body := `{"inviter":"@` + testInitiatorUUID + `:` + testHomeserverDomain + `","invitee":"@not-a-uuid:` + testHomeserverDomain + `"}`
@@ -216,7 +188,7 @@ func TestDMWebhook_InvalidInviteeFormat(t *testing.T) {
 }
 
 func TestDMWebhook_SameUser(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	handler := newTestHandler(queue)
 
 	body := `{"inviter":"@` + testInitiatorUUID + `:` + testHomeserverDomain + `","invitee":"@` + testInitiatorUUID + `:` + testHomeserverDomain + `"}`
@@ -232,9 +204,7 @@ func TestDMWebhook_SameUser(t *testing.T) {
 	}
 }
 
-func TestValidateAuth(t *testing.T) {
-	handler := newTestHandler(&mockQueuePort{})
-
+func TestValidateBearerToken(t *testing.T) {
 	tests := []struct {
 		name       string
 		authHeader string
@@ -254,16 +224,24 @@ func TestValidateAuth(t *testing.T) {
 				req.Header.Set("Authorization", tc.authHeader)
 			}
 
-			result := handler.validateAuth(req)
+			result := ValidateBearerToken(req, testHSToken)
 			if result != tc.expected {
 				t.Errorf("expected %v, got %v", tc.expected, result)
 			}
 		})
 	}
+
+	t.Run("empty expected token rejects", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set("Authorization", "Bearer ")
+		if ValidateBearerToken(req, "") {
+			t.Error("expected false when expected token is empty")
+		}
+	})
 }
 
 func TestExtractActorID(t *testing.T) {
-	handler := newTestHandler(&mockQueuePort{})
+	handler := newTestHandler(&testutil.MockQueuePort{})
 
 	tests := []struct {
 		name       string

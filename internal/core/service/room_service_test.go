@@ -8,6 +8,7 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/testutil"
 )
 
 // mockMatrixPort is a minimal test double for MatrixPort.
@@ -167,7 +168,7 @@ func TestCreateRoom_JoinRulePublic(t *testing.T) {
 	matrix := &mockMatrixPort{
 		resolveAliasErr: domain.NewRoomNotFoundError("not found"),
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
 	svc := NewRoomService(matrix, logger, idMapper)
 
@@ -195,7 +196,7 @@ func TestCreateRoom_JoinRuleInvite(t *testing.T) {
 	matrix := &mockMatrixPort{
 		resolveAliasErr: domain.NewRoomNotFoundError("not found"),
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
 	svc := NewRoomService(matrix, logger, idMapper)
 
@@ -220,7 +221,7 @@ func TestCreateRoom_JoinRuleOmitted(t *testing.T) {
 	matrix := &mockMatrixPort{
 		resolveAliasErr: domain.NewRoomNotFoundError("not found"),
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
 	svc := NewRoomService(matrix, logger, idMapper)
 
@@ -245,7 +246,7 @@ func TestCreateRoom_DirectMessage_JoinRuleIgnored(t *testing.T) {
 	matrix := &mockMatrixPort{
 		resolveAliasErr: domain.NewRoomNotFoundError("not found"),
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
 	svc := NewRoomService(matrix, logger, idMapper)
 
@@ -272,7 +273,7 @@ func TestCreateRoom_DirectMessage_JoinRuleIgnored(t *testing.T) {
 
 func TestUpdateRoom_JoinRuleProvided(t *testing.T) {
 	matrix := &mockMatrixPort{}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
 	svc := NewRoomService(matrix, logger, idMapper)
 
@@ -298,7 +299,7 @@ func TestUpdateRoom_JoinRuleProvided(t *testing.T) {
 
 func TestUpdateRoom_JoinRuleOmitted(t *testing.T) {
 	matrix := &mockMatrixPort{}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
 	svc := NewRoomService(matrix, logger, idMapper)
 

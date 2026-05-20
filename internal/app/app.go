@@ -60,6 +60,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	eventService := service.NewEventService(queueAdapter, log, cfg)
 	spaceService := service.NewSpaceService(matrixAdapter, log, idMapper)
 	dmService := service.NewDMService(queueAdapter, log)
+	roomCheckService := service.NewRoomCheckService(queueAdapter, idMapper, log)
 	readReceiptService := service.NewReadReceiptService(matrixAdapter, log)
 
 	// 5. Initialize Handlers (using shared IDMapper)
@@ -84,6 +85,10 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// DM Webhook endpoint (using shared IDMapper)
 	dmWebhookHandler := httpinfra.NewDMWebhookHandler(dmService, idMapper, cfg.Matrix.HomeserverToken, log)
 	dmWebhookHandler.RegisterRoutes(router)
+
+	// Check Room endpoint (synchronous room creation check)
+	checkRoomHandler := httpinfra.NewCheckRoomHandler(roomCheckService, cfg.Matrix.HomeserverToken, log)
+	checkRoomHandler.RegisterRoutes(router)
 
 	// 7. Wire up Event Listeners (Matrix -> Queue)
 	matrixAdapter.SetEventHandlers(matrix.EventHandlers{
@@ -136,6 +141,9 @@ func (a *App) Start(ctx context.Context) error {
 	if err := a.queueAdapter.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect to Queue: %w", err)
 	}
+
+	// 3a. Set queue port on Matrix adapter for reconciliation RPC calls.
+	a.matrixAdapter.SetQueuePort(a.queueAdapter)
 
 	// 4. Subscribe queue handlers (incoming commands from Alkemio Server).
 	queue.RegisterRoutes(a.queueAdapter, a.roomHandler, a.actorHandler, a.spaceHandler, a.readReceiptHandler, a.logger)

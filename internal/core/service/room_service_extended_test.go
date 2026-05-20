@@ -10,6 +10,7 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/testutil"
 )
 
 // ============================================================================
@@ -255,7 +256,7 @@ func (m *mockExtendedMatrixPort) GetBatchUnreadCounts(_ context.Context, _ domai
 var testIDMapper = domain.NewIDMapper("test.local")
 
 func newTestService(matrix *mockExtendedMatrixPort) *RoomService {
-	return NewRoomService(matrix, &mockLogger{}, domain.NewIDMapper("test.local"))
+	return NewRoomService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"))
 }
 
 // ============================================================================

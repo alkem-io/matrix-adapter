@@ -16,6 +16,8 @@ import type {
   BatchRemoveMemberResponse,
   BatchRemoveSpaceMemberRequest,
   BatchRemoveSpaceMemberResponse,
+  CheckRoomRequest,
+  CheckRoomResponse,
   CreateRoomRequest,
   CreateSpaceRequest,
   DMRequestedEvent,
@@ -30,6 +32,8 @@ import type {
   GetReactionResponse,
   GetRoomAsUserRequest,
   GetRoomAsUserResponse,
+  GetRoomInfoRequest,
+  GetRoomInfoResponse,
   GetRoomMembersRequest,
   GetRoomMembersResponse,
   GetRoomRequest,
@@ -120,6 +124,10 @@ export const Commands = {
     request: {} as BatchGetUnreadCountsRequest,
     response: {} as BatchGetUnreadCountsResponse,
   },
+  'communication.room.check': {
+    request: {} as CheckRoomRequest,
+    response: {} as CheckRoomResponse,
+  },
   'communication.room.create': {
     request: {} as CreateRoomRequest,
     response: {} as BaseResponse,
@@ -135,6 +143,10 @@ export const Commands = {
   'communication.room.get.as_user': {
     request: {} as GetRoomAsUserRequest,
     response: {} as GetRoomAsUserResponse,
+  },
+  'communication.room.info': {
+    request: {} as GetRoomInfoRequest,
+    response: {} as GetRoomInfoResponse,
   },
   'communication.room.last_message.get': {
     request: {} as GetLastMessageRequest,

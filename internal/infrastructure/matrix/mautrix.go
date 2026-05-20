@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha1" //nolint:gosec // Required by Synapse shared secret registration API (HMAC-SHA1)
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -25,6 +26,7 @@ import (
 	"github.com/alkem-io/matrix-adapter-go/internal/config"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
 
 // MautrixAdapter implements the MatrixPort interface using the mautrix-go library.
@@ -39,6 +41,7 @@ type MautrixAdapter struct {
 	eventLoopOnce  sync.Once
 	server         *http.Server // our own HTTP server wrapping as.Router
 	gateOpen       atomic.Bool  // when false, transactions are ack'd and dropped
+	queuePort      ports.QueuePort
 }
 
 // NewMautrixAdapter creates a new instance of MautrixAdapter.
@@ -1991,6 +1994,135 @@ func (m *MautrixAdapter) SetRoomAlias(ctx context.Context, roomID id.RoomID, ali
 
 	m.logger.Info("Room alias set", "room_id", roomID, "alias", alias)
 	return nil
+}
+
+// ============================================================================
+// Reconciliation (Element-initiated room creation)
+// ============================================================================
+
+// SetQueuePort sets the queue port for RabbitMQ RPC calls during reconciliation.
+// Must be called before the event listener starts processing transactions.
+func (m *MautrixAdapter) SetQueuePort(queuePort ports.QueuePort) {
+	m.queuePort = queuePort
+}
+
+// ReconcileRoom completes setup for a room created via Element's check flow.
+// Uses the creator's intent (PL 100 as room creator) for all state operations
+// since the bot cannot admin-join invite-only rooms.
+func (m *MautrixAdapter) ReconcileRoom(
+	ctx context.Context, roomID id.RoomID, alkemioRoomID uuid.UUID, creatorUserID id.UserID,
+) error {
+	m.logger.Info("Starting room reconciliation",
+		"room_id", roomID, "alkemio_room_id", alkemioRoomID, "creator", creatorUserID)
+
+	if m.queuePort == nil {
+		return fmt.Errorf("reconcile: queue port not configured")
+	}
+
+	creatorIntent := m.as.Intent(creatorUserID)
+
+	// 1. Get room info from server
+	roomInfoReq := dto.GetRoomInfoRequest{
+		AlkemioRoomID: alkemioRoomID.String(),
+	}
+
+	respBytes, err := m.queuePort.PublishAndWait(ctx, dto.TopicRoomInfo, roomInfoReq, 3*time.Second)
+	if err != nil {
+		return fmt.Errorf("reconcile: get room info failed: %w", err)
+	}
+
+	var roomInfo dto.GetRoomInfoResponse
+	if err := json.Unmarshal(respBytes, &roomInfo); err != nil {
+		return fmt.Errorf("reconcile: failed to parse room info: %w", err)
+	}
+
+	// 2. EnsureUser + EnsureJoined for each member
+	memberUserIDs := make([]id.UserID, 0, len(roomInfo.Members))
+	for _, member := range roomInfo.Members {
+		actorUUID, err := uuid.Parse(member.ActorID)
+		if err != nil {
+			return fmt.Errorf("reconcile: invalid actor ID %q: %w", member.ActorID, err)
+		}
+
+		actor := domain.Actor{
+			ID:          actorUUID,
+			DisplayName: member.DisplayName,
+		}
+		userID, err := m.EnsureUser(ctx, actor)
+		if err != nil {
+			return fmt.Errorf("reconcile: EnsureUser failed for %s: %w", member.ActorID, err)
+		}
+
+		if userID != creatorUserID {
+			if _, err := creatorIntent.InviteUser(ctx, roomID, &mautrix.ReqInviteUser{UserID: userID}); err != nil {
+				m.logger.Warn("reconcile: invite failed, will attempt EnsureJoined anyway",
+					"user_id", userID, "room_id", roomID, "error", err)
+			}
+		}
+		memberIntent := m.as.Intent(userID)
+		if err := memberIntent.EnsureJoined(ctx, roomID); err != nil {
+			return fmt.Errorf("reconcile: EnsureJoined failed for %s: %w", userID, err)
+		}
+		memberUserIDs = append(memberUserIDs, userID)
+	}
+
+	// 3. Set m.direct account data for DMs
+	if roomInfo.IsDirect {
+		m.registerDirectRoomParticipants(ctx, roomID, true, memberUserIDs)
+	}
+
+	// 4. Set power levels via creator intent (creator has PL 100 as room creator)
+	plContent := &event.PowerLevelsEventContent{
+		Users: map[id.UserID]int{
+			creatorUserID: 50,
+		},
+		UsersDefault: 50,
+	}
+	if _, err := creatorIntent.SendStateEvent(ctx, roomID, event.StatePowerLevels, "", plContent); err != nil {
+		return fmt.Errorf("reconcile: set power levels failed: %w", err)
+	}
+
+	// 5. Set alias via creator intent
+	alias := m.idMapper.RoomAlias(alkemioRoomID)
+	if err := m.SetRoomAlias(ctx, roomID, alias); err != nil {
+		return fmt.Errorf("reconcile: set alias failed: %w", err)
+	}
+
+	m.logger.Info("Room reconciliation complete",
+		"room_id", roomID, "alkemio_room_id", alkemioRoomID,
+		"members", len(memberUserIDs), "is_direct", roomInfo.IsDirect)
+	return nil
+}
+
+// getRoomCreator reads the m.room.create state event and returns the room creator's user ID.
+func (m *MautrixAdapter) getRoomCreator(ctx context.Context, roomID id.RoomID) (id.UserID, error) {
+	stateEvents, err := m.admin.GetRoomState(ctx, roomID, "m.room.create")
+	if err != nil {
+		return "", fmt.Errorf("failed to get m.room.create state: %w", err)
+	}
+	if len(stateEvents) == 0 {
+		return "", fmt.Errorf("no m.room.create state event in room %s", roomID)
+	}
+
+	var createEvent struct {
+		Content struct {
+			Creator string `json:"creator"`
+		} `json:"content"`
+		Sender string `json:"sender"`
+	}
+	if err := json.Unmarshal(stateEvents[0], &createEvent); err != nil {
+		return "", fmt.Errorf("failed to parse m.room.create: %w", err)
+	}
+
+	creator := createEvent.Content.Creator
+	if creator == "" {
+		creator = createEvent.Sender
+	}
+	if creator == "" {
+		return "", fmt.Errorf("no creator found in m.room.create for room %s", roomID)
+	}
+
+	return id.UserID(creator), nil
 }
 
 // ============================================================================

@@ -103,6 +103,14 @@ const (
 	TopicBatchLastMessagesGet = "communication.room.batch.last_messages.get"
 )
 
+// Room Check Topics (Adapter → Server, request-reply)
+const (
+	// TopicRoomCheck is the topic for room creation check commands (consent, dedup).
+	TopicRoomCheck = "communication.room.check"
+	// TopicRoomInfo is the topic for retrieving server-side room info during reconciliation.
+	TopicRoomInfo = "communication.room.info"
+)
+
 // Read Receipt & Message Event Topics (Adapter → Server)
 const (
 	// TopicReadReceiptUpdated is the topic for read receipt update events.
@@ -191,6 +199,10 @@ var CommandRegistry = []CommandDef{
 	{Topic: TopicBatchUnreadCountsGet, RequestType: "BatchGetUnreadCountsRequest", ResponseType: "BatchGetUnreadCountsResponse"},
 	{Topic: TopicLastMessageGet, RequestType: "GetLastMessageRequest", ResponseType: "GetLastMessageResponse"},
 	{Topic: TopicBatchLastMessagesGet, RequestType: "BatchGetLastMessagesRequest", ResponseType: "BatchGetLastMessagesResponse"},
+
+	// Room check commands (adapter-initiated request-reply)
+	{Topic: TopicRoomCheck, RequestType: "CheckRoomRequest", ResponseType: "CheckRoomResponse"},
+	{Topic: TopicRoomInfo, RequestType: "GetRoomInfoRequest", ResponseType: "GetRoomInfoResponse"},
 
 	// Custom state API (io.alkemio.*)
 	{Topic: TopicRoomStateSet, RequestType: "SetRoomStateRequest", ResponseType: "BaseResponse"},

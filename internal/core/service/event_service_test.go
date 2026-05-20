@@ -9,19 +9,20 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/testutil"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
 
 // newEventService creates an EventService with the given mock queue for testing.
 // Config is nil because no handler reads it.
-func newEventService(queue *mockQueuePort) *EventService {
-	return NewEventService(queue, &mockLogger{}, nil)
+func newEventService(queue *testutil.MockQueuePort) *EventService {
+	return NewEventService(queue, &testutil.MockLogger{}, nil)
 }
 
 // ── HandleMessage ──────────────────────────────────────────────────────────
 
 func TestHandleMessage_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	now := time.Now()
@@ -40,13 +41,13 @@ func TestHandleMessage_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicMessageReceived {
-		t.Errorf("expected topic %s, got %s", dto.TopicMessageReceived, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicMessageReceived {
+		t.Errorf("expected topic %s, got %s", dto.TopicMessageReceived, queue.PublishedTopic)
 	}
 
-	payload, ok := queue.publishedPayload.(dto.MessageReceivedPayload)
+	payload, ok := queue.PublishedPayload.(dto.MessageReceivedPayload)
 	if !ok {
-		t.Fatalf("expected MessageReceivedPayload, got %T", queue.publishedPayload)
+		t.Fatalf("expected MessageReceivedPayload, got %T", queue.PublishedPayload)
 	}
 
 	if payload.RoomID != "!room1:example.com" {
@@ -76,7 +77,7 @@ func TestHandleMessage_Success(t *testing.T) {
 }
 
 func TestHandleMessage_WithThreadID(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	msg := domain.Message{
@@ -93,7 +94,7 @@ func TestHandleMessage_WithThreadID(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	payload := queue.publishedPayload.(dto.MessageReceivedPayload)
+	payload := queue.PublishedPayload.(dto.MessageReceivedPayload)
 	if payload.Message.ThreadID == nil {
 		t.Fatal("expected non-nil ThreadID")
 	}
@@ -103,7 +104,7 @@ func TestHandleMessage_WithThreadID(t *testing.T) {
 }
 
 func TestHandleMessage_QueueError(t *testing.T) {
-	queue := &mockQueuePort{publishError: context.DeadlineExceeded}
+	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)
 
 	err := svc.HandleMessage(domain.Message{
@@ -121,7 +122,7 @@ func TestHandleMessage_QueueError(t *testing.T) {
 // ── HandleReactionAdded ────────────────────────────────────────────────────
 
 func TestHandleReactionAdded_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	now := time.Now()
@@ -141,13 +142,13 @@ func TestHandleReactionAdded_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicReactionAdded {
-		t.Errorf("expected topic %s, got %s", dto.TopicReactionAdded, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicReactionAdded {
+		t.Errorf("expected topic %s, got %s", dto.TopicReactionAdded, queue.PublishedTopic)
 	}
 
-	payload, ok := queue.publishedPayload.(dto.ReactionAddedEvent)
+	payload, ok := queue.PublishedPayload.(dto.ReactionAddedEvent)
 	if !ok {
-		t.Fatalf("expected ReactionAddedEvent, got %T", queue.publishedPayload)
+		t.Fatalf("expected ReactionAddedEvent, got %T", queue.PublishedPayload)
 	}
 
 	if uuid.UUID(payload.AlkemioRoomID) != roomID {
@@ -171,7 +172,7 @@ func TestHandleReactionAdded_Success(t *testing.T) {
 }
 
 func TestHandleReactionAdded_QueueError(t *testing.T) {
-	queue := &mockQueuePort{publishError: context.DeadlineExceeded}
+	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)
 
 	err := svc.HandleReactionAdded(domain.ReactionEvent{
@@ -190,7 +191,7 @@ func TestHandleReactionAdded_QueueError(t *testing.T) {
 // ── HandleReactionRemoved ──────────────────────────────────────────────────
 
 func TestHandleReactionRemoved_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	now := time.Now()
@@ -210,13 +211,13 @@ func TestHandleReactionRemoved_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicReactionRemoved {
-		t.Errorf("expected topic %s, got %s", dto.TopicReactionRemoved, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicReactionRemoved {
+		t.Errorf("expected topic %s, got %s", dto.TopicReactionRemoved, queue.PublishedTopic)
 	}
 
-	payload, ok := queue.publishedPayload.(dto.ReactionRemovedEvent)
+	payload, ok := queue.PublishedPayload.(dto.ReactionRemovedEvent)
 	if !ok {
-		t.Fatalf("expected ReactionRemovedEvent, got %T", queue.publishedPayload)
+		t.Fatalf("expected ReactionRemovedEvent, got %T", queue.PublishedPayload)
 	}
 
 	if uuid.UUID(payload.AlkemioRoomID) != roomID {
@@ -240,7 +241,7 @@ func TestHandleReactionRemoved_Success(t *testing.T) {
 }
 
 func TestHandleReactionRemoved_QueueError(t *testing.T) {
-	queue := &mockQueuePort{publishError: context.DeadlineExceeded}
+	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)
 
 	err := svc.HandleReactionRemoved(domain.ReactionRemovedEvent{
@@ -259,7 +260,7 @@ func TestHandleReactionRemoved_QueueError(t *testing.T) {
 // ── HandleMemberLeft ───────────────────────────────────────────────────────
 
 func TestHandleMemberLeft_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	now := time.Now()
@@ -277,13 +278,13 @@ func TestHandleMemberLeft_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicRoomMemberLeft {
-		t.Errorf("expected topic %s, got %s", dto.TopicRoomMemberLeft, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicRoomMemberLeft {
+		t.Errorf("expected topic %s, got %s", dto.TopicRoomMemberLeft, queue.PublishedTopic)
 	}
 
-	payload, ok := queue.publishedPayload.(dto.RoomMemberLeftEvent)
+	payload, ok := queue.PublishedPayload.(dto.RoomMemberLeftEvent)
 	if !ok {
-		t.Fatalf("expected RoomMemberLeftEvent, got %T", queue.publishedPayload)
+		t.Fatalf("expected RoomMemberLeftEvent, got %T", queue.PublishedPayload)
 	}
 
 	if uuid.UUID(payload.AlkemioRoomID) != roomID {
@@ -301,7 +302,7 @@ func TestHandleMemberLeft_Success(t *testing.T) {
 }
 
 func TestHandleMemberLeft_QueueError(t *testing.T) {
-	queue := &mockQueuePort{publishError: context.DeadlineExceeded}
+	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)
 
 	err := svc.HandleMemberLeft(domain.MembershipEvent{
@@ -318,7 +319,7 @@ func TestHandleMemberLeft_QueueError(t *testing.T) {
 // ── HandleReadReceiptUpdated ───────────────────────────────────────────────
 
 func TestHandleReadReceiptUpdated_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	now := time.Now()
@@ -336,13 +337,13 @@ func TestHandleReadReceiptUpdated_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicReadReceiptUpdated {
-		t.Errorf("expected topic %s, got %s", dto.TopicReadReceiptUpdated, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicReadReceiptUpdated {
+		t.Errorf("expected topic %s, got %s", dto.TopicReadReceiptUpdated, queue.PublishedTopic)
 	}
 
-	payload, ok := queue.publishedPayload.(dto.ReadReceiptUpdatedEvent)
+	payload, ok := queue.PublishedPayload.(dto.ReadReceiptUpdatedEvent)
 	if !ok {
-		t.Fatalf("expected ReadReceiptUpdatedEvent, got %T", queue.publishedPayload)
+		t.Fatalf("expected ReadReceiptUpdatedEvent, got %T", queue.PublishedPayload)
 	}
 
 	if uuid.UUID(payload.AlkemioRoomID) != roomID {
@@ -363,7 +364,7 @@ func TestHandleReadReceiptUpdated_Success(t *testing.T) {
 }
 
 func TestHandleReadReceiptUpdated_WithThreadID(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	threadRoot := id.EventID("$thread-root:example.com")
@@ -379,7 +380,7 @@ func TestHandleReadReceiptUpdated_WithThreadID(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	payload := queue.publishedPayload.(dto.ReadReceiptUpdatedEvent)
+	payload := queue.PublishedPayload.(dto.ReadReceiptUpdatedEvent)
 	if payload.ThreadID == nil {
 		t.Fatal("expected non-nil ThreadID")
 	}
@@ -389,7 +390,7 @@ func TestHandleReadReceiptUpdated_WithThreadID(t *testing.T) {
 }
 
 func TestHandleReadReceiptUpdated_QueueError(t *testing.T) {
-	queue := &mockQueuePort{publishError: context.DeadlineExceeded}
+	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)
 
 	err := svc.HandleReadReceiptUpdated(domain.ReadReceiptEvent{
@@ -407,7 +408,7 @@ func TestHandleReadReceiptUpdated_QueueError(t *testing.T) {
 // ── HandleMessageEdited ────────────────────────────────────────────────────
 
 func TestHandleMessageEdited_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	now := time.Now()
@@ -427,13 +428,13 @@ func TestHandleMessageEdited_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicMessageEdited {
-		t.Errorf("expected topic %s, got %s", dto.TopicMessageEdited, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicMessageEdited {
+		t.Errorf("expected topic %s, got %s", dto.TopicMessageEdited, queue.PublishedTopic)
 	}
 
-	payload, ok := queue.publishedPayload.(dto.MessageEditedEvent)
+	payload, ok := queue.PublishedPayload.(dto.MessageEditedEvent)
 	if !ok {
-		t.Fatalf("expected MessageEditedEvent, got %T", queue.publishedPayload)
+		t.Fatalf("expected MessageEditedEvent, got %T", queue.PublishedPayload)
 	}
 
 	if uuid.UUID(payload.AlkemioRoomID) != roomID {
@@ -460,7 +461,7 @@ func TestHandleMessageEdited_Success(t *testing.T) {
 }
 
 func TestHandleMessageEdited_WithThreadID(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	threadRoot := id.EventID("$thread-root:example.com")
@@ -478,7 +479,7 @@ func TestHandleMessageEdited_WithThreadID(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	payload := queue.publishedPayload.(dto.MessageEditedEvent)
+	payload := queue.PublishedPayload.(dto.MessageEditedEvent)
 	if payload.ThreadID == nil {
 		t.Fatal("expected non-nil ThreadID")
 	}
@@ -488,7 +489,7 @@ func TestHandleMessageEdited_WithThreadID(t *testing.T) {
 }
 
 func TestHandleMessageEdited_QueueError(t *testing.T) {
-	queue := &mockQueuePort{publishError: context.DeadlineExceeded}
+	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)
 
 	err := svc.HandleMessageEdited(domain.MessageEditedEvent{
@@ -507,7 +508,7 @@ func TestHandleMessageEdited_QueueError(t *testing.T) {
 // ── HandleMessageRedacted ──────────────────────────────────────────────────
 
 func TestHandleMessageRedacted_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	now := time.Now()
@@ -527,13 +528,13 @@ func TestHandleMessageRedacted_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicMessageRedacted {
-		t.Errorf("expected topic %s, got %s", dto.TopicMessageRedacted, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicMessageRedacted {
+		t.Errorf("expected topic %s, got %s", dto.TopicMessageRedacted, queue.PublishedTopic)
 	}
 
-	payload, ok := queue.publishedPayload.(dto.MessageRedactedEvent)
+	payload, ok := queue.PublishedPayload.(dto.MessageRedactedEvent)
 	if !ok {
-		t.Fatalf("expected MessageRedactedEvent, got %T", queue.publishedPayload)
+		t.Fatalf("expected MessageRedactedEvent, got %T", queue.PublishedPayload)
 	}
 
 	if uuid.UUID(payload.AlkemioRoomID) != roomID {
@@ -560,7 +561,7 @@ func TestHandleMessageRedacted_Success(t *testing.T) {
 }
 
 func TestHandleMessageRedacted_WithThreadID(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	threadRoot := id.EventID("$thread-root:example.com")
@@ -577,7 +578,7 @@ func TestHandleMessageRedacted_WithThreadID(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	payload := queue.publishedPayload.(dto.MessageRedactedEvent)
+	payload := queue.PublishedPayload.(dto.MessageRedactedEvent)
 	if payload.ThreadID == nil {
 		t.Fatal("expected non-nil ThreadID")
 	}
@@ -587,7 +588,7 @@ func TestHandleMessageRedacted_WithThreadID(t *testing.T) {
 }
 
 func TestHandleMessageRedacted_QueueError(t *testing.T) {
-	queue := &mockQueuePort{publishError: context.DeadlineExceeded}
+	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)
 
 	err := svc.HandleMessageRedacted(domain.MessageRedactedEvent{
@@ -606,7 +607,7 @@ func TestHandleMessageRedacted_QueueError(t *testing.T) {
 // ── HandleRoomCreated ──────────────────────────────────────────────────────
 
 func TestHandleRoomCreated_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	now := time.Now()
@@ -627,13 +628,13 @@ func TestHandleRoomCreated_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicRoomCreated {
-		t.Errorf("expected topic %s, got %s", dto.TopicRoomCreated, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicRoomCreated {
+		t.Errorf("expected topic %s, got %s", dto.TopicRoomCreated, queue.PublishedTopic)
 	}
 
-	payload, ok := queue.publishedPayload.(dto.RoomCreatedEvent)
+	payload, ok := queue.PublishedPayload.(dto.RoomCreatedEvent)
 	if !ok {
-		t.Fatalf("expected RoomCreatedEvent, got %T", queue.publishedPayload)
+		t.Fatalf("expected RoomCreatedEvent, got %T", queue.PublishedPayload)
 	}
 
 	if uuid.UUID(payload.AlkemioRoomID) != roomID {
@@ -657,7 +658,7 @@ func TestHandleRoomCreated_Success(t *testing.T) {
 }
 
 func TestHandleRoomCreated_QueueError(t *testing.T) {
-	queue := &mockQueuePort{publishError: context.DeadlineExceeded}
+	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)
 
 	err := svc.HandleRoomCreated(domain.RoomCreatedEvent{
@@ -674,7 +675,7 @@ func TestHandleRoomCreated_QueueError(t *testing.T) {
 // ── HandleRoomUpdated ──────────────────────────────────────────────────────
 
 func TestHandleRoomUpdated_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	now := time.Now()
@@ -695,13 +696,13 @@ func TestHandleRoomUpdated_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicRoomUpdated {
-		t.Errorf("expected topic %s, got %s", dto.TopicRoomUpdated, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicRoomUpdated {
+		t.Errorf("expected topic %s, got %s", dto.TopicRoomUpdated, queue.PublishedTopic)
 	}
 
-	payload, ok := queue.publishedPayload.(dto.RoomUpdatedEvent)
+	payload, ok := queue.PublishedPayload.(dto.RoomUpdatedEvent)
 	if !ok {
-		t.Fatalf("expected RoomUpdatedEvent, got %T", queue.publishedPayload)
+		t.Fatalf("expected RoomUpdatedEvent, got %T", queue.PublishedPayload)
 	}
 
 	if uuid.UUID(payload.AlkemioRoomID) != roomID {
@@ -722,7 +723,7 @@ func TestHandleRoomUpdated_Success(t *testing.T) {
 }
 
 func TestHandleRoomUpdated_NilFields(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	evt := domain.RoomUpdatedEvent{
@@ -734,7 +735,7 @@ func TestHandleRoomUpdated_NilFields(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	payload := queue.publishedPayload.(dto.RoomUpdatedEvent)
+	payload := queue.PublishedPayload.(dto.RoomUpdatedEvent)
 	if payload.DisplayName != nil {
 		t.Errorf("expected nil DisplayName, got %v", payload.DisplayName)
 	}
@@ -747,7 +748,7 @@ func TestHandleRoomUpdated_NilFields(t *testing.T) {
 }
 
 func TestHandleRoomUpdated_QueueError(t *testing.T) {
-	queue := &mockQueuePort{publishError: context.DeadlineExceeded}
+	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)
 
 	err := svc.HandleRoomUpdated(domain.RoomUpdatedEvent{
@@ -763,7 +764,7 @@ func TestHandleRoomUpdated_QueueError(t *testing.T) {
 // ── HandleSpaceUpdated ─────────────────────────────────────────────────────
 
 func TestHandleSpaceUpdated_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	now := time.Now()
@@ -784,13 +785,13 @@ func TestHandleSpaceUpdated_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicSpaceUpdated {
-		t.Errorf("expected topic %s, got %s", dto.TopicSpaceUpdated, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicSpaceUpdated {
+		t.Errorf("expected topic %s, got %s", dto.TopicSpaceUpdated, queue.PublishedTopic)
 	}
 
-	payload, ok := queue.publishedPayload.(dto.SpaceUpdatedEvent)
+	payload, ok := queue.PublishedPayload.(dto.SpaceUpdatedEvent)
 	if !ok {
-		t.Fatalf("expected SpaceUpdatedEvent, got %T", queue.publishedPayload)
+		t.Fatalf("expected SpaceUpdatedEvent, got %T", queue.PublishedPayload)
 	}
 
 	if uuid.UUID(payload.AlkemioContextID) != contextID {
@@ -811,7 +812,7 @@ func TestHandleSpaceUpdated_Success(t *testing.T) {
 }
 
 func TestHandleSpaceUpdated_NilFields(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	evt := domain.SpaceUpdatedEvent{
@@ -823,7 +824,7 @@ func TestHandleSpaceUpdated_NilFields(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	payload := queue.publishedPayload.(dto.SpaceUpdatedEvent)
+	payload := queue.PublishedPayload.(dto.SpaceUpdatedEvent)
 	if payload.DisplayName != nil {
 		t.Errorf("expected nil DisplayName, got %v", payload.DisplayName)
 	}
@@ -836,7 +837,7 @@ func TestHandleSpaceUpdated_NilFields(t *testing.T) {
 }
 
 func TestHandleSpaceUpdated_QueueError(t *testing.T) {
-	queue := &mockQueuePort{publishError: context.DeadlineExceeded}
+	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)
 
 	err := svc.HandleSpaceUpdated(domain.SpaceUpdatedEvent{
@@ -852,7 +853,7 @@ func TestHandleSpaceUpdated_QueueError(t *testing.T) {
 // ── HandleMemberUpdated ────────────────────────────────────────────────────
 
 func TestHandleMemberUpdated_Success(t *testing.T) {
-	queue := &mockQueuePort{}
+	queue := &testutil.MockQueuePort{}
 	svc := newEventService(queue)
 
 	now := time.Now()
@@ -872,13 +873,13 @@ func TestHandleMemberUpdated_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicRoomMemberUpdated {
-		t.Errorf("expected topic %s, got %s", dto.TopicRoomMemberUpdated, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicRoomMemberUpdated {
+		t.Errorf("expected topic %s, got %s", dto.TopicRoomMemberUpdated, queue.PublishedTopic)
 	}
 
-	payload, ok := queue.publishedPayload.(dto.RoomMemberUpdatedEvent)
+	payload, ok := queue.PublishedPayload.(dto.RoomMemberUpdatedEvent)
 	if !ok {
-		t.Fatalf("expected RoomMemberUpdatedEvent, got %T", queue.publishedPayload)
+		t.Fatalf("expected RoomMemberUpdatedEvent, got %T", queue.PublishedPayload)
 	}
 
 	if uuid.UUID(payload.AlkemioRoomID) != roomID {
@@ -899,7 +900,7 @@ func TestHandleMemberUpdated_Success(t *testing.T) {
 }
 
 func TestHandleMemberUpdated_QueueError(t *testing.T) {
-	queue := &mockQueuePort{publishError: context.DeadlineExceeded}
+	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)
 
 	err := svc.HandleMemberUpdated(domain.RoomMemberUpdatedEvent{
