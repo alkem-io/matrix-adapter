@@ -275,7 +275,7 @@ class AlkemioRoomControl:
                 503,
                 "Service temporarily unavailable",
                 Codes.UNKNOWN,
-            )
+            ) from e
 
     async def on_create_room(
         self,

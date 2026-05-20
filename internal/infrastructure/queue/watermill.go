@@ -107,6 +107,8 @@ func (w *WatermillAdapter) Connect(_ context.Context) error {
 	// Watermill's connection is internal and not exposed for raw channel operations.
 	rpcConn, err := stdAmqp.Dial(w.cfg.RabbitMQ.URL)
 	if err != nil {
+		_ = publisher.Close()
+		_ = subscriber.Close()
 		return fmt.Errorf("failed to create RPC AMQP connection: %w", err)
 	}
 	w.rpcConn = rpcConn
