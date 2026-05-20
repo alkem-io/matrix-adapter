@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill-amqp/v2/pkg/amqp"
@@ -71,6 +72,7 @@ type WatermillAdapter struct {
 	logger     ports.Logger
 	publisher  *amqp.Publisher
 	subscriber *amqp.Subscriber
+	rpcConn    *stdAmqp.Connection // dedicated connection for RPC reply queues
 }
 
 // NewWatermillAdapter creates a new instance of WatermillAdapter.
@@ -101,6 +103,14 @@ func (w *WatermillAdapter) Connect(_ context.Context) error {
 	}
 	w.subscriber = subscriber
 
+	// Open a dedicated AMQP connection for RPC reply queues (PublishAndWait).
+	// Watermill's connection is internal and not exposed for raw channel operations.
+	rpcConn, err := stdAmqp.Dial(w.cfg.RabbitMQ.URL)
+	if err != nil {
+		return fmt.Errorf("failed to create RPC AMQP connection: %w", err)
+	}
+	w.rpcConn = rpcConn
+
 	w.logger.Info("Connected to RabbitMQ via Watermill")
 	return nil
 }
@@ -115,6 +125,11 @@ func (w *WatermillAdapter) Close() error {
 	if w.subscriber != nil {
 		if err := w.subscriber.Close(); err != nil {
 			w.logger.Error("Failed to close subscriber", "error", err)
+		}
+	}
+	if w.rpcConn != nil && !w.rpcConn.IsClosed() {
+		if err := w.rpcConn.Close(); err != nil {
+			w.logger.Error("Failed to close RPC connection", "error", err)
 		}
 	}
 	return nil
@@ -218,6 +233,60 @@ func (w *WatermillAdapter) logErrorResponse(msg *message.Message, resp interface
 			"errorCode", baseCheck.Error.Code,
 			"errorMessage", baseCheck.Error.Message,
 		)
+	}
+}
+
+// PublishAndWait implements adapter-initiated RPC: publishes a message and waits for a reply
+// on a temporary exclusive AMQP queue. Uses raw amqp091-go for the reply consumer since
+// Watermill's subscriber creates durable queues unsuitable for ephemeral RPC replies.
+func (w *WatermillAdapter) PublishAndWait(ctx context.Context, topic string, payload interface{}, timeout time.Duration) ([]byte, error) {
+	ch, err := w.rpcConn.Channel()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open RPC channel: %w", err)
+	}
+	defer func() { _ = ch.Close() }()
+
+	// Declare exclusive auto-delete reply queue (server assigns unique name)
+	replyQueue, err := ch.QueueDeclare("", false, false, true, false, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to declare reply queue: %w", err)
+	}
+
+	deliveries, err := ch.Consume(replyQueue.Name, "", true, true, false, false, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to consume reply queue: %w", err)
+	}
+
+	correlationID := watermill.NewUUID()
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	msg := message.NewMessage(correlationID, data)
+	msg.Metadata.Set(MetadataReplyTo, replyQueue.Name)
+	msg.Metadata.Set(MetadataCorrelationID, correlationID)
+
+	if err := w.publisher.Publish(topic, msg); err != nil {
+		return nil, fmt.Errorf("failed to publish RPC message to %s: %w", topic, err)
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			return nil, fmt.Errorf("RPC timeout waiting for reply on %s: %w", topic, timeoutCtx.Err())
+		case delivery, ok := <-deliveries:
+			if !ok {
+				return nil, fmt.Errorf("reply queue closed unexpectedly for %s", topic)
+			}
+			if delivery.CorrelationId == correlationID {
+				return delivery.Body, nil
+			}
+		}
 	}
 }
 

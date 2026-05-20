@@ -12,6 +12,9 @@ import (
 )
 
 // DMService handles DM request events from Synapse and publishes them to the queue.
+//
+// Deprecated: Replaced by RoomCheckService and the synchronous check-room flow.
+// Kept during server-side transition; remove once the server no longer sends DM webhooks.
 type DMService struct {
 	queue  ports.QueuePort
 	logger ports.Logger
@@ -38,7 +41,7 @@ func (s *DMService) PublishDMRequest(initiatorActorID, targetActorID uuid.UUID) 
 		return fmt.Errorf("initiator and target cannot be the same user")
 	}
 
-	event := dto.DMRequestedEvent{
+	event := dto.DMRequestedEvent{ //nolint:staticcheck // deprecated but kept during transition
 		InitiatorActorID: initiatorActorID.String(),
 		TargetActorID:    targetActorID.String(),
 		Timestamp:        time.Now().UnixMilli(),

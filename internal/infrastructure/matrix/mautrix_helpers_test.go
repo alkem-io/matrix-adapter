@@ -13,7 +13,7 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/testutil"
 )
 
 // newTestAdapter creates a minimal MautrixAdapter with only the idMapper set,
@@ -633,18 +633,8 @@ func TestExtractSynapseNotificationCount_OnlyMSC2654(t *testing.T) {
 // lastMessageStats.record
 // ============================================================================
 
-// mockLogger implements ports.Logger for testing purposes.
-type mockLogger struct{}
-
-func (l *mockLogger) Debug(_ string, _ ...interface{})   {}
-func (l *mockLogger) Info(_ string, _ ...interface{})    {}
-func (l *mockLogger) Warn(_ string, _ ...interface{})    {}
-func (l *mockLogger) Error(_ string, _ ...interface{})   {}
-func (l *mockLogger) Fatal(_ string, _ ...interface{})   {}
-func (l *mockLogger) With(_ ...interface{}) ports.Logger { return l }
-
 func TestLastMessageStats_Record_Buckets(t *testing.T) {
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 
 	tests := []struct {
 		name          string
@@ -665,7 +655,7 @@ func TestLastMessageStats_Record_Buckets(t *testing.T) {
 }
 
 func TestLastMessageStats_Record_AllBuckets(t *testing.T) {
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	stats := &lastMessageStats{logInterval: 1000}
 
 	// Record values into each bucket
@@ -686,7 +676,7 @@ func TestLastMessageStats_Record_AllBuckets(t *testing.T) {
 }
 
 func TestLastMessageStats_Record_BoundaryValues(t *testing.T) {
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 
 	tests := []struct {
 		name         string

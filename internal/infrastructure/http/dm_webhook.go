@@ -3,10 +3,8 @@ package httpinfra
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
@@ -18,8 +16,11 @@ import (
 )
 
 // DMWebhookHandler handles incoming DM request webhooks from Synapse.
+//
+// Deprecated: Replaced by CheckRoomHandler and the synchronous check-room flow.
+// Kept during server-side transition; remove once the server no longer sends DM webhooks.
 type DMWebhookHandler struct {
-	dmService *service.DMService
+	dmService *service.DMService //nolint:staticcheck // deprecated but kept during transition
 	idMapper  *domain.IDMapper
 	hsToken   string
 	logger    ports.Logger
@@ -27,7 +28,7 @@ type DMWebhookHandler struct {
 
 // NewDMWebhookHandler creates a new instance of DMWebhookHandler.
 func NewDMWebhookHandler(
-	dmService *service.DMService,
+	dmService *service.DMService, //nolint:staticcheck // deprecated but kept during transition
 	idMapper *domain.IDMapper,
 	hsToken string,
 	logger ports.Logger,
@@ -47,18 +48,17 @@ func (h *DMWebhookHandler) RegisterRoutes(mux *http.ServeMux) {
 
 // handleDMRequest processes DM request webhooks from Synapse.
 func (h *DMWebhookHandler) handleDMRequest(w http.ResponseWriter, r *http.Request) {
-	// Validate authorization
-	if !h.validateAuth(r) {
+	if !ValidateBearerToken(r, h.hsToken) {
 		h.logger.Warn("DM webhook: unauthorized request")
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 
 	// Parse the webhook payload
-	var payload dto.DMWebhookPayload
+	var payload dto.DMWebhookPayload //nolint:staticcheck // deprecated but kept during transition
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		h.logger.Warn("DM webhook: invalid JSON payload", "error", err)
-		http.Error(w, `{"error":"invalid_payload"}`, http.StatusBadRequest)
+		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_payload"})
 		return
 	}
 
@@ -68,7 +68,7 @@ func (h *DMWebhookHandler) handleDMRequest(w http.ResponseWriter, r *http.Reques
 			"has_inviter", payload.Inviter != "",
 			"has_invitee", payload.Invitee != "",
 		)
-		http.Error(w, `{"error":"missing_required_fields"}`, http.StatusBadRequest)
+		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_required_fields"})
 		return
 	}
 
@@ -77,14 +77,14 @@ func (h *DMWebhookHandler) handleDMRequest(w http.ResponseWriter, r *http.Reques
 	initiatorID := h.extractActorID(ctx, payload.Inviter)
 	if initiatorID == uuid.Nil {
 		h.logger.Warn("DM webhook: invalid inviter format", "inviter", payload.Inviter)
-		http.Error(w, `{"error":"invalid_inviter_format"}`, http.StatusBadRequest)
+		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_inviter_format"})
 		return
 	}
 
 	targetID := h.extractActorID(ctx, payload.Invitee)
 	if targetID == uuid.Nil {
 		h.logger.Warn("DM webhook: invalid invitee format", "invitee", payload.Invitee)
-		http.Error(w, `{"error":"invalid_invitee_format"}`, http.StatusBadRequest)
+		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_invitee_format"})
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *DMWebhookHandler) handleDMRequest(w http.ResponseWriter, r *http.Reques
 			"target", targetID.String(),
 			"error", err,
 		)
-		http.Error(w, `{"error":"internal_error"}`, http.StatusInternalServerError)
+		WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error"})
 		return
 	}
 
@@ -104,26 +104,7 @@ func (h *DMWebhookHandler) handleDMRequest(w http.ResponseWriter, r *http.Reques
 		"target", targetID.String(),
 	)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"accepted"}`))
-}
-
-// validateAuth checks the Authorization header for a valid Bearer token.
-func (h *DMWebhookHandler) validateAuth(r *http.Request) bool {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		return false
-	}
-
-	// Expected format: "Bearer <token>"
-	parts := strings.SplitN(authHeader, " ", 2)
-	if len(parts) != 2 || parts[0] != "Bearer" {
-		return false
-	}
-
-	// Constant-time comparison to prevent timing attacks
-	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(h.hsToken)) == 1
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
 }
 
 // extractActorID extracts the Alkemio actor UUID from a Matrix user ID.

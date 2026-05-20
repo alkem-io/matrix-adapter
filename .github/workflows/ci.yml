@@ -28,3 +28,27 @@ jobs:
 
       - name: Lint
         run: make lint
+
+  openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install apispec
+        run: go install github.com/antst/go-apispec/cmd/apispec@v0.4.9
+
+      - name: Generate OpenAPI spec
+        run: make openapi
+
+      - name: Verify openapi.yaml is up to date
+        run: |
+          git diff --exit-code openapi.yaml || {
+            echo "::error::openapi.yaml is stale. Run 'make openapi' and commit."
+            exit 1
+          }

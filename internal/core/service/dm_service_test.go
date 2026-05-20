@@ -6,40 +6,13 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/testutil"
 	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
 )
 
-// mockQueuePort is a test double for QueuePort.
-type mockQueuePort struct {
-	publishedTopic   string
-	publishedPayload interface{}
-	publishError     error
-}
-
-func (m *mockQueuePort) Connect(_ context.Context) error { return nil }
-func (m *mockQueuePort) Close() error                    { return nil }
-func (m *mockQueuePort) Publish(topic string, payload interface{}) error {
-	m.publishedTopic = topic
-	m.publishedPayload = payload
-	return m.publishError
-}
-func (m *mockQueuePort) Subscribe(_ string, _ ports.MessageHandler) error {
-	return nil
-}
-
-// mockLogger is a test double for Logger.
-type mockLogger struct{}
-
-func (m *mockLogger) Debug(_ string, _ ...interface{})   {}
-func (m *mockLogger) Info(_ string, _ ...interface{})    {}
-func (m *mockLogger) Warn(_ string, _ ...interface{})    {}
-func (m *mockLogger) Error(_ string, _ ...interface{})   {}
-func (m *mockLogger) With(_ ...interface{}) ports.Logger { return m }
-
 func TestDMService_PublishDMRequest_Success(t *testing.T) {
-	queue := &mockQueuePort{}
-	logger := &mockLogger{}
+	queue := &testutil.MockQueuePort{}
+	logger := &testutil.MockLogger{}
 	svc := NewDMService(queue, logger)
 
 	initiator := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
@@ -51,13 +24,13 @@ func TestDMService_PublishDMRequest_Success(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if queue.publishedTopic != dto.TopicRoomDMRequested {
-		t.Errorf("expected topic %s, got %s", dto.TopicRoomDMRequested, queue.publishedTopic)
+	if queue.PublishedTopic != dto.TopicRoomDMRequested {
+		t.Errorf("expected topic %s, got %s", dto.TopicRoomDMRequested, queue.PublishedTopic)
 	}
 
-	event, ok := queue.publishedPayload.(dto.DMRequestedEvent)
+	event, ok := queue.PublishedPayload.(dto.DMRequestedEvent) //nolint:staticcheck // deprecated but kept during transition
 	if !ok {
-		t.Fatalf("expected DMRequestedEvent payload, got %T", queue.publishedPayload)
+		t.Fatalf("expected DMRequestedEvent payload, got %T", queue.PublishedPayload)
 	}
 
 	if event.InitiatorActorID != initiator.String() {
@@ -69,8 +42,8 @@ func TestDMService_PublishDMRequest_Success(t *testing.T) {
 }
 
 func TestDMService_PublishDMRequest_NilInitiator(t *testing.T) {
-	queue := &mockQueuePort{}
-	logger := &mockLogger{}
+	queue := &testutil.MockQueuePort{}
+	logger := &testutil.MockLogger{}
 	svc := NewDMService(queue, logger)
 
 	target := uuid.MustParse("660e8400-e29b-41d4-a716-446655440002")
@@ -81,14 +54,14 @@ func TestDMService_PublishDMRequest_NilInitiator(t *testing.T) {
 		t.Fatal("expected error for nil initiator")
 	}
 
-	if queue.publishedTopic != "" {
+	if queue.PublishedTopic != "" {
 		t.Error("should not publish when initiator is nil")
 	}
 }
 
 func TestDMService_PublishDMRequest_NilTarget(t *testing.T) {
-	queue := &mockQueuePort{}
-	logger := &mockLogger{}
+	queue := &testutil.MockQueuePort{}
+	logger := &testutil.MockLogger{}
 	svc := NewDMService(queue, logger)
 
 	initiator := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
@@ -99,14 +72,14 @@ func TestDMService_PublishDMRequest_NilTarget(t *testing.T) {
 		t.Fatal("expected error for nil target")
 	}
 
-	if queue.publishedTopic != "" {
+	if queue.PublishedTopic != "" {
 		t.Error("should not publish when target is nil")
 	}
 }
 
 func TestDMService_PublishDMRequest_SameUser(t *testing.T) {
-	queue := &mockQueuePort{}
-	logger := &mockLogger{}
+	queue := &testutil.MockQueuePort{}
+	logger := &testutil.MockLogger{}
 	svc := NewDMService(queue, logger)
 
 	userID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
@@ -117,16 +90,16 @@ func TestDMService_PublishDMRequest_SameUser(t *testing.T) {
 		t.Fatal("expected error when initiator and target are the same")
 	}
 
-	if queue.publishedTopic != "" {
+	if queue.PublishedTopic != "" {
 		t.Error("should not publish when initiator and target are the same")
 	}
 }
 
 func TestDMService_PublishDMRequest_QueueError(t *testing.T) {
-	queue := &mockQueuePort{
-		publishError: context.DeadlineExceeded,
+	queue := &testutil.MockQueuePort{
+		PublishError: context.DeadlineExceeded,
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	svc := NewDMService(queue, logger)
 
 	initiator := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")

@@ -97,6 +97,12 @@ const (
 	// TopicRoomMemberUpdated is the topic for room member updated events.
 	TopicRoomMemberUpdated = dto.TopicRoomMemberUpdated
 
+	// Room Check Topics (Adapter → Server, request-reply)
+	// TopicRoomCheck is the topic for room creation check commands.
+	TopicRoomCheck = dto.TopicRoomCheck
+	// TopicRoomInfo is the topic for retrieving server-side room info.
+	TopicRoomInfo = dto.TopicRoomInfo
+
 	// Custom State Topics (io.alkemio.* state events)
 	TopicRoomStateSet  = dto.TopicRoomStateSet
 	TopicRoomStateGet  = dto.TopicRoomStateGet

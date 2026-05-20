@@ -15,6 +15,12 @@ GOFMT=$(GO) fmt
 .PHONY: all
 all: deps fmt lint test build
 
+# Generate OpenAPI spec from Go source
+.PHONY: openapi
+openapi:
+	@echo "Generating OpenAPI spec..."
+	apispec --dir . --output openapi.yaml --config apispec.yaml
+
 # Build the application
 .PHONY: build
 build:
@@ -119,4 +125,5 @@ help:
 	@echo "  doc            - Serve documentation (using go doc -http)"
 	@echo "  clean          - Remove build artifacts"
 	@echo "  deps           - Download and tidy dependencies"
+	@echo "  openapi        - Generate OpenAPI spec from Go source"
 	@echo "  docker-build   - Build Docker image"

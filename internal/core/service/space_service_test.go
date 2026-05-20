@@ -10,6 +10,7 @@ import (
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter-go/internal/testutil"
 )
 
 // ============================================================================
@@ -256,7 +257,7 @@ var _ ports.MatrixPort = (*mockSpaceMatrixPort)(nil)
 var spaceIDMapper = domain.NewIDMapper("test.local")
 
 func newSpaceService(matrix *mockSpaceMatrixPort) *SpaceService {
-	return NewSpaceService(matrix, &mockLogger{}, domain.NewIDMapper("test.local"))
+	return NewSpaceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"))
 }
 
 func mustAlias(contextID uuid.UUID) string {
@@ -739,7 +740,7 @@ func TestListSpaces_Success(t *testing.T) {
 		},
 		detailsByRoom: detailsByRoom,
 	}
-	svc := NewSpaceService(wrapper, &mockLogger{}, domain.NewIDMapper("test.local"))
+	svc := NewSpaceService(wrapper, &testutil.MockLogger{}, domain.NewIDMapper("test.local"))
 
 	contextIDs, cursor, err := svc.ListSpaces(context.Background(), "")
 	if err != nil {

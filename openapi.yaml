@@ -1,0 +1,181 @@
+components:
+  schemas:
+    dto.CheckRoomHTTPRequest:
+      properties:
+        creator:
+          type: string
+        is_direct:
+          type: boolean
+        members:
+          items:
+            type: string
+          type: array
+      required:
+        - creator
+        - members
+        - is_direct
+      type: object
+    dto.CheckRoomHTTPResponse:
+      properties:
+        alkemio_room_id:
+          type: string
+        allow:
+          type: boolean
+        reason:
+          type: string
+      required:
+        - allow
+      type: object
+    dto.CheckRoomResponse:
+      properties:
+        alkemio_room_id:
+          type: string
+        allow:
+          type: boolean
+        reason:
+          type: string
+      required:
+        - allow
+      type: object
+    dto.DMWebhookPayload:
+      properties:
+        invitee:
+          type: string
+        inviter:
+          type: string
+      required:
+        - inviter
+        - invitee
+      type: object
+info:
+  contact:
+    email: info@alkem.io
+    name: Alkemio Foundation
+    url: https://alkem.io
+  description: |
+    Matrix Adapter service for the Alkemio platform. Bridges the Alkemio Server
+    and Matrix Homeserver using mautrix-go and RabbitMQ. Provides AppService
+    transaction handling, room creation check endpoints, and health probes.
+  license:
+    name: EUPL-1.2
+    url: https://opensource.org/licenses/EUPL-1.2
+  title: Alkemio Matrix Adapter
+  version: 1.0.0
+openapi: 3.1.1
+paths:
+  /GET /health/live:
+    post:
+      operationId: app.go:76:40
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: OK
+  /GET /health/ready:
+    post:
+      operationId: app.go:80:41
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: OK
+  /POST /_matrix/app/alkemio/check-room:
+    post:
+      operationId: CheckRoomHandler.handleCheckRoom
+      parameters:
+        - in: header
+          name: Authorization
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/dto.CheckRoomResponse'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/dto.CheckRoomHTTPResponse'
+                  - additionalProperties:
+                      type: string
+                    type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "401":
+          content:
+            application/json: {}
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Internal Server Error
+        "504":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Gateway Timeout
+  /POST /_matrix/app/alkemio/dm-request:
+    post:
+      operationId: DMWebhookHandler.handleDMRequest
+      parameters:
+        - in: header
+          name: Authorization
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/dto.DMWebhookPayload'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Bad Request
+        "401":
+          content:
+            application/json: {}
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: Internal Server Error

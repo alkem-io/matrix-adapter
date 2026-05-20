@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 )
 
 // MessageHandler is the function signature for queue message handlers.
@@ -18,4 +19,7 @@ type QueuePort interface {
 	Publish(topic string, payload interface{}) error
 	// Subscribe registers a handler for messages on the specified topic.
 	Subscribe(topic string, handler MessageHandler) error
+	// PublishAndWait sends a message to the specified topic and waits for a reply
+	// using the AMQP RPC pattern (temporary exclusive reply queue + correlation_id).
+	PublishAndWait(ctx context.Context, topic string, payload interface{}, timeout time.Duration) ([]byte, error)
 }

@@ -9,6 +9,7 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter-go/internal/testutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -181,7 +182,7 @@ func TestActorService_SyncActor_Success(t *testing.T) {
 	matrix := &arMockMatrixPort{
 		ensureUserResult: "@user-abc:test.local",
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	svc := NewActorService(matrix, logger)
 
 	actorID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
@@ -204,7 +205,7 @@ func TestActorService_SyncActor_EnsureUserError(t *testing.T) {
 	matrix := &arMockMatrixPort{
 		ensureUserErr: ensureErr,
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	svc := NewActorService(matrix, logger)
 
 	actorID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
@@ -231,7 +232,7 @@ func TestActorService_SyncActor_SetUserProfileError(t *testing.T) {
 		ensureUserResult:  "@user-abc:test.local",
 		setUserProfileErr: profileErr,
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	svc := NewActorService(matrix, logger)
 
 	actorID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
@@ -258,7 +259,7 @@ func TestActorService_SyncActor_SetUserProfileError(t *testing.T) {
 
 func TestReadReceiptService_MarkMessageRead_Success(t *testing.T) {
 	matrix := &arMockMatrixPort{}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	svc := NewReadReceiptService(matrix, logger)
 
 	actorID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
@@ -289,7 +290,7 @@ func TestReadReceiptService_MarkMessageRead_Success(t *testing.T) {
 
 func TestReadReceiptService_MarkMessageRead_WithThreadRootID(t *testing.T) {
 	matrix := &arMockMatrixPort{}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	svc := NewReadReceiptService(matrix, logger)
 
 	actorID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
@@ -318,7 +319,7 @@ func TestReadReceiptService_MarkMessageRead_Error(t *testing.T) {
 	matrix := &arMockMatrixPort{
 		sendReadReceiptErr: receiptErr,
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	svc := NewReadReceiptService(matrix, logger)
 
 	actorID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
@@ -349,7 +350,7 @@ func TestReadReceiptService_GetUnreadCounts_Success(t *testing.T) {
 	matrix := &arMockMatrixPort{
 		getUnreadCountsResult: expected,
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	svc := NewReadReceiptService(matrix, logger)
 
 	actorID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
@@ -383,7 +384,7 @@ func TestReadReceiptService_GetUnreadCounts_NoThreads(t *testing.T) {
 	matrix := &arMockMatrixPort{
 		getUnreadCountsResult: expected,
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	svc := NewReadReceiptService(matrix, logger)
 
 	actorID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
@@ -404,7 +405,7 @@ func TestReadReceiptService_GetUnreadCounts_Error(t *testing.T) {
 	matrix := &arMockMatrixPort{
 		getUnreadCountsErr: countsErr,
 	}
-	logger := &mockLogger{}
+	logger := &testutil.MockLogger{}
 	svc := NewReadReceiptService(matrix, logger)
 
 	actorID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
