@@ -2053,6 +2053,13 @@ func (m *MautrixAdapter) ReconcileRoom(
 			continue
 		}
 
+		if userID != creatorUserID {
+			if _, err := creatorIntent.InviteUser(ctx, roomID, &mautrix.ReqInviteUser{UserID: userID}); err != nil {
+				m.logger.Error("reconcile: invite failed",
+					"user_id", userID, "room_id", roomID, "error", err)
+				continue
+			}
+		}
 		memberIntent := m.as.Intent(userID)
 		if err := memberIntent.EnsureJoined(ctx, roomID); err != nil {
 			m.logger.Error("reconcile: EnsureJoined failed",
