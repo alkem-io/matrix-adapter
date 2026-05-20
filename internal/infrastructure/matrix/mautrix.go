@@ -2007,25 +2007,17 @@ func (m *MautrixAdapter) SetQueuePort(queuePort ports.QueuePort) {
 }
 
 // ReconcileRoom completes setup for a room created via Element's check flow.
-// Performs: bot admin-join, get members from server, EnsureJoined for each member,
-// m.direct for DMs, power levels, alias, bot leave.
+// Uses the creator's intent (PL 100 as room creator) for all state operations
+// since the bot cannot admin-join invite-only rooms.
 func (m *MautrixAdapter) ReconcileRoom(
 	ctx context.Context, roomID id.RoomID, alkemioRoomID uuid.UUID, creatorUserID id.UserID,
 ) error {
 	m.logger.Info("Starting room reconciliation",
 		"room_id", roomID, "alkemio_room_id", alkemioRoomID, "creator", creatorUserID)
 
-	// 1. Bot admin-join
-	botUserID := m.as.BotMXID()
-	if err := m.admin.JoinRoom(ctx, roomID, botUserID); err != nil {
-		return fmt.Errorf("reconcile: bot admin-join failed: %w", err)
-	}
-	if err := m.as.SetMembership(ctx, roomID, botUserID, event.MembershipJoin); err != nil {
-		m.logger.Error("reconcile: failed to sync StateStore after bot admin-join",
-			"room_id", roomID, "error", err)
-	}
+	creatorIntent := m.as.Intent(creatorUserID)
 
-	// 2. Get room info from server
+	// 1. Get room info from server
 	roomInfoReq := dto.GetRoomInfoRequest{
 		AlkemioRoomID: alkemioRoomID.String(),
 	}
@@ -2040,7 +2032,7 @@ func (m *MautrixAdapter) ReconcileRoom(
 		return fmt.Errorf("reconcile: failed to parse room info: %w", err)
 	}
 
-	// 3. EnsureUser + EnsureJoined for each member
+	// 2. EnsureUser + EnsureJoined for each member
 	memberUserIDs := make([]id.UserID, 0, len(roomInfo.Members))
 	for _, member := range roomInfo.Members {
 		actorUUID, err := uuid.Parse(member.ActorID)
@@ -2070,34 +2062,26 @@ func (m *MautrixAdapter) ReconcileRoom(
 		memberUserIDs = append(memberUserIDs, userID)
 	}
 
-	// 4. Set m.direct account data for DMs
+	// 3. Set m.direct account data for DMs
 	if roomInfo.IsDirect {
 		m.registerDirectRoomParticipants(ctx, roomID, true, memberUserIDs)
 	}
 
-	// 5. Set power levels: bot=100, creator→50, users_default=50
-	botIntent := m.as.BotIntent()
+	// 4. Set power levels via creator intent (creator has PL 100 as room creator)
 	plContent := &event.PowerLevelsEventContent{
 		Users: map[id.UserID]int{
-			botUserID:     100,
 			creatorUserID: 50,
 		},
 		UsersDefault: 50,
 	}
-	if _, err := botIntent.SendStateEvent(ctx, roomID, event.StatePowerLevels, "", plContent); err != nil {
+	if _, err := creatorIntent.SendStateEvent(ctx, roomID, event.StatePowerLevels, "", plContent); err != nil {
 		return fmt.Errorf("reconcile: set power levels failed: %w", err)
 	}
 
-	// 6. Set alias
+	// 5. Set alias via creator intent
 	alias := m.idMapper.RoomAlias(alkemioRoomID)
 	if err := m.SetRoomAlias(ctx, roomID, alias); err != nil {
 		return fmt.Errorf("reconcile: set alias failed: %w", err)
-	}
-
-	// 7. Bot leaves
-	if _, err := botIntent.LeaveRoom(ctx, roomID); err != nil {
-		m.logger.Warn("reconcile: bot leave failed (non-fatal)",
-			"room_id", roomID, "error", err)
 	}
 
 	m.logger.Info("Room reconciliation complete",
