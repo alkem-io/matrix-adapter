@@ -1,0 +1,217 @@
+name: Sync Synapse Config to Downstream Repos
+
+# Propagates two canonical Synapse-related files from this repo to the three
+# downstream repos whenever they change on develop:
+#
+#   synapse-modules/alkemio_room_control.py   (the Synapse room-control module)
+#   registration.yaml                          (the AppService registration shape)
+#
+# Targets:
+#
+#   - alkem-io/server                     (file mode)
+#   - alkem-io/dev-orchestration          (embedded in 01-synapse-setup-confmap.yml)
+#   - alkem-io/infrastructure-operations  (embedded in 01-synapse-setup-confmap.yml)
+#
+# The room-control module is synced verbatim (it has no per-environment
+# fields). registration.yaml is schema-synced: namespaces / sender_localpart /
+# receive_ephemeral / msc2409 / id are taken from canonical, but each target's
+# existing url / as_token / hs_token values are preserved (those are
+# environment-specific — dev secrets in server, ${MATRIX_*} placeholders in
+# the ops repos).
+#
+# Each target gets a single rolling PR on branch `bot/sync-synapse-config`;
+# re-running this workflow updates that PR's diff in-place rather than
+# opening new PRs. Both files' changes land in one PR when both are out of sync.
+#
+# Required secrets (configured in matrix-adapter-go):
+#
+#   ALKEMIO_INFRASTRUCTURE_BOT_PUSH_TOKEN       PAT for the bot account with
+#                                               contents:write + pull_requests:write
+#                                               on the three downstream repos.
+#   ALKEMIO_INFRASTRUCTURE_BOT_GPG_PRIVATE_KEY  ASCII-armoured GPG private key for
+#                                               signing commits.
+#   ALKEMIO_INFRASTRUCTURE_BOT_GPG_PASSPHRASE   Passphrase for the GPG key.
+#   ALKEMIO_INFRASTRUCTURE_BOT_GPG_KEY_ID       Fallback key ID if the import action
+#                                               doesn't surface a fingerprint.
+#
+# Same secrets are used by server/.github/workflows/schema-baseline.yml.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'synapse-modules/alkemio_room_control.py'
+      - 'registration.yaml'
+      - '.scripts/sync-synapse-module.sh'
+      - '.scripts/sync-synapse-registration.py'
+      - '.github/workflows/sync-synapse-module.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: sync-synapse-config-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  sync:
+    # Guard against manual dispatches from feature branches: the source checkout
+    # below has no explicit ref, so it'd otherwise pull canonical content from
+    # whatever branch the dispatch was fired from. We only ever want to sync
+    # what's actually on develop.
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - repo: alkem-io/server
+            base: develop
+          - repo: alkem-io/dev-orchestration
+            base: main
+          - repo: alkem-io/infrastructure-operations
+            base: develop
+    env:
+      SYNC_BRANCH: bot/sync-synapse-config
+      TARGET_REPO: ${{ matrix.target.repo }}
+      TARGET_BASE: ${{ matrix.target.base }}
+
+    steps:
+      - name: Checkout matrix-adapter-go (canonical)
+        uses: actions/checkout@v4
+        with:
+          path: source
+          persist-credentials: false
+
+      - name: Checkout ${{ matrix.target.repo }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.target.repo }}
+          token: ${{ secrets.ALKEMIO_INFRASTRUCTURE_BOT_PUSH_TOKEN }}
+          path: target
+          ref: ${{ matrix.target.base }}
+          fetch-depth: 0
+
+      - name: Apply room-control module sync
+        run: ./source/.scripts/sync-synapse-module.sh ./target
+
+      - name: Apply registration.yaml sync
+        run: ./source/.scripts/sync-synapse-registration.py ./target
+
+      - name: Detect changes
+        id: sync
+        run: |
+          set -euo pipefail
+          cd target
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git --no-pager diff --stat
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate downstream YAML still parses
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, yaml
+          patterns = (
+              "target/**/01-synapse-setup-confmap.yml",   # ops repos
+              "target/**/matrix-adapter.yaml",            # server's registration file
+          )
+          for pattern in patterns:
+              for path in glob.glob(pattern, recursive=True):
+                  with open(path) as f:
+                      yaml.safe_load(f)
+                  print(f"OK: {path}")
+          PY
+
+      - name: Import GPG signing key
+        if: steps.sync.outputs.changed == 'true'
+        id: import_gpg
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.ALKEMIO_INFRASTRUCTURE_BOT_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.ALKEMIO_INFRASTRUCTURE_BOT_GPG_PASSPHRASE }}
+          trust_level: 5
+          workdir: target
+
+      - name: Commit and push sync branch
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          PUSH_TOKEN: ${{ secrets.ALKEMIO_INFRASTRUCTURE_BOT_PUSH_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          FALLBACK_GPG_KEY_ID: ${{ secrets.ALKEMIO_INFRASTRUCTURE_BOT_GPG_KEY_ID }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          cd target
+          git config user.name "Alkemio Infrastructure Bot"
+          git config user.email "infrastructure@alkem.io"
+          git config commit.gpgsign true
+          if [[ -n "${GPG_FINGERPRINT:-}" ]]; then
+            git config user.signingkey "$GPG_FINGERPRINT"
+          elif [[ -n "${FALLBACK_GPG_KEY_ID:-}" ]]; then
+            git config user.signingkey "$FALLBACK_GPG_KEY_ID"
+          else
+            echo "::error::No GPG signing key available." >&2
+            exit 1
+          fi
+
+          git checkout -B "$SYNC_BRANCH"
+          git add -A
+          git commit -S -m "chore(synapse): sync canonical config from matrix-adapter-go@${SOURCE_SHA:0:7}
+
+          Auto-synced from https://github.com/${{ github.repository }}/commit/${SOURCE_SHA}
+
+          Files synced from matrix-adapter-go:
+            synapse-modules/alkemio_room_control.py
+            registration.yaml (schema fields only; url / as_token / hs_token preserved)"
+
+          git push --force-with-lease \
+            "https://x-access-token:${PUSH_TOKEN}@github.com/${TARGET_REPO}.git" \
+            "${SYNC_BRANCH}"
+
+      - name: Open or update pull request
+        if: steps.sync.outputs.changed == 'true'
+        uses: actions/github-script@v7
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        with:
+          github-token: ${{ secrets.ALKEMIO_INFRASTRUCTURE_BOT_PUSH_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.TARGET_REPO.split('/');
+            const branch = process.env.SYNC_BRANCH;
+            const base = process.env.TARGET_BASE;
+            const sourceSha = process.env.SOURCE_SHA;
+            const shortSha = sourceSha.slice(0, 7);
+            const title = `chore(synapse): sync canonical config from matrix-adapter-go`;
+            const body = [
+              `Auto-synced from [matrix-adapter-go@${shortSha}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${sourceSha}).`,
+              '',
+              'Two canonical Synapse-related files live in matrix-adapter-go and are propagated here automatically:',
+              '',
+              '- [`synapse-modules/alkemio_room_control.py`](https://github.com/alkem-io/matrix-adapter-go/blob/develop/synapse-modules/alkemio_room_control.py) — synced verbatim.',
+              '- [`registration.yaml`](https://github.com/alkem-io/matrix-adapter-go/blob/develop/registration.yaml) — schema fields only; `url` / `as_token` / `hs_token` are preserved from this repo.',
+              '',
+              `Review and merge to roll the change forward to this repo's deployment. The branch (\`${branch}\`) is rolling — subsequent canonical changes will force-update this PR rather than open new ones.`,
+            ].join('\n');
+
+            const { data: existing } = await github.rest.pulls.list({
+              owner, repo, state: 'open',
+              head: `${owner}:${branch}`,
+              base,
+            });
+
+            if (existing.length > 0) {
+              const pr = existing[0];
+              await github.rest.pulls.update({ owner, repo, pull_number: pr.number, title, body });
+              core.info(`Updated existing PR #${pr.number}: ${pr.html_url}`);
+            } else {
+              const { data: pr } = await github.rest.pulls.create({
+                owner, repo, head: branch, base, title, body,
+                maintainer_can_modify: true,
+              });
+              core.info(`Opened PR #${pr.number}: ${pr.html_url}`);
+            }

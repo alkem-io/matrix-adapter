@@ -2,6 +2,14 @@
 
 This is a Synapse spam checker module that restricts room creation to the Alkemio Matrix Adapter AppService bot.
 
+> **Canonical source.** This file (and [`../registration.yaml`](../registration.yaml)) is the single source of truth. Three downstream copies are kept in sync automatically by [`.github/workflows/sync-synapse-module.yml`](../.github/workflows/sync-synapse-module.yml) whenever either file changes on `develop`:
+>
+> - `alkem-io/server` — `.build/synapse/modules/alkemio_room_control.py` + `.build/synapse/matrix-adapter.yaml`
+> - `alkem-io/dev-orchestration` — both embedded in `01-synapse-setup-confmap.yml`
+> - `alkem-io/infrastructure-operations` — both embedded in `01-synapse-setup-confmap.yml`
+>
+> Do not edit those copies directly. Edit this file (or `registration.yaml`), merge to `develop`, and review the rolling PR opened in each downstream repo by the Alkemio Infrastructure Bot. For `registration.yaml`, only schema fields are synced — `url`, `as_token`, and `hs_token` stay environment-specific in each downstream.
+
 ## Overview
 
 - **All users are ghost users** provisioned by the AppService
