@@ -1,16 +1,27 @@
-name: Sync Synapse Module to Downstream Repos
+name: Sync Synapse Config to Downstream Repos
 
-# When the canonical Synapse module (synapse-modules/alkemio_room_control.py)
-# changes on develop, this workflow propagates the new version to the three
-# downstream repos that embed or vendor it:
+# Propagates two canonical Synapse-related files from this repo to the three
+# downstream repos whenever they change on develop:
 #
-#   - alkem-io/server                     →  .build/synapse/modules/alkemio_room_control.py
-#   - alkem-io/dev-orchestration          →  ConfigMap literal block (k8s dev env)
-#   - alkem-io/infrastructure-operations  →  ConfigMap literal block (k8s prod/acceptance)
+#   synapse-modules/alkemio_room_control.py   (the Synapse room-control module)
+#   registration.yaml                          (the AppService registration shape)
 #
-# Each target gets a single rolling PR on branch
-# `bot/sync-alkemio-room-control-module`; re-running this workflow updates
-# that PR's diff in-place rather than opening new PRs.
+# Targets:
+#
+#   - alkem-io/server                     (file mode)
+#   - alkem-io/dev-orchestration          (embedded in 01-synapse-setup-confmap.yml)
+#   - alkem-io/infrastructure-operations  (embedded in 01-synapse-setup-confmap.yml)
+#
+# The room-control module is synced verbatim (it has no per-environment
+# fields). registration.yaml is schema-synced: namespaces / sender_localpart /
+# receive_ephemeral / msc2409 / id are taken from canonical, but each target's
+# existing url / as_token / hs_token values are preserved (those are
+# environment-specific — dev secrets in server, ${MATRIX_*} placeholders in
+# the ops repos).
+#
+# Each target gets a single rolling PR on branch `bot/sync-synapse-config`;
+# re-running this workflow updates that PR's diff in-place rather than
+# opening new PRs. Both files' changes land in one PR when both are out of sync.
 #
 # Required secrets (configured in matrix-adapter-go):
 #
@@ -30,12 +41,14 @@ on:
     branches: [develop]
     paths:
       - 'synapse-modules/alkemio_room_control.py'
+      - 'registration.yaml'
       - '.scripts/sync-synapse-module.sh'
+      - '.scripts/sync-synapse-registration.py'
       - '.github/workflows/sync-synapse-module.yml'
   workflow_dispatch: {}
 
 concurrency:
-  group: sync-synapse-module-${{ github.ref }}
+  group: sync-synapse-config-${{ github.ref }}
   cancel-in-progress: false
 
 permissions: {}
@@ -54,7 +67,7 @@ jobs:
           - repo: alkem-io/infrastructure-operations
             base: develop
     env:
-      SYNC_BRANCH: bot/sync-alkemio-room-control-module
+      SYNC_BRANCH: bot/sync-synapse-config
       TARGET_REPO: ${{ matrix.target.repo }}
       TARGET_BASE: ${{ matrix.target.base }}
 
@@ -73,11 +86,16 @@ jobs:
           ref: ${{ matrix.target.base }}
           fetch-depth: 0
 
-      - name: Apply sync
+      - name: Apply room-control module sync
+        run: ./source/.scripts/sync-synapse-module.sh ./target
+
+      - name: Apply registration.yaml sync
+        run: ./source/.scripts/sync-synapse-registration.py ./target
+
+      - name: Detect changes
         id: sync
         run: |
           set -euo pipefail
-          ./source/.scripts/sync-synapse-module.sh ./target
           cd target
           if [[ -n "$(git status --porcelain)" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -132,9 +150,13 @@ jobs:
 
           git checkout -B "$SYNC_BRANCH"
           git add -A
-          git commit -S -m "chore(synapse): sync alkemio_room_control.py from matrix-adapter-go@${SOURCE_SHA:0:7}
+          git commit -S -m "chore(synapse): sync canonical config from matrix-adapter-go@${SOURCE_SHA:0:7}
 
-          Auto-synced from https://github.com/${{ github.repository }}/commit/${SOURCE_SHA}"
+          Auto-synced from https://github.com/${{ github.repository }}/commit/${SOURCE_SHA}
+
+          Files synced from matrix-adapter-go:
+            synapse-modules/alkemio_room_control.py
+            registration.yaml (schema fields only; url / as_token / hs_token preserved)"
 
           git push --force-with-lease \
             "https://x-access-token:${PUSH_TOKEN}@github.com/${TARGET_REPO}.git" \
@@ -153,11 +175,14 @@ jobs:
             const base = process.env.TARGET_BASE;
             const sourceSha = process.env.SOURCE_SHA;
             const shortSha = sourceSha.slice(0, 7);
-            const title = `chore(synapse): sync alkemio_room_control.py from matrix-adapter-go`;
+            const title = `chore(synapse): sync canonical config from matrix-adapter-go`;
             const body = [
               `Auto-synced from [matrix-adapter-go@${shortSha}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${sourceSha}).`,
               '',
-              'The canonical `alkemio_room_control.py` lives in [matrix-adapter-go/synapse-modules/](https://github.com/alkem-io/matrix-adapter-go/blob/develop/synapse-modules/alkemio_room_control.py). This PR is opened and updated automatically by the `sync-synapse-module` workflow whenever that file changes on `develop`.',
+              'Two canonical Synapse-related files live in matrix-adapter-go and are propagated here automatically:',
+              '',
+              '- [`synapse-modules/alkemio_room_control.py`](https://github.com/alkem-io/matrix-adapter-go/blob/develop/synapse-modules/alkemio_room_control.py) — synced verbatim.',
+              '- [`registration.yaml`](https://github.com/alkem-io/matrix-adapter-go/blob/develop/registration.yaml) — schema fields only; `url` / `as_token` / `hs_token` are preserved from this repo.',
               '',
               `Review and merge to roll the change forward to this repo's deployment. The branch (\`${branch}\`) is rolling — subsequent canonical changes will force-update this PR rather than open new ones.`,
             ].join('\n');

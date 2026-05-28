@@ -1,3 +1,7 @@
+# Canonical AppService registration shape. Schema fields are auto-synced to
+# downstream repos by .github/workflows/sync-synapse-module.yml whenever this
+# file changes on develop. The url / as_token / hs_token below are local-dev
+# placeholders only — each downstream preserves its own values for those three.
 id: alkemio-matrix-adapter
 url: http://host.docker.internal:8280
 as_token: secret_as_token
@@ -6,6 +10,7 @@ hs_token: secret_hs_token
 sender_localpart: "00000000-0000-0000-0000-000000000000"
 # Enable receiving ephemeral events (m.receipt for read receipts)
 receive_ephemeral: true
+de.sorunome.msc2409.push_ephemeral: true
 namespaces:
   users:
     # Bot user - exclusive, only AS can control (security: prevents impersonation)
