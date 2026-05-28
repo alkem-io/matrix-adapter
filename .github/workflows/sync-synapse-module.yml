@@ -55,6 +55,11 @@ permissions: {}
 
 jobs:
   sync:
+    # Guard against manual dispatches from feature branches: the source checkout
+    # below has no explicit ref, so it'd otherwise pull canonical content from
+    # whatever branch the dispatch was fired from. We only ever want to sync
+    # what's actually on develop.
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -76,6 +81,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: source
+          persist-credentials: false
 
       - name: Checkout ${{ matrix.target.repo }}
         uses: actions/checkout@v4
@@ -109,11 +115,16 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import sys, glob, yaml
-          for path in glob.glob("target/**/01-synapse-setup-confmap.yml", recursive=True):
-              with open(path) as f:
-                  yaml.safe_load(f)
-              print(f"OK: {path}")
+          import glob, yaml
+          patterns = (
+              "target/**/01-synapse-setup-confmap.yml",   # ops repos
+              "target/**/matrix-adapter.yaml",            # server's registration file
+          )
+          for pattern in patterns:
+              for path in glob.glob(pattern, recursive=True):
+                  with open(path) as f:
+                      yaml.safe_load(f)
+                  print(f"OK: {path}")
           PY
 
       - name: Import GPG signing key

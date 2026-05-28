@@ -116,16 +116,19 @@ def sync_file_mode(canonical_text: str, target: Path) -> bool:
 def shell_quote(line: str) -> str:
     """Wrap a YAML line in shell quoting for use as a printf argument.
 
-    Use single quotes if the line contains `"`; double quotes otherwise so
-    `${VAR}` interpolation still works.
+    Three cases:
+      - no `"` in the line          → double quotes (preserves `${VAR}` interp)
+      - `"` but no `'`              → single quotes (verbatim)
+      - both `"` and `'` in the line → single quotes with `'` → `'\\''` escape
+        (canonical YAML rarely contains both; this branch only exists so a
+        future canonical change doesn't hard-fail the workflow)
     """
-    if '"' in line:
-        if "'" in line:
-            raise ValueError(
-                f"cannot shell-quote line with both quote kinds: {line!r}"
-            )
+    if '"' not in line:
+        return f'"{line}"'
+    if "'" not in line:
         return f"'{line}'"
-    return f'"{line}"'
+    escaped = line.replace("'", "'\\''")
+    return f"'{escaped}'"
 
 
 def extract_printf_block(text: str) -> tuple[str, int, int, str]:
