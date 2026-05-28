@@ -23,7 +23,7 @@
 --        acc:  \set bot_mxid '@00000000-0000-0000-0000-000000000000:matrix-acc.alkem.io'
 --        prod: \set bot_mxid '@00000000-0000-0000-0000-000000000000:matrix.alkem.io'
 --   3. Run: psql -U synapse-db -d synapse -v bot_mxid="'@00000000-...'" -f fix_duplicate_bot_joins.sql
---   4. Step 5 must report 0 / 0 before COMMIT. If it doesn't, ROLLBACK
+--   4. ALL verification counts in step 8 must be 0 before COMMIT. If not, ROLLBACK
 --      and investigate.
 --   5. Restart the adapter.
 -- ============================================================================
@@ -38,7 +38,7 @@ JOIN event_json ej ON e.event_id = ej.event_id
 WHERE e.type = 'm.room.member'
   AND e.state_key = :'bot_mxid'
   AND ej.json::jsonb->'content'->>'membership' = 'join'
-ORDER BY e.room_id, e.origin_server_ts;
+ORDER BY e.room_id, e.origin_server_ts, e.event_id;
 
 -- Step 2: list every duplicate (any bot join that isn't the canonical one).
 CREATE TEMP TABLE bot_duplicates AS
