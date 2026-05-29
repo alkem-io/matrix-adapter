@@ -2,7 +2,7 @@
 # Sync the canonical Synapse AlkemioRoomControl module into a downstream repo.
 #
 # Source of truth:
-#   matrix-adapter-go/synapse-modules/alkemio_room_control.py
+#   matrix-adapter/synapse-modules/alkemio_room_control.py
 #
 # Downstream layouts handled:
 #

@@ -51,7 +51,7 @@ All error responses include:
 ## Consumer Usage
 
 ```typescript
-import { BaseResponse, ErrorCodeNotFound } from '@alkem-io/matrix-adapter-go-lib';
+import { BaseResponse, ErrorCodeNotFound } from '@alkem-io/matrix-adapter-lib';
 
 if (!response.success) {
   if (response.error?.code === ErrorCodeNotFound) {

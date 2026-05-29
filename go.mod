@@ -1,4 +1,4 @@
-module github.com/alkem-io/matrix-adapter-go
+module github.com/alkem-io/matrix-adapter
 
 go 1.25.1
 

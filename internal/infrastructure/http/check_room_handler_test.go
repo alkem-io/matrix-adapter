@@ -8,10 +8,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
-	"github.com/alkem-io/matrix-adapter-go/internal/testutil"
-	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/core/service"
+	"github.com/alkem-io/matrix-adapter/internal/testutil"
+	"github.com/alkem-io/matrix-adapter/pkg/dto"
 )
 
 const (

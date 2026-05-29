@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/config"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
-	httpinfra "github.com/alkem-io/matrix-adapter-go/internal/infrastructure/http"
-	"github.com/alkem-io/matrix-adapter-go/internal/infrastructure/logger"
-	"github.com/alkem-io/matrix-adapter-go/internal/infrastructure/matrix"
-	"github.com/alkem-io/matrix-adapter-go/internal/infrastructure/queue"
+	"github.com/alkem-io/matrix-adapter/internal/config"
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter/internal/core/service"
+	httpinfra "github.com/alkem-io/matrix-adapter/internal/infrastructure/http"
+	"github.com/alkem-io/matrix-adapter/internal/infrastructure/logger"
+	"github.com/alkem-io/matrix-adapter/internal/infrastructure/matrix"
+	"github.com/alkem-io/matrix-adapter/internal/infrastructure/queue"
 )
 
 // App represents the Matrix Adapter application and holds references to all its components.

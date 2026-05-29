@@ -56,7 +56,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/alkem-io/matrix-adapter-go
+        - github.com/alkem-io/matrix-adapter
 
 issues:
   max-issues-per-linter: 0

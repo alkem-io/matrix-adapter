@@ -3,7 +3,7 @@ package queue
 import (
 	"context"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 )
 
 // RegisterRoutes registers all queue subscribers to their respective topics.

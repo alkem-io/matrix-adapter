@@ -34,7 +34,7 @@ func (h *ActorHandler) HandleRegister(payload []byte) (interface{}, error) {
 ## Consumer Usage (TypeScript)
 
 ```typescript
-import { BaseResponse, ErrorCodeNotFound } from '@alkem-io/matrix-adapter-go-lib';
+import { BaseResponse, ErrorCodeNotFound } from '@alkem-io/matrix-adapter-lib';
 
 if (!response.success) {
   switch (response.error?.code) {

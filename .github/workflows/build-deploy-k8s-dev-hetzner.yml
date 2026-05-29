@@ -20,7 +20,7 @@ jobs:
 
       - name: Build & push image
         run: |
-          IMAGE="${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go"
+          IMAGE="${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter"
           docker build -f Dockerfile . -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest
           docker push ${IMAGE}:${{ github.sha }}
 
@@ -44,7 +44,7 @@ jobs:
 
       - name: Create image pull secret
         run: |
-          kubectl create secret docker-registry matrix-adapter-go-registry \
+          kubectl create secret docker-registry matrix-adapter-registry \
             --docker-server=${{ secrets.REGISTRY_LOGIN_SERVER }} \
             --docker-username=${{ secrets.REGISTRY_USERNAME }} \
             --docker-password=${{ secrets.REGISTRY_PASSWORD }} \
@@ -53,9 +53,9 @@ jobs:
       - name: Attach image pull secret to deployment
         run: |
           kubectl patch deployment alkemio-matrix-adapter-deployment -p \
-            '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"matrix-adapter-go-registry"}]}}}}'
+            '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"matrix-adapter-registry"}]}}}}'
 
       - name: Update deployment image
         run: |
           kubectl set image deployment/alkemio-matrix-adapter-deployment \
-            alkemio-matrix-adapter=${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter-go:${{ github.sha }}
+            alkemio-matrix-adapter=${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter:${{ github.sha }}

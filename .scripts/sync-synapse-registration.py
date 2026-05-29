@@ -3,7 +3,7 @@
 Sync the canonical Synapse AppService registration shape into a downstream repo.
 
 Source of truth:
-  matrix-adapter-go/registration.yaml
+  matrix-adapter/registration.yaml
 
 Downstream layouts:
 

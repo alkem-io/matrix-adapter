@@ -1,5 +1,5 @@
 packages:
-  - path: "github.com/alkem-io/matrix-adapter-go/pkg/dto"
+  - path: "github.com/alkem-io/matrix-adapter/pkg/dto"
     output_path: "lib/src/dto/generated.ts"
     fallback_type: "any"
     type_mappings:

@@ -5,7 +5,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 )
 
 // MockQueuePort is a test double for ports.QueuePort that records the last published topic and payload.

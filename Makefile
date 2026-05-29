@@ -107,7 +107,7 @@ deps:
 .PHONY: docker-build
 docker-build:
 	@echo "Building Docker image..."
-	docker build -t alkemio/matrix-adapter-go .
+	docker build -t alkemio/matrix-adapter .
 
 # Help
 .PHONY: help

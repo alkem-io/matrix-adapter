@@ -61,7 +61,7 @@ All Synapse Admin API calls MUST use `SynapseAdmin` (`internal/infrastructure/ma
 ## CI & Release Signals
 
 - **GitHub Actions**:
-  - `build-release-docker-hub.yml`: Builds and pushes the `alkemio/matrix-adapter-go` Docker image.
+  - `build-release-docker-hub.yml`: Builds and pushes the `alkemio/matrix-adapter` Docker image.
 - **Versioning**:
   - `VERSION` file or git tags for Go service.
   - `lib/package.json`: Library version (published to npm/GitHub Packages).
