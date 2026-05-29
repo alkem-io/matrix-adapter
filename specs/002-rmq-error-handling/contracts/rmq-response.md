@@ -36,7 +36,7 @@ All handlers always ACK after execution. Infrastructure failures are handled by 
 ## TypeScript Usage
 
 ```typescript
-import { BaseResponse, ErrorCodeNotFound } from '@alkem-io/matrix-adapter-go-lib';
+import { BaseResponse, ErrorCodeNotFound } from '@alkem-io/matrix-adapter-lib';
 
 if (!response.success && response.error?.code === ErrorCodeNotFound) {
   throw new NotFoundException(response.error.message);

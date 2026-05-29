@@ -5,8 +5,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 )
 
 // ActorService handles operations related to actor profile synchronization.

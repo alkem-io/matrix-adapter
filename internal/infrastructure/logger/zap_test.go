@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 )
 
 func TestNewZapLogger_Debug(t *testing.T) {

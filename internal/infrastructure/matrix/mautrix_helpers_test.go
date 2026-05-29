@@ -12,8 +12,8 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/testutil"
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/testutil"
 )
 
 // newTestAdapter creates a minimal MautrixAdapter with only the idMapper set,

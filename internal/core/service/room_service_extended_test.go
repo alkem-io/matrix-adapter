@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/testutil"
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/testutil"
 )
 
 // ============================================================================

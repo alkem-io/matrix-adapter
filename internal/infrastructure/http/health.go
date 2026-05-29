@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 )
 
 // HTTPServer provides the main HTTP server for health checks and webhooks.

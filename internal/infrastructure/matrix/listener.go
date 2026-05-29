@@ -11,7 +11,7 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 )
 
 // reconciling tracks rooms currently undergoing reconciliation to prevent concurrent attempts.

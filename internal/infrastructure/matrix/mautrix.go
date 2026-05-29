@@ -23,10 +23,10 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/config"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
-	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
+	"github.com/alkem-io/matrix-adapter/internal/config"
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter/pkg/dto"
 )
 
 // MautrixAdapter implements the MatrixPort interface using the mautrix-go library.

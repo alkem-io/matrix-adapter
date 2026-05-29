@@ -2,9 +2,9 @@
 
 A high-performance, stateless Matrix Adapter service written in Go, implementing the Alkemio Matrix Adapter specification.
 
-[![Build Status](https://app.travis-ci.com/alkem-io/matrix-adapter-go.svg?branch=develop)](https://app.travis-ci.com/alkem-io/matrix-adapter-go.svg?branch=develop)
-[![Coverage Status](https://coveralls.io/repos/github/alkem-io/matrix-adapter-go/badge.svg?branch=develop)](https://coveralls.io/github/alkem-io/matrix-adapter-go?branch=develop)
-[![Deploy to DockerHub](https://github.com/alkem-io/matrix-adapter-go/actions/workflows/build-release-docker-hub.yml/badge.svg)](https://github.com/alkem-io/matrix-adapter-go/actions/workflows/build-release-docker-hub.yml)
+[![Build Status](https://app.travis-ci.com/alkem-io/matrix-adapter.svg?branch=develop)](https://app.travis-ci.com/alkem-io/matrix-adapter.svg?branch=develop)
+[![Coverage Status](https://coveralls.io/repos/github/alkem-io/matrix-adapter/badge.svg?branch=develop)](https://coveralls.io/github/alkem-io/matrix-adapter?branch=develop)
+[![Deploy to DockerHub](https://github.com/alkem-io/matrix-adapter/actions/workflows/build-release-docker-hub.yml/badge.svg)](https://github.com/alkem-io/matrix-adapter/actions/workflows/build-release-docker-hub.yml)
 
 
 This repository contains two core elements:
@@ -124,7 +124,7 @@ The shared TypeScript library (`lib/`) is automatically published via GitHub Act
 
 4. **Install preview** (development/testing):
    ```bash
-   npm install https://pkg.pr.new/alkem-io/matrix-adapter-go/@alkemio/matrix-adapter-lib@{commit-sha}
+   npm install https://pkg.pr.new/alkem-io/matrix-adapter/@alkemio/matrix-adapter-lib@{commit-sha}
    ```
 
 ### Authentication

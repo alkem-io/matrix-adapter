@@ -4,10 +4,10 @@ package service
 import (
 	"fmt"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/config"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
-	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
+	"github.com/alkem-io/matrix-adapter/internal/config"
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter/pkg/dto"
 )
 
 // EventService handles incoming Matrix events and publishes them to the queue.

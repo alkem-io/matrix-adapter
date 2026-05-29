@@ -12,9 +12,9 @@ import (
 	"github.com/pkg/errors"
 	stdAmqp "github.com/rabbitmq/amqp091-go"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/config"
-	"github.com/alkem-io/matrix-adapter-go/internal/core/ports"
-	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
+	"github.com/alkem-io/matrix-adapter/internal/config"
+	"github.com/alkem-io/matrix-adapter/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter/pkg/dto"
 )
 
 // Metadata keys for AMQP native properties

@@ -123,7 +123,7 @@ if (!response.success) {
 Install the generated library:
 
 ```bash
-npm install @alkem-io/matrix-adapter-go-lib
+npm install @alkem-io/matrix-adapter-lib
 ```
 
 Import types:
@@ -136,7 +136,7 @@ import {
   SendMessageResponse,
   ErrorCode,
   // ... etc
-} from '@alkem-io/matrix-adapter-go-lib';
+} from '@alkem-io/matrix-adapter-lib';
 ```
 
 ---

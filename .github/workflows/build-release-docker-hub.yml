@@ -14,7 +14,7 @@ jobs:
       - name: Prepare
         id: prep
         run: |
-          DOCKER_IMAGE=alkemio/matrix-adapter-go
+          DOCKER_IMAGE=alkemio/matrix-adapter
           VERSION=noop
           if [ "${{ github.event_name }}" = "schedule" ]; then
             VERSION=nightly

@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 )
 
 // ReadReceiptServicePort defines the interface for read receipt service operations.

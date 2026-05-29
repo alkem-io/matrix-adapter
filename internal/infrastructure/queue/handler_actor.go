@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/alkem-io/matrix-adapter-go/internal/core/service"
-	"github.com/alkem-io/matrix-adapter-go/pkg/dto"
+	"github.com/alkem-io/matrix-adapter/internal/core/service"
+	"github.com/alkem-io/matrix-adapter/pkg/dto"
 )
 
 // ActorHandler handles queue messages related to actor operations.

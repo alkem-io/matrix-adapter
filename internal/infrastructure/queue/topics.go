@@ -1,7 +1,7 @@
 // Package queue provides RabbitMQ message queue infrastructure.
 package queue
 
-import "github.com/alkem-io/matrix-adapter-go/pkg/dto"
+import "github.com/alkem-io/matrix-adapter/pkg/dto"
 
 // Topic aliases for internal use - imported from dto (single source of truth).
 const (

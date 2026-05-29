@@ -1,4 +1,4 @@
-# matrix-adapter-go Development Guidelines
+# matrix-adapter Development Guidelines
 
 > **Workspace context.** This repo is part of the Alkemio polyrepo at
 > [alkem-io/agents-hq](https://github.com/alkem-io/agents-hq).
