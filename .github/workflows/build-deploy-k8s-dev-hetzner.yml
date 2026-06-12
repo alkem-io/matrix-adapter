@@ -5,57 +5,15 @@ on:
     branches: [develop]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Login to registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ secrets.REGISTRY_LOGIN_SERVER }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
-
-      - name: Build & push image
-        run: |
-          IMAGE="${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter"
-          docker build -f Dockerfile . -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest
-          docker push ${IMAGE}:${{ github.sha }}
-
   deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v5
-        with:
-          version: 'v1.31.14'
-
-      - name: Configure kubeconfig
-        run: |
-          mkdir -p $HOME/.kube
-          echo "${{ secrets.KUBECONFIG_SECRET_HETZNER_DEV }}" > $HOME/.kube/config
-          chmod 600 $HOME/.kube/config
-
-      - name: Create image pull secret
-        run: |
-          kubectl create secret docker-registry matrix-adapter-registry \
-            --docker-server=${{ secrets.REGISTRY_LOGIN_SERVER }} \
-            --docker-username=${{ secrets.REGISTRY_USERNAME }} \
-            --docker-password=${{ secrets.REGISTRY_PASSWORD }} \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Attach image pull secret to deployment
-        run: |
-          kubectl patch deployment alkemio-matrix-adapter-deployment -p \
-            '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"matrix-adapter-registry"}]}}}}'
-
-      - name: Update deployment image
-        run: |
-          kubectl set image deployment/alkemio-matrix-adapter-deployment \
-            alkemio-matrix-adapter=${{ secrets.REGISTRY_LOGIN_SERVER }}/alkemio-matrix-adapter:${{ github.sha }}
+    uses: antst/alkemio-github-workflows/.github/workflows/deploy-hetzner.yml@v1
+    with:
+      environment: dev
+      # All names match the org conventions derived from the repo name:
+      # alkemio-matrix-adapter / alkemio-matrix-adapter-deployment /
+      # matrix-adapter-registry — no overrides needed.
+    secrets:
+      KUBECONFIG: ${{ secrets.KUBECONFIG_SECRET_HETZNER_DEV }}
+      REGISTRY_LOGIN_SERVER: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}

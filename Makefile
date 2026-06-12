@@ -15,11 +15,14 @@ GOFMT=$(GO) fmt
 .PHONY: all
 all: deps fmt lint test build
 
-# Generate OpenAPI spec from Go source
+# Generate OpenAPI spec from Go source.
+# Requires the `apispec` binary on PATH. CI installs the org-pinned version
+# (see go-ci.yml in antst/alkemio-github-workflows); locally:
+#   go install github.com/antst/go-apispec/cmd/apispec@v0.4.16
 .PHONY: openapi
 openapi:
 	@echo "Generating OpenAPI spec..."
-	$(GO) run github.com/antst/go-apispec/cmd/apispec@v0.4.14 --dir . --output openapi.yaml --config apispec.yaml
+	apispec --dir . --output openapi.yaml --config apispec.yaml
 
 # Build the application
 .PHONY: build
