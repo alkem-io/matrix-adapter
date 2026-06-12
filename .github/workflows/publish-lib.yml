@@ -34,7 +34,7 @@ jobs:
           registry-url: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://registry.npmjs.org' || '' }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 

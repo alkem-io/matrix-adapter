@@ -78,13 +78,13 @@ jobs:
 
     steps:
       - name: Checkout matrix-adapter (canonical)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: source
           persist-credentials: false
 
       - name: Checkout ${{ matrix.target.repo }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ matrix.target.repo }}
           token: ${{ secrets.ALKEMIO_INFRASTRUCTURE_BOT_PUSH_TOKEN }}
@@ -130,7 +130,7 @@ jobs:
       - name: Import GPG signing key
         if: steps.sync.outputs.changed == 'true'
         id: import_gpg
-        uses: crazy-max/ghaction-import-gpg@v6
+        uses: crazy-max/ghaction-import-gpg@v7
         with:
           gpg_private_key: ${{ secrets.ALKEMIO_INFRASTRUCTURE_BOT_GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.ALKEMIO_INFRASTRUCTURE_BOT_GPG_PASSPHRASE }}
@@ -175,7 +175,7 @@ jobs:
 
       - name: Open or update pull request
         if: steps.sync.outputs.changed == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           SOURCE_SHA: ${{ github.sha }}
         with:
