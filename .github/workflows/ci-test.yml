@@ -1,0 +1,19 @@
+name: CI — Lint & Test
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  ci:
+    uses: antst/alkemio-github-workflows/.github/workflows/go-ci.yml@v1
+    permissions:
+      contents: read
+    with:
+      # Old `make lint` ran go vet before golangci-lint; keep that.
+      run-vet: true
+      # Staleness gate: make openapi regenerates openapi.yaml with the
+      # centrally pinned apispec, then the diff must be clean.
+      openapi-make-target: openapi

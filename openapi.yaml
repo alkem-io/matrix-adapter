@@ -71,11 +71,7 @@ paths:
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: '#/components/schemas/dto.CheckRoomHTTPResponse'
-                  - additionalProperties:
-                      type: string
-                    type: object
+                $ref: '#/components/schemas/dto.CheckRoomHTTPResponse'
           description: OK
         "400":
           content:
