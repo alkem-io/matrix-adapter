@@ -16,4 +16,3 @@ jobs:
       contents: read
       packages: write
       pull-requests: write
-    secrets: inherit
