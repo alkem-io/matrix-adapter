@@ -6,7 +6,7 @@ on:
 
 jobs:
   deploy:
-    uses: antst/alkemio-github-workflows/.github/workflows/deploy-hetzner.yml@v1
+    uses: alkem-io/github-workflows/.github/workflows/deploy-hetzner.yml@v1
     with:
       environment: dev
       # All names match the org conventions derived from the repo name:

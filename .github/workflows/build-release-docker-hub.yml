@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   release:
-    uses: antst/alkemio-github-workflows/.github/workflows/container-release.yml@v1
+    uses: alkem-io/github-workflows/.github/workflows/container-release.yml@v1
     permissions:
       contents: read
       packages: write
