@@ -8,7 +8,7 @@ on:
 
 jobs:
   ci:
-    uses: antst/alkemio-github-workflows/.github/workflows/go-ci.yml@v1
+    uses: alkem-io/github-workflows/.github/workflows/go-ci.yml@v1
     permissions:
       contents: read
     with:

@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   image:
-    uses: antst/alkemio-github-workflows/.github/workflows/container-pr.yml@v1
+    uses: alkem-io/github-workflows/.github/workflows/container-pr.yml@v1
     permissions:
       contents: read
       packages: write
