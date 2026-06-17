@@ -151,6 +151,7 @@ paths:
           description: Internal Server Error
       security:
         - apiKeyAuth: []
+      summary: handleDMRequest processes DM request webhooks from Synapse.
   /health/live:
     get:
       operationId: app.go:76:40
