@@ -28,6 +28,13 @@ type Config struct {
 	RabbitMQ struct {
 		URL string `yaml:"url"`
 	} `yaml:"rabbitmq"`
+
+	FileService struct {
+		// URL is the internal base URL of the Alkemio file-service
+		// (cluster-only). Used to fetch document bytes for outbound media
+		// attachments, e.g. GET {URL}/internal/file/{id}/content.
+		URL string `yaml:"url"`
+	} `yaml:"file_service"`
 }
 
 // Load reads the configuration from config.yaml and overrides it with environment variables.
@@ -78,6 +85,13 @@ func loadEnvVars(cfg *Config) {
 
 	loadMatrixEnv(cfg)
 	loadRabbitMQEnv(cfg)
+	loadFileServiceEnv(cfg)
+}
+
+func loadFileServiceEnv(cfg *Config) {
+	if v := os.Getenv("FILE_SERVICE_URL"); v != "" {
+		cfg.FileService.URL = v
+	}
 }
 
 func loadMatrixEnv(cfg *Config) {

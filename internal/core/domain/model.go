@@ -76,8 +76,28 @@ type Message struct {
 	SenderMatrixID string // Matrix User ID
 	Content        string
 	Timestamp      time.Time
-	ThreadID       string     // Parent message ID for threads
-	Reactions      []Reaction // Reactions to this message
+	ThreadID       string       // Parent message ID for threads
+	Reactions      []Reaction   // Reactions to this message
+	Attachments    []Attachment // Media attachments on this message
+}
+
+// Attachment is a media reference carried on a message, in either direction.
+//
+//   - Outbound (web→Matrix): DocumentID is the file-service document whose bytes
+//     are uploaded to Synapse; MediaID is unset.
+//   - Inbound (Matrix→web): MediaID is the Synapse media id parsed from the
+//     event's mxc:// URL; DocumentID is set only when the event carries an
+//     io.alkemio.document_id field (an echo of our own outbound media).
+//
+// The adapter is stateless: it never resolves these refs to URLs or buckets.
+type Attachment struct {
+	DocumentID  string
+	MediaID     string
+	DisplayName string
+	MimeType    string
+	Size        int64
+	Width       *int
+	Height      *int
 }
 
 // Reaction represents a reaction event.

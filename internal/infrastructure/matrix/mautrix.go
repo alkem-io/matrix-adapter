@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -723,9 +724,12 @@ func (m *MautrixAdapter) markRoomAsReadForUsers(
 	)
 }
 
-// SendMessage sends a message to a room.
+// SendMessage sends a message to a room. A non-empty text body is sent as a
+// single m.text event; each attachment is sent as its own media event
+// (m.image/m.file/...). Returns the primary event ID (the text event if there
+// is text, otherwise the first media event).
 func (m *MautrixAdapter) SendMessage(
-	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string,
+	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment,
 ) (id.EventID, error) {
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
@@ -733,11 +737,26 @@ func (m *MautrixAdapter) SendMessage(
 	}
 	intent := m.as.Intent(userID)
 
-	resp, err := intent.SendText(ctx, roomID, content)
-	if err != nil {
-		return "", fmt.Errorf("failed to send message: %w", err)
+	var primaryEventID id.EventID
+	if content != "" {
+		resp, err := intent.SendText(ctx, roomID, content)
+		if err != nil {
+			return "", fmt.Errorf("failed to send message: %w", err)
+		}
+		primaryEventID = resp.EventID
 	}
-	return resp.EventID, nil
+
+	for i := range attachments {
+		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], "")
+		if err != nil {
+			return "", err
+		}
+		if primaryEventID == "" {
+			primaryEventID = eventID
+		}
+	}
+
+	return primaryEventID, nil
 }
 
 // ============================================================================
@@ -878,9 +897,13 @@ func (m *MautrixAdapter) setOrRedactState(
 // Message & Reaction Operations
 // ============================================================================
 
-// SendReply sends a reply to a message.
+// SendReply sends a reply to a message. A non-empty text body is sent as a
+// single threaded m.text event; each attachment is sent as its own threaded
+// media event. Returns the primary event ID (the text event if there is text,
+// otherwise the first media event).
 func (m *MautrixAdapter) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
+	attachments []domain.Attachment,
 ) (id.EventID, error) {
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
@@ -888,24 +911,183 @@ func (m *MautrixAdapter) SendReply(
 	}
 	intent := m.as.Intent(userID)
 
-	msgContent := event.MessageEventContent{
-		MsgType: event.MsgText,
-		Body:    content,
-		RelatesTo: &event.RelatesTo{
-			Type:    event.RelThread,
-			EventID: threadID,
-			InReplyTo: &event.InReplyTo{
+	var primaryEventID id.EventID
+	if content != "" {
+		msgContent := event.MessageEventContent{
+			MsgType: event.MsgText,
+			Body:    content,
+			RelatesTo: &event.RelatesTo{
+				Type:    event.RelThread,
 				EventID: threadID,
+				InReplyTo: &event.InReplyTo{
+					EventID: threadID,
+				},
+				IsFallingBack: true,
 			},
-			IsFallingBack: true,
-		},
+		}
+
+		resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, &msgContent)
+		if err != nil {
+			return "", fmt.Errorf("failed to send reply: %w", err)
+		}
+		primaryEventID = resp.EventID
 	}
 
-	resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, &msgContent)
+	for i := range attachments {
+		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID)
+		if err != nil {
+			return "", err
+		}
+		if primaryEventID == "" {
+			primaryEventID = eventID
+		}
+	}
+
+	return primaryEventID, nil
+}
+
+// ============================================================================
+// Media (byte bridge) — stateless: fetch from file-service, push to Synapse
+// ============================================================================
+
+// UploadMedia uploads raw bytes to the homeserver's media repository and
+// returns the resulting mxc:// content URI. Thin wrapper over the bot's
+// Client.UploadBytes.
+func (m *MautrixAdapter) UploadMedia(ctx context.Context, data []byte, contentType string) (id.ContentURI, error) {
+	resp, err := m.as.BotIntent().UploadBytes(ctx, data, contentType)
 	if err != nil {
-		return "", fmt.Errorf("failed to send reply: %w", err)
+		return id.ContentURI{}, fmt.Errorf("failed to upload media: %w", err)
+	}
+	return resp.ContentURI, nil
+}
+
+// DownloadMedia fetches the bytes for an mxc:// content URI from the
+// homeserver's media repository. Thin wrapper over the bot's
+// Client.DownloadBytes.
+func (m *MautrixAdapter) DownloadMedia(ctx context.Context, mxc id.ContentURI) ([]byte, error) {
+	data, err := m.as.BotIntent().DownloadBytes(ctx, mxc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download media %s: %w", mxc.String(), err)
+	}
+	return data, nil
+}
+
+// sendAttachment fetches a document's bytes from file-service, uploads them to
+// the homeserver, and sends a media event carrying the mxc URL, file info, and
+// the io.alkemio.document_id breadcrumb. When threadID is non-empty the event
+// is threaded under it.
+func (m *MautrixAdapter) sendAttachment(
+	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, threadID id.EventID,
+) (id.EventID, error) {
+	data, contentType, err := m.fetchDocumentContent(ctx, att.DocumentID)
+	if err != nil {
+		return "", err
+	}
+	if contentType == "" {
+		contentType = att.MimeType
+	}
+
+	mxc, err := m.UploadMedia(ctx, data, contentType)
+	if err != nil {
+		return "", err
+	}
+
+	content := buildMediaContent(att, mxc, contentType, threadID)
+	resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content)
+	if err != nil {
+		return "", fmt.Errorf("failed to send media event: %w", err)
 	}
 	return resp.EventID, nil
+}
+
+// fetchDocumentContent streams a document's bytes from the file-service internal
+// content endpoint: GET {FILE_SERVICE_URL}/internal/file/{id}/content. Returns
+// the bytes and the response Content-Type.
+func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID string) ([]byte, string, error) {
+	baseURL := m.cfg.FileService.URL
+	if baseURL == "" {
+		return nil, "", fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
+	}
+	url := fmt.Sprintf("%s/internal/file/%s/content", strings.TrimRight(baseURL, "/"), documentID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to build file-service request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to fetch document %s from file-service: %w", documentID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("file-service returned status %d fetching document %s", resp.StatusCode, documentID)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read document %s content: %w", documentID, err)
+	}
+	return data, resp.Header.Get("Content-Type"), nil
+}
+
+// buildMediaContent constructs the raw event content for a media message:
+// msgtype + body + url(mxc) + info, plus the io.alkemio.document_id breadcrumb
+// used for lookup-free read-translation of our own outbound media. A map is
+// used (rather than event.MessageEventContent) so the custom field can be set
+// as a top-level event property.
+func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType string, threadID id.EventID) map[string]any {
+	mime := att.MimeType
+	if mime == "" {
+		mime = contentType
+	}
+
+	info := map[string]any{
+		"mimetype": mime,
+		"size":     att.Size,
+	}
+	if att.Width != nil {
+		info["w"] = *att.Width
+	}
+	if att.Height != nil {
+		info["h"] = *att.Height
+	}
+
+	content := map[string]any{
+		"msgtype":                mediaMsgType(mime),
+		"body":                   att.DisplayName,
+		"url":                    mxc.String(),
+		"info":                   info,
+		"io.alkemio.document_id": att.DocumentID,
+	}
+
+	if threadID != "" {
+		content["m.relates_to"] = map[string]any{
+			"rel_type": "m.thread",
+			"event_id": threadID.String(),
+			"m.in_reply_to": map[string]any{
+				"event_id": threadID.String(),
+			},
+			"is_falling_back": true,
+		}
+	}
+
+	return content
+}
+
+// mediaMsgType maps a MIME type to the appropriate Matrix message msgtype.
+func mediaMsgType(mime string) string {
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		return "m.image"
+	case strings.HasPrefix(mime, "video/"):
+		return "m.video"
+	case strings.HasPrefix(mime, "audio/"):
+		return "m.audio"
+	default:
+		return "m.file"
+	}
 }
 
 // RedactEvent redacts an event.
@@ -1545,7 +1727,10 @@ func (m *MautrixAdapter) parseReactionEvent(evt *event.Event, roomID id.RoomID) 
 // parseMessageEvent extracts a domain.Message from a Matrix event.
 func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *domain.Message {
 	body := m.extractMessageBody(evt)
-	if body == "" {
+	attachment := extractAttachment(evt)
+	// A media event may carry an empty body; keep it as long as it has an
+	// attachment. Text events with an empty body are skipped as before.
+	if body == "" && attachment == nil {
 		return nil
 	}
 
@@ -1555,6 +1740,9 @@ func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *
 		Content:        body,
 		SenderMatrixID: evt.Sender.String(),
 		Timestamp:      time.UnixMilli(evt.Timestamp),
+	}
+	if attachment != nil {
+		msg.Attachments = []domain.Attachment{*attachment}
 	}
 
 	// Check for thread relation (MSC3440) first, then fallback to m.in_reply_to
