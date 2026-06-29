@@ -3,6 +3,7 @@ package matrix
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -94,9 +95,11 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse content
-	content, ok := evt.Content.Raw["body"].(string)
-	if !ok {
+	// Parse content. Media events (m.image/m.file/...) may carry no body, so
+	// a missing body is only fatal when there is also no attachment.
+	content, _ := evt.Content.Raw["body"].(string)
+	attachment := extractAttachment(evt)
+	if content == "" && attachment == nil {
 		m.logger.Warn("Failed to parse message body", "event_id", evt.ID)
 		return
 	}
@@ -109,25 +112,14 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 	}
 
 	// Extract thread ID from m.relates_to if present
-	var threadID string
-	if relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{}); ok {
-		// Check for thread relation (MSC3440)
-		if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
-			if eventID, ok := relatesTo["event_id"].(string); ok {
-				threadID = eventID
-			}
-		}
-		// Also check m.in_reply_to for legacy thread support
-		if threadID == "" {
-			if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
-				if eventID, ok := inReplyTo["event_id"].(string); ok {
-					threadID = eventID
-				}
-			}
-		}
+	threadID := extractThreadIDFromRawRelations(evt)
+
+	var attachments []domain.Attachment
+	if attachment != nil {
+		attachments = []domain.Attachment{*attachment}
 	}
 
-	go func(e *event.Event, c string, s uuid.UUID, tid string) {
+	go func(e *event.Event, c string, s uuid.UUID, tid string, atts []domain.Attachment) {
 		// Resolve Alkemio room ID from Matrix room ID (HTTP call - must be async)
 		alkemioRoomID := m.resolveOrReconcile(context.Background(), e.RoomID)
 		if alkemioRoomID == uuid.Nil {
@@ -137,17 +129,39 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 
 		if err := m.eventHandlers.OnMessage(
 			domain.Message{
-				ID:        e.ID.String(),
-				RoomID:    alkemioRoomID.String(),
-				SenderID:  s,
-				Content:   c,
-				Timestamp: time.UnixMilli(e.Timestamp),
-				ThreadID:  tid,
+				ID:          e.ID.String(),
+				RoomID:      alkemioRoomID.String(),
+				SenderID:    s,
+				Content:     c,
+				Timestamp:   time.UnixMilli(e.Timestamp),
+				ThreadID:    tid,
+				Attachments: atts,
 			},
 		); err != nil {
 			m.logger.Error("Error handling message", "error", err)
 		}
-	}(evt, content, senderUUID, threadID)
+	}(evt, content, senderUUID, threadID, attachments)
+}
+
+// extractThreadIDFromRawRelations reads the thread/reply event id from a
+// message event's raw m.relates_to: the explicit m.thread relation (MSC3440)
+// is preferred, falling back to m.in_reply_to for legacy clients. Returns "".
+func extractThreadIDFromRawRelations(evt *event.Event) string {
+	relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
+		if eventID, ok := relatesTo["event_id"].(string); ok {
+			return eventID
+		}
+	}
+	if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
+		if eventID, ok := inReplyTo["event_id"].(string); ok {
+			return eventID
+		}
+	}
+	return ""
 }
 
 // isMessageEdit checks if an event is a message edit (m.replace relation).
@@ -799,6 +813,91 @@ func (m *MautrixAdapter) isSpaceRoom(ctx context.Context, roomID id.RoomID) (boo
 	}
 	roomType, _ := content["type"].(string)
 	return roomType == "m.space", nil
+}
+
+// mediaMsgTypes is the set of m.room.message msgtypes that carry a media
+// attachment (an mxc:// URL + file info).
+var mediaMsgTypes = map[string]struct{}{
+	"m.image": {},
+	"m.file":  {},
+	"m.video": {},
+	"m.audio": {},
+}
+
+// extractAttachment surfaces a raw media reference from a message event, or nil
+// if the event is not a media message. It reads the event's raw content:
+//   - url(mxc) → MediaID (the Synapse media id; the server's re-home key)
+//   - info → mimetype/size/w/h
+//   - io.alkemio.document_id → DocumentID (set only on our own outbound echo)
+//
+// The adapter never resolves these refs — it only surfaces them.
+func extractAttachment(evt *event.Event) *domain.Attachment {
+	raw := evt.Content.Raw
+	if raw == nil {
+		return nil
+	}
+	msgtype, _ := raw["msgtype"].(string)
+	if _, ok := mediaMsgTypes[msgtype]; !ok {
+		return nil
+	}
+
+	att := &domain.Attachment{}
+	if body, ok := raw["body"].(string); ok {
+		att.DisplayName = body
+	}
+
+	// url (mxc://<server>/<media_id>) → MediaID
+	if urlStr, ok := raw["url"].(string); ok && urlStr != "" {
+		if uri, err := id.ParseContentURI(urlStr); err == nil {
+			att.MediaID = uri.FileID
+		}
+	}
+
+	// info → mime/size/dims
+	if info, ok := raw["info"].(map[string]interface{}); ok {
+		if mime, ok := info["mimetype"].(string); ok {
+			att.MimeType = mime
+		}
+		if size, ok := rawInt64(info["size"]); ok {
+			att.Size = size
+		}
+		att.Width = rawIntPtr(info["w"])
+		att.Height = rawIntPtr(info["h"])
+	}
+
+	// io.alkemio.document_id → DocumentID (outbound echo only)
+	if docID, ok := raw["io.alkemio.document_id"].(string); ok && docID != "" {
+		att.DocumentID = docID
+	}
+
+	return att
+}
+
+// rawInt64 coerces a JSON-decoded numeric value (float64 from encoding/json, or
+// an int produced by in-process construction) to an int64.
+func rawInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case json.Number:
+		i, err := n.Int64()
+		return i, err == nil
+	default:
+		return 0, false
+	}
+}
+
+// rawIntPtr returns a pointer to the int value of v, or nil if v is not numeric.
+func rawIntPtr(v any) *int {
+	if i, ok := rawInt64(v); ok {
+		x := int(i)
+		return &x
+	}
+	return nil
 }
 
 // getRoomNameAndTopic fetches the room name and topic from state events.
