@@ -14,6 +14,118 @@ import (
 func adapter() *MautrixAdapter { return &MautrixAdapter{} }
 
 // ---------------------------------------------------------------------------
+// extractAttachment (T010 — inbound media translation)
+// ---------------------------------------------------------------------------
+
+func mediaEvent(raw map[string]any) *event.Event {
+	return &event.Event{Content: event.Content{Raw: raw}}
+}
+
+// Inbound m.image carrying io.alkemio.document_id (our own outbound echo) →
+// both DocumentID and MediaID are surfaced.
+func TestExtractAttachment_ImageWithDocumentID(t *testing.T) {
+	att := extractAttachment(mediaEvent(map[string]any{
+		"msgtype": "m.image",
+		"body":    "photo.jpg",
+		"url":     "mxc://test.local/media123",
+		"info": map[string]any{
+			"mimetype": "image/jpeg",
+			"size":     float64(12345), // JSON numbers decode to float64
+			"w":        float64(1920),
+			"h":        float64(1080),
+		},
+		"io.alkemio.document_id": "doc-abc",
+	}))
+	if att == nil {
+		t.Fatal("expected non-nil attachment")
+		return
+	}
+	if att.MediaID != "media123" {
+		t.Errorf("expected MediaID 'media123', got %q", att.MediaID)
+	}
+	if att.DocumentID != "doc-abc" {
+		t.Errorf("expected DocumentID 'doc-abc', got %q", att.DocumentID)
+	}
+	if att.MimeType != "image/jpeg" {
+		t.Errorf("expected MimeType 'image/jpeg', got %q", att.MimeType)
+	}
+	if att.Size != 12345 {
+		t.Errorf("expected Size 12345, got %d", att.Size)
+	}
+	if att.DisplayName != "photo.jpg" {
+		t.Errorf("expected DisplayName 'photo.jpg', got %q", att.DisplayName)
+	}
+	if att.Width == nil || *att.Width != 1920 {
+		t.Errorf("expected Width 1920, got %v", att.Width)
+	}
+	if att.Height == nil || *att.Height != 1080 {
+		t.Errorf("expected Height 1080, got %v", att.Height)
+	}
+}
+
+// Inbound m.image from Element (no io.alkemio.document_id) → MediaID set,
+// DocumentID empty (server will re-home by media_id).
+func TestExtractAttachment_ImageWithoutDocumentID(t *testing.T) {
+	att := extractAttachment(mediaEvent(map[string]any{
+		"msgtype": "m.image",
+		"body":    "element.png",
+		"url":     "mxc://other.server/xyz789",
+		"info": map[string]any{
+			"mimetype": "image/png",
+			"size":     float64(42),
+		},
+	}))
+	if att == nil {
+		t.Fatal("expected non-nil attachment")
+		return
+	}
+	if att.MediaID != "xyz789" {
+		t.Errorf("expected MediaID 'xyz789', got %q", att.MediaID)
+	}
+	if att.DocumentID != "" {
+		t.Errorf("expected empty DocumentID, got %q", att.DocumentID)
+	}
+	if att.Width != nil || att.Height != nil {
+		t.Errorf("expected nil dims, got w=%v h=%v", att.Width, att.Height)
+	}
+}
+
+// m.file inbound maps to an attachment too.
+func TestExtractAttachment_File(t *testing.T) {
+	att := extractAttachment(mediaEvent(map[string]any{
+		"msgtype": "m.file",
+		"body":    "doc.pdf",
+		"url":     "mxc://test.local/fileabc",
+		"info":    map[string]any{"mimetype": "application/pdf", "size": float64(1000)},
+	}))
+	if att == nil {
+		t.Fatal("expected non-nil attachment")
+		return
+	}
+	if att.MediaID != "fileabc" {
+		t.Errorf("expected MediaID 'fileabc', got %q", att.MediaID)
+	}
+}
+
+// A plain text message yields no attachment.
+func TestExtractAttachment_NonMedia(t *testing.T) {
+	att := extractAttachment(mediaEvent(map[string]any{
+		"msgtype": "m.text",
+		"body":    "hello",
+	}))
+	if att != nil {
+		t.Errorf("expected nil attachment for m.text, got %+v", att)
+	}
+}
+
+// An event with no raw content yields no attachment.
+func TestExtractAttachment_NilRaw(t *testing.T) {
+	if att := extractAttachment(&event.Event{}); att != nil {
+		t.Errorf("expected nil attachment for empty event, got %+v", att)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // parseStateChange
 // ---------------------------------------------------------------------------
 

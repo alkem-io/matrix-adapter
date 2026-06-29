@@ -68,6 +68,10 @@ type mockIntentAPI struct {
 	whoamiResult           *mautrix.RespWhoami
 	whoamiErr              error
 	inviteUserErr          error
+	uploadBytesResult      *mautrix.RespMediaUpload
+	uploadBytesErr         error
+	downloadBytesResult    []byte
+	downloadBytesErr       error
 
 	// Call tracking
 	ensureRegisteredCalled int
@@ -116,6 +120,13 @@ type mockIntentAPI struct {
 	lastSetAccountDataContent  interface{}
 	lastBuildClientURLParts    []any
 	buildClientURLResult       string
+
+	// Media
+	uploadBytesCalled    int
+	lastUploadBytesData  []byte
+	lastUploadBytesType  string
+	downloadBytesCalled  int
+	lastDownloadBytesMXC id.ContentURI
 }
 
 var _ intentAPI = (*mockIntentAPI)(nil)
@@ -224,6 +235,19 @@ func (m *mockIntentAPI) CreateAlias(_ context.Context, alias id.RoomAlias, roomI
 func (m *mockIntentAPI) DeleteAlias(_ context.Context, _ id.RoomAlias) (*mautrix.RespAliasDelete, error) {
 	m.deleteAliasCalled++
 	return &mautrix.RespAliasDelete{}, m.deleteAliasErr
+}
+
+func (m *mockIntentAPI) UploadBytes(_ context.Context, data []byte, contentType string) (*mautrix.RespMediaUpload, error) {
+	m.uploadBytesCalled++
+	m.lastUploadBytesData = data
+	m.lastUploadBytesType = contentType
+	return m.uploadBytesResult, m.uploadBytesErr
+}
+
+func (m *mockIntentAPI) DownloadBytes(_ context.Context, mxcURL id.ContentURI) ([]byte, error) {
+	m.downloadBytesCalled++
+	m.lastDownloadBytesMXC = mxcURL
+	return m.downloadBytesResult, m.downloadBytesErr
 }
 
 func (m *mockIntentAPI) SendReceipt(_ context.Context, _ id.RoomID, _ id.EventID, _ event.ReceiptType, _ interface{}) error {
@@ -524,7 +548,7 @@ func TestSendMessage_Success(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	eventID, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello")
+	eventID, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil)
 	require.NoError(t, err)
 	assert.Equal(t, id.EventID("$msg1"), eventID)
 	assert.Equal(t, 1, intent.sendTextCalled)
@@ -541,7 +565,7 @@ func TestSendMessage_Error(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello")
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to send message")
 }
@@ -559,7 +583,7 @@ func TestSendReply_Success(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	eventID, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply text", "$thread-root")
+	eventID, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply text", "$thread-root", nil)
 	require.NoError(t, err)
 	assert.Equal(t, id.EventID("$reply1"), eventID)
 	assert.Equal(t, 1, intent.sendMessageEventCalled)
@@ -583,7 +607,7 @@ func TestSendReply_Error(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	_, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply", "$thread")
+	_, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply", "$thread", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to send reply")
 }

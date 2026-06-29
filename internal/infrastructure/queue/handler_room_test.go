@@ -741,6 +741,46 @@ func TestHandleSendMessage_EmptyContent(t *testing.T) {
 	assertErrorCode(t, result, dto.ErrCodeInvalidParam)
 }
 
+func TestHandleSendMessage_WithAttachments(t *testing.T) {
+	mock := &testMockMatrixPort{
+		resolveAliasResult: "!room1:test",
+		sendMessageResult:  "$evt1:test",
+	}
+	h := testRoomHandler(mock)
+
+	w, hgt := 800, 600
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Content:       "", // attachment-only: empty content must be accepted
+		Attachments: []dto.AttachmentRef{{
+			DocumentID:  "doc-1",
+			DisplayName: "pic.png",
+			MimeType:    "image/png",
+			Size:        123,
+			Width:       &w,
+			Height:      &hgt,
+		}},
+	})
+
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertSuccess(t, result)
+
+	if len(mock.capturedSendMessageAttachments) != 1 {
+		t.Fatalf("expected 1 attachment forwarded, got %d", len(mock.capturedSendMessageAttachments))
+	}
+	att := mock.capturedSendMessageAttachments[0]
+	if att.DocumentID != "doc-1" || att.DisplayName != "pic.png" || att.MimeType != "image/png" || att.Size != 123 {
+		t.Errorf("attachment not forwarded correctly: %+v", att)
+	}
+	if att.Width == nil || *att.Width != 800 || att.Height == nil || *att.Height != 600 {
+		t.Errorf("attachment dims not forwarded: w=%v h=%v", att.Width, att.Height)
+	}
+}
+
 func TestHandleSendMessage_RoomNotFound(t *testing.T) {
 	mock := &testMockMatrixPort{
 		resolveAliasErr: domain.ErrRoomNotFound,

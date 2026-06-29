@@ -130,11 +130,11 @@ func (m *mockExtendedMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.U
 	return m.kickUserErr
 }
 
-func (m *mockExtendedMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string) (id.EventID, error) {
+func (m *mockExtendedMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (id.EventID, error) {
 	return m.sendMessageResult, m.sendMessageErr
 }
 
-func (m *mockExtendedMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID) (id.EventID, error) {
+func (m *mockExtendedMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID, _ []domain.Attachment) (id.EventID, error) {
 	return m.sendReplyResult, m.sendReplyErr
 }
 
@@ -876,7 +876,7 @@ func TestSendMessage_Success(t *testing.T) {
 	}
 	svc := newTestService(matrix)
 
-	eventID, err := svc.SendMessage(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "hello")
+	eventID, err := svc.SendMessage(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "hello", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -891,7 +891,7 @@ func TestSendMessage_Error(t *testing.T) {
 	}
 	svc := newTestService(matrix)
 
-	_, err := svc.SendMessage(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "hello")
+	_, err := svc.SendMessage(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "hello", nil)
 	if err == nil {
 		t.Fatal("expected error from SendMessage")
 	}
@@ -907,7 +907,7 @@ func TestSendReply_Success(t *testing.T) {
 	}
 	svc := newTestService(matrix)
 
-	eventID, err := svc.SendReply(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "reply text", "$thread:test.local")
+	eventID, err := svc.SendReply(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "reply text", "$thread:test.local", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -922,7 +922,7 @@ func TestSendReply_Error(t *testing.T) {
 	}
 	svc := newTestService(matrix)
 
-	_, err := svc.SendReply(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "reply text", "$thread:test.local")
+	_, err := svc.SendReply(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "reply text", "$thread:test.local", nil)
 	if err == nil {
 		t.Fatal("expected error from SendReply")
 	}
