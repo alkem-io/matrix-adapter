@@ -72,7 +72,51 @@ func convertMessageToDTO(msg domain.Message) dto.MessageDto {
 	for _, r := range msg.Reactions {
 		msgDTO.Reactions = append(msgDTO.Reactions, convertReactionToDTO(r))
 	}
+	// Convert attachments
+	for _, a := range msg.Attachments {
+		msgDTO.Attachments = append(msgDTO.Attachments, convertAttachmentToReceivedDTO(a))
+	}
 	return msgDTO
+}
+
+// convertAttachmentRefsToDomain converts inbound send attachment refs to domain attachments.
+func convertAttachmentRefsToDomain(refs []dto.AttachmentRef) []domain.Attachment {
+	if len(refs) == 0 {
+		return nil
+	}
+	attachments := make([]domain.Attachment, 0, len(refs))
+	for _, r := range refs {
+		attachments = append(attachments, domain.Attachment{
+			DocumentID:  r.DocumentID,
+			DisplayName: r.DisplayName,
+			MimeType:    r.MimeType,
+			Size:        r.Size,
+			Width:       r.Width,
+			Height:      r.Height,
+		})
+	}
+	return attachments
+}
+
+// convertAttachmentToReceivedDTO converts a domain.Attachment to a
+// dto.ReceivedAttachment, mapping empty DocumentID/MediaID to nil pointers.
+func convertAttachmentToReceivedDTO(a domain.Attachment) dto.ReceivedAttachment {
+	ra := dto.ReceivedAttachment{
+		DisplayName: a.DisplayName,
+		MimeType:    a.MimeType,
+		Size:        a.Size,
+		Width:       a.Width,
+		Height:      a.Height,
+	}
+	if a.DocumentID != "" {
+		docID := a.DocumentID
+		ra.DocumentID = &docID
+	}
+	if a.MediaID != "" {
+		mediaID := a.MediaID
+		ra.MediaID = &mediaID
+	}
+	return ra
 }
 
 // convertMessagesToDTO converts a slice of domain.Message to []dto.MessageDto.
@@ -312,8 +356,11 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 	if errResp := RequireUUID(req.SenderActorID, "sender_actor_id"); errResp != nil {
 		return *errResp, nil
 	}
-	if errResp := RequireNonEmpty(req.Content, "content"); errResp != nil {
-		return *errResp, nil
+	// Content may be empty when the message carries only attachments.
+	if len(req.Attachments) == 0 {
+		if errResp := RequireNonEmpty(req.Content, "content"); errResp != nil {
+			return *errResp, nil
+		}
 	}
 
 	// Resolve room alias to Matrix room ID
@@ -323,6 +370,7 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 	}
 
 	sender := domain.NewActor(req.SenderActorID.UUID())
+	attachments := convertAttachmentRefsToDomain(req.Attachments)
 
 	var eventID id.EventID
 	var err error
@@ -334,10 +382,11 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 			sender,
 			req.Content,
 			id.EventID(*req.ParentMessageID),
+			attachments,
 		)
 	} else {
 		// Send as regular message
-		eventID, err = h.service.SendMessage(ctx, roomID, sender, req.Content)
+		eventID, err = h.service.SendMessage(ctx, roomID, sender, req.Content, attachments)
 	}
 
 	if err != nil {
