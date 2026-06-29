@@ -318,10 +318,10 @@ Package dto provides Data Transfer Objects for the Matrix Adapter.
 */
 
 /**
- * Deprecated: DMRequestedEvent represents the event published when Synapse requests approval
+ * DMRequestedEvent represents the event published when Synapse requests approval
  * for a DM room creation between two Alkemio users.
  * This is published to the communication.room.dm.requested topic.
- * Replaced by CheckRoomHTTPRequest/CheckRoomHTTPResponse and the synchronous check-room flow.
+ * Deprecated: Replaced by CheckRoomHTTPRequest/CheckRoomHTTPResponse and the synchronous check-room flow.
  */
 export interface DMRequestedEvent {
   /**
@@ -339,9 +339,9 @@ export interface DMRequestedEvent {
   timestamp: number /* int64 */;
 }
 /**
- * Deprecated: DMWebhookPayload represents the payload received from Synapse's DM request webhook.
+ * DMWebhookPayload represents the payload received from Synapse's DM request webhook.
  * The spam checker module sends this when a user attempts to create a DM room.
- * Replaced by CheckRoomHTTPRequest and the synchronous check-room flow.
+ * Deprecated: Replaced by CheckRoomHTTPRequest and the synchronous check-room flow.
  */
 export interface DMWebhookPayload {
   /**
@@ -438,6 +438,7 @@ export interface Message {
   sender: string;
   timestamp: number /* int64 */;
   reactions: Reaction[];
+  attachments?: ReceivedAttachment[];
 }
 /**
  * Reaction represents a reaction to a message.
@@ -539,6 +540,37 @@ export interface MessageDto {
   timestamp: number /* int64 */; // Unix milliseconds
   reactions: ReactionDto[];
   thread_id?: MessageID;
+  attachments?: ReceivedAttachment[];
+}
+/**
+ * AttachmentRef is a reference to a file-service document to be sent as a
+ * Matrix media event. The adapter fetches the document bytes, uploads them to
+ * the homeserver, and embeds the DocumentID as io.alkemio.document_id on the
+ * outbound event.
+ */
+export interface AttachmentRef {
+  document_id: string; // Alkemio file-service document id (conversation bucket)
+  display_name: string; // Filename / caption shown in clients
+  mime_type: string;
+  size: number /* int64 */;
+  width?: number /* int */;
+  height?: number /* int */;
+}
+/**
+ * ReceivedAttachment is a raw media reference surfaced on an inbound message.
+ * DocumentID is set when the event carries io.alkemio.document_id (an echo of
+ * our own outbound media); MediaID is set for Element-origin media (the Synapse
+ * media id, used by the server as the re-home key). The adapter never resolves
+ * either — the server re-homes and resolves URLs.
+ */
+export interface ReceivedAttachment {
+  document_id?: string;
+  media_id?: string;
+  display_name: string;
+  mime_type: string;
+  size: number /* int64 */;
+  width?: number /* int */;
+  height?: number /* int */;
 }
 /**
  * SendMessageRequest sends a text message to a room.
@@ -547,8 +579,9 @@ export interface MessageDto {
 export interface SendMessageRequest {
   alkemio_room_id: AlkemioRoomID;
   sender_actor_id: AlkemioActorID;
-  content: string; // Markdown supported
+  content: string; // Markdown supported (may be empty if only attachments)
   parent_message_id?: MessageID; // For threads
+  attachments?: AttachmentRef[]; // Media doc refs (<=10)
 }
 /**
  * SendMessageResponse returns the message ID and timestamp.
