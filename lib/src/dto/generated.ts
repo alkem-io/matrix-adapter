@@ -582,6 +582,16 @@ export interface SendMessageRequest {
   content: string; // Markdown supported (may be empty if only attachments)
   parent_message_id?: MessageID; // For threads
   attachments?: AttachmentRef[]; // Media doc refs (<=10)
+  /**
+   * IdempotencyKey, when set, makes the send safe to retry: the adapter derives
+   * a deterministic Matrix transaction ID per emitted event from this key, so a
+   * retry with the same key is de-duplicated by the homeserver instead of
+   * producing duplicate text/attachment events. It must be unique per logical
+   * send and STABLE across retries of that same send (a request UUID minted by
+   * the caller). When empty, sends are at-most-once: a partially-failed
+   * multi-event send may duplicate already-delivered events if retried.
+   */
+  idempotency_key?: string;
 }
 /**
  * SendMessageResponse returns the message ID and timestamp.

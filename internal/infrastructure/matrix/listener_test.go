@@ -40,11 +40,14 @@ func TestExtractAttachment_ImageWithDocumentID(t *testing.T) {
 		t.Fatal("expected non-nil attachment")
 		return
 	}
-	if att.MediaID != "media123" {
-		t.Errorf("expected MediaID 'media123', got %q", att.MediaID)
-	}
+	// This is our own outbound echo (it carries io.alkemio.document_id), so the
+	// document ref wins and MediaID is cleared — the server resolves by
+	// DocumentID and must not re-home it by media_id.
 	if att.DocumentID != "doc-abc" {
 		t.Errorf("expected DocumentID 'doc-abc', got %q", att.DocumentID)
+	}
+	if att.MediaID != "" {
+		t.Errorf("expected MediaID cleared when DocumentID present, got %q", att.MediaID)
 	}
 	if att.MimeType != "image/jpeg" {
 		t.Errorf("expected MimeType 'image/jpeg', got %q", att.MimeType)

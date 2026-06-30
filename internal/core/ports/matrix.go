@@ -53,11 +53,16 @@ type MatrixPort interface {
 
 	// SendMessage sends a text message and/or media attachments to a room on
 	// behalf of a user. Text (if any) is one m.text event; each attachment is
-	// its own media event.
-	SendMessage(ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment) (id.EventID, error)
-	// SendReply sends a threaded reply (text and/or media attachments) to an existing message.
+	// its own media event. When idempotencyKey is non-empty, each emitted event
+	// is given a deterministic Matrix transaction ID derived from it so retries
+	// of the same logical send are de-duplicated by the homeserver; when empty,
+	// the send is at-most-once and a partial failure may duplicate on retry.
+	SendMessage(ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment, idempotencyKey string) (id.EventID, error)
+	// SendReply sends a threaded reply (text and/or media attachments) to an
+	// existing message. idempotencyKey carries the same retry semantics as
+	// SendMessage.
 	SendReply(
-		ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID, attachments []domain.Attachment,
+		ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID, attachments []domain.Attachment, idempotencyKey string,
 	) (id.EventID, error)
 	// RedactEvent deletes an event from a room.
 	RedactEvent(ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string) error

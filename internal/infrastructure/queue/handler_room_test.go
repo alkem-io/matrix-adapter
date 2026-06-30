@@ -781,6 +781,95 @@ func TestHandleSendMessage_WithAttachments(t *testing.T) {
 	}
 }
 
+// The idempotency key on the request is forwarded verbatim to the matrix port
+// (for both plain sends and threaded replies) so the adapter can de-duplicate
+// retries at the homeserver.
+func TestHandleSendMessage_ForwardsIdempotencyKey(t *testing.T) {
+	mock := &testMockMatrixPort{
+		resolveAliasResult: "!room1:test",
+		sendMessageResult:  "$evt1:test",
+		sendReplyResult:    "$reply1:test",
+	}
+	h := testRoomHandler(mock)
+
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID:  dto.AlkemioRoomID(uuid.New()),
+		SenderActorID:  dto.AlkemioActorID(uuid.New()),
+		Content:        "Hello!",
+		IdempotencyKey: "key-123",
+	})
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertSuccess(t, result)
+	if mock.capturedSendMessageIdempotencyKey != "key-123" {
+		t.Errorf("expected idempotency key forwarded to SendMessage, got %q", mock.capturedSendMessageIdempotencyKey)
+	}
+
+	parentID := dto.MessageID("$parent:test")
+	replyPayload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID:   dto.AlkemioRoomID(uuid.New()),
+		SenderActorID:   dto.AlkemioActorID(uuid.New()),
+		Content:         "Reply!",
+		ParentMessageID: &parentID,
+		IdempotencyKey:  "key-456",
+	})
+	if _, err := h.HandleSendMessage(context.Background(), replyPayload); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.capturedSendReplyIdempotencyKey != "key-456" {
+		t.Errorf("expected idempotency key forwarded to SendReply, got %q", mock.capturedSendReplyIdempotencyKey)
+	}
+}
+
+// Defense-in-depth: more than the allowed number of attachments is rejected
+// before any Matrix event is emitted.
+func TestHandleSendMessage_TooManyAttachments(t *testing.T) {
+	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$evt1:test"}
+	h := testRoomHandler(mock)
+
+	atts := make([]dto.AttachmentRef, maxAttachmentsPerMessage+1)
+	for i := range atts {
+		atts[i] = dto.AttachmentRef{DocumentID: "doc", DisplayName: "x", MimeType: "image/png"}
+	}
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Attachments:   atts,
+	})
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertErrorCode(t, result, dto.ErrCodeInvalidParam)
+	if mock.capturedSendMessageRoomID != "" {
+		t.Error("SendMessage should not have been called when attachment count is rejected")
+	}
+}
+
+// An attachment with an empty document_id is rejected early with a clear error.
+func TestHandleSendMessage_EmptyAttachmentDocumentID(t *testing.T) {
+	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$evt1:test"}
+	h := testRoomHandler(mock)
+
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Attachments: []dto.AttachmentRef{
+			{DocumentID: "", DisplayName: "x", MimeType: "image/png"},
+		},
+	})
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertErrorCode(t, result, dto.ErrCodeInvalidParam)
+	if mock.capturedSendMessageRoomID != "" {
+		t.Error("SendMessage should not have been called when a document_id is empty")
+	}
+}
+
 func TestHandleSendMessage_RoomNotFound(t *testing.T) {
 	mock := &testMockMatrixPort{
 		resolveAliasErr: domain.ErrRoomNotFound,

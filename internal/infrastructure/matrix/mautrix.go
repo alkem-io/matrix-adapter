@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -730,6 +731,7 @@ func (m *MautrixAdapter) markRoomAsReadForUsers(
 // is text, otherwise the first media event).
 func (m *MautrixAdapter) SendMessage(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment,
+	idempotencyKey string,
 ) (id.EventID, error) {
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
@@ -739,15 +741,26 @@ func (m *MautrixAdapter) SendMessage(
 
 	var primaryEventID id.EventID
 	if content != "" {
-		resp, err := intent.SendText(ctx, roomID, content)
-		if err != nil {
-			return "", fmt.Errorf("failed to send message: %w", err)
+		if txn := txnReq(idempotencyKey, "text"); txn != nil {
+			// With an idempotency key we route the text through SendMessageEvent
+			// so we can attach a deterministic transaction ID for retry dedup.
+			resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage,
+				&event.MessageEventContent{MsgType: event.MsgText, Body: content}, txn...)
+			if err != nil {
+				return "", fmt.Errorf("failed to send message: %w", err)
+			}
+			primaryEventID = resp.EventID
+		} else {
+			resp, err := intent.SendText(ctx, roomID, content)
+			if err != nil {
+				return "", fmt.Errorf("failed to send message: %w", err)
+			}
+			primaryEventID = resp.EventID
 		}
-		primaryEventID = resp.EventID
 	}
 
 	for i := range attachments {
-		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], "")
+		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], "", txnReq(idempotencyKey, attachmentTxnSuffix(i)))
 		if err != nil {
 			return "", err
 		}
@@ -903,7 +916,7 @@ func (m *MautrixAdapter) setOrRedactState(
 // otherwise the first media event).
 func (m *MautrixAdapter) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
-	attachments []domain.Attachment,
+	attachments []domain.Attachment, idempotencyKey string,
 ) (id.EventID, error) {
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
@@ -926,7 +939,7 @@ func (m *MautrixAdapter) SendReply(
 			},
 		}
 
-		resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, &msgContent)
+		resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, &msgContent, txnReq(idempotencyKey, "text")...)
 		if err != nil {
 			return "", fmt.Errorf("failed to send reply: %w", err)
 		}
@@ -934,7 +947,7 @@ func (m *MautrixAdapter) SendReply(
 	}
 
 	for i := range attachments {
-		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID)
+		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID, txnReq(idempotencyKey, attachmentTxnSuffix(i)))
 		if err != nil {
 			return "", err
 		}
@@ -964,6 +977,14 @@ func (m *MautrixAdapter) UploadMedia(ctx context.Context, data []byte, contentTy
 // DownloadMedia fetches the bytes for an mxc:// content URI from the
 // homeserver's media repository. Thin wrapper over the bot's
 // Client.DownloadBytes.
+//
+// This is the download half of the adapter's byte-bridge responsibility
+// ("byte upload/download", workspace#013-matrix-media-file-service). It is not
+// yet wired to a queue topic — inbound media in the current slice is re-homed by
+// the server from the surfaced media_id, not pulled through the adapter — so it
+// is exercised only by tests today. Retained (not deleted) as the symmetric
+// counterpart to UploadMedia for the inbound byte-plane slice; remove if that
+// slice settles on a design that never routes bytes through the adapter.
 func (m *MautrixAdapter) DownloadMedia(ctx context.Context, mxc id.ContentURI) ([]byte, error) {
 	data, err := m.as.BotIntent().DownloadBytes(ctx, mxc)
 	if err != nil {
@@ -975,9 +996,12 @@ func (m *MautrixAdapter) DownloadMedia(ctx context.Context, mxc id.ContentURI) (
 // sendAttachment fetches a document's bytes from file-service, uploads them to
 // the homeserver, and sends a media event carrying the mxc URL, file info, and
 // the io.alkemio.document_id breadcrumb. When threadID is non-empty the event
-// is threaded under it.
+// is threaded under it. txn, when non-nil, carries a deterministic Matrix
+// transaction ID so a retry of this exact event is de-duplicated by the
+// homeserver.
 func (m *MautrixAdapter) sendAttachment(
 	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, threadID id.EventID,
+	txn []mautrix.ReqSendEvent,
 ) (id.EventID, error) {
 	data, contentType, err := m.fetchDocumentContent(ctx, att.DocumentID)
 	if err != nil {
@@ -992,17 +1016,44 @@ func (m *MautrixAdapter) sendAttachment(
 		return "", err
 	}
 
-	content := buildMediaContent(att, mxc, contentType, threadID)
-	resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content)
+	// info.size reflects the bytes actually uploaded, not the caller-supplied
+	// att.Size, so the event can't claim a length that disagrees with the blob.
+	content := buildMediaContent(att, mxc, contentType, int64(len(data)), threadID)
+	resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content, txn...)
 	if err != nil {
 		return "", fmt.Errorf("failed to send media event: %w", err)
 	}
 	return resp.EventID, nil
 }
 
+// fileServiceFetchTimeout bounds a single document fetch from file-service so a
+// slow or hung file-service can't block a send indefinitely. It is a backstop
+// in addition to any deadline already on the request context.
+const fileServiceFetchTimeout = 60 * time.Second
+
+// defaultMaxAttachmentBytes caps how many bytes we read from file-service for a
+// single attachment when no per-deployment limit is configured (50 MiB).
+const defaultMaxAttachmentBytes int64 = 50 * 1024 * 1024
+
+// fileServiceHTTPClient is a dedicated client (with a timeout) for fetching
+// document bytes. http.DefaultClient has no timeout, so it is deliberately not
+// used here.
+var fileServiceHTTPClient = &http.Client{Timeout: fileServiceFetchTimeout}
+
+// maxAttachmentBytes returns the configured per-attachment byte cap, falling
+// back to defaultMaxAttachmentBytes when unset.
+func (m *MautrixAdapter) maxAttachmentBytes() int64 {
+	if m.cfg != nil && m.cfg.FileService.MaxAttachmentBytes > 0 {
+		return m.cfg.FileService.MaxAttachmentBytes
+	}
+	return defaultMaxAttachmentBytes
+}
+
 // fetchDocumentContent streams a document's bytes from the file-service internal
 // content endpoint: GET {FILE_SERVICE_URL}/internal/file/{id}/content. Returns
-// the bytes and the response Content-Type.
+// the bytes and the response Content-Type. The response body is bounded by the
+// configured max attachment size to protect against a slow/hostile file-service
+// (timeout via fileServiceHTTPClient, size via io.LimitReader).
 func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID string) ([]byte, string, error) {
 	baseURL := m.cfg.FileService.URL
 	if baseURL == "" {
@@ -1015,7 +1066,7 @@ func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID st
 		return nil, "", fmt.Errorf("failed to build file-service request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := fileServiceHTTPClient.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to fetch document %s from file-service: %w", documentID, err)
 	}
@@ -1025,11 +1076,36 @@ func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID st
 		return nil, "", fmt.Errorf("file-service returned status %d fetching document %s", resp.StatusCode, documentID)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	// Read at most maxBytes+1 so we can detect (and reject) an oversized body
+	// without buffering the whole thing.
+	maxBytes := m.maxAttachmentBytes()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to read document %s content: %w", documentID, err)
 	}
+	if int64(len(data)) > maxBytes {
+		return nil, "", fmt.Errorf("document %s exceeds max attachment size of %d bytes", documentID, maxBytes)
+	}
 	return data, resp.Header.Get("Content-Type"), nil
+}
+
+// txnReq builds the optional ReqSendEvent carrying a deterministic Matrix
+// transaction ID (idempotencyKey + ":" + suffix) so a retry of the same logical
+// send is de-duplicated by the homeserver. When idempotencyKey is empty it
+// returns nil, leaving mautrix to mint a random transaction ID per call
+// (at-most-once semantics, no cross-retry dedup).
+func txnReq(idempotencyKey, suffix string) []mautrix.ReqSendEvent {
+	if idempotencyKey == "" {
+		return nil
+	}
+	return []mautrix.ReqSendEvent{{TransactionID: idempotencyKey + ":" + suffix}}
+}
+
+// attachmentTxnSuffix returns the per-attachment transaction-ID suffix; each
+// attachment in a send must get a distinct suffix so they are not de-duplicated
+// against one another.
+func attachmentTxnSuffix(index int) string {
+	return "att" + strconv.Itoa(index)
 }
 
 // buildMediaContent constructs the raw event content for a media message:
@@ -1037,7 +1113,7 @@ func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID st
 // used for lookup-free read-translation of our own outbound media. A map is
 // used (rather than event.MessageEventContent) so the custom field can be set
 // as a top-level event property.
-func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType string, threadID id.EventID) map[string]any {
+func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType string, size int64, threadID id.EventID) map[string]any {
 	mime := att.MimeType
 	if mime == "" {
 		mime = contentType
@@ -1045,7 +1121,7 @@ func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType str
 
 	info := map[string]any{
 		"mimetype": mime,
-		"size":     att.Size,
+		"size":     size,
 	}
 	if att.Width != nil {
 		info["w"] = *att.Width

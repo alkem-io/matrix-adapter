@@ -51,6 +51,14 @@ type SendMessageRequest struct {
 	Content         string          `json:"content"`                     // Markdown supported (may be empty if only attachments)
 	ParentMessageID *MessageID      `json:"parent_message_id,omitempty"` // For threads
 	Attachments     []AttachmentRef `json:"attachments,omitempty"`       // Media doc refs (<=10)
+	// IdempotencyKey, when set, makes the send safe to retry: the adapter derives
+	// a deterministic Matrix transaction ID per emitted event from this key, so a
+	// retry with the same key is de-duplicated by the homeserver instead of
+	// producing duplicate text/attachment events. It must be unique per logical
+	// send and STABLE across retries of that same send (a request UUID minted by
+	// the caller). When empty, sends are at-most-once: a partially-failed
+	// multi-event send may duplicate already-delivered events if retried.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 // SendMessageResponse returns the message ID and timestamp.

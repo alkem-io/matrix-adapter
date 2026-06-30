@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,12 @@ import (
 	"github.com/alkem-io/matrix-adapter/internal/core/service"
 	"github.com/alkem-io/matrix-adapter/pkg/dto"
 )
+
+// maxAttachmentsPerMessage caps how many media refs a single send may carry.
+// The server is the authoritative validator; this is a defense-in-depth bound
+// so a malformed/hostile request can't fan out into an unbounded number of
+// Matrix events.
+const maxAttachmentsPerMessage = 10
 
 // RoomHandler handles queue messages related to room operations.
 type RoomHandler struct {
@@ -363,6 +370,19 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 		}
 	}
 
+	// Defense-in-depth: the server owns attachment validation, but cap the count
+	// and reject empty document refs so a malformed request fails fast with a
+	// clear error instead of part-way through emitting Matrix events.
+	if len(req.Attachments) > maxAttachmentsPerMessage {
+		return NewInvalidParamError(fmt.Sprintf(
+			"too many attachments: %d (max %d)", len(req.Attachments), maxAttachmentsPerMessage)), nil
+	}
+	for i := range req.Attachments {
+		if req.Attachments[i].DocumentID == "" {
+			return NewInvalidParamError(fmt.Sprintf("attachment[%d] document_id is required", i)), nil
+		}
+	}
+
 	// Resolve room alias to Matrix room ID
 	roomID, errResp := h.resolver.ResolveRoom(ctx, req.AlkemioRoomID)
 	if errResp != nil {
@@ -383,10 +403,11 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 			req.Content,
 			id.EventID(*req.ParentMessageID),
 			attachments,
+			req.IdempotencyKey,
 		)
 	} else {
 		// Send as regular message
-		eventID, err = h.service.SendMessage(ctx, roomID, sender, req.Content, attachments)
+		eventID, err = h.service.SendMessage(ctx, roomID, sender, req.Content, attachments, req.IdempotencyKey)
 	}
 
 	if err != nil {

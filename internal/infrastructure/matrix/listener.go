@@ -865,9 +865,14 @@ func extractAttachment(evt *event.Event) *domain.Attachment {
 		att.Height = rawIntPtr(info["h"])
 	}
 
-	// io.alkemio.document_id → DocumentID (outbound echo only)
+	// io.alkemio.document_id → DocumentID (outbound echo only). When present this
+	// is our own outbound media, already living in file-service, so the server
+	// resolves it by DocumentID and must NOT re-home it by MediaID. Clear MediaID
+	// so the two refs are unambiguous (DocumentID wins for our echoes; MediaID is
+	// only for Element-origin media that still needs re-homing).
 	if docID, ok := raw["io.alkemio.document_id"].(string); ok && docID != "" {
 		att.DocumentID = docID
+		att.MediaID = ""
 	}
 
 	return att

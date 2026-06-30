@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -34,6 +35,9 @@ type Config struct {
 		// (cluster-only). Used to fetch document bytes for outbound media
 		// attachments, e.g. GET {URL}/internal/file/{id}/content.
 		URL string `yaml:"url"`
+		// MaxAttachmentBytes caps how many bytes are read from file-service for a
+		// single outbound attachment. <= 0 means use the built-in default (50 MiB).
+		MaxAttachmentBytes int64 `yaml:"max_attachment_bytes"`
 	} `yaml:"file_service"`
 }
 
@@ -91,6 +95,11 @@ func loadEnvVars(cfg *Config) {
 func loadFileServiceEnv(cfg *Config) {
 	if v := os.Getenv("FILE_SERVICE_URL"); v != "" {
 		cfg.FileService.URL = v
+	}
+	if v := os.Getenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.FileService.MaxAttachmentBytes = n
+		}
 	}
 }
 

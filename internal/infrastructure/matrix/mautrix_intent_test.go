@@ -115,11 +115,15 @@ type mockIntentAPI struct {
 	lastSendMsgEventRoomID     id.RoomID
 	lastSendMsgEventType       event.Type
 	lastSendMsgEventContent    any
-	lastEnsureJoinedRoomID     id.RoomID
-	lastSetAccountDataName     string
-	lastSetAccountDataContent  interface{}
-	lastBuildClientURLParts    []any
-	buildClientURLResult       string
+	lastSendMsgEventExtra      []mautrix.ReqSendEvent
+	// sendMsgEventTxns accumulates the transaction ID seen on each
+	// SendMessageEvent call (empty string when none was supplied), in call order.
+	sendMsgEventTxns          []string
+	lastEnsureJoinedRoomID    id.RoomID
+	lastSetAccountDataName    string
+	lastSetAccountDataContent interface{}
+	lastBuildClientURLParts   []any
+	buildClientURLResult      string
 
 	// Media
 	uploadBytesCalled    int
@@ -142,11 +146,17 @@ func (m *mockIntentAPI) EnsureJoined(_ context.Context, roomID id.RoomID, _ ...a
 	return m.ensureJoinedErr
 }
 
-func (m *mockIntentAPI) SendMessageEvent(_ context.Context, roomID id.RoomID, eventType event.Type, contentJSON any, _ ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {
+func (m *mockIntentAPI) SendMessageEvent(_ context.Context, roomID id.RoomID, eventType event.Type, contentJSON any, extra ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {
 	m.sendMessageEventCalled++
 	m.lastSendMsgEventRoomID = roomID
 	m.lastSendMsgEventType = eventType
 	m.lastSendMsgEventContent = contentJSON
+	m.lastSendMsgEventExtra = extra
+	var txn string
+	if len(extra) > 0 {
+		txn = extra[0].TransactionID
+	}
+	m.sendMsgEventTxns = append(m.sendMsgEventTxns, txn)
 	return m.sendMessageEventResult, m.sendMessageEventErr
 }
 
@@ -548,7 +558,7 @@ func TestSendMessage_Success(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	eventID, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil)
+	eventID, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, id.EventID("$msg1"), eventID)
 	assert.Equal(t, 1, intent.sendTextCalled)
@@ -565,7 +575,7 @@ func TestSendMessage_Error(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil)
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to send message")
 }
@@ -583,7 +593,7 @@ func TestSendReply_Success(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	eventID, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply text", "$thread-root", nil)
+	eventID, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply text", "$thread-root", nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, id.EventID("$reply1"), eventID)
 	assert.Equal(t, 1, intent.sendMessageEventCalled)
@@ -607,7 +617,7 @@ func TestSendReply_Error(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	_, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply", "$thread", nil)
+	_, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply", "$thread", nil, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to send reply")
 }

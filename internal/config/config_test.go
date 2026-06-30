@@ -74,6 +74,31 @@ func TestLoad_MatrixEnvOverrides(t *testing.T) {
 	assert.Equal(t, "TestBot", cfg.Matrix.BotDisplayName)
 }
 
+func TestLoad_FileServiceEnvOverrides(t *testing.T) {
+	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("RABBITMQ_URL", "")
+	t.Setenv("RABBITMQ_HOST", "")
+
+	t.Run("URL and max attachment bytes", func(t *testing.T) {
+		t.Setenv("FILE_SERVICE_URL", "http://file-service:4000")
+		t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "1048576")
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, "http://file-service:4000", cfg.FileService.URL)
+		assert.Equal(t, int64(1048576), cfg.FileService.MaxAttachmentBytes)
+	})
+
+	t.Run("invalid max attachment bytes is ignored (falls back to default)", func(t *testing.T) {
+		t.Setenv("FILE_SERVICE_URL", "http://file-service:4000")
+		t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "not-a-number")
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), cfg.FileService.MaxAttachmentBytes, "unparseable value leaves it unset")
+	})
+}
+
 func TestLoad_RegistrationSecretPrecedence(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
 	t.Setenv("RABBITMQ_URL", "")
