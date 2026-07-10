@@ -13,17 +13,19 @@
   },
   "scripts": {
     "prebuild": "rimraf dist",
-    "build": "tsc --project tsconfig.prod.json",
+    "build": "tsc6 --project tsconfig.prod.json",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "lint": "eslint --config eslint.config.mjs .",
-    "lint:prod": "tsc --noEmit && cross-env NODE_ENV=production eslint --config eslint.config.mjs src/",
-    "lint:fix": "eslint --config eslint.config.mjs . --fix"
+    "lint:prod": "pnpm run typecheck:native && cross-env NODE_ENV=production eslint --config eslint.config.mjs src/",
+    "lint:fix": "eslint --config eslint.config.mjs . --fix",
+    "typecheck:native": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@types/node": "^22.18.13",
     "@typescript-eslint/eslint-plugin": "^8.46.2",
     "@typescript-eslint/parser": "^8.46.2",
+    "@typescript/native": "npm:typescript@7.0.2",
     "eslint": "^9.38.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import": "^2.31.0",
@@ -35,7 +37,7 @@
     "rimraf": "^6.1.0",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "npm:@typescript/typescript6@~6.0.2"
   },
   "_moduleAliases": {
     "@src": "./dist"
