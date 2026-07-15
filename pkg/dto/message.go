@@ -56,8 +56,12 @@ type SendMessageRequest struct {
 	// retry with the same key is de-duplicated by the homeserver instead of
 	// producing duplicate text/attachment events. It must be unique per logical
 	// send and STABLE across retries of that same send (a request UUID minted by
-	// the caller). When empty, sends are at-most-once: a partially-failed
-	// multi-event send may duplicate already-delivered events if retried.
+	// the caller). When empty, the adapter falls back to a deterministic key
+	// derived from the request content (room, sender, content, parent, and ordered
+	// attachment document ids), so retries are still de-duplicated. The one
+	// trade-off of the fallback: two byte-identical sends issued within Synapse's
+	// transaction-dedup window collapse to a single event; supply an explicit key
+	// to keep intentionally-identical sends distinct.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 

@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -372,8 +375,8 @@ func (s *RoomService) SendMessage(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment,
 	idempotencyKey string,
 ) (id.EventID, error) {
-	s.warnUnkeyedMultiSend(roomID, content, attachments, idempotencyKey)
-	return s.matrix.SendMessage(ctx, roomID, senderID, content, attachments, idempotencyKey)
+	key := s.resolveIdempotencyKey(roomID, senderID, content, "", attachments, idempotencyKey)
+	return s.matrix.SendMessage(ctx, roomID, senderID, content, attachments, key)
 }
 
 // SendReply sends a reply (text and/or media attachments) to a specific event in a room.
@@ -381,27 +384,67 @@ func (s *RoomService) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
 	attachments []domain.Attachment, idempotencyKey string,
 ) (id.EventID, error) {
-	s.warnUnkeyedMultiSend(roomID, content, attachments, idempotencyKey)
-	return s.matrix.SendReply(ctx, roomID, senderID, content, threadID, attachments, idempotencyKey)
+	key := s.resolveIdempotencyKey(roomID, senderID, content, threadID, attachments, idempotencyKey)
+	return s.matrix.SendReply(ctx, roomID, senderID, content, threadID, attachments, key)
 }
 
-// warnUnkeyedMultiSend logs a warning when a send fans out into multiple Matrix
-// events (any attachments, or text plus attachments) without an idempotency
-// key. Such a send is not atomic: a retry after partial success can duplicate
-// the already-delivered events. We don't hard-reject (the key is optional for
-// back-compat) — we just make the duplication risk visible.
-func (s *RoomService) warnUnkeyedMultiSend(
-	roomID id.RoomID, content string, attachments []domain.Attachment, idempotencyKey string,
-) {
-	if idempotencyKey != "" || len(attachments) == 0 {
-		return
+// resolveIdempotencyKey returns the caller-supplied idempotency key when present,
+// otherwise a deterministic fallback derived from the send's content (A2). A
+// fallback key gives every emitted event a stable Matrix transaction id, so a
+// server RPC retry of the same logical send produces identical txn ids and
+// Synapse de-duplicates the already-delivered events instead of duplicating them
+// — the fix for an unkeyed multi-event send duplicating on retry. It is a pure
+// function of the request (stateless), so a retry recomputes the same key.
+//
+// Accepted consequence: two genuinely distinct sends that are byte-identical
+// (same room, sender, content, parent and ordered attachment document ids)
+// issued within Synapse's transaction-dedup window collapse to a single event.
+// That is preferable to duplicating every event on every retry of an unkeyed
+// send. An explicit caller-supplied key always takes precedence.
+func (s *RoomService) resolveIdempotencyKey(
+	roomID id.RoomID, senderID domain.Actor, content string, parentID id.EventID,
+	attachments []domain.Attachment, idempotencyKey string,
+) string {
+	if idempotencyKey != "" {
+		return idempotencyKey
 	}
-	s.logger.Warn(
-		"multi-event send (attachments) without idempotency_key: a retry after partial success may duplicate messages",
+	// Downgraded from Warn (C2): with a deterministic fallback key an unkeyed send
+	// is now retry-safe, so this is informational, not a per-send warning that
+	// would flood at 100% of media sends.
+	s.logger.Debug(
+		"no idempotency_key supplied; applying deterministic fallback key derived from send content (retry-safe)",
 		"room_id", roomID,
 		"attachment_count", len(attachments),
 		"has_text", content != "",
 	)
+	return deriveFallbackIdempotencyKey(roomID, senderID.ID, content, parentID, attachments)
+}
+
+// deriveFallbackIdempotencyKey hashes the request's identifying content into a
+// deterministic key: room + sender + content + parent (thread) event id + the
+// ordered attachment document ids. Each field is length-prefixed so the
+// concatenation is unambiguous (no field-boundary collisions between, e.g., a
+// content ending in a doc id and an empty first attachment). Identical requests
+// hash to the same key; any difference (content, ordering, an extra attachment)
+// changes it.
+func deriveFallbackIdempotencyKey(
+	roomID id.RoomID, senderID uuid.UUID, content string, parentID id.EventID, attachments []domain.Attachment,
+) string {
+	h := sha256.New()
+	writeField := func(s string) {
+		var lenPrefix [8]byte
+		binary.BigEndian.PutUint64(lenPrefix[:], uint64(len(s)))
+		_, _ = h.Write(lenPrefix[:])
+		_, _ = h.Write([]byte(s))
+	}
+	writeField(roomID.String())
+	writeField(senderID.String())
+	writeField(content)
+	writeField(parentID.String())
+	for i := range attachments {
+		writeField(attachments[i].DocumentID)
+	}
+	return "auto-" + hex.EncodeToString(h.Sum(nil))
 }
 
 // RedactEvent redacts (deletes) an event from a room.
