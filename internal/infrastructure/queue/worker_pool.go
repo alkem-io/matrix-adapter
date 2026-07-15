@@ -10,19 +10,28 @@ import (
 // partition key so that:
 //
 //   - messages sharing a key are processed strictly in delivery order (a key is
-//     served by at most one worker at a time, draining its FIFO backlog), and
-//   - different keys progress concurrently, up to the worker bound.
+//     served by at most one worker at a time, draining its FIFO backlog),
+//   - different keys progress concurrently, up to the worker bound, and
+//   - the total in-memory backlog across all keys is bounded (backpressure).
 //
-// The design is a per-key serial queue with a bounded concurrency semaphore.
-// enqueue never blocks on message processing: it appends to the key's backlog
-// (under a short mutex) and, if that key is idle, starts a runner goroutine for
-// it. So a slow send for room A can never stall the ingest of room B — B simply
-// gets its own runner. At most `workers` runners execute a handler at once; the
-// rest wait on the semaphore. In-memory backlog is bounded by the broker's
-// prefetch window, since messages are only acknowledged after processing.
+// The design is a per-key serial queue with two bounds: a concurrency semaphore
+// (`sem`, at most `workers` handlers run at once) and a total-backlog semaphore
+// (`slots`, at most `capacity` messages are resident in the pool at once).
+//
+// enqueue BLOCKS when the backlog is at capacity — it acquires a slot before
+// appending. That blocking is the backpressure mechanism: the ingest goroutine
+// calls enqueue then acks, so when the pool is saturated (all runners busy AND
+// the backlog full) enqueue blocks → the ingest loop stops acking/reading → the
+// broker stops delivering (prefetch fills) → memory stays bounded. Without it a
+// slow key's backlog would grow without limit (OOM). enqueue never blocks on
+// message *processing* though: it appends to the key's backlog (under a short
+// mutex) and, if that key is idle, starts a runner goroutine for it, so a slow
+// send for room A can never stall a send for room B — B gets its own runner. At
+// most `workers` runners execute a handler at once; the rest wait on `sem`.
 type orderedPool struct {
 	process func(*message.Message)
-	sem     chan struct{}
+	sem     chan struct{} // bounds concurrent handlers (cross-key concurrency)
+	slots   chan struct{} // bounds total in-memory backlog (backpressure)
 
 	mu     sync.Mutex
 	queues map[string][]*message.Message // key -> pending backlog (present ⇒ runner active)
@@ -31,22 +40,35 @@ type orderedPool struct {
 }
 
 // newOrderedPool creates a pool that runs process for each message with the
-// ordering/concurrency guarantees described on orderedPool. workers is clamped
-// to at least 1.
-func newOrderedPool(workers int, process func(*message.Message)) *orderedPool {
+// ordering/concurrency/backpressure guarantees described on orderedPool.
+// workers is clamped to at least 1; capacity (the total-backlog bound) is
+// clamped to at least workers so every worker can hold an in-flight message and
+// a single message can always be admitted.
+func newOrderedPool(workers, capacity int, process func(*message.Message)) *orderedPool {
 	if workers < 1 {
 		workers = 1
+	}
+	if capacity < workers {
+		capacity = workers
 	}
 	return &orderedPool{
 		process: process,
 		sem:     make(chan struct{}, workers),
+		slots:   make(chan struct{}, capacity),
 		queues:  make(map[string][]*message.Message),
 	}
 }
 
 // enqueue appends msg to its partition's backlog and ensures a runner is active
-// for that partition. It does not block on message processing.
+// for that partition. It blocks while the pool's total backlog is at capacity
+// (backpressure), but never blocks on message processing.
 func (p *orderedPool) enqueue(key string, msg *message.Message) {
+	// Reserve a backlog slot BEFORE taking the map mutex. This blocks when the
+	// pool is full, propagating backpressure to the caller (and thus to the
+	// broker), and keeps resident memory bounded by capacity messages. The slot
+	// is released once the message is fully processed (see runKey).
+	p.slots <- struct{}{}
+
 	p.mu.Lock()
 	backlog, active := p.queues[key]
 	p.queues[key] = append(backlog, msg)
@@ -79,6 +101,7 @@ func (p *orderedPool) runKey(key string) {
 		p.sem <- struct{}{} // bound concurrent handlers across all partitions
 		p.process(msg)
 		<-p.sem
+		<-p.slots // release the backlog slot: the message is no longer resident
 	}
 }
 

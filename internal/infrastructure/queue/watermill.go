@@ -234,6 +234,23 @@ func (w *WatermillAdapter) Subscribe(topic string, handler ports.MessageHandler)
 	return nil
 }
 
+// sendBacklogPerWorker sizes the ordered pool's total in-memory backlog bound as
+// a small multiple of the worker count. It gives distinct rooms a little queuing
+// headroom (so a burst doesn't immediately stall the broker) while keeping
+// resident memory bounded: at most SendConcurrency*sendBacklogPerWorker messages
+// sit in the pool at once, after which enqueue blocks and backpressure kicks in.
+const sendBacklogPerWorker = 4
+
+// orderedBacklogCapacity is the pool's total-backlog bound for the given worker
+// count. Never smaller than workers so every worker can hold an in-flight
+// message (and a single message is always admissible).
+func orderedBacklogCapacity(workers int) int {
+	if workers < 1 {
+		workers = 1
+	}
+	return workers * sendBacklogPerWorker
+}
+
 // SubscribeOrdered subscribes with per-key ordering and bounded cross-key
 // concurrency (see ports.QueuePort.SubscribeOrdered). A single ingest goroutine
 // drains the ordered subscriber and dispatches each delivery to an orderedPool
@@ -244,25 +261,35 @@ func (w *WatermillAdapter) Subscribe(topic string, handler ports.MessageHandler)
 // it delivers one message and then blocks on that message's Ack before reading
 // the next delivery. If we acked only after the handler completed, a slow send
 // for room A would stall the loop and every other room would head-of-line-block,
-// so the pool would never hold more than one in-flight message. Instead we ACK
-// ON DISPATCH — the moment the message is handed to the pool — which unblocks the
-// consuming loop so it can deliver the next room's message immediately. Combined
-// with the ordered subscriber's raised prefetch, this is what yields genuine
-// cross-room concurrency.
+// so the pool would never hold more than one in-flight message. Instead the
+// ingest loop enqueues into the pool and ACKS IMMEDIATELY AFTER — which unblocks
+// the consuming loop so it can deliver the next room's message. Combined with the
+// ordered subscriber's raised prefetch, this yields genuine cross-room
+// concurrency.
 //
-// This keeps the existing always-ack / at-most-once model: the broker never
-// redelivers, and recovery on failure is the server's RPC retry keyed by the
-// idempotency key, not AMQP redelivery. The handler still runs — and still
-// publishes its RPC reply — inside the pool after the ack. On Close the
-// subscribers stop delivering, the ingest goroutine is joined, then the pool
-// drains before the publisher/connection are torn down.
+// Backpressure (bounded memory): the pool's enqueue BLOCKS when its total
+// in-memory backlog reaches orderedBacklogCapacity(SendConcurrency). Because the
+// ingest loop enqueues THEN acks, a saturated pool (all runners busy + backlog
+// full) blocks the enqueue → the loop stops acking/reading → the broker stops
+// delivering (prefetch fills). So a slow room can never grow an unbounded
+// in-memory backlog (OOM); resident memory is capped at the backlog bound.
+//
+// Ordering vs. ack: enqueue-then-ack means a delivery is acked only once it is
+// safely resident in the bounded pool. On a crash between enqueue and ack the
+// broker may redeliver the message (it was not acked); the server's RPC retry is
+// keyed by an idempotency key, so a redelivery is deduplicated rather than
+// duplicated — no message is silently dropped. The handler still runs — and still
+// publishes its RPC reply — inside the pool. On Close the subscribers stop
+// delivering, the ingest goroutine is joined, then the pool drains before the
+// publisher/connection are torn down.
 func (w *WatermillAdapter) SubscribeOrdered(topic string, handler ports.MessageHandler, keyFn ports.PartitionKeyFunc) error {
 	messages, err := w.orderedSubscriber.Subscribe(context.Background(), topic)
 	if err != nil {
 		return err
 	}
 
-	pool := newOrderedPool(w.cfg.SendConcurrency(), func(msg *message.Message) {
+	workers := w.cfg.SendConcurrency()
+	pool := newOrderedPool(workers, orderedBacklogCapacity(workers), func(msg *message.Message) {
 		w.processOrderedMessage(msg, handler)
 	})
 	w.pools = append(w.pools, pool)
@@ -282,22 +309,27 @@ func (w *WatermillAdapter) SubscribeOrdered(topic string, handler ports.MessageH
 	return nil
 }
 
-// dispatchOrdered acks a delivery and enqueues it to the room-partitioned pool.
-// Acking here (rather than after the handler) is what unblocks watermill's
-// consuming loop so the next room's message can be delivered concurrently.
+// dispatchOrdered enqueues a delivery to the room-partitioned pool and then acks
+// it. The order matters: enqueue BLOCKS when the pool's backlog is full, so this
+// call (and thus the single ingest loop) stalls before acking — that is what
+// propagates backpressure to the broker and bounds resident memory. Acking right
+// after a successful enqueue unblocks watermill's consuming loop so the next
+// room's message can be delivered concurrently. A delivery is therefore acked
+// only once it is safely resident in the bounded pool.
 //
-// The delivery is detached from its AMQP context BEFORE the ack: watermill
-// cancels msg.Context() as soon as the ack unblocks its loop, but the pooled
-// handler must run to completion (bounded by its own send deadline), so we swap
-// in an uncancelable context that still carries any request-scoped values.
+// The delivery is detached from its AMQP context BEFORE enqueue: a runner may
+// start the handler the instant it is enqueued, and watermill cancels
+// msg.Context() as soon as the ack unblocks its loop, but the pooled handler must
+// run to completion (bounded by its own send deadline), so we swap in an
+// uncancelable context that still carries any request-scoped values.
 func (w *WatermillAdapter) dispatchOrdered(pool *orderedPool, key string, msg *message.Message) {
 	base := msg.Context()
 	if base == nil {
 		base = context.Background()
 	}
 	msg.SetContext(context.WithoutCancel(base))
+	pool.enqueue(key, msg) // blocks when the pool backlog is full (backpressure)
 	msg.Ack()
-	pool.enqueue(key, msg)
 }
 
 // processMessage runs a handler for a one-at-a-time topic and acks after it
@@ -312,8 +344,8 @@ func (w *WatermillAdapter) processMessage(msg *message.Message, handler ports.Me
 	msg.Ack()
 }
 
-// processOrderedMessage runs a send handler for a message already acked at
-// dispatch (see dispatchOrdered). It does NOT ack again.
+// processOrderedMessage runs a send handler for a message the ingest loop acks
+// right after enqueue (see dispatchOrdered). It does NOT ack again.
 func (w *WatermillAdapter) processOrderedMessage(msg *message.Message, handler ports.MessageHandler) {
 	ctx := msg.Context()
 	if ctx == nil {

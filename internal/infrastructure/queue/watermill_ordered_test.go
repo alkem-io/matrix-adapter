@@ -165,6 +165,75 @@ func TestSubscribeOrdered_CrossRoomConcurrencyAndPerRoomOrdering(t *testing.T) {
 	require.NoError(t, w.Close())
 }
 
+// F2 (backpressure): with one room's send stalled, the ordered pool's backlog
+// fills to its bound and then enqueue blocks, so the ingest loop STOPS acking and
+// the broker (here the fake feeder) stops being drained. This proves the OOM
+// scenario can't happen: acks climb to exactly the backlog bound and never past
+// it while the handler is blocked — resident memory is capped, not unbounded.
+func TestSubscribeOrdered_BackpressureStopsAckingWhenBacklogFull(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Send.Concurrency = 1 // small pool ⇒ small, easily-saturated backlog bound
+	capacity := orderedBacklogCapacity(cfg.SendConcurrency())
+
+	fake := newFakeSubscriber()
+	w := &WatermillAdapter{cfg: cfg, logger: &testMockLogger{}, orderedSubscriber: fake}
+
+	block := make(chan struct{})
+	var handlerStarts atomic.Int32
+	handler := func(_ context.Context, _ []byte) (interface{}, error) {
+		handlerStarts.Add(1)
+		<-block // stall the single room's send indefinitely
+		return nil, nil
+	}
+	// All messages share one room ⇒ strictly serial ⇒ only the first handler runs;
+	// the rest pile into the bounded backlog until enqueue blocks.
+	require.NoError(t, w.SubscribeOrdered("send", handler, func([]byte) string { return "room" }))
+
+	const total = 50
+	var acked atomic.Int32
+	stopFeed := make(chan struct{})
+	feedDone := make(chan struct{})
+	go func() {
+		defer close(feedDone)
+		for i := 0; i < total; i++ {
+			m := orderedTestMsg("room", i)
+			m.SetContext(context.Background())
+			select {
+			case fake.ch <- m:
+			case <-stopFeed:
+				return
+			}
+			// Mirror watermill: block on this message's Ack before delivering the
+			// next. Count acks so the test can observe backpressure stopping them.
+			select {
+			case <-m.Acked():
+				acked.Add(1)
+			case <-stopFeed:
+				return
+			}
+		}
+	}()
+
+	// Acks climb to exactly the backlog bound, then stop (enqueue blocks).
+	require.Eventually(t, func() bool { return acked.Load() == int32(capacity) },
+		2*time.Second, 5*time.Millisecond, "acks should reach the backlog bound")
+	// ...and never exceed it while the handler stays blocked.
+	require.Never(t, func() bool { return acked.Load() > int32(capacity) },
+		300*time.Millisecond, 10*time.Millisecond,
+		"acks exceeded the backlog bound — backpressure not enforced (unbounded backlog / OOM)")
+
+	assert.Equal(t, int32(1), handlerStarts.Load(),
+		"only the first same-room send runs; the rest are queued, not processed")
+	assert.Less(t, acked.Load(), int32(total), "producer must be backpressured, not fully drained")
+
+	// Teardown: stop the feeder BEFORE Close so no send races Close's channel
+	// close, then unblock the pool so it drains, and shut down cleanly.
+	close(stopFeed)
+	<-feedDone
+	close(block)
+	require.NoError(t, w.Close())
+}
+
 // F6: Close must join the ingest goroutine and drain the in-flight handler
 // before returning, without a WaitGroup-misuse panic.
 func TestWatermillAdapter_Close_DrainsInFlightWithoutPanic(t *testing.T) {

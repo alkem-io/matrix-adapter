@@ -22,7 +22,7 @@ func TestOrderedPool_PreservesPerKeyOrder(t *testing.T) {
 	var mu sync.Mutex
 	got := map[string][]string{}
 
-	pool := newOrderedPool(8, func(m *message.Message) {
+	pool := newOrderedPool(8, 1024, func(m *message.Message) {
 		mu.Lock()
 		key := m.Metadata.Get("key")
 		got[key] = append(got[key], string(m.Payload))
@@ -52,7 +52,7 @@ func TestOrderedPool_CrossKeyConcurrency(t *testing.T) {
 	blockA := make(chan struct{})
 	bDone := make(chan struct{})
 
-	pool := newOrderedPool(4, func(m *message.Message) {
+	pool := newOrderedPool(4, 8, func(m *message.Message) {
 		switch string(m.Payload) {
 		case "A":
 			<-blockA // simulate a slow media send in room A
@@ -82,7 +82,7 @@ func TestOrderedPool_SameKeySerialized(t *testing.T) {
 	release := make(chan struct{})
 	var secondRan atomic.Bool
 
-	pool := newOrderedPool(4, func(m *message.Message) {
+	pool := newOrderedPool(4, 8, func(m *message.Message) {
 		switch string(m.Payload) {
 		case "first":
 			close(firstStarted)
@@ -113,7 +113,7 @@ func TestOrderedPool_BoundedConcurrency(t *testing.T) {
 	var maxSeen atomic.Int32
 	release := make(chan struct{})
 
-	pool := newOrderedPool(workers, func(_ *message.Message) {
+	pool := newOrderedPool(workers, 64, func(_ *message.Message) {
 		cur := inFlight.Add(1)
 		for {
 			old := maxSeen.Load()
@@ -142,11 +142,60 @@ func TestOrderedPool_BoundedConcurrency(t *testing.T) {
 // A zero/negative worker count is clamped to a single serial worker.
 func TestOrderedPool_ClampsWorkers(t *testing.T) {
 	var count atomic.Int32
-	pool := newOrderedPool(0, func(_ *message.Message) { count.Add(1) })
+	pool := newOrderedPool(0, 8, func(_ *message.Message) { count.Add(1) })
 	pool.enqueue("k", poolMsg("x"))
 	pool.enqueue("k", poolMsg("y"))
 	pool.wait()
 	assert.Equal(t, int32(2), count.Load())
+}
+
+// Backpressure: once the pool's total backlog reaches capacity, enqueue must
+// BLOCK rather than grow the in-memory backlog without limit (the OOM scenario
+// F2 fixes). With one key's handler stalled, exactly `capacity` messages become
+// resident (1 in-flight + capacity-1 queued); the next enqueue blocks until a
+// slot frees, and no more.
+func TestOrderedPool_BackpressureBlocksAtCapacity(t *testing.T) {
+	const capacity = 3
+	release := make(chan struct{})
+	var processed atomic.Int32
+
+	pool := newOrderedPool(1, capacity, func(_ *message.Message) {
+		<-release // stall the single room's runner
+		processed.Add(1)
+	})
+
+	// Fill the backlog to capacity: 1 message in-flight (blocked on release) plus
+	// capacity-1 queued behind it (same key ⇒ serial). All hold a backlog slot.
+	for i := 0; i < capacity; i++ {
+		pool.enqueue("room", poolMsg("m"+itoa(i)))
+	}
+
+	// The next enqueue must block — the backlog is full. Run it off-goroutine and
+	// assert it does NOT complete while the handler is stalled.
+	enqueued := make(chan struct{})
+	go func() {
+		pool.enqueue("room", poolMsg("overflow"))
+		close(enqueued)
+	}()
+
+	select {
+	case <-enqueued:
+		t.Fatal("enqueue did not block at capacity — backlog is unbounded (OOM risk)")
+	case <-time.After(200 * time.Millisecond):
+		// good: backpressure — the producer is blocked, memory stays bounded.
+	}
+	assert.Equal(t, int32(0), processed.Load(), "no message should have drained while the runner is stalled")
+
+	// Draining the stalled runner frees slots, so the blocked enqueue proceeds and
+	// everything is eventually processed (no message lost).
+	close(release)
+	select {
+	case <-enqueued:
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked enqueue never proceeded after capacity freed")
+	}
+	pool.wait()
+	assert.Equal(t, int32(capacity+1), processed.Load(), "every enqueued message must eventually process")
 }
 
 // itoa is a tiny helper to avoid importing strconv just for test labels.
