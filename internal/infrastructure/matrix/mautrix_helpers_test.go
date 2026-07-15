@@ -191,6 +191,73 @@ func TestParseMessageEvent_WithThreadRelation(t *testing.T) {
 	assert.Equal(t, "$thread-root", msg.ThreadID)
 }
 
+// F1 regression: Synapse-fetched read-path events arrive with Content.Raw
+// populated and Content.Parsed == nil (the shared inbound helper reads Raw and
+// never triggers ParseRaw). parseMessageEvent must still recover the thread
+// parent from the RAW m.relates_to — otherwise threaded replies from real reads
+// (GetMessage/GetRoomMessages/GetThreadMessages) render as top-level.
+func TestParseMessageEvent_RawThreadRelation_ParsedNil(t *testing.T) {
+	adapter := newTestAdapter("test.local")
+	roomID := id.RoomID("!room123:test.local")
+
+	evt := &event.Event{
+		ID:        id.EventID("$reply-raw"),
+		Sender:    id.UserID("@bob:test.local"),
+		Type:      event.EventMessage,
+		Timestamp: 1700000000000,
+		Content: event.Content{
+			// No Parsed — mirrors how Synapse read-path events arrive.
+			Raw: map[string]interface{}{
+				"msgtype": "m.text",
+				"body":    "Thread reply from a read",
+				"m.relates_to": map[string]interface{}{
+					"rel_type": "m.thread",
+					"event_id": "$thread-root",
+					"m.in_reply_to": map[string]interface{}{
+						"event_id": "$thread-root",
+					},
+				},
+			},
+		},
+	}
+	require.Nil(t, evt.Content.Parsed, "precondition: read-path events have Parsed == nil")
+
+	msg := adapter.parseMessageEvent(evt, roomID)
+	require.NotNil(t, msg)
+	assert.Equal(t, "Thread reply from a read", msg.Content)
+	assert.Equal(t, "$thread-root", msg.ThreadID,
+		"thread parent must be recovered from raw relations even when Parsed is nil")
+}
+
+// F1: the legacy m.in_reply_to fallback must also work off the raw relations on
+// the read path (Parsed nil).
+func TestParseMessageEvent_RawInReplyToFallback_ParsedNil(t *testing.T) {
+	adapter := newTestAdapter("test.local")
+	roomID := id.RoomID("!room123:test.local")
+
+	evt := &event.Event{
+		ID:        id.EventID("$reply-raw2"),
+		Sender:    id.UserID("@carol:test.local"),
+		Type:      event.EventMessage,
+		Timestamp: 1700000000000,
+		Content: event.Content{
+			Raw: map[string]interface{}{
+				"msgtype": "m.text",
+				"body":    "Reply fallback from a read",
+				"m.relates_to": map[string]interface{}{
+					"m.in_reply_to": map[string]interface{}{
+						"event_id": "$parent-msg",
+					},
+				},
+			},
+		},
+	}
+
+	msg := adapter.parseMessageEvent(evt, roomID)
+	require.NotNil(t, msg)
+	assert.Equal(t, "$parent-msg", msg.ThreadID)
+}
+
 func TestParseMessageEvent_WithInReplyToFallback(t *testing.T) {
 	adapter := newTestAdapter("test.local")
 	roomID := id.RoomID("!room123:test.local")
@@ -352,72 +419,6 @@ func TestParseReactionEvent_NoContent_ReturnsNil(t *testing.T) {
 
 	reaction := adapter.parseReactionEvent(evt, roomID)
 	assert.Nil(t, reaction)
-}
-
-// ============================================================================
-// extractMessageBody
-// ============================================================================
-
-func TestExtractMessageBody_ParsedContent(t *testing.T) {
-	adapter := newTestAdapter("test.local")
-
-	evt := &event.Event{
-		Type: event.EventMessage,
-		Content: event.Content{
-			Parsed: &event.MessageEventContent{
-				MsgType: event.MsgText,
-				Body:    "Parsed body content",
-			},
-		},
-	}
-
-	body := adapter.extractMessageBody(evt)
-	assert.Equal(t, "Parsed body content", body)
-}
-
-func TestExtractMessageBody_RawJSONFallback(t *testing.T) {
-	adapter := newTestAdapter("test.local")
-
-	evt := &event.Event{
-		Type: event.EventMessage,
-		Content: event.Content{
-			Raw: map[string]interface{}{
-				"body":    "Raw fallback body",
-				"msgtype": "m.text",
-			},
-		},
-	}
-
-	body := adapter.extractMessageBody(evt)
-	assert.Equal(t, "Raw fallback body", body)
-}
-
-func TestExtractMessageBody_NoBodyAtAll(t *testing.T) {
-	adapter := newTestAdapter("test.local")
-
-	evt := &event.Event{
-		Type:    event.EventMessage,
-		Content: event.Content{},
-	}
-
-	body := adapter.extractMessageBody(evt)
-	assert.Equal(t, "", body)
-}
-
-func TestExtractMessageBody_RawWithNonStringBody(t *testing.T) {
-	adapter := newTestAdapter("test.local")
-
-	evt := &event.Event{
-		Type: event.EventMessage,
-		Content: event.Content{
-			Raw: map[string]interface{}{
-				"body": 12345, // Not a string
-			},
-		},
-	}
-
-	body := adapter.extractMessageBody(evt)
-	assert.Equal(t, "", body)
 }
 
 // ============================================================================

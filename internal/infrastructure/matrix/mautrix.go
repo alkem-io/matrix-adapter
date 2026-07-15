@@ -1876,33 +1876,14 @@ func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *
 		msg.Attachments = []domain.Attachment{*attachment}
 	}
 
-	// Check for thread relation (MSC3440) first, then fallback to m.in_reply_to
-	if content, ok := evt.Content.Parsed.(*event.MessageEventContent); ok && content.RelatesTo != nil {
-		// Check for explicit m.thread relation first
-		if content.RelatesTo.Type == "m.thread" && content.RelatesTo.EventID != "" {
-			msg.ThreadID = content.RelatesTo.EventID.String()
-		} else if content.RelatesTo.InReplyTo != nil {
-			// Fallback to m.in_reply_to for older clients
-			msg.ThreadID = content.RelatesTo.InReplyTo.EventID.String()
-		}
-	}
+	// Thread linkage (MSC3440): read from the same helper the live-sync path uses,
+	// which prefers the RAW m.relates_to. Reading Content.Parsed alone (as this
+	// path used to) silently dropped the thread/parent linkage on Synapse-fetched
+	// read-path events, whose Parsed is nil — so threaded replies rendered as
+	// top-level in GetMessage/GetRoomMessages/GetThreadMessages (F1).
+	msg.ThreadID = extractThreadID(evt)
 
 	return msg
-}
-
-// extractMessageBody gets the message body from an event, trying multiple approaches.
-func (m *MautrixAdapter) extractMessageBody(evt *event.Event) string {
-	// Try the generic parser first
-	if content, ok := parseEventContent[event.MessageEventContent](evt); ok {
-		return content.Body
-	}
-
-	// Try raw JSON as last resort
-	if rawBody, ok := evt.Content.Raw["body"].(string); ok {
-		return rawBody
-	}
-
-	return ""
 }
 
 // GetReaction retrieves details of a specific reaction.

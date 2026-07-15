@@ -111,7 +111,7 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 	}
 
 	// Extract thread ID from m.relates_to if present
-	threadID := extractThreadIDFromRawRelations(evt)
+	threadID := extractThreadID(evt)
 
 	var attachments []domain.Attachment
 	if attachment != nil {
@@ -142,10 +142,25 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 	}(evt, content, senderUUID, threadID, attachments)
 }
 
-// extractThreadIDFromRawRelations reads the thread/reply event id from a
-// message event's raw m.relates_to: the explicit m.thread relation (MSC3440)
-// is preferred, falling back to m.in_reply_to for legacy clients. Returns "".
-func extractThreadIDFromRawRelations(evt *event.Event) string {
+// extractThreadID reads the thread/reply parent event id from a message event,
+// used by BOTH the live-sync path (handleMessageEvent) and the read path
+// (parseMessageEvent) so the two can't diverge. It prefers the RAW m.relates_to,
+// which is present on live-sync events AND on Synapse-fetched read-path events —
+// the latter arrive with Content.Parsed == nil (the shared inbound helper reads
+// Content.Raw and never triggers ParseRaw), so reading Parsed alone would
+// silently drop thread linkage on real reads (F1). It falls back to the parsed
+// content's RelatesTo for parsed-only events (e.g. unit-constructed events with
+// no raw map). The explicit m.thread relation (MSC3440) wins over the legacy
+// m.in_reply_to fallback. Returns "" when the event carries no thread/reply.
+func extractThreadID(evt *event.Event) string {
+	if tid := threadIDFromRaw(evt); tid != "" {
+		return tid
+	}
+	return threadIDFromParsed(evt)
+}
+
+// threadIDFromRaw reads the thread/reply parent id from the raw m.relates_to.
+func threadIDFromRaw(evt *event.Event) string {
 	relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{})
 	if !ok {
 		return ""
@@ -159,6 +174,22 @@ func extractThreadIDFromRawRelations(evt *event.Event) string {
 		if eventID, ok := inReplyTo["event_id"].(string); ok {
 			return eventID
 		}
+	}
+	return ""
+}
+
+// threadIDFromParsed reads the thread/reply parent id from parsed content — the
+// fallback for events that arrive parsed-only (no raw map).
+func threadIDFromParsed(evt *event.Event) string {
+	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
+	if !ok || content.RelatesTo == nil {
+		return ""
+	}
+	if content.RelatesTo.Type == event.RelThread && content.RelatesTo.EventID != "" {
+		return content.RelatesTo.EventID.String()
+	}
+	if content.RelatesTo.InReplyTo != nil {
+		return content.RelatesTo.InReplyTo.EventID.String()
 	}
 	return ""
 }
@@ -952,7 +983,14 @@ func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content stri
 	}
 
 	content = body
-	if attachment != nil && !bodyIsCaption(evt, body) {
+	// MSC2530: body is a caption (kept as Content) only when the attachment carries
+	// a distinct filename that differs from body — otherwise body IS the filename
+	// and is blanked so clients don't render a filename text bubble beside the
+	// media. The attachment's DisplayName already resolves to that filename (or
+	// falls back to body when there is none), so comparing against it derives the
+	// caption decision without re-reading the raw `filename` field a second time
+	// (it is read once, in attachmentDisplayName).
+	if attachment != nil && attachment.DisplayName == body {
 		content = ""
 	}
 	return content, attachment, true
@@ -973,17 +1011,6 @@ func inboundBody(evt *event.Event) (string, bool) {
 		return c.Body, true
 	}
 	return "", false
-}
-
-// bodyIsCaption reports whether a media event's body is an MSC2530 caption
-// rather than the filename: true only when a separate top-level `filename` field
-// is present and differs from body.
-func bodyIsCaption(evt *event.Event, body string) bool {
-	if evt.Content.Raw == nil {
-		return false
-	}
-	filename, _ := evt.Content.Raw["filename"].(string)
-	return filename != "" && filename != body
 }
 
 // isOwnAppserviceUser reports whether userID is a user the adapter's own
