@@ -3,10 +3,13 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
@@ -663,6 +666,36 @@ func TestHandleSendMessage_Success(t *testing.T) {
 	if mock.capturedSendMessageRoomID != "!room1:test" {
 		t.Errorf("expected room ID '!room1:test', got %q", mock.capturedSendMessageRoomID)
 	}
+}
+
+// F5: a partial send (some events landed, a later one failed) surfaces the
+// delivered message id on the response alongside a partial-failure error, so the
+// server can record what landed rather than re-sending everything.
+func TestHandleSendMessage_PartialFailure_CarriesDeliveredMessageID(t *testing.T) {
+	mock := &testMockMatrixPort{
+		resolveAliasResult: "!room1:test",
+		sendMessageErr: &domain.PartialSendError{
+			PrimaryEventID: "$text1:test",
+			Err:            errors.New("attachment 2 of 2 failed: synapse upload failed"),
+		},
+	}
+	h := testRoomHandler(mock)
+
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Content:       "hello",
+	})
+
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	require.NoError(t, err)
+
+	resp, ok := result.(dto.SendMessageResponse)
+	require.True(t, ok, "expected SendMessageResponse, got %T", result)
+	assert.Equal(t, "$text1:test", string(resp.MessageID), "delivered event id must be carried")
+	require.NotNil(t, resp.Error, "partial send is not a success")
+	assert.False(t, resp.Success)
+	assert.Contains(t, resp.Error.Message, "partial send")
 }
 
 func TestHandleSendMessage_WithThread(t *testing.T) {

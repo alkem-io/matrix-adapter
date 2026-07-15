@@ -38,6 +38,14 @@ type Config struct {
 		// MaxAttachmentBytes caps how many bytes are read from file-service for a
 		// single outbound attachment. <= 0 means use the built-in default (50 MiB).
 		MaxAttachmentBytes int64 `yaml:"max_attachment_bytes"`
+		// MaxTotalAttachmentBytes bounds the TOTAL bytes buffered in memory across
+		// all concurrently in-flight attachment uploads. Without it, N send
+		// workers each buffering a max-size attachment would use N×MaxAttachmentBytes
+		// of memory. A weighted budget caps that regardless of worker count; large
+		// attachments self-limit their concurrency while small ones flow freely.
+		// <= 0 means use the built-in default (128 MiB, raised to MaxAttachmentBytes
+		// if that is larger so a single max attachment can always be sent).
+		MaxTotalAttachmentBytes int64 `yaml:"max_total_attachment_bytes"`
 	} `yaml:"file_service"`
 
 	Send struct {
@@ -164,6 +172,11 @@ func loadFileServiceEnv(cfg *Config) {
 	if v := os.Getenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			cfg.FileService.MaxAttachmentBytes = n
+		}
+	}
+	if v := os.Getenv("FILE_SERVICE_MAX_TOTAL_ATTACHMENT_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.FileService.MaxTotalAttachmentBytes = n
 		}
 	}
 }
