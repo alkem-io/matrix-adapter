@@ -1055,6 +1055,9 @@ func (m *MautrixAdapter) maxAttachmentBytes() int64 {
 // configured max attachment size to protect against a slow/hostile file-service
 // (timeout via fileServiceHTTPClient, size via io.LimitReader).
 func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID string) ([]byte, string, error) {
+	if m.cfg == nil {
+		return nil, "", fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
+	}
 	baseURL := m.cfg.FileService.URL
 	if baseURL == "" {
 		return nil, "", fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")

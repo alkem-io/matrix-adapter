@@ -45,7 +45,7 @@ func (s *EventService) HandleMessage(msg domain.Message) error {
 			ThreadID:    threadID,
 			Sender:      msg.SenderID.String(),
 			Timestamp:   msg.Timestamp.UnixMilli(),
-			Attachments: convertAttachmentsToReceivedDTO(msg.Attachments),
+			Attachments: AttachmentsToReceivedDTO(msg.Attachments),
 		},
 	}
 
@@ -58,34 +58,6 @@ func (s *EventService) HandleMessage(msg domain.Message) error {
 	}
 	s.logger.Debug("Event published successfully", "event_id", msg.ID, "sender_id", msg.SenderID)
 	return nil
-}
-
-// convertAttachmentsToReceivedDTO maps inbound domain attachments to the wire
-// DTO, translating empty DocumentID/MediaID to nil pointers.
-func convertAttachmentsToReceivedDTO(attachments []domain.Attachment) []dto.ReceivedAttachment {
-	if len(attachments) == 0 {
-		return nil
-	}
-	result := make([]dto.ReceivedAttachment, 0, len(attachments))
-	for _, a := range attachments {
-		ra := dto.ReceivedAttachment{
-			DisplayName: a.DisplayName,
-			MimeType:    a.MimeType,
-			Size:        a.Size,
-			Width:       a.Width,
-			Height:      a.Height,
-		}
-		if a.DocumentID != "" {
-			docID := a.DocumentID
-			ra.DocumentID = &docID
-		}
-		if a.MediaID != "" {
-			mediaID := a.MediaID
-			ra.MediaID = &mediaID
-		}
-		result = append(result, ra)
-	}
-	return result
 }
 
 // HandleReactionAdded processes a reaction added event and publishes it to the queue.

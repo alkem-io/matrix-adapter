@@ -81,7 +81,7 @@ func convertMessageToDTO(msg domain.Message) dto.MessageDto {
 	}
 	// Convert attachments
 	for _, a := range msg.Attachments {
-		msgDTO.Attachments = append(msgDTO.Attachments, convertAttachmentToReceivedDTO(a))
+		msgDTO.Attachments = append(msgDTO.Attachments, service.AttachmentToReceivedDTO(a))
 	}
 	return msgDTO
 }
@@ -103,27 +103,6 @@ func convertAttachmentRefsToDomain(refs []dto.AttachmentRef) []domain.Attachment
 		})
 	}
 	return attachments
-}
-
-// convertAttachmentToReceivedDTO converts a domain.Attachment to a
-// dto.ReceivedAttachment, mapping empty DocumentID/MediaID to nil pointers.
-func convertAttachmentToReceivedDTO(a domain.Attachment) dto.ReceivedAttachment {
-	ra := dto.ReceivedAttachment{
-		DisplayName: a.DisplayName,
-		MimeType:    a.MimeType,
-		Size:        a.Size,
-		Width:       a.Width,
-		Height:      a.Height,
-	}
-	if a.DocumentID != "" {
-		docID := a.DocumentID
-		ra.DocumentID = &docID
-	}
-	if a.MediaID != "" {
-		mediaID := a.MediaID
-		ra.MediaID = &mediaID
-	}
-	return ra
 }
 
 // convertMessagesToDTO converts a slice of domain.Message to []dto.MessageDto.
