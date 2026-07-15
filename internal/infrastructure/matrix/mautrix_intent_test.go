@@ -118,7 +118,10 @@ type mockIntentAPI struct {
 	lastSendMsgEventExtra      []mautrix.ReqSendEvent
 	// sendMsgEventTxns accumulates the transaction ID seen on each
 	// SendMessageEvent call (empty string when none was supplied), in call order.
-	sendMsgEventTxns          []string
+	sendMsgEventTxns []string
+	// sendMsgEventContents accumulates the content passed to each
+	// SendMessageEvent call, in call order (parallel to sendMsgEventTxns).
+	sendMsgEventContents      []any
 	lastEnsureJoinedRoomID    id.RoomID
 	lastSetAccountDataName    string
 	lastSetAccountDataContent interface{}
@@ -157,6 +160,7 @@ func (m *mockIntentAPI) SendMessageEvent(_ context.Context, roomID id.RoomID, ev
 		txn = extra[0].TransactionID
 	}
 	m.sendMsgEventTxns = append(m.sendMsgEventTxns, txn)
+	m.sendMsgEventContents = append(m.sendMsgEventContents, contentJSON)
 	return m.sendMessageEventResult, m.sendMessageEventErr
 }
 
@@ -551,7 +555,7 @@ func TestSetUserProfile_ClearAvatar(t *testing.T) {
 
 func TestSendMessage_Success(t *testing.T) {
 	intent := &mockIntentAPI{
-		sendTextResult: &mautrix.RespSendEvent{EventID: "$msg1"},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$msg1"},
 	}
 	as := newMockAS(intent, map[id.UserID]intentAPI{
 		expectedUserID(testActorID): intent,
@@ -561,14 +565,19 @@ func TestSendMessage_Success(t *testing.T) {
 	eventID, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, id.EventID("$msg1"), eventID)
-	assert.Equal(t, 1, intent.sendTextCalled)
-	assert.Equal(t, id.RoomID("!room:test.local"), intent.lastSendTextRoomID)
-	assert.Equal(t, "Hello", intent.lastSendTextContent)
+	// Text goes through the unified SendMessageEvent path (never SendText).
+	assert.Equal(t, 0, intent.sendTextCalled)
+	require.Equal(t, 1, intent.sendMessageEventCalled)
+	assert.Equal(t, id.RoomID("!room:test.local"), intent.lastSendMsgEventRoomID)
+	content, ok := intent.lastSendMsgEventContent.(*event.MessageEventContent)
+	require.True(t, ok)
+	assert.Equal(t, event.MsgText, content.MsgType)
+	assert.Equal(t, "Hello", content.Body)
 }
 
 func TestSendMessage_Error(t *testing.T) {
 	intent := &mockIntentAPI{
-		sendTextErr: errors.New("send failed"),
+		sendMessageEventErr: errors.New("send failed"),
 	}
 	as := newMockAS(intent, map[id.UserID]intentAPI{
 		expectedUserID(testActorID): intent,

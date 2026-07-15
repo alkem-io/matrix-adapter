@@ -35,7 +35,7 @@ func TestExtractAttachment_ImageWithDocumentID(t *testing.T) {
 			"h":        float64(1080),
 		},
 		"io.alkemio.document_id": "doc-abc",
-	}))
+	}), true) // trusted (own-appservice) sender ⇒ document_id surfaced
 	if att == nil {
 		t.Fatal("expected non-nil attachment")
 		return
@@ -78,7 +78,7 @@ func TestExtractAttachment_ImageWithoutDocumentID(t *testing.T) {
 			"mimetype": "image/png",
 			"size":     float64(42),
 		},
-	}))
+	}), false) // untrusted sender: no document_id in event anyway
 	if att == nil {
 		t.Fatal("expected non-nil attachment")
 		return
@@ -101,7 +101,7 @@ func TestExtractAttachment_File(t *testing.T) {
 		"body":    "doc.pdf",
 		"url":     "mxc://test.local/fileabc",
 		"info":    map[string]any{"mimetype": "application/pdf", "size": float64(1000)},
-	}))
+	}), true)
 	if att == nil {
 		t.Fatal("expected non-nil attachment")
 		return
@@ -116,7 +116,7 @@ func TestExtractAttachment_NonMedia(t *testing.T) {
 	att := extractAttachment(mediaEvent(map[string]any{
 		"msgtype": "m.text",
 		"body":    "hello",
-	}))
+	}), true)
 	if att != nil {
 		t.Errorf("expected nil attachment for m.text, got %+v", att)
 	}
@@ -124,7 +124,7 @@ func TestExtractAttachment_NonMedia(t *testing.T) {
 
 // An event with no raw content yields no attachment.
 func TestExtractAttachment_NilRaw(t *testing.T) {
-	if att := extractAttachment(&event.Event{}); att != nil {
+	if att := extractAttachment(&event.Event{}, true); att != nil {
 		t.Errorf("expected nil attachment for empty event, got %+v", att)
 	}
 }

@@ -98,10 +98,18 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 	// Parse content. Media events (m.image/m.file/...) may carry no body, so
 	// a missing body is only fatal when there is also no attachment.
 	content, _ := evt.Content.Raw["body"].(string)
-	attachment := extractAttachment(evt)
+	attachment := extractAttachment(evt, m.isOwnAppserviceUser(evt.Sender))
 	if content == "" && attachment == nil {
 		m.logger.Warn("Failed to parse message body", "event_id", evt.ID)
 		return
+	}
+
+	// For media events the body is the filename, which the attachment already
+	// carries as DisplayName. Don't also surface it as message Content or the
+	// client renders a filename text bubble beside the attachment. Content and
+	// attachments are separate fields in the contract.
+	if attachment != nil {
+		content = ""
 	}
 
 	// Parse sender UUID from Matrix user ID
@@ -815,23 +823,42 @@ func (m *MautrixAdapter) isSpaceRoom(ctx context.Context, roomID id.RoomID) (boo
 	return roomType == "m.space", nil
 }
 
+// Media m.room.message msgtypes carrying an attachment (mxc:// URL + file info).
+// Shared by the inbound path (mediaMsgTypes) and the outbound MIME→msgtype
+// mapping (mediaMsgType in mautrix.go) so the two never drift.
+const (
+	msgTypeImage = "m.image"
+	msgTypeVideo = "m.video"
+	msgTypeAudio = "m.audio"
+	msgTypeFile  = "m.file"
+)
+
 // mediaMsgTypes is the set of m.room.message msgtypes that carry a media
 // attachment (an mxc:// URL + file info).
 var mediaMsgTypes = map[string]struct{}{
-	"m.image": {},
-	"m.file":  {},
-	"m.video": {},
-	"m.audio": {},
+	msgTypeImage: {},
+	msgTypeFile:  {},
+	msgTypeVideo: {},
+	msgTypeAudio: {},
 }
 
 // extractAttachment surfaces a raw media reference from a message event, or nil
-// if the event is not a media message. It reads the event's raw content:
+// if the event is not a media message (or carries neither an mxc URL nor a
+// document id). It reads the event's raw content:
 //   - url(mxc) → MediaID (the Synapse media id; the server's re-home key)
 //   - info → mimetype/size/w/h
-//   - io.alkemio.document_id → DocumentID (set only on our own outbound echo)
+//   - io.alkemio.document_id → DocumentID (only when trustDocumentID is set)
+//
+// trustDocumentID must be true only when the event sender is within the
+// adapter's own appservice namespace (see isOwnAppserviceUser). The
+// io.alkemio.document_id breadcrumb is attacker-influenceable — any in-room
+// client could stamp it on an event — so it is authoritative only on echoes of
+// our own outbound media, which are sent by our appservice ghosts. For any
+// other sender the DocumentID is dropped and only MediaID is surfaced, routing
+// the event down the Element-origin (re-home) path.
 //
 // The adapter never resolves these refs — it only surfaces them.
-func extractAttachment(evt *event.Event) *domain.Attachment {
+func extractAttachment(evt *event.Event, trustDocumentID bool) *domain.Attachment {
 	raw := evt.Content.Raw
 	if raw == nil {
 		return nil
@@ -865,19 +892,40 @@ func extractAttachment(evt *event.Event) *domain.Attachment {
 		att.Height = rawIntPtr(info["h"])
 	}
 
-	// io.alkemio.document_id → DocumentID (outbound echo only). Our own outbound
-	// media already lives in file-service as document D, but the server routes
-	// echoes (DocumentID present) to the *coalesce* path — stamp
-	// externalReference=media_id onto D and drop the provider's staging twin —
-	// which needs BOTH refs. So keep MediaID populated alongside DocumentID. The
-	// server distinguishes echo (DocumentID present → coalesce) from Element-origin
-	// (DocumentID absent → re-home) by DocumentID, never by MediaID, so surfacing
-	// both is unambiguous.
-	if docID, ok := raw["io.alkemio.document_id"].(string); ok && docID != "" {
-		att.DocumentID = docID
+	// io.alkemio.document_id → DocumentID, but only from a trusted (own
+	// appservice) sender. Our own outbound media already lives in file-service as
+	// document D, and the server routes echoes (DocumentID present) to the
+	// *coalesce* path — stamp externalReference=media_id onto D and drop the
+	// provider's staging twin — which needs BOTH refs, so MediaID stays populated
+	// alongside DocumentID. The server distinguishes echo (DocumentID present →
+	// coalesce) from Element-origin (DocumentID absent → re-home) by DocumentID,
+	// never by MediaID, so surfacing both is unambiguous.
+	if trustDocumentID {
+		if docID, ok := raw["io.alkemio.document_id"].(string); ok && docID != "" {
+			att.DocumentID = docID
+		}
+	}
+
+	// A media msgtype with neither a parseable mxc URL nor a surfaced document id
+	// carries no reference the server can act on — drop it rather than emit a
+	// dead attachment record.
+	if att.MediaID == "" && att.DocumentID == "" {
+		return nil
 	}
 
 	return att
+}
+
+// isOwnAppserviceUser reports whether userID is a user the adapter's own
+// appservice controls on our homeserver: a UUID-localpart ghost (or the bot,
+// which is itself a UUID localpart) on the configured homeserver domain. This
+// is the trust gate for the io.alkemio.document_id breadcrumb — only echoes
+// from our ghosts may surface an authoritative DocumentID.
+func (m *MautrixAdapter) isOwnAppserviceUser(userID id.UserID) bool {
+	if userID.Homeserver() != m.idMapper.HomeserverDomain() {
+		return false
+	}
+	return m.idMapper.AlkemioActorID(userID) != uuid.Nil
 }
 
 // rawInt64 coerces a JSON-decoded numeric value (float64 from encoding/json, or

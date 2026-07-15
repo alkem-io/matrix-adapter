@@ -725,6 +725,19 @@ func (m *MautrixAdapter) markRoomAsReadForUsers(
 	)
 }
 
+// sendDeadline bounds a single logical send (text + fetches + uploads) with the
+// configured SEND_TIMEOUT_SECONDS. Because the send topic is drained by a
+// bounded worker pool, an unbounded send could otherwise pin a worker for
+// minutes; this backstop guarantees forward progress even if the request
+// context has no deadline. The caller must always call the returned cancel.
+func (m *MautrixAdapter) sendDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	seconds := config.DefaultSendTimeoutSeconds
+	if m.cfg != nil {
+		seconds = m.cfg.SendTimeoutSeconds()
+	}
+	return context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+}
+
 // SendMessage sends a message to a room. A non-empty text body is sent as a
 // single m.text event; each attachment is sent as its own media event
 // (m.image/m.file/...). Returns the primary event ID (the text event if there
@@ -733,6 +746,9 @@ func (m *MautrixAdapter) SendMessage(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment,
 	idempotencyKey string,
 ) (id.EventID, error) {
+	ctx, cancel := m.sendDeadline(ctx)
+	defer cancel()
+
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
 		return "", err
@@ -741,22 +757,15 @@ func (m *MautrixAdapter) SendMessage(
 
 	var primaryEventID id.EventID
 	if content != "" {
-		if txn := txnReq(idempotencyKey, "text"); txn != nil {
-			// With an idempotency key we route the text through SendMessageEvent
-			// so we can attach a deterministic transaction ID for retry dedup.
-			resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage,
-				&event.MessageEventContent{MsgType: event.MsgText, Body: content}, txn...)
-			if err != nil {
-				return "", fmt.Errorf("failed to send message: %w", err)
-			}
-			primaryEventID = resp.EventID
-		} else {
-			resp, err := intent.SendText(ctx, roomID, content)
-			if err != nil {
-				return "", fmt.Errorf("failed to send message: %w", err)
-			}
-			primaryEventID = resp.EventID
+		// Text always goes through SendMessageEvent: txnReq returns nil (no extra
+		// args) without an idempotency key, and a deterministic transaction ID
+		// with one — a single code path for both.
+		resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage,
+			&event.MessageEventContent{MsgType: event.MsgText, Body: content}, txnReq(idempotencyKey, "text")...)
+		if err != nil {
+			return "", fmt.Errorf("failed to send message: %w", err)
 		}
+		primaryEventID = resp.EventID
 	}
 
 	for i := range attachments {
@@ -918,6 +927,9 @@ func (m *MautrixAdapter) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
 	attachments []domain.Attachment, idempotencyKey string,
 ) (id.EventID, error) {
+	ctx, cancel := m.sendDeadline(ctx)
+	defer cancel()
+
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
 		return "", err
@@ -974,31 +986,23 @@ func (m *MautrixAdapter) UploadMedia(ctx context.Context, data []byte, contentTy
 	return resp.ContentURI, nil
 }
 
-// DownloadMedia fetches the bytes for an mxc:// content URI from the
-// homeserver's media repository. Thin wrapper over the bot's
-// Client.DownloadBytes.
-//
-// This is the download half of the adapter's byte-bridge responsibility
-// ("byte upload/download", workspace#013-matrix-media-file-service). It is not
-// yet wired to a queue topic — inbound media in the current slice is re-homed by
-// the server from the surfaced media_id, not pulled through the adapter — so it
-// is exercised only by tests today. Retained (not deleted) as the symmetric
-// counterpart to UploadMedia for the inbound byte-plane slice; remove if that
-// slice settles on a design that never routes bytes through the adapter.
-func (m *MautrixAdapter) DownloadMedia(ctx context.Context, mxc id.ContentURI) ([]byte, error) {
-	data, err := m.as.BotIntent().DownloadBytes(ctx, mxc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to download media %s: %w", mxc.String(), err)
-	}
-	return data, nil
-}
-
 // sendAttachment fetches a document's bytes from file-service, uploads them to
 // the homeserver, and sends a media event carrying the mxc URL, file info, and
 // the io.alkemio.document_id breadcrumb. When threadID is non-empty the event
 // is threaded under it. txn, when non-nil, carries a deterministic Matrix
 // transaction ID so a retry of this exact event is de-duplicated by the
 // homeserver.
+//
+// Upload/event ordering & at-least-once semantics (accepted, not fixable while
+// stateless): the byte upload happens before the txn-deduped event send. Matrix
+// media upload is NOT idempotent — there is no client-supplied transaction ID
+// for UploadBytes — so a retry re-uploads the bytes and mints a *fresh* mxc,
+// then the deduped SendMessageEvent returns the ORIGINAL event (with the
+// original mxc). The freshly-uploaded blob is therefore orphaned. Making upload
+// deterministic would require caching a document→mxc mapping, i.e. reintroducing
+// adapter state, which the constitution forbids. Orphaned media are unreferenced
+// by any event and are reclaimed by Synapse's media retention / purge, so this
+// is a bounded, self-healing cost of stateless at-least-once delivery.
 func (m *MautrixAdapter) sendAttachment(
 	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, threadID id.EventID,
 	txn []mautrix.ReqSendEvent,
@@ -1062,9 +1066,15 @@ func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID st
 	if baseURL == "" {
 		return nil, "", fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
 	}
-	url := fmt.Sprintf("%s/internal/file/%s/content", strings.TrimRight(baseURL, "/"), documentID)
+	// Defense-in-depth on the internal fetch path: document ids are UUIDs, so
+	// validate the shape and path-escape before interpolating into the URL.
+	if _, err := uuid.Parse(documentID); err != nil {
+		return nil, "", fmt.Errorf("invalid document id %q: %w", documentID, err)
+	}
+	endpoint := fmt.Sprintf("%s/internal/file/%s/content",
+		strings.TrimRight(baseURL, "/"), url.PathEscape(documentID))
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to build file-service request: %w", err)
 	}
@@ -1159,13 +1169,13 @@ func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType str
 func mediaMsgType(mime string) string {
 	switch {
 	case strings.HasPrefix(mime, "image/"):
-		return "m.image"
+		return msgTypeImage
 	case strings.HasPrefix(mime, "video/"):
-		return "m.video"
+		return msgTypeVideo
 	case strings.HasPrefix(mime, "audio/"):
-		return "m.audio"
+		return msgTypeAudio
 	default:
-		return "m.file"
+		return msgTypeFile
 	}
 }
 
@@ -1216,6 +1226,11 @@ func (m *MautrixAdapter) SendReaction(
 }
 
 // GetMessage retrieves a specific message event.
+//
+// It routes through parseMessageEvent — the same path as GetRoomMessages /
+// GetLastMessage / GetThreadMessages — so a media event returns its attachment
+// (mxc→MediaID, io.alkemio.document_id→DocumentID) consistently, rather than
+// just its body text.
 func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, eventID id.EventID) (
 	*domain.Message, error,
 ) {
@@ -1224,59 +1239,11 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 		return nil, fmt.Errorf("failed to get event: %w", err)
 	}
 
-	// Try to parse using generic helper
-	if content, ok := parseEventContent[event.MessageEventContent](evt); ok {
-		msg := &domain.Message{
-			ID:             evt.ID.String(),
-			RoomID:         roomID.String(),
-			Content:        content.Body,
-			SenderMatrixID: evt.Sender.String(),
-			Timestamp:      time.UnixMilli(evt.Timestamp),
-		}
-		// Extract thread ID from RelatesTo (same logic as fallback path)
-		if content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
-			msg.ThreadID = content.RelatesTo.InReplyTo.EventID.String()
-		}
-		return msg, nil
-	}
-
-	// Fallback: try raw JSON body
-	return m.parseMessageFromRaw(evt, roomID)
-}
-
-// parseMessageFromRaw extracts a message from raw event content as a fallback.
-func (m *MautrixAdapter) parseMessageFromRaw(evt *event.Event, roomID id.RoomID) (*domain.Message, error) {
-	rawBody, ok := evt.Content.Raw["body"].(string)
-	if !ok {
+	msg := m.parseMessageEvent(evt, roomID)
+	if msg == nil {
 		return nil, fmt.Errorf("event is not a message")
 	}
-
-	msg := &domain.Message{
-		ID:             evt.ID.String(),
-		RoomID:         roomID.String(),
-		Content:        rawBody,
-		SenderMatrixID: evt.Sender.String(),
-		Timestamp:      time.UnixMilli(evt.Timestamp),
-	}
-
-	// Try to extract thread info from raw content
-	msg.ThreadID = m.extractThreadIDFromRaw(evt)
-
 	return msg, nil
-}
-
-// extractThreadIDFromRaw extracts thread ID from raw event content.
-func (m *MautrixAdapter) extractThreadIDFromRaw(evt *event.Event) string {
-	relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	threadID, _ := inReplyTo["event_id"].(string)
-	return threadID
 }
 
 // parseEventContent attempts to parse event content, trying Parsed first then ParseRaw.
@@ -1806,17 +1773,24 @@ func (m *MautrixAdapter) parseReactionEvent(evt *event.Event, roomID id.RoomID) 
 // parseMessageEvent extracts a domain.Message from a Matrix event.
 func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *domain.Message {
 	body := m.extractMessageBody(evt)
-	attachment := extractAttachment(evt)
+	attachment := extractAttachment(evt, m.isOwnAppserviceUser(evt.Sender))
 	// A media event may carry an empty body; keep it as long as it has an
 	// attachment. Text events with an empty body are skipped as before.
 	if body == "" && attachment == nil {
 		return nil
 	}
 
+	// For media events the body is the filename (already carried by the
+	// attachment's DisplayName); don't duplicate it as message Content.
+	content := body
+	if attachment != nil {
+		content = ""
+	}
+
 	msg := &domain.Message{
 		ID:             evt.ID.String(),
 		RoomID:         roomID.String(),
-		Content:        body,
+		Content:        content,
 		SenderMatrixID: evt.Sender.String(),
 		Timestamp:      time.UnixMilli(evt.Timestamp),
 	}
