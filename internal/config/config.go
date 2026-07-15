@@ -38,14 +38,6 @@ type Config struct {
 		// MaxAttachmentBytes caps how many bytes are read from file-service for a
 		// single outbound attachment. <= 0 means use the built-in default (50 MiB).
 		MaxAttachmentBytes int64 `yaml:"max_attachment_bytes"`
-		// MaxTotalAttachmentBytes bounds the TOTAL bytes buffered in memory across
-		// all concurrently in-flight attachment uploads. Without it, N send
-		// workers each buffering a max-size attachment would use N×MaxAttachmentBytes
-		// of memory. A weighted budget caps that regardless of worker count; large
-		// attachments self-limit their concurrency while small ones flow freely.
-		// <= 0 means use the built-in default (128 MiB, raised to MaxAttachmentBytes
-		// if that is larger so a single max attachment can always be sent).
-		MaxTotalAttachmentBytes int64 `yaml:"max_total_attachment_bytes"`
 	} `yaml:"file_service"`
 
 	Send struct {
@@ -77,9 +69,6 @@ const (
 	// DefaultMaxAttachmentBytes caps how many bytes are read from file-service for
 	// a single outbound attachment (50 MiB).
 	DefaultMaxAttachmentBytes int64 = 50 * 1024 * 1024
-	// DefaultMaxTotalAttachmentBytes bounds the TOTAL bytes buffered across all
-	// concurrently in-flight attachment uploads (128 MiB).
-	DefaultMaxTotalAttachmentBytes int64 = 128 * 1024 * 1024
 )
 
 // MaxAttachmentBytes returns the configured per-attachment byte cap, falling back
@@ -90,21 +79,6 @@ func (c *Config) MaxAttachmentBytes() int64 {
 		return c.FileService.MaxAttachmentBytes
 	}
 	return DefaultMaxAttachmentBytes
-}
-
-// MaxTotalAttachmentBytes returns the shared attachment-memory budget, falling
-// back to DefaultMaxTotalAttachmentBytes. It is never smaller than the
-// per-attachment cap, otherwise a single max-size attachment could never be
-// admitted to the budget. Nil-safe.
-func (c *Config) MaxTotalAttachmentBytes() int64 {
-	total := DefaultMaxTotalAttachmentBytes
-	if c != nil && c.FileService.MaxTotalAttachmentBytes > 0 {
-		total = c.FileService.MaxTotalAttachmentBytes
-	}
-	if per := c.MaxAttachmentBytes(); total < per {
-		total = per
-	}
-	return total
 }
 
 // SendTimeoutSeconds returns the configured per-send timeout, falling back to
@@ -208,11 +182,6 @@ func loadFileServiceEnv(cfg *Config) {
 	if v := os.Getenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			cfg.FileService.MaxAttachmentBytes = n
-		}
-	}
-	if v := os.Getenv("FILE_SERVICE_MAX_TOTAL_ATTACHMENT_BYTES"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			cfg.FileService.MaxTotalAttachmentBytes = n
 		}
 	}
 }

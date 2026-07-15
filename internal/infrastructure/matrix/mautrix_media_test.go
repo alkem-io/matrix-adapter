@@ -531,17 +531,56 @@ func TestGetMessage_MediaEvent_ReturnsAttachment(t *testing.T) {
 	assert.Equal(t, "photo.jpg", msg.Attachments[0].DisplayName)
 }
 
-// UploadMedia thin wrapper delegates to the bot client.
-func TestUploadMedia(t *testing.T) {
-	intent := &mockIntentAPI{
-		uploadBytesResult: &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/up1")},
-	}
-	as := newMockAS(intent, map[id.UserID]intentAPI{})
-	a := newFullTestAdapter(as, &mockAdminAPI{})
+// Streaming upload: a body within the cap streams straight through to Synapse
+// (no whole-file buffering) and the media event's info.size is the streamed byte
+// count; a body larger than the cap fails with the oversize error and sends no
+// media event, so an oversized document never gets buffered whole in memory.
+func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
+	t.Run("in-cap body streams through with streamed size", func(t *testing.T) {
+		body := []byte("STREAMED-BODY") // 13 bytes
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(body)
+		}))
+		defer ts.Close()
 
-	mxc, err := a.UploadMedia(context.Background(), []byte("DATA"), "image/png")
-	require.NoError(t, err)
-	assert.Equal(t, "mxc://test.local/up1", mxc.String())
-	assert.Equal(t, "image/png", intent.lastUploadBytesType)
-	assert.Equal(t, 1, intent.uploadBytesCalled)
+		intent := &mockIntentAPI{
+			uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/s")},
+			sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$s"},
+		}
+		a := newMediaTestAdapter(t, ts.URL, intent)
+		a.cfg.FileService.MaxAttachmentBytes = 1024 // well above the body
+
+		_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+			[]domain.Attachment{{DocumentID: docID1, DisplayName: "s.png", MimeType: "image/png", Size: 999}}, "")
+		require.NoError(t, err)
+		require.Equal(t, 1, intent.uploadBytesCalled)
+		assert.Equal(t, body, intent.lastUploadBytesData, "the whole body streamed through to the upload")
+		require.Equal(t, 1, intent.sendMessageEventCalled)
+		content, ok := intent.lastSendMsgEventContent.(map[string]any)
+		require.True(t, ok)
+		info, ok := content["info"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, int64(len(body)), info["size"], "info.size is the streamed byte count")
+	})
+
+	t.Run("oversize body fails and sends no event", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(make([]byte, 100)) // 100 bytes
+		}))
+		defer ts.Close()
+
+		intent := &mockIntentAPI{
+			sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$never"},
+		}
+		a := newMediaTestAdapter(t, ts.URL, intent)
+		a.cfg.FileService.MaxAttachmentBytes = 10 // below the 100-byte body
+
+		_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+			[]domain.Attachment{{DocumentID: docID1, DisplayName: "big.bin", MimeType: "application/octet-stream"}}, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeds max attachment size")
+		assert.Equal(t, 0, intent.sendMessageEventCalled, "no media event when the cap is exceeded")
+	})
 }

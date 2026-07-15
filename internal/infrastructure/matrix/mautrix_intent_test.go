@@ -3,6 +3,7 @@ package matrix
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"testing"
 
@@ -256,6 +257,32 @@ func (m *mockIntentAPI) UploadBytes(_ context.Context, data []byte, contentType 
 	m.lastUploadBytesData = data
 	m.lastUploadBytesType = contentType
 	return m.uploadBytesResult, m.uploadBytesErr
+}
+
+// UploadMedia records the streamed upload the same way UploadBytes recorded the
+// buffered one: it drains req.Content into lastUploadBytesData and captures the
+// content type, so the existing upload assertions carry over to the streamed
+// path. A read error from the streaming reader (e.g. the oversize cap tripping)
+// is surfaced so sendAttachment can classify it.
+func (m *mockIntentAPI) UploadMedia(_ context.Context, req mautrix.ReqUploadMedia) (*mautrix.RespMediaUpload, error) {
+	m.uploadBytesCalled++
+	m.lastUploadBytesType = req.ContentType
+	if req.Content != nil {
+		data, err := io.ReadAll(req.Content)
+		m.lastUploadBytesData = data
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		m.lastUploadBytesData = req.ContentBytes
+	}
+	if m.uploadBytesErr != nil {
+		return nil, m.uploadBytesErr
+	}
+	if m.uploadBytesResult != nil {
+		return m.uploadBytesResult, nil
+	}
+	return &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/stub")}, nil
 }
 
 func (m *mockIntentAPI) DownloadBytes(_ context.Context, mxcURL id.ContentURI) ([]byte, error) {

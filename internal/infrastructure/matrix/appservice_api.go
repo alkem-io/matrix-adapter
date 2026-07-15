@@ -41,6 +41,7 @@ type intentAPI interface {
 
 	// --- Inherited from *mautrix.Client (not overridden by IntentAPI) ---
 	UploadBytes(ctx context.Context, data []byte, contentType string) (*mautrix.RespMediaUpload, error)
+	UploadMedia(ctx context.Context, req mautrix.ReqUploadMedia) (*mautrix.RespMediaUpload, error)
 	DownloadBytes(ctx context.Context, mxcURL id.ContentURI) ([]byte, error)
 	SendReceipt(ctx context.Context, roomID id.RoomID, eventID id.EventID, receiptType event.ReceiptType, content interface{}) error
 	SetReadMarkers(ctx context.Context, roomID id.RoomID, content interface{}) error
