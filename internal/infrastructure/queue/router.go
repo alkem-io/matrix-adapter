@@ -10,10 +10,14 @@ import (
 
 // sendMessagePartitionKey extracts the target room from a SendMessageRequest
 // payload so the ordered send pool can serialize same-room sends while running
-// different rooms concurrently. A malformed payload (which the handler will
-// reject anyway) falls back to the empty key — still ordered, never dropped.
+// different rooms concurrently. Only the room id is decoded (not the full
+// request with its attachment list) — the handler decodes the payload again
+// anyway. A malformed payload (which the handler will reject) falls back to the
+// empty key — still ordered, never dropped.
 func sendMessagePartitionKey(payload []byte) string {
-	var req dto.SendMessageRequest
+	var req struct {
+		AlkemioRoomID dto.AlkemioRoomID `json:"alkemio_room_id"`
+	}
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return ""
 	}
