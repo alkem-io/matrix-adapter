@@ -209,6 +209,64 @@ func TestExtractInboundMessage_AbsentBodyNoAttachment_Dropped(t *testing.T) {
 // F4 — GetMessage on a present-but-empty-body message yields a Message
 // ============================================================================
 
+// A1 — GetLastMessage (a scan) skips a trailing (newest) blank preview message
+// and returns the previous real one. On develop, parseMessageEvent returned nil
+// for an empty body so scans never saw it; after the empty-body fix (F4) the
+// scanning read paths filter blanks explicitly.
+func TestGetLastMessage_SkipsTrailingBlank(t *testing.T) {
+	admin := &mockAdminAPI{
+		getRoomMessagesResult: &mautrix.RespMessages{
+			// dir="b" ⇒ newest first: a blank preview message, then a real one.
+			Chunk: []*event.Event{
+				{
+					ID: "$blank", Sender: id.UserID("@user:test.local"), Type: event.EventMessage,
+					Timestamp: 1700000002000,
+					Content:   event.Content{Raw: map[string]any{"body": "", "msgtype": "m.text"}},
+				},
+				{
+					ID: "$real", Sender: id.UserID("@user:test.local"), Type: event.EventMessage,
+					Timestamp: 1700000001000,
+					Content:   event.Content{Raw: map[string]any{"body": "hello", "msgtype": "m.text"}},
+				},
+			},
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	msg, err := a.GetLastMessage(context.Background(), "!room:test.local")
+	require.NoError(t, err)
+	require.NotNil(t, msg, "a real message exists behind the blank")
+	assert.Equal(t, "$real", msg.ID, "the trailing blank must be skipped as the room's last message")
+	assert.Equal(t, "hello", msg.Content)
+}
+
+// A1 — GetRoomMessages (a history scan) filters blank preview messages out of
+// the returned list, matching develop.
+func TestGetRoomMessages_FiltersBlank(t *testing.T) {
+	admin := &mockAdminAPI{
+		getRoomMessagesResult: &mautrix.RespMessages{
+			Chunk: []*event.Event{
+				{
+					ID: "$real", Sender: id.UserID("@user:test.local"), Type: event.EventMessage,
+					Timestamp: 1700000001000,
+					Content:   event.Content{Raw: map[string]any{"body": "hi", "msgtype": "m.text"}},
+				},
+				{
+					ID: "$blank", Sender: id.UserID("@user:test.local"), Type: event.EventMessage,
+					Timestamp: 1700000002000,
+					Content:   event.Content{Raw: map[string]any{"body": "", "msgtype": "m.text"}},
+				},
+			},
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	msgs, err := a.GetRoomMessages(context.Background(), "!room:test.local")
+	require.NoError(t, err)
+	require.Len(t, msgs, 1, "the blank message must be filtered from room history")
+	assert.Equal(t, "$real", msgs[0].ID)
+}
+
 func TestGetMessage_EmptyBody_ReturnsMessage(t *testing.T) {
 	admin := &mockAdminAPI{
 		getEventResult: &event.Event{

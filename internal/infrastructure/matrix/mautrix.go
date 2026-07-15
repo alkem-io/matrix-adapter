@@ -1573,11 +1573,15 @@ func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) 
 		}
 
 		msg := m.parseMessageEvent(evt, roomID)
-		if msg != nil {
-			msg.Reactions = []domain.Reaction{} // Initialize empty slice
-			messages = append(messages, *msg)
-			messageIndices[msg.ID] = len(messages) - 1
+		// Skip blank preview messages (present-but-empty body, no attachment):
+		// this is a history scan, so it must not surface them (A1). GetMessage
+		// by id still returns them.
+		if msg == nil || isBlankMessage(msg) {
+			continue
 		}
+		msg.Reactions = []domain.Reaction{} // Initialize empty slice
+		messages = append(messages, *msg)
+		messageIndices[msg.ID] = len(messages) - 1
 	}
 
 	// Second pass: collect reactions and attach to their parent messages
@@ -1677,15 +1681,22 @@ func (m *MautrixAdapter) GetLastMessage(ctx context.Context, roomID id.RoomID) (
 
 		allEvents = append(allEvents, resp.Chunk...)
 
-		// Check if we found a message in this batch
+		// Check if we found a non-blank message in this batch. A blank preview
+		// message (present-but-empty body, no attachment) must NOT be surfaced as
+		// the room's last message (A1) — keep scanning older events for a real one.
 		for i, evt := range resp.Chunk {
-			if evt.Type == event.EventMessage {
-				// Record stats: total events scanned = previous batches + position in current batch
-				eventsScanned := len(allEvents) - len(resp.Chunk) + i + 1
-				lastMsgStats.record(eventsScanned, true, m.logger)
-				// Found a message - collect reactions from all fetched events and return
-				return m.buildLastMessageWithReactions(allEvents, roomID)
+			if evt.Type != event.EventMessage {
+				continue
 			}
+			msg := m.parseMessageEvent(evt, roomID)
+			if msg == nil || isBlankMessage(msg) {
+				continue
+			}
+			// Record stats: total events scanned = previous batches + position in current batch
+			eventsScanned := len(allEvents) - len(resp.Chunk) + i + 1
+			lastMsgStats.record(eventsScanned, true, m.logger)
+			// Found a real message - collect reactions from all fetched events and return
+			return m.buildLastMessageWithReactions(allEvents, roomID)
 		}
 
 		// No message found yet - continue with next batch if there are more events
@@ -1701,16 +1712,21 @@ func (m *MautrixAdapter) GetLastMessage(ctx context.Context, roomID id.RoomID) (
 
 // buildLastMessageWithReactions finds the last message and attaches its reactions.
 func (m *MautrixAdapter) buildLastMessageWithReactions(events []*event.Event, roomID id.RoomID) (*domain.Message, error) {
-	// Find the first m.room.message event
+	// Find the first m.room.message event that is a real (non-blank) message. A
+	// blank preview message is skipped so it never becomes the room's last
+	// message, matching the scan in GetLastMessage (A1).
 	var msg *domain.Message
 	for _, evt := range events {
-		if evt.Type == event.EventMessage {
-			msg = m.parseMessageEvent(evt, roomID)
-			if msg != nil {
-				msg.Reactions = []domain.Reaction{}
-				break
-			}
+		if evt.Type != event.EventMessage {
+			continue
 		}
+		parsed := m.parseMessageEvent(evt, roomID)
+		if parsed == nil || isBlankMessage(parsed) {
+			continue
+		}
+		parsed.Reactions = []domain.Reaction{}
+		msg = parsed
+		break
 	}
 
 	if msg == nil {
@@ -1852,6 +1868,20 @@ func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *
 	return msg
 }
 
+// isBlankMessage reports whether a parsed message carries nothing renderable:
+// empty Content AND no attachment. The SCANNING read paths (GetRoomMessages,
+// GetLastMessage, and GetThreadMessages replies) skip such messages so a
+// present-but-empty-body event never surfaces as a room's latest/preview message
+// — restoring develop's behavior, where parseMessageEvent returned nil for an
+// empty body and these scans never saw it (A1).
+//
+// By-id fetches (GetMessage, and the explicitly-requested thread root) still
+// return blank messages, and live-sync (handleMessageEvent) still forwards them:
+// a present-but-empty body is a real event (F3/F4), just not a preview-worthy one.
+func isBlankMessage(msg *domain.Message) bool {
+	return msg.Content == "" && len(msg.Attachments) == 0
+}
+
 // GetReaction retrieves details of a specific reaction.
 func (m *MautrixAdapter) GetReaction(ctx context.Context, roomID id.RoomID, reactionID id.EventID) (
 	*domain.Reaction, error,
@@ -1910,18 +1940,22 @@ func (m *MautrixAdapter) GetThreadMessages(
 		return messages, nil
 	}
 
-	// Parse thread reply messages (relations API returns newest-first)
+	// Parse thread reply messages (relations API returns newest-first). This is a
+	// history scan, so blank preview messages (present-but-empty body, no
+	// attachment) are skipped (A1); the explicitly-requested thread root above is
+	// kept regardless, matching GetMessage-by-id semantics.
 	for _, evt := range chunk {
 		if evt.Type != event.EventMessage {
 			continue
 		}
 
 		msg := m.parseMessageEvent(evt, roomID)
-		if msg != nil {
-			msg.Reactions = []domain.Reaction{}
-			msg.ThreadID = threadRootID.String()
-			messages = append(messages, *msg)
+		if msg == nil || isBlankMessage(msg) {
+			continue
 		}
+		msg.Reactions = []domain.Reaction{}
+		msg.ThreadID = threadRootID.String()
+		messages = append(messages, *msg)
 	}
 
 	// Append root message last so the server's .reverse() puts it first
