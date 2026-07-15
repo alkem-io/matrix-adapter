@@ -30,7 +30,11 @@ type QueuePort interface {
 	// with per-key ordering and bounded cross-key concurrency: messages sharing
 	// a partition key are processed sequentially in delivery order, while
 	// different keys progress concurrently up to the configured worker bound.
-	// A message is acknowledged only after its handler completes.
+	// A message is acknowledged when it is dispatched to the worker pool (not
+	// after its handler completes), which is what lets a slow key run without
+	// head-of-line-blocking other keys. This is an always-ack, at-most-once
+	// model: the broker never redelivers, so recovery on failure is the caller's
+	// RPC retry keyed by a stable idempotency key.
 	SubscribeOrdered(topic string, handler MessageHandler, keyFn PartitionKeyFunc) error
 	// PublishAndWait sends a message to the specified topic and waits for a reply
 	// using the AMQP RPC pattern (temporary exclusive reply queue + correlation_id).
