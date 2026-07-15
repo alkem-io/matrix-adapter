@@ -5,10 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/semaphore"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/id"
 
@@ -85,28 +89,73 @@ func TestSendMessage_TotalFailure_NotPartial(t *testing.T) {
 // F7 — attachment memory reservation
 // ============================================================================
 
-func TestAttachmentReservation(t *testing.T) {
-	const cap50 = 50 * 1024 * 1024
-	const budget = 128 * 1024 * 1024
+// The budget must bound RESIDENT memory even when att.Size is understated.
+// fetchDocumentContent buffers up to the per-attachment cap regardless of the
+// declared size, so acquireAttachmentBudget reserves the cap — meaning at most
+// floor(budget/cap) attachments buffer concurrently, no matter how small the
+// declared sizes are. Here budget/cap = 30/10 = 3, so of N concurrent acquires
+// only 3 are ever admitted at once (the old code, reserving att.Size=1, would
+// have admitted all N and blown the bound to N×cap).
+func TestAcquireAttachmentBudget_BoundsResidentMemoryDespiteUnderstatedSize(t *testing.T) {
+	a := newTestAdapter("test.local")
+	cfg := &config.Config{}
+	cfg.FileService.MaxAttachmentBytes = 10      // per-attachment cap (worst-case buffered bytes)
+	cfg.FileService.MaxTotalAttachmentBytes = 30 // budget ⇒ floor(30/10) = 3 admitted at once
+	a.cfg = cfg
+	a.attachmentBudget = semaphore.NewWeighted(cfg.MaxTotalAttachmentBytes())
 
-	// Known, sane declared size reserves exactly that.
-	assert.Equal(t, int64(1024), attachmentReservation(1024, cap50, budget))
-	// Unknown size (<=0) reserves the per-attachment cap (worst case).
-	assert.Equal(t, int64(cap50), attachmentReservation(0, cap50, budget))
-	// A declared size above the cap is clamped to the cap (we never read more).
-	assert.Equal(t, int64(cap50), attachmentReservation(cap50*10, cap50, budget))
-	// Never exceeds the total budget, and never below 1.
-	assert.LessOrEqual(t, attachmentReservation(999999999, 999999999, 10), int64(10))
-	assert.Equal(t, int64(1), attachmentReservation(-5, 0, budget))
+	const n = 12
+	const wantAdmitted = 3
+
+	var inFlight, maxSeen atomic.Int32
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Declared size is irrelevant now — the reservation is the cap. (The old
+			// signature took att.Size; understating it no longer weakens the bound.)
+			rel, err := a.acquireAttachmentBudget(context.Background())
+			if err != nil {
+				return
+			}
+			defer rel()
+			cur := inFlight.Add(1)
+			for {
+				old := maxSeen.Load()
+				if cur <= old || maxSeen.CompareAndSwap(old, cur) {
+					break
+				}
+			}
+			<-release
+			inFlight.Add(-1)
+		}()
+	}
+
+	// Only floor(budget/cap) attachments may hold the budget at once.
+	require.Eventually(t, func() bool { return maxSeen.Load() == wantAdmitted },
+		2*time.Second, 5*time.Millisecond, "budget should admit exactly floor(budget/cap) at once")
+	require.Never(t, func() bool { return maxSeen.Load() > wantAdmitted },
+		200*time.Millisecond, 10*time.Millisecond,
+		"more than floor(budget/cap) admitted — resident memory bound not enforced")
+
+	close(release)
+	wg.Wait()
 }
 
-// The budget is never smaller than the per-attachment cap, so a single max-size
-// attachment can always be admitted (otherwise its Acquire would deadlock).
-func TestMaxTotalAttachmentBytes_AtLeastPerAttachmentCap(t *testing.T) {
+// A single max-size attachment must always be admissible: reserving the cap
+// against a budget floored at the cap can't deadlock.
+func TestAcquireAttachmentBudget_MaxSizeAlwaysAdmissible(t *testing.T) {
 	a := newTestAdapter("test.local")
 	cfg := &config.Config{}
 	cfg.FileService.MaxAttachmentBytes = 64 * 1024 * 1024
-	cfg.FileService.MaxTotalAttachmentBytes = 1 // total(1) < per(64MiB)
+	cfg.FileService.MaxTotalAttachmentBytes = 1 // total(1) < per(64MiB): floored up to the cap
 	a.cfg = cfg
-	assert.Equal(t, int64(64*1024*1024), a.maxTotalAttachmentBytes())
+	assert.Equal(t, int64(64*1024*1024), cfg.MaxTotalAttachmentBytes())
+
+	a.attachmentBudget = semaphore.NewWeighted(cfg.MaxTotalAttachmentBytes())
+	rel, err := a.acquireAttachmentBudget(context.Background())
+	require.NoError(t, err, "a single max-size attachment must be admissible")
+	rel()
 }

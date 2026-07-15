@@ -477,13 +477,13 @@ func TestMaxAttachmentBytes_NonPositiveFallsBackToDefault(t *testing.T) {
 	a := newMediaTestAdapter(t, "", intent)
 
 	a.cfg.FileService.MaxAttachmentBytes = -1
-	assert.Equal(t, defaultMaxAttachmentBytes, a.maxAttachmentBytes())
+	assert.Equal(t, config.DefaultMaxAttachmentBytes, a.cfg.MaxAttachmentBytes())
 
 	a.cfg.FileService.MaxAttachmentBytes = 0
-	assert.Equal(t, defaultMaxAttachmentBytes, a.maxAttachmentBytes())
+	assert.Equal(t, config.DefaultMaxAttachmentBytes, a.cfg.MaxAttachmentBytes())
 
 	a.cfg.FileService.MaxAttachmentBytes = 1234
-	assert.Equal(t, int64(1234), a.maxAttachmentBytes())
+	assert.Equal(t, int64(1234), a.cfg.MaxAttachmentBytes())
 }
 
 // fetchDocumentContent rejects a non-UUID document id before any HTTP call.

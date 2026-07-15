@@ -215,16 +215,16 @@ func TestSubscribeOrdered_BackpressureStopsAckingWhenBacklogFull(t *testing.T) {
 	}()
 
 	// Acks climb to exactly the backlog bound, then stop (enqueue blocks).
-	require.Eventually(t, func() bool { return acked.Load() == int32(capacity) },
+	require.Eventually(t, func() bool { return int(acked.Load()) == capacity },
 		2*time.Second, 5*time.Millisecond, "acks should reach the backlog bound")
 	// ...and never exceed it while the handler stays blocked.
-	require.Never(t, func() bool { return acked.Load() > int32(capacity) },
+	require.Never(t, func() bool { return int(acked.Load()) > capacity },
 		300*time.Millisecond, 10*time.Millisecond,
 		"acks exceeded the backlog bound — backpressure not enforced (unbounded backlog / OOM)")
 
 	assert.Equal(t, int32(1), handlerStarts.Load(),
 		"only the first same-room send runs; the rest are queued, not processed")
-	assert.Less(t, acked.Load(), int32(total), "producer must be backpressured, not fully drained")
+	assert.Less(t, int(acked.Load()), total, "producer must be backpressured, not fully drained")
 
 	// Teardown: stop the feeder BEFORE Close so no send races Close's channel
 	// close, then unblock the pool so it drains, and shut down cleanly.

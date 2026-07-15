@@ -71,6 +71,42 @@ const (
 	DefaultSendConcurrency = 8
 )
 
+// File-service attachment memory defaults (applied when the corresponding config
+// value is <= 0).
+const (
+	// DefaultMaxAttachmentBytes caps how many bytes are read from file-service for
+	// a single outbound attachment (50 MiB).
+	DefaultMaxAttachmentBytes int64 = 50 * 1024 * 1024
+	// DefaultMaxTotalAttachmentBytes bounds the TOTAL bytes buffered across all
+	// concurrently in-flight attachment uploads (128 MiB).
+	DefaultMaxTotalAttachmentBytes int64 = 128 * 1024 * 1024
+)
+
+// MaxAttachmentBytes returns the configured per-attachment byte cap, falling back
+// to DefaultMaxAttachmentBytes when unset or non-positive. Nil-safe so callers
+// need not guard a nil *Config.
+func (c *Config) MaxAttachmentBytes() int64 {
+	if c != nil && c.FileService.MaxAttachmentBytes > 0 {
+		return c.FileService.MaxAttachmentBytes
+	}
+	return DefaultMaxAttachmentBytes
+}
+
+// MaxTotalAttachmentBytes returns the shared attachment-memory budget, falling
+// back to DefaultMaxTotalAttachmentBytes. It is never smaller than the
+// per-attachment cap, otherwise a single max-size attachment could never be
+// admitted to the budget. Nil-safe.
+func (c *Config) MaxTotalAttachmentBytes() int64 {
+	total := DefaultMaxTotalAttachmentBytes
+	if c != nil && c.FileService.MaxTotalAttachmentBytes > 0 {
+		total = c.FileService.MaxTotalAttachmentBytes
+	}
+	if per := c.MaxAttachmentBytes(); total < per {
+		total = per
+	}
+	return total
+}
+
 // SendTimeoutSeconds returns the configured per-send timeout, falling back to
 // the built-in default when unset or non-positive.
 func (c *Config) SendTimeoutSeconds() int {

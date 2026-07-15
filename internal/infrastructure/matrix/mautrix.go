@@ -46,8 +46,10 @@ type MautrixAdapter struct {
 	gateOpen       atomic.Bool  // when false, transactions are ack'd and dropped
 	queuePort      ports.QueuePort
 	// attachmentBudget bounds the total bytes buffered across concurrently
-	// in-flight attachment uploads (F7), so memory can't grow as
-	// SendConcurrency × MaxAttachmentBytes.
+	// in-flight attachment uploads (F7) to MaxTotalAttachmentBytes. Each send
+	// reserves the per-attachment cap (the worst-case buffered size), so resident
+	// memory is genuinely capped at the budget — at most floor(budget/cap)
+	// attachments buffer at once — rather than growing as SendConcurrency × cap.
 	attachmentBudget *semaphore.Weighted
 }
 
@@ -170,7 +172,7 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		admin:          admin,
 		botDisplayName: cfg.Matrix.BotDisplayName,
 	}
-	adapter.attachmentBudget = semaphore.NewWeighted(adapter.maxTotalAttachmentBytes())
+	adapter.attachmentBudget = semaphore.NewWeighted(cfg.MaxTotalAttachmentBytes())
 	return adapter, nil
 }
 
@@ -1030,7 +1032,7 @@ func (m *MautrixAdapter) sendAttachment(
 	// Reserve this attachment's memory from the shared budget before buffering it,
 	// bounding total concurrent attachment memory (F7). Held until the media event
 	// is sent (defer), matching the lifetime of the in-memory bytes.
-	release, err := m.acquireAttachmentBudget(ctx, att.Size)
+	release, err := m.acquireAttachmentBudget(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -1064,76 +1066,40 @@ func (m *MautrixAdapter) sendAttachment(
 // in addition to any deadline already on the request context.
 const fileServiceFetchTimeout = 60 * time.Second
 
-// defaultMaxAttachmentBytes caps how many bytes we read from file-service for a
-// single attachment when no per-deployment limit is configured (50 MiB).
-const defaultMaxAttachmentBytes int64 = 50 * 1024 * 1024
-
 // fileServiceHTTPClient is a dedicated client (with a timeout) for fetching
 // document bytes. http.DefaultClient has no timeout, so it is deliberately not
 // used here.
 var fileServiceHTTPClient = &http.Client{Timeout: fileServiceFetchTimeout}
 
-// defaultMaxTotalAttachmentBytes bounds the total bytes buffered across all
-// concurrently in-flight attachment uploads when no per-deployment limit is
-// configured (128 MiB).
-const defaultMaxTotalAttachmentBytes int64 = 128 * 1024 * 1024
-
-// maxAttachmentBytes returns the configured per-attachment byte cap, falling
-// back to defaultMaxAttachmentBytes when unset.
-func (m *MautrixAdapter) maxAttachmentBytes() int64 {
-	if m.cfg != nil && m.cfg.FileService.MaxAttachmentBytes > 0 {
-		return m.cfg.FileService.MaxAttachmentBytes
-	}
-	return defaultMaxAttachmentBytes
-}
-
-// maxTotalAttachmentBytes returns the shared attachment-memory budget, falling
-// back to defaultMaxTotalAttachmentBytes. It is never smaller than the
-// per-attachment cap, otherwise a single max-size attachment could never be
-// admitted to the budget.
-func (m *MautrixAdapter) maxTotalAttachmentBytes() int64 {
-	total := defaultMaxTotalAttachmentBytes
-	if m.cfg != nil && m.cfg.FileService.MaxTotalAttachmentBytes > 0 {
-		total = m.cfg.FileService.MaxTotalAttachmentBytes
-	}
-	if per := m.maxAttachmentBytes(); total < per {
-		total = per
-	}
-	return total
-}
-
 // acquireAttachmentBudget reserves memory for one attachment from the shared
-// budget, returning a release func. The reservation is the declared size when
-// known (else the per-attachment cap), clamped so it can always be satisfied.
-// Acquire respects ctx, so a saturated budget fails the send via its deadline
-// rather than blocking forever.
-func (m *MautrixAdapter) acquireAttachmentBudget(ctx context.Context, declaredSize int64) (func(), error) {
+// budget, returning a release func. Acquire respects ctx, so a saturated budget
+// fails the send via its deadline rather than blocking forever.
+//
+// The reservation is the per-attachment CAP, not the caller-declared att.Size
+// (F7): fetchDocumentContent buffers up to the cap regardless of the declared
+// size (io.ReadAll of a LimitReader capped at maxAttachmentBytes), so reserving
+// the declared size would under-count — a stale/small size (e.g. 1) would admit
+// far more concurrent uploads than fit in memory, and actual resident memory
+// would be SendConcurrency×cap rather than the configured budget. Reserving the
+// cap makes the total budget a real bound on resident memory: at most
+// floor(budget/cap) attachments buffer concurrently. The budget is floored at
+// the cap (see config.MaxTotalAttachmentBytes), so a single max-size attachment
+// is always admissible.
+func (m *MautrixAdapter) acquireAttachmentBudget(ctx context.Context) (func(), error) {
 	if m.attachmentBudget == nil {
 		return func() {}, nil
 	}
-	w := attachmentReservation(declaredSize, m.maxAttachmentBytes(), m.maxTotalAttachmentBytes())
+	w := m.cfg.MaxAttachmentBytes()
+	if budget := m.cfg.MaxTotalAttachmentBytes(); w > budget {
+		w = budget // budget is floored at the cap, so this only clamps pathological configs
+	}
+	if w < 1 {
+		w = 1
+	}
 	if err := m.attachmentBudget.Acquire(ctx, w); err != nil {
 		return func() {}, fmt.Errorf("failed to reserve attachment memory budget (%d bytes): %w", w, err)
 	}
 	return func() { m.attachmentBudget.Release(w) }, nil
-}
-
-// attachmentReservation computes the budget weight for one attachment: the
-// declared size when it is a sane positive value within the per-attachment cap,
-// otherwise the cap (worst case). The result is clamped to [1, budget] so the
-// weighted acquire can always be satisfied by the (budget >= cap) semaphore.
-func attachmentReservation(declaredSize, perAttachmentCap, budget int64) int64 {
-	reserve := declaredSize
-	if reserve <= 0 || reserve > perAttachmentCap {
-		reserve = perAttachmentCap
-	}
-	if reserve > budget {
-		reserve = budget
-	}
-	if reserve < 1 {
-		reserve = 1
-	}
-	return reserve
 }
 
 // fetchDocumentContent streams a document's bytes from the file-service internal
@@ -1174,7 +1140,7 @@ func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID st
 
 	// Read at most maxBytes+1 so we can detect (and reject) an oversized body
 	// without buffering the whole thing.
-	maxBytes := m.maxAttachmentBytes()
+	maxBytes := m.cfg.MaxAttachmentBytes()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to read document %s content: %w", documentID, err)
