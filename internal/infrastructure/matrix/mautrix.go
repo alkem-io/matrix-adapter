@@ -47,9 +47,12 @@ type MautrixAdapter struct {
 	queuePort      ports.QueuePort
 	// attachmentBudget bounds the total bytes buffered across concurrently
 	// in-flight attachment uploads (F7) to MaxTotalAttachmentBytes. Each send
-	// reserves the per-attachment cap (the worst-case buffered size), so resident
-	// memory is genuinely capped at the budget — at most floor(budget/cap)
-	// attachments buffer at once — rather than growing as SendConcurrency × cap.
+	// reserves the fetch response's Content-Length (clamped to the per-attachment
+	// cap), so small attachments reserve little and flow concurrently while a
+	// large or unknown-length attachment reserves the full cap (A5). Resident
+	// memory stays capped at the budget: a large file still limits its own
+	// concurrency to floor(budget/cap), and the LimitReader guard means no single
+	// fetch ever buffers more than the cap regardless of the declared length.
 	attachmentBudget *semaphore.Weighted
 }
 
@@ -1029,16 +1032,27 @@ func (m *MautrixAdapter) sendAttachment(
 	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, threadID id.EventID,
 	txn []mautrix.ReqSendEvent,
 ) (id.EventID, error) {
+	// Open the fetch first (headers only, body unread) so the budget reservation
+	// can be sized from the response Content-Length before any bytes are buffered.
+	resp, err := m.openDocumentFetch(ctx, att.DocumentID)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
 	// Reserve this attachment's memory from the shared budget before buffering it,
-	// bounding total concurrent attachment memory (F7). Held until the media event
-	// is sent (defer), matching the lifetime of the in-memory bytes.
-	release, err := m.acquireAttachmentBudget(ctx)
+	// bounding total concurrent attachment memory (F7/A5). The reservation is the
+	// response Content-Length clamped to the per-attachment cap, so small files
+	// reserve little (and flow concurrently) while large/unknown ones reserve the
+	// cap. Held until the media event is sent (defer), matching the lifetime of
+	// the in-memory bytes.
+	release, err := m.acquireAttachmentBudget(ctx, resp.ContentLength)
 	if err != nil {
 		return "", err
 	}
 	defer release()
 
-	data, contentType, err := m.fetchDocumentContent(ctx, att.DocumentID)
+	data, contentType, err := readDocumentBody(resp, m.cfg.MaxAttachmentBytes(), att.DocumentID)
 	if err != nil {
 		return "", err
 	}
@@ -1054,11 +1068,11 @@ func (m *MautrixAdapter) sendAttachment(
 	// info.size reflects the bytes actually uploaded, not the caller-supplied
 	// att.Size, so the event can't claim a length that disagrees with the blob.
 	content := buildMediaContent(att, mxc, contentType, int64(len(data)), threadID)
-	resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content, txn...)
+	sent, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content, txn...)
 	if err != nil {
 		return "", fmt.Errorf("failed to send media event: %w", err)
 	}
-	return resp.EventID, nil
+	return sent.EventID, nil
 }
 
 // fileServiceFetchTimeout bounds a single document fetch from file-service so a
@@ -1071,25 +1085,40 @@ const fileServiceFetchTimeout = 60 * time.Second
 // used here.
 var fileServiceHTTPClient = &http.Client{Timeout: fileServiceFetchTimeout}
 
+// budgetReservation computes how many budget bytes to reserve for a fetch whose
+// response reports contentLength (<= 0 when unknown, e.g. chunked/absent). A
+// known length within the per-attachment cap reserves exactly that many bytes,
+// so a small file reserves little and flows concurrently instead of hard-capping
+// concurrency at floor(budget/cap); an unknown or over-cap length reserves the
+// full cap — the worst case, since the body read is bounded by the cap (A5).
+// The caller-declared att.Size is never used (it is untrusted and often stale).
+func budgetReservation(contentLength, capBytes int64) int64 {
+	if contentLength > 0 && contentLength <= capBytes {
+		return contentLength
+	}
+	return capBytes
+}
+
 // acquireAttachmentBudget reserves memory for one attachment from the shared
 // budget, returning a release func. Acquire respects ctx, so a saturated budget
 // fails the send via its deadline rather than blocking forever.
 //
-// The reservation is the per-attachment CAP, not the caller-declared att.Size
-// (F7): fetchDocumentContent buffers up to the cap regardless of the declared
-// size (io.ReadAll of a LimitReader capped at maxAttachmentBytes), so reserving
-// the declared size would under-count — a stale/small size (e.g. 1) would admit
-// far more concurrent uploads than fit in memory, and actual resident memory
-// would be SendConcurrency×cap rather than the configured budget. Reserving the
-// cap makes the total budget a real bound on resident memory: at most
-// floor(budget/cap) attachments buffer concurrently. The budget is floored at
-// the cap (see config.MaxTotalAttachmentBytes), so a single max-size attachment
-// is always admissible.
-func (m *MautrixAdapter) acquireAttachmentBudget(ctx context.Context) (func(), error) {
+// contentLength is the fetch response's Content-Length (<= 0 when unknown). The
+// reservation is that length clamped to the per-attachment cap
+// (budgetReservation): small files reserve little and run concurrently, while a
+// large or unknown-length attachment reserves the cap so at most floor(budget/cap)
+// of them buffer at once. The per-fetch read is independently bounded by the cap
+// (LimitReader), so resident memory never exceeds the cap per attachment
+// regardless of a mis-stated Content-Length; the file-service is the adapter's
+// own trusted internal service, so a truthful Content-Length keeps the total
+// budget an accurate bound. The budget is floored at the cap (see
+// config.MaxTotalAttachmentBytes), so a single max-size attachment is always
+// admissible.
+func (m *MautrixAdapter) acquireAttachmentBudget(ctx context.Context, contentLength int64) (func(), error) {
 	if m.attachmentBudget == nil {
 		return func() {}, nil
 	}
-	w := m.cfg.MaxAttachmentBytes()
+	w := budgetReservation(contentLength, m.cfg.MaxAttachmentBytes())
 	if budget := m.cfg.MaxTotalAttachmentBytes(); w > budget {
 		w = budget // budget is floored at the cap, so this only clamps pathological configs
 	}
@@ -1102,45 +1131,53 @@ func (m *MautrixAdapter) acquireAttachmentBudget(ctx context.Context) (func(), e
 	return func() { m.attachmentBudget.Release(w) }, nil
 }
 
-// fetchDocumentContent streams a document's bytes from the file-service internal
-// content endpoint: GET {FILE_SERVICE_URL}/internal/file/{id}/content. Returns
-// the bytes and the response Content-Type. The response body is bounded by the
-// configured max attachment size to protect against a slow/hostile file-service
-// (timeout via fileServiceHTTPClient, size via io.LimitReader).
-func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID string) ([]byte, string, error) {
+// openDocumentFetch performs the GET against the file-service internal content
+// endpoint (GET {FILE_SERVICE_URL}/internal/file/{id}/content) and returns the
+// response with its headers available and the body UNREAD, so the caller can
+// size the budget reservation from resp.ContentLength before buffering bytes.
+// A non-200 response is turned into an error here (and its body closed) so no
+// budget is reserved for a failed fetch. The caller MUST close resp.Body on the
+// success path. The request is bounded by fileServiceHTTPClient's timeout.
+func (m *MautrixAdapter) openDocumentFetch(ctx context.Context, documentID string) (*http.Response, error) {
 	if m.cfg == nil {
-		return nil, "", fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
+		return nil, fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
 	}
 	baseURL := m.cfg.FileService.URL
 	if baseURL == "" {
-		return nil, "", fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
+		return nil, fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
 	}
 	// Defense-in-depth on the internal fetch path: document ids are UUIDs, so
 	// validate the shape and path-escape before interpolating into the URL.
 	if _, err := uuid.Parse(documentID); err != nil {
-		return nil, "", fmt.Errorf("invalid document id %q: %w", documentID, err)
+		return nil, fmt.Errorf("invalid document id %q: %w", documentID, err)
 	}
 	endpoint := fmt.Sprintf("%s/internal/file/%s/content",
 		strings.TrimRight(baseURL, "/"), url.PathEscape(documentID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to build file-service request: %w", err)
+		return nil, fmt.Errorf("failed to build file-service request: %w", err)
 	}
 
 	resp, err := fileServiceHTTPClient.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to fetch document %s from file-service: %w", documentID, err)
+		return nil, fmt.Errorf("failed to fetch document %s from file-service: %w", documentID, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("file-service returned status %d fetching document %s", resp.StatusCode, documentID)
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("file-service returned status %d fetching document %s", resp.StatusCode, documentID)
 	}
+	return resp, nil
+}
 
+// readDocumentBody reads and returns a document fetch's bytes and Content-Type.
+// The body is bounded by maxBytes to protect against a slow/hostile file-service
+// (read at most maxBytes+1 via io.LimitReader, then reject if it exceeds the
+// cap). The reservation sized from Content-Length is independent of this guard,
+// so a mis-stated length never lets a single fetch buffer more than the cap.
+func readDocumentBody(resp *http.Response, maxBytes int64, documentID string) ([]byte, string, error) {
 	// Read at most maxBytes+1 so we can detect (and reject) an oversized body
 	// without buffering the whole thing.
-	maxBytes := m.cfg.MaxAttachmentBytes()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to read document %s content: %w", documentID, err)
@@ -1149,6 +1186,20 @@ func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID st
 		return nil, "", fmt.Errorf("document %s exceeds max attachment size of %d bytes", documentID, maxBytes)
 	}
 	return data, resp.Header.Get("Content-Type"), nil
+}
+
+// fetchDocumentContent streams a document's bytes from the file-service internal
+// content endpoint. Returns the bytes and the response Content-Type. This is the
+// combined open+read used where budget sizing is not needed (e.g. tests); the
+// send path splits the two so it can reserve budget from Content-Length between
+// them (see sendAttachment).
+func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID string) ([]byte, string, error) {
+	resp, err := m.openDocumentFetch(ctx, documentID)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return readDocumentBody(resp, m.cfg.MaxAttachmentBytes(), documentID)
 }
 
 // txnReq builds the optional ReqSendEvent carrying a deterministic Matrix
@@ -1192,6 +1243,9 @@ func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType str
 		info["h"] = *att.Height
 	}
 
+	// att.DocumentID is guaranteed non-empty here (C5): HandleSendMessage rejects
+	// any attachment with an empty document_id, and fetchDocumentContent (which
+	// runs before this) rejects a non-UUID id — so the breadcrumb is never blank.
 	content := map[string]any{
 		"msgtype":                mediaMsgType(mime),
 		"body":                   att.DisplayName,

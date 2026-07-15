@@ -86,17 +86,27 @@ func TestSendMessage_TotalFailure_NotPartial(t *testing.T) {
 }
 
 // ============================================================================
-// F7 — attachment memory reservation
+// F7 / A5 — attachment memory reservation sized by Content-Length
 // ============================================================================
 
-// The budget must bound RESIDENT memory even when att.Size is understated.
-// fetchDocumentContent buffers up to the per-attachment cap regardless of the
-// declared size, so acquireAttachmentBudget reserves the cap — meaning at most
-// floor(budget/cap) attachments buffer concurrently, no matter how small the
-// declared sizes are. Here budget/cap = 30/10 = 3, so of N concurrent acquires
-// only 3 are ever admitted at once (the old code, reserving att.Size=1, would
-// have admitted all N and blown the bound to N×cap).
-func TestAcquireAttachmentBudget_BoundsResidentMemoryDespiteUnderstatedSize(t *testing.T) {
+// budgetReservation is a pure function of the response Content-Length and the
+// per-attachment cap: a known length within the cap reserves exactly that many
+// bytes; an unknown (<= 0) or over-cap length reserves the full cap.
+func TestBudgetReservation(t *testing.T) {
+	const capBytes = int64(50 * 1024 * 1024)
+	assert.Equal(t, int64(1), budgetReservation(1, capBytes), "tiny known length reserves itself")
+	assert.Equal(t, int64(1024), budgetReservation(1024, capBytes), "small known length reserves itself")
+	assert.Equal(t, capBytes, budgetReservation(capBytes, capBytes), "exactly-cap length reserves the cap")
+	assert.Equal(t, capBytes, budgetReservation(capBytes+1, capBytes), "over-cap length reserves the cap")
+	assert.Equal(t, capBytes, budgetReservation(-1, capBytes), "unknown (-1) length reserves the cap")
+	assert.Equal(t, capBytes, budgetReservation(0, capBytes), "zero (absent) length reserves the cap")
+}
+
+// A5 — the total-budget bound still HOLDS for large/unknown-size attachments:
+// a fetch with an unknown Content-Length (-1) reserves the full per-attachment
+// cap, so of N concurrent acquires only floor(budget/cap) are admitted at once.
+// Here budget/cap = 30/10 = 3.
+func TestAcquireAttachmentBudget_UnknownLength_BoundsToFloorBudgetOverCap(t *testing.T) {
 	a := newTestAdapter("test.local")
 	cfg := &config.Config{}
 	cfg.FileService.MaxAttachmentBytes = 10      // per-attachment cap (worst-case buffered bytes)
@@ -114,9 +124,8 @@ func TestAcquireAttachmentBudget_BoundsResidentMemoryDespiteUnderstatedSize(t *t
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Declared size is irrelevant now — the reservation is the cap. (The old
-			// signature took att.Size; understating it no longer weakens the bound.)
-			rel, err := a.acquireAttachmentBudget(context.Background())
+			// Unknown Content-Length (-1) ⇒ reserve the cap ⇒ bound to floor(budget/cap).
+			rel, err := a.acquireAttachmentBudget(context.Background(), -1)
 			if err != nil {
 				return
 			}
@@ -144,6 +153,53 @@ func TestAcquireAttachmentBudget_BoundsResidentMemoryDespiteUnderstatedSize(t *t
 	wg.Wait()
 }
 
+// A5 — small attachments (small Content-Length) reserve little, so many more
+// than floor(budget/cap) run concurrently instead of being throttled. Here
+// budget/cap = 30/10 = 3, but with each fetch reserving only 1 byte all n=12
+// acquires are admitted at once (the old cap-always reservation admitted 3).
+func TestAcquireAttachmentBudget_SmallLength_FlowsConcurrently(t *testing.T) {
+	a := newTestAdapter("test.local")
+	cfg := &config.Config{}
+	cfg.FileService.MaxAttachmentBytes = 10      // cap ⇒ old design admitted floor(30/10)=3
+	cfg.FileService.MaxTotalAttachmentBytes = 30 // budget
+	a.cfg = cfg
+	a.attachmentBudget = semaphore.NewWeighted(cfg.MaxTotalAttachmentBytes())
+
+	const n = 12 // 12 × 1 byte = 12 <= 30 budget ⇒ all admissible at once
+
+	var inFlight, maxSeen atomic.Int32
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Small known Content-Length (1) ⇒ reserve 1 byte ⇒ not throttled to floor(budget/cap).
+			rel, err := a.acquireAttachmentBudget(context.Background(), 1)
+			if err != nil {
+				return
+			}
+			defer rel()
+			cur := inFlight.Add(1)
+			for {
+				old := maxSeen.Load()
+				if cur <= old || maxSeen.CompareAndSwap(old, cur) {
+					break
+				}
+			}
+			<-release
+			inFlight.Add(-1)
+		}()
+	}
+
+	require.Eventually(t, func() bool { return maxSeen.Load() == int32(n) },
+		2*time.Second, 5*time.Millisecond,
+		"small-length attachments must run concurrently well beyond floor(budget/cap)")
+
+	close(release)
+	wg.Wait()
+}
+
 // A single max-size attachment must always be admissible: reserving the cap
 // against a budget floored at the cap can't deadlock.
 func TestAcquireAttachmentBudget_MaxSizeAlwaysAdmissible(t *testing.T) {
@@ -155,7 +211,8 @@ func TestAcquireAttachmentBudget_MaxSizeAlwaysAdmissible(t *testing.T) {
 	assert.Equal(t, int64(64*1024*1024), cfg.MaxTotalAttachmentBytes())
 
 	a.attachmentBudget = semaphore.NewWeighted(cfg.MaxTotalAttachmentBytes())
-	rel, err := a.acquireAttachmentBudget(context.Background())
+	// Unknown length ⇒ reserves the cap; must still be admissible.
+	rel, err := a.acquireAttachmentBudget(context.Background(), -1)
 	require.NoError(t, err, "a single max-size attachment must be admissible")
 	rel()
 }
