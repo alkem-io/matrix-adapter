@@ -242,12 +242,11 @@ func (w *WatermillAdapter) Subscribe(topic string, handler ports.MessageHandler)
 const sendBacklogPerWorker = 4
 
 // orderedBacklogCapacity is the pool's total-backlog bound for the given worker
-// count. Never smaller than workers so every worker can hold an in-flight
-// message (and a single message is always admissible).
+// count: sendBacklogPerWorker messages per worker (>= workers, so every worker
+// can hold an in-flight message). The sole caller passes SendConcurrency(), which
+// is always >= 1, and newOrderedPool independently clamps both workers and
+// capacity — so this does not re-clamp (C4).
 func orderedBacklogCapacity(workers int) int {
-	if workers < 1 {
-		workers = 1
-	}
 	return workers * sendBacklogPerWorker
 }
 
@@ -274,14 +273,27 @@ func orderedBacklogCapacity(workers int) int {
 // delivering (prefetch fills). So a slow room can never grow an unbounded
 // in-memory backlog (OOM); resident memory is capped at the backlog bound.
 //
-// Ordering vs. ack: enqueue-then-ack means a delivery is acked only once it is
-// safely resident in the bounded pool. On a crash between enqueue and ack the
-// broker may redeliver the message (it was not acked); the server's RPC retry is
-// keyed by an idempotency key, so a redelivery is deduplicated rather than
-// duplicated — no message is silently dropped. The handler still runs — and still
-// publishes its RPC reply — inside the pool. On Close the subscribers stop
-// delivering, the ingest goroutine is joined, then the pool drains before the
-// publisher/connection are torn down.
+// Ordering vs. ack (delivery semantics): enqueue-then-ack means a delivery is
+// acked once it is safely resident in the bounded pool, BEFORE its handler
+// completes (early ack is what unblocks watermill's consuming loop for the next
+// key — the whole point of the concurrency design). Two consequences follow, and
+// they are consistent with ports.QueuePort.SubscribeOrdered:
+//   - After the ack, the broker does NOT redeliver, so a crash while the handler
+//     is still executing loses that in-flight send with no broker redelivery
+//     (at-most-once for execution). Shrinking this window further (e.g. acking
+//     only once the runner dequeues) would not remove it — any ack before
+//     durable completion has it, and waiting for completion would reintroduce the
+//     head-of-line blocking this design exists to avoid.
+//   - A crash in the narrow window between enqueue and ack leaves the message
+//     un-acked, so the broker MAY redeliver it.
+//
+// Recovery for the lost-after-ack case is the SERVER retrying the RPC on timeout
+// (a cross-repo dependency); both retry and redelivery are made safe by the
+// idempotency key (caller-supplied or the adapter's deterministic fallback),
+// which yields identical Matrix transaction ids so Synapse de-duplicates instead
+// of duplicating. The handler still runs — and still publishes its RPC reply —
+// inside the pool. On Close the subscribers stop delivering, the ingest goroutine
+// is joined, then the pool drains before the publisher/connection are torn down.
 func (w *WatermillAdapter) SubscribeOrdered(topic string, handler ports.MessageHandler, keyFn ports.PartitionKeyFunc) error {
 	messages, err := w.orderedSubscriber.Subscribe(context.Background(), topic)
 	if err != nil {
