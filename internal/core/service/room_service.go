@@ -372,6 +372,7 @@ func (s *RoomService) SendMessage(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment,
 	idempotencyKey string,
 ) (id.EventID, error) {
+	s.warnUnkeyedMultiSend(roomID, content, attachments, idempotencyKey)
 	return s.matrix.SendMessage(ctx, roomID, senderID, content, attachments, idempotencyKey)
 }
 
@@ -380,7 +381,27 @@ func (s *RoomService) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
 	attachments []domain.Attachment, idempotencyKey string,
 ) (id.EventID, error) {
+	s.warnUnkeyedMultiSend(roomID, content, attachments, idempotencyKey)
 	return s.matrix.SendReply(ctx, roomID, senderID, content, threadID, attachments, idempotencyKey)
+}
+
+// warnUnkeyedMultiSend logs a warning when a send fans out into multiple Matrix
+// events (any attachments, or text plus attachments) without an idempotency
+// key. Such a send is not atomic: a retry after partial success can duplicate
+// the already-delivered events. We don't hard-reject (the key is optional for
+// back-compat) — we just make the duplication risk visible.
+func (s *RoomService) warnUnkeyedMultiSend(
+	roomID id.RoomID, content string, attachments []domain.Attachment, idempotencyKey string,
+) {
+	if idempotencyKey != "" || len(attachments) == 0 {
+		return
+	}
+	s.logger.Warn(
+		"multi-event send (attachments) without idempotency_key: a retry after partial success may duplicate messages",
+		"room_id", roomID,
+		"attachment_count", len(attachments),
+		"has_text", content != "",
+	)
 }
 
 // RedactEvent redacts (deletes) an event from a room.

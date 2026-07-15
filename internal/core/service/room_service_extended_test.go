@@ -10,6 +10,7 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter/internal/testutil"
 )
 
@@ -894,6 +895,52 @@ func TestSendMessage_Error(t *testing.T) {
 	_, err := svc.SendMessage(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "hello", nil, "")
 	if err == nil {
 		t.Fatal("expected error from SendMessage")
+	}
+}
+
+// warnCountingLogger records how many Warn calls it saw (for the M5 unkeyed
+// multi-send warning).
+type warnCountingLogger struct {
+	warns int
+}
+
+func (l *warnCountingLogger) Debug(string, ...interface{}) {}
+func (l *warnCountingLogger) Info(string, ...interface{})  {}
+func (l *warnCountingLogger) Warn(string, ...interface{})  { l.warns++ }
+func (l *warnCountingLogger) Error(string, ...interface{}) {}
+func (l *warnCountingLogger) With(...interface{}) ports.Logger {
+	return l
+}
+
+// M5 — a multi-event send (attachments) without an idempotency key logs a
+// warning (retry may duplicate); a keyed send, or a text-only send, does not.
+func TestSendMessage_UnkeyedMultiSend_WarnsOnce(t *testing.T) {
+	att := []domain.Attachment{{DocumentID: "11111111-1111-4111-8111-111111111111"}}
+
+	tests := []struct {
+		name        string
+		attachments []domain.Attachment
+		key         string
+		wantWarns   int
+	}{
+		{"attachments, no key → warn", att, "", 1},
+		{"attachments, with key → no warn", att, "req-1", 0},
+		{"text only, no key → no warn", nil, "", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := &warnCountingLogger{}
+			svc := NewRoomService(&mockExtendedMatrixPort{}, logger, domain.NewIDMapper("test.local"))
+
+			_, err := svc.SendMessage(context.Background(), "!room:test.local",
+				domain.NewActor(uuid.New()), "hello", tt.attachments, tt.key)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if logger.warns != tt.wantWarns {
+				t.Errorf("expected %d warnings, got %d", tt.wantWarns, logger.warns)
+			}
+		})
 	}
 }
 

@@ -79,10 +79,8 @@ func convertMessageToDTO(msg domain.Message) dto.MessageDto {
 	for _, r := range msg.Reactions {
 		msgDTO.Reactions = append(msgDTO.Reactions, convertReactionToDTO(r))
 	}
-	// Convert attachments
-	for _, a := range msg.Attachments {
-		msgDTO.Attachments = append(msgDTO.Attachments, service.AttachmentToReceivedDTO(a))
-	}
+	// Convert attachments via the shared slice helper (single source of truth).
+	msgDTO.Attachments = service.AttachmentsToReceivedDTO(msg.Attachments)
 	return msgDTO
 }
 
