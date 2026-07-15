@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
+	"golang.org/x/sync/semaphore"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/appservice"
 	"maunium.net/go/mautrix/event"
@@ -44,6 +45,10 @@ type MautrixAdapter struct {
 	server         *http.Server // our own HTTP server wrapping as.Router
 	gateOpen       atomic.Bool  // when false, transactions are ack'd and dropped
 	queuePort      ports.QueuePort
+	// attachmentBudget bounds the total bytes buffered across concurrently
+	// in-flight attachment uploads (F7), so memory can't grow as
+	// SendConcurrency × MaxAttachmentBytes.
+	attachmentBudget *semaphore.Weighted
 }
 
 // NewMautrixAdapter creates a new instance of MautrixAdapter.
@@ -157,14 +162,16 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		return nil, fmt.Errorf("failed to create synapse admin client: %w", err)
 	}
 
-	return &MautrixAdapter{
+	adapter := &MautrixAdapter{
 		cfg:            cfg,
 		logger:         logger,
 		as:             &appserviceWrapper{as: as},
 		idMapper:       domain.NewIDMapper(homeserverDomain),
 		admin:          admin,
 		botDisplayName: cfg.Matrix.BotDisplayName,
-	}, nil
+	}
+	adapter.attachmentBudget = semaphore.NewWeighted(adapter.maxTotalAttachmentBytes())
+	return adapter, nil
 }
 
 // safePrefix returns the first n characters of s, or all of s if shorter.
@@ -771,7 +778,7 @@ func (m *MautrixAdapter) SendMessage(
 	for i := range attachments {
 		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], "", txnReq(idempotencyKey, attachmentTxnSuffix(i)))
 		if err != nil {
-			return "", err
+			return primaryEventID, partialSendError(primaryEventID, i, len(attachments), err)
 		}
 		if primaryEventID == "" {
 			primaryEventID = eventID
@@ -779,6 +786,19 @@ func (m *MautrixAdapter) SendMessage(
 	}
 
 	return primaryEventID, nil
+}
+
+// partialSendError classifies an attachment-send failure. If earlier events
+// already landed in the room (primaryEventID != ""), it wraps the failure in a
+// domain.PartialSendError carrying the delivered id, so the caller records the
+// partial delivery instead of re-sending everything. If nothing has landed yet
+// (the first event failed), it returns the raw error — a clean total failure.
+func partialSendError(primaryEventID id.EventID, index, total int, cause error) error {
+	wrapped := fmt.Errorf("attachment %d of %d failed: %w", index+1, total, cause)
+	if primaryEventID == "" {
+		return wrapped
+	}
+	return &domain.PartialSendError{PrimaryEventID: primaryEventID.String(), Err: wrapped}
 }
 
 // ============================================================================
@@ -961,7 +981,7 @@ func (m *MautrixAdapter) SendReply(
 	for i := range attachments {
 		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID, txnReq(idempotencyKey, attachmentTxnSuffix(i)))
 		if err != nil {
-			return "", err
+			return primaryEventID, partialSendError(primaryEventID, i, len(attachments), err)
 		}
 		if primaryEventID == "" {
 			primaryEventID = eventID
@@ -1007,6 +1027,15 @@ func (m *MautrixAdapter) sendAttachment(
 	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, threadID id.EventID,
 	txn []mautrix.ReqSendEvent,
 ) (id.EventID, error) {
+	// Reserve this attachment's memory from the shared budget before buffering it,
+	// bounding total concurrent attachment memory (F7). Held until the media event
+	// is sent (defer), matching the lifetime of the in-memory bytes.
+	release, err := m.acquireAttachmentBudget(ctx, att.Size)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+
 	data, contentType, err := m.fetchDocumentContent(ctx, att.DocumentID)
 	if err != nil {
 		return "", err
@@ -1044,6 +1073,11 @@ const defaultMaxAttachmentBytes int64 = 50 * 1024 * 1024
 // used here.
 var fileServiceHTTPClient = &http.Client{Timeout: fileServiceFetchTimeout}
 
+// defaultMaxTotalAttachmentBytes bounds the total bytes buffered across all
+// concurrently in-flight attachment uploads when no per-deployment limit is
+// configured (128 MiB).
+const defaultMaxTotalAttachmentBytes int64 = 128 * 1024 * 1024
+
 // maxAttachmentBytes returns the configured per-attachment byte cap, falling
 // back to defaultMaxAttachmentBytes when unset.
 func (m *MautrixAdapter) maxAttachmentBytes() int64 {
@@ -1051,6 +1085,55 @@ func (m *MautrixAdapter) maxAttachmentBytes() int64 {
 		return m.cfg.FileService.MaxAttachmentBytes
 	}
 	return defaultMaxAttachmentBytes
+}
+
+// maxTotalAttachmentBytes returns the shared attachment-memory budget, falling
+// back to defaultMaxTotalAttachmentBytes. It is never smaller than the
+// per-attachment cap, otherwise a single max-size attachment could never be
+// admitted to the budget.
+func (m *MautrixAdapter) maxTotalAttachmentBytes() int64 {
+	total := defaultMaxTotalAttachmentBytes
+	if m.cfg != nil && m.cfg.FileService.MaxTotalAttachmentBytes > 0 {
+		total = m.cfg.FileService.MaxTotalAttachmentBytes
+	}
+	if per := m.maxAttachmentBytes(); total < per {
+		total = per
+	}
+	return total
+}
+
+// acquireAttachmentBudget reserves memory for one attachment from the shared
+// budget, returning a release func. The reservation is the declared size when
+// known (else the per-attachment cap), clamped so it can always be satisfied.
+// Acquire respects ctx, so a saturated budget fails the send via its deadline
+// rather than blocking forever.
+func (m *MautrixAdapter) acquireAttachmentBudget(ctx context.Context, declaredSize int64) (func(), error) {
+	if m.attachmentBudget == nil {
+		return func() {}, nil
+	}
+	w := attachmentReservation(declaredSize, m.maxAttachmentBytes(), m.maxTotalAttachmentBytes())
+	if err := m.attachmentBudget.Acquire(ctx, w); err != nil {
+		return func() {}, fmt.Errorf("failed to reserve attachment memory budget (%d bytes): %w", w, err)
+	}
+	return func() { m.attachmentBudget.Release(w) }, nil
+}
+
+// attachmentReservation computes the budget weight for one attachment: the
+// declared size when it is a sane positive value within the per-attachment cap,
+// otherwise the cap (worst case). The result is clamped to [1, budget] so the
+// weighted acquire can always be satisfied by the (budget >= cap) semaphore.
+func attachmentReservation(declaredSize, perAttachmentCap, budget int64) int64 {
+	reserve := declaredSize
+	if reserve <= 0 || reserve > perAttachmentCap {
+		reserve = perAttachmentCap
+	}
+	if reserve > budget {
+		reserve = budget
+	}
+	if reserve < 1 {
+		reserve = 1
+	}
+	return reserve
 }
 
 // fetchDocumentContent streams a document's bytes from the file-service internal
@@ -1772,19 +1855,14 @@ func (m *MautrixAdapter) parseReactionEvent(evt *event.Event, roomID id.RoomID) 
 
 // parseMessageEvent extracts a domain.Message from a Matrix event.
 func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *domain.Message {
-	body := m.extractMessageBody(evt)
-	attachment := extractAttachment(evt, m.isOwnAppserviceUser(evt.Sender))
-	// A media event may carry an empty body; keep it as long as it has an
-	// attachment. Text events with an empty body are skipped as before.
-	if body == "" && attachment == nil {
+	// Shared inbound-media helper (F10): applies MSC2530 caption semantics and
+	// the present-but-empty-body rule. ok=false ⇒ not a forwardable message
+	// (genuinely absent body and no attachment) ⇒ nil, so read-path callers skip
+	// non-message events as before. A present-but-empty body yields a Message
+	// with empty Content (so GetMessage doesn't error on it — F4).
+	content, attachment, ok := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender))
+	if !ok {
 		return nil
-	}
-
-	// For media events the body is the filename (already carried by the
-	// attachment's DisplayName); don't duplicate it as message Content.
-	content := body
-	if attachment != nil {
-		content = ""
 	}
 
 	msg := &domain.Message{

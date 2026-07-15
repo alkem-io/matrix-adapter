@@ -95,21 +95,12 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse content. Media events (m.image/m.file/...) may carry no body, so
-	// a missing body is only fatal when there is also no attachment.
-	content, _ := evt.Content.Raw["body"].(string)
-	attachment := extractAttachment(evt, m.isOwnAppserviceUser(evt.Sender))
-	if content == "" && attachment == nil {
+	// Parse content + attachment via the shared inbound-media helper, which
+	// applies MSC2530 caption semantics and the present-but-empty-body rule.
+	content, attachment, ok := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender))
+	if !ok {
 		m.logger.Warn("Failed to parse message body", "event_id", evt.ID)
 		return
-	}
-
-	// For media events the body is the filename, which the attachment already
-	// carries as DisplayName. Don't also surface it as message Content or the
-	// client renders a filename text bubble beside the attachment. Content and
-	// attachments are separate fields in the contract.
-	if attachment != nil {
-		content = ""
 	}
 
 	// Parse sender UUID from Matrix user ID
@@ -868,10 +859,7 @@ func extractAttachment(evt *event.Event, trustDocumentID bool) *domain.Attachmen
 		return nil
 	}
 
-	att := &domain.Attachment{}
-	if body, ok := raw["body"].(string); ok {
-		att.DisplayName = body
-	}
+	att := &domain.Attachment{DisplayName: attachmentDisplayName(raw)}
 
 	// url (mxc://<server>/<media_id>) → MediaID
 	if urlStr, ok := raw["url"].(string); ok && urlStr != "" {
@@ -880,17 +868,7 @@ func extractAttachment(evt *event.Event, trustDocumentID bool) *domain.Attachmen
 		}
 	}
 
-	// info → mime/size/dims
-	if info, ok := raw["info"].(map[string]interface{}); ok {
-		if mime, ok := info["mimetype"].(string); ok {
-			att.MimeType = mime
-		}
-		if size, ok := rawInt64(info["size"]); ok {
-			att.Size = size
-		}
-		att.Width = rawIntPtr(info["w"])
-		att.Height = rawIntPtr(info["h"])
-	}
+	applyMediaInfo(att, raw)
 
 	// io.alkemio.document_id → DocumentID, but only from a trusted (own
 	// appservice) sender. Our own outbound media already lives in file-service as
@@ -914,6 +892,98 @@ func extractAttachment(evt *event.Event, trustDocumentID bool) *domain.Attachmen
 	}
 
 	return att
+}
+
+// attachmentDisplayName resolves a media event's display name. MSC2530: modern
+// media events carry the filename in a dedicated top-level `filename` field and
+// use `body` for a human caption. Prefer `filename`; fall back to `body` for
+// legacy media where the body IS the filename.
+func attachmentDisplayName(raw map[string]interface{}) string {
+	if filename, ok := raw["filename"].(string); ok && filename != "" {
+		return filename
+	}
+	if body, ok := raw["body"].(string); ok {
+		return body
+	}
+	return ""
+}
+
+// applyMediaInfo copies the media event's info block (mime/size/dimensions) onto
+// the attachment. A missing or malformed info block leaves the fields zeroed.
+func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
+	info, ok := raw["info"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	if mime, ok := info["mimetype"].(string); ok {
+		att.MimeType = mime
+	}
+	if size, ok := rawInt64(info["size"]); ok {
+		att.Size = size
+	}
+	att.Width = rawIntPtr(info["w"])
+	att.Height = rawIntPtr(info["h"])
+}
+
+// extractInboundMessage computes the inbound message Content and optional media
+// attachment for an m.room.message event, applying MSC2530 caption semantics. It
+// is the single source of truth shared by the live-sync path
+// (handleMessageEvent) and the read path (parseMessageEvent), so the two can't
+// diverge (F10). trustDocumentID gates the io.alkemio.document_id breadcrumb
+// (see extractAttachment / isOwnAppserviceUser).
+//
+// ok is false only when the event carries neither a present body nor an
+// attachment — the caller then drops the event. A present-but-empty body ("")
+// IS forwarded (ok=true, empty Content): only a genuinely absent/non-string
+// body with no attachment is dropped (F3/F4).
+//
+// Content semantics for media events (MSC2530): a modern client sets
+// body=caption and a separate top-level `filename`. When `filename` is present
+// and differs from body, body is a caption and is KEPT as Content (F2).
+// Otherwise body IS the filename (legacy: no filename field, or filename==body)
+// — already carried as the attachment's DisplayName — so Content is blanked, so
+// clients don't render a filename text bubble beside the media.
+func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content string, attachment *domain.Attachment, ok bool) {
+	body, bodyPresent := inboundBody(evt)
+	attachment = extractAttachment(evt, trustDocumentID)
+
+	if !bodyPresent && attachment == nil {
+		return "", nil, false
+	}
+
+	content = body
+	if attachment != nil && !bodyIsCaption(evt, body) {
+		content = ""
+	}
+	return content, attachment, true
+}
+
+// inboundBody returns the message body and whether a body is present. A body is
+// present when the raw event carries a "body" string (even the empty string — a
+// present-but-empty body is forwarded), or when the parsed content yields a
+// non-empty body (covers events that arrive parsed but without a raw map, e.g.
+// in unit tests). This mirrors develop's `, ok` semantics.
+func inboundBody(evt *event.Event) (string, bool) {
+	if evt.Content.Raw != nil {
+		if b, ok := evt.Content.Raw["body"].(string); ok {
+			return b, true
+		}
+	}
+	if c, ok := parseEventContent[event.MessageEventContent](evt); ok && c.Body != "" {
+		return c.Body, true
+	}
+	return "", false
+}
+
+// bodyIsCaption reports whether a media event's body is an MSC2530 caption
+// rather than the filename: true only when a separate top-level `filename` field
+// is present and differs from body.
+func bodyIsCaption(evt *event.Event, body string) bool {
+	if evt.Content.Raw == nil {
+		return false
+	}
+	filename, _ := evt.Content.Raw["filename"].(string)
+	return filename != "" && filename != body
 }
 
 // isOwnAppserviceUser reports whether userID is a user the adapter's own
