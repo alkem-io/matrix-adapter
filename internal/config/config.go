@@ -39,6 +39,57 @@ type Config struct {
 		// single outbound attachment. <= 0 means use the built-in default (50 MiB).
 		MaxAttachmentBytes int64 `yaml:"max_attachment_bytes"`
 	} `yaml:"file_service"`
+
+	Send struct {
+		// TimeoutSeconds bounds a single message-send (text + fetch + up to 10
+		// uploads). One slow/stuck send can't block the send worker indefinitely.
+		// <= 0 means use the built-in default.
+		TimeoutSeconds int `yaml:"timeout_seconds"`
+		// Concurrency is the number of send workers draining the message-send
+		// topic. Sends are partitioned by room, so distinct rooms progress
+		// concurrently while same-room sends stay strictly ordered. <= 0 means
+		// use the built-in default.
+		Concurrency int `yaml:"concurrency"`
+	} `yaml:"send"`
+}
+
+// Send tuning defaults (applied when the corresponding config value is <= 0).
+const (
+	// DefaultSendTimeoutSeconds bounds a single send: a media send does a
+	// file-service fetch plus up to 10 uploads, which can legitimately take tens
+	// of seconds, but must not stall its worker for minutes.
+	DefaultSendTimeoutSeconds = 120
+	// DefaultSendConcurrency is the number of room-partitioned send workers.
+	DefaultSendConcurrency = 8
+)
+
+// SendTimeoutSeconds returns the configured per-send timeout, falling back to
+// the built-in default when unset or non-positive.
+func (c *Config) SendTimeoutSeconds() int {
+	if c.Send.TimeoutSeconds > 0 {
+		return c.Send.TimeoutSeconds
+	}
+	return DefaultSendTimeoutSeconds
+}
+
+// SendConcurrency returns the configured number of send workers, falling back
+// to the built-in default when unset or non-positive.
+func (c *Config) SendConcurrency() int {
+	if c.Send.Concurrency > 0 {
+		return c.Send.Concurrency
+	}
+	return DefaultSendConcurrency
+}
+
+// Validate checks that configuration required for the service to run is present.
+// It is called at boot so misconfiguration surfaces immediately rather than on
+// the first user action. Media attachments are always supported, so a
+// file-service URL is mandatory: without it, every attachment send would fail.
+func (c *Config) Validate() error {
+	if c.FileService.URL == "" {
+		return fmt.Errorf("FILE_SERVICE_URL is required (media attachment sends fetch bytes from file-service)")
+	}
+	return nil
 }
 
 // Load reads the configuration from config.yaml and overrides it with environment variables.
@@ -90,6 +141,20 @@ func loadEnvVars(cfg *Config) {
 	loadMatrixEnv(cfg)
 	loadRabbitMQEnv(cfg)
 	loadFileServiceEnv(cfg)
+	loadSendEnv(cfg)
+}
+
+func loadSendEnv(cfg *Config) {
+	if v := os.Getenv("SEND_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Send.TimeoutSeconds = n
+		}
+	}
+	if v := os.Getenv("SEND_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Send.Concurrency = n
+		}
+	}
 }
 
 func loadFileServiceEnv(cfg *Config) {

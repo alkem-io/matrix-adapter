@@ -40,6 +40,12 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}
 	log.Info("Initializing Matrix Adapter Application", "env", cfg.App.Environment)
 
+	// Fail fast on misconfiguration so it surfaces at boot rather than on the
+	// first user send (e.g. missing FILE_SERVICE_URL breaks every media send).
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
 	// 2. Initialize Adapters
 	matrixAdapter, err := matrix.NewMautrixAdapter(cfg, log)
 	if err != nil {

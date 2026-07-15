@@ -2,9 +2,23 @@ package queue
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/alkem-io/matrix-adapter/internal/core/ports"
+	"github.com/alkem-io/matrix-adapter/pkg/dto"
 )
+
+// sendMessagePartitionKey extracts the target room from a SendMessageRequest
+// payload so the ordered send pool can serialize same-room sends while running
+// different rooms concurrently. A malformed payload (which the handler will
+// reject anyway) falls back to the empty key — still ordered, never dropped.
+func sendMessagePartitionKey(payload []byte) string {
+	var req dto.SendMessageRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return ""
+	}
+	return req.AlkemioRoomID.String()
+}
 
 // RegisterRoutes registers all queue subscribers to their respective topics.
 func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, space *SpaceHandler, readReceipt *ReadReceiptHandler, log ports.Logger) {
@@ -21,7 +35,9 @@ func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, s
 		TopicRoomMembersGet: room.HandleGetRoomMembers,
 
 		// Message Routes (communication.message.*)
-		TopicMessageSend:   room.HandleSendMessage,
+		// NOTE: TopicMessageSend is registered separately below via
+		// SubscribeOrdered — a media send does a fetch + up to 10 uploads and
+		// must not head-of-line-block other rooms' sends.
 		TopicMessageGet:    room.HandleGetMessage,
 		TopicMessageDelete: room.HandleDeleteMessage,
 
@@ -76,5 +92,14 @@ func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, s
 		} else {
 			log.Info("Subscribed to topic", "topic", topic)
 		}
+	}
+
+	// The send topic gets room-partitioned concurrency: same-room sends stay
+	// strictly ordered, different rooms progress in parallel, so one slow media
+	// send can't block every other send.
+	if err := q.SubscribeOrdered(TopicMessageSend, room.HandleSendMessage, sendMessagePartitionKey); err != nil {
+		log.Error("Failed to subscribe to topic", "topic", TopicMessageSend, "error", err)
+	} else {
+		log.Info("Subscribed to topic (room-ordered)", "topic", TopicMessageSend)
 	}
 }

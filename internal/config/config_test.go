@@ -99,6 +99,50 @@ func TestLoad_FileServiceEnvOverrides(t *testing.T) {
 	})
 }
 
+func TestValidate_RequiresFileServiceURL(t *testing.T) {
+	cfg := &Config{}
+	require.Error(t, cfg.Validate(), "empty FILE_SERVICE_URL must fail validation")
+
+	cfg.FileService.URL = "http://file-service:4000"
+	require.NoError(t, cfg.Validate())
+}
+
+func TestSendTuning_EnvAndDefaults(t *testing.T) {
+	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("RABBITMQ_URL", "")
+	t.Setenv("RABBITMQ_HOST", "")
+
+	t.Run("env overrides", func(t *testing.T) {
+		t.Setenv("SEND_TIMEOUT_SECONDS", "45")
+		t.Setenv("SEND_CONCURRENCY", "3")
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, 45, cfg.SendTimeoutSeconds())
+		assert.Equal(t, 3, cfg.SendConcurrency())
+	})
+
+	t.Run("unset falls back to defaults", func(t *testing.T) {
+		t.Setenv("SEND_TIMEOUT_SECONDS", "")
+		t.Setenv("SEND_CONCURRENCY", "")
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, DefaultSendTimeoutSeconds, cfg.SendTimeoutSeconds())
+		assert.Equal(t, DefaultSendConcurrency, cfg.SendConcurrency())
+	})
+
+	t.Run("non-positive values fall back to defaults", func(t *testing.T) {
+		t.Setenv("SEND_TIMEOUT_SECONDS", "0")
+		t.Setenv("SEND_CONCURRENCY", "-4")
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, DefaultSendTimeoutSeconds, cfg.SendTimeoutSeconds())
+		assert.Equal(t, DefaultSendConcurrency, cfg.SendConcurrency())
+	})
+}
+
 func TestLoad_RegistrationSecretPrecedence(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
 	t.Setenv("RABBITMQ_URL", "")

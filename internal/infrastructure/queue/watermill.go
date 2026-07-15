@@ -73,6 +73,10 @@ type WatermillAdapter struct {
 	publisher  *amqp.Publisher
 	subscriber *amqp.Subscriber
 	rpcConn    *stdAmqp.Connection // dedicated connection for RPC reply queues
+
+	// pools holds the ordered worker pools created by SubscribeOrdered so Close
+	// can drain in-flight work after the subscriber stops delivering.
+	pools []*orderedPool
 }
 
 // NewWatermillAdapter creates a new instance of WatermillAdapter.
@@ -118,15 +122,24 @@ func (w *WatermillAdapter) Connect(_ context.Context) error {
 }
 
 // Close closes the connection to the RabbitMQ broker.
+//
+// Shutdown order matters: the subscriber is closed first so no new deliveries
+// arrive and the ordered pools' ingest goroutines drain; then in-flight send
+// work is awaited (pool.wait) — these handlers still publish RPC replies, so the
+// publisher must outlive them — and only then are the publisher and RPC
+// connection torn down.
 func (w *WatermillAdapter) Close() error {
-	if w.publisher != nil {
-		if err := w.publisher.Close(); err != nil {
-			w.logger.Error("Failed to close publisher", "error", err)
-		}
-	}
 	if w.subscriber != nil {
 		if err := w.subscriber.Close(); err != nil {
 			w.logger.Error("Failed to close subscriber", "error", err)
+		}
+	}
+	for _, pool := range w.pools {
+		pool.wait()
+	}
+	if w.publisher != nil {
+		if err := w.publisher.Close(); err != nil {
+			w.logger.Error("Failed to close publisher", "error", err)
 		}
 	}
 	if w.rpcConn != nil && !w.rpcConn.IsClosed() {
@@ -162,6 +175,40 @@ func (w *WatermillAdapter) Subscribe(topic string, handler ports.MessageHandler)
 	go func() {
 		for msg := range messages {
 			w.processMessage(msg, handler)
+		}
+	}()
+
+	return nil
+}
+
+// SubscribeOrdered subscribes with per-key ordering and bounded cross-key
+// concurrency (see ports.QueuePort.SubscribeOrdered). Messages are drained from
+// the broker by a single ingest goroutine and dispatched to an orderedPool
+// keyed by keyFn(payload); the pool preserves per-key ordering while letting
+// distinct keys run concurrently up to cfg.SendConcurrency() workers.
+//
+// Acknowledgement happens inside processMessage, i.e. only after the handler
+// completes, so redelivery semantics are unchanged. On Close the subscriber
+// stops delivering, the ingest goroutine drains, and the pool finishes any
+// in-flight work before the connection is torn down.
+func (w *WatermillAdapter) SubscribeOrdered(topic string, handler ports.MessageHandler, keyFn ports.PartitionKeyFunc) error {
+	messages, err := w.subscriber.Subscribe(context.Background(), topic)
+	if err != nil {
+		return err
+	}
+
+	pool := newOrderedPool(w.cfg.SendConcurrency(), func(msg *message.Message) {
+		w.processMessage(msg, handler)
+	})
+	w.pools = append(w.pools, pool)
+
+	go func() {
+		for msg := range messages {
+			key := ""
+			if keyFn != nil {
+				key = keyFn(msg.Payload)
+			}
+			pool.enqueue(key, msg)
 		}
 	}()
 
