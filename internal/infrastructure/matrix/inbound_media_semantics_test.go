@@ -76,9 +76,11 @@ func TestParseMessageEvent_LegacyFilenameBody_BlanksContent(t *testing.T) {
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
 
-// filename==body is treated as legacy (the caption equals the filename, so there
-// is no distinct caption to preserve): Content is blanked.
-func TestParseMessageEvent_FilenameEqualsBody_BlanksContent(t *testing.T) {
+// A3 — when a top-level `filename` field is present, body is a CAPTION and is
+// preserved as Content even if it happens to equal the filename. The presence of
+// the field (not DisplayName==body) drives the decision, so a caption that
+// coincides with the filename is no longer dropped.
+func TestParseMessageEvent_FilenameEqualsBody_CaptionPreserved(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	evt := &event.Event{
@@ -99,7 +101,8 @@ func TestParseMessageEvent_FilenameEqualsBody_BlanksContent(t *testing.T) {
 
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
-	assert.Empty(t, msg.Content, "filename==body is not a caption; Content must be blank")
+	assert.Equal(t, "report.pdf", msg.Content,
+		"a present filename field means body is a caption — preserved even when it equals the filename")
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
 
