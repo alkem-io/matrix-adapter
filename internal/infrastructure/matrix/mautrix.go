@@ -1306,43 +1306,40 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 		return nil, fmt.Errorf("failed to get event: %w", err)
 	}
 
-	if malformedMessageBody(evt) {
+	// parseMessageEvent is the SINGLE authority on "is there usable content or an
+	// attachment": it runs extractInboundMessage, which surfaces an attachment via
+	// BOTH the mxc url and the trusted io.alkemio.document_id breadcrumb and applies
+	// the msgtype rules. A non-message event (reaction, m.sticker, ...) yields nil
+	// and errors — resolving a sticker to its alt-text would drop the image and
+	// surface a phantom text message. The server tracks message ids distinctly, so
+	// message.get is not called with such ids.
+	msg := m.parseMessageEvent(evt, roomID)
+	if msg == nil {
 		return nil, fmt.Errorf("event is not a message")
 	}
 
-	// Only m.room.message events resolve to a Message (with attachments for media).
-	// A non-message event (reaction, m.sticker, ...) errors rather than being
-	// coerced to bare text — resolving a sticker to its alt-text would drop the
-	// image and surface a phantom text message. The server tracks message ids
-	// distinctly, so message.get is not called with such ids.
-	msg := m.parseMessageEvent(evt, roomID)
-	if msg == nil {
+	// parseMessageEvent surfaced no usable content or attachment. That is valid for
+	// a bodyless/redacted event (an empty-content Message), but a present-but-non-
+	// string body with nothing usable is a malformed event, not a blank message.
+	// Deferring to parseMessageEvent here avoids replicating extractAttachment's
+	// media-detection (url + document_id + msgtype) in the malformed check.
+	if msg.Content == "" && len(msg.Attachments) == 0 && malformedMessageBody(evt) {
 		return nil, fmt.Errorf("event is not a message")
 	}
 	return msg, nil
 }
 
 // malformedMessageBody reports whether a message-type event carries a "body" that
-// is present but not a string — a corrupt event that is not a usable message
-// (develop errored here). An ABSENT body is NOT malformed: a bodyless/redacted
+// is present but not a string. An ABSENT body is NOT malformed: a bodyless/redacted
 // message event still resolves to an empty-content Message.
 //
-// A MEDIA event (a "url" that parses as a valid mxc URI) is NEVER malformed on
-// body grounds: it is a valid attachment that parseMessageEvent/extractInboundMessage
-// surface via the url, and the timeline scans (GetRoomMessages/GetLastMessage)
-// return it. Firing here on a media event with a corrupt/non-string body would make
-// GetMessage error on a message the other read paths return, an inconsistent read
-// path. The url must validate with the SAME parser extractAttachment uses
-// (id.ParseContentURI): a non-mxc url (e.g. "http://...") does not surface an
-// attachment, so a non-string body alongside it stays malformed.
+// This is a PURE body check — it does NOT inspect url/mxc/msgtype/document_id.
+// Whether the event nonetheless carries usable media is decided by parseMessageEvent
+// (the single source of truth); GetMessage only consults this once parseMessageEvent
+// has surfaced no content and no attachment.
 func malformedMessageBody(evt *event.Event) bool {
 	if evt.Type != event.EventMessage || evt.Content.Raw == nil {
 		return false
-	}
-	if urlStr, ok := evt.Content.Raw["url"].(string); ok && urlStr != "" {
-		if _, err := id.ParseContentURI(urlStr); err == nil {
-			return false
-		}
 	}
 	raw, present := evt.Content.Raw["body"]
 	if !present {

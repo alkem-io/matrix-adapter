@@ -443,3 +443,63 @@ func TestGetMessage_NonMxcUrlNonStringBody_ReturnsError(t *testing.T) {
 	require.Error(t, err, "a non-mxc url with a non-string body is malformed and must error")
 	assert.Nil(t, msg)
 }
+
+// Media can be surfaced via the trusted io.alkemio.document_id breadcrumb ALONE —
+// no parseable mxc url needed — when the sender is an own-appservice ghost. Such an
+// event with a non-string body is a valid attachment (parseMessageEvent surfaces
+// it), so GetMessage must return it, not error. This is the case a url-only
+// malformed check would have wrongly rejected.
+func TestGetMessage_DocumentIDMediaNonStringBody_ReturnsAttachment(t *testing.T) {
+	ghost := expectedUserID(testActorID) // @<uuid>:test.local — a trusted own-ghost sender
+	admin := &mockAdminAPI{
+		getEventResult: &event.Event{
+			ID:        id.EventID("$doc"),
+			Sender:    ghost,
+			Type:      event.EventMessage,
+			Timestamp: 1700000000000,
+			Content: event.Content{
+				Raw: map[string]any{
+					"msgtype":                "m.image",
+					"body":                   12345, // corrupt, non-string body
+					"io.alkemio.document_id": docID1,
+					// no url at all — the attachment is surfaced via document_id
+				},
+			},
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$doc")
+	require.NoError(t, err, "media surfaced via trusted document_id is valid regardless of body")
+	require.NotNil(t, msg)
+	require.Len(t, msg.Attachments, 1, "the document_id attachment must be surfaced")
+	assert.Equal(t, docID1, msg.Attachments[0].DocumentID)
+	assert.Empty(t, msg.Attachments[0].MediaID, "no mxc url → no MediaID")
+}
+
+// A non-media msgtype (m.text) with an mxc url and a non-string body carries no
+// attachment (extractAttachment ignores non-media msgtypes) and no usable content,
+// so it is malformed: GetMessage must error rather than return a phantom blank
+// message off the stray url.
+func TestGetMessage_TextMsgtypeWithUrlNonStringBody_ReturnsError(t *testing.T) {
+	admin := &mockAdminAPI{
+		getEventResult: &event.Event{
+			ID:        id.EventID("$phantom"),
+			Sender:    id.UserID("@user:test.local"),
+			Type:      event.EventMessage,
+			Timestamp: 1700000000000,
+			Content: event.Content{
+				Raw: map[string]any{
+					"msgtype": "m.text",
+					"body":    12345,                // corrupt, non-string body
+					"url":     "mxc://test.local/x", // valid mxc, but msgtype is not media
+				},
+			},
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$phantom")
+	require.Error(t, err, "a non-media msgtype with a non-string body is malformed and must error")
+	assert.Nil(t, msg)
+}
