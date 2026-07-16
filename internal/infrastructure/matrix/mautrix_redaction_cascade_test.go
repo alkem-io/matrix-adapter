@@ -2,6 +2,7 @@ package matrix
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -43,7 +44,7 @@ func newCascadeMediaAdapter(
 
 // A text + media send stamps every attachment with the text event as parent,
 // then deleting that primary redacts every stamped attachment.
-func TestRedactEvent_CascadesNonThreadedAttachments(t *testing.T) {
+func TestRedactMessageWithAttachments_CascadesNonThreadedAttachments(t *testing.T) {
 	intent := &mockIntentAPI{
 		sendTextResult:         &mautrix.RespSendEvent{EventID: "$primary"},
 		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/media")},
@@ -76,7 +77,7 @@ func TestRedactEvent_CascadesNonThreadedAttachments(t *testing.T) {
 		cascadeTestEvent("$media-1", firstContent),
 		cascadeTestEvent("$media-2", secondContent),
 	)
-	require.NoError(t, a.RedactEvent(
+	require.NoError(t, a.RedactMessageWithAttachments(
 		context.Background(), cascadeTestRoomID, testActor(testActorID, "Alice"), primaryEventID, "deleted",
 	))
 
@@ -86,13 +87,13 @@ func TestRedactEvent_CascadesNonThreadedAttachments(t *testing.T) {
 		RoomID: cascadeTestRoomID,
 		From:   "after-primary",
 		Dir:    "f",
-		Limit:  attachmentCascadeScanLimit,
+		Limit:  attachmentCascadePageSize,
 	}, admin.getRoomMessagesCalls[0])
 }
 
 // The custom parent marker coexists with the media event's one m.thread
 // relation, allowing the same cascade mechanism to work for threaded sends.
-func TestRedactEvent_CascadesThreadedAttachments(t *testing.T) {
+func TestRedactMessageWithAttachments_CascadesThreadedAttachments(t *testing.T) {
 	intent := &mockIntentAPI{
 		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/media")},
 		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$primary"},
@@ -128,14 +129,14 @@ func TestRedactEvent_CascadesThreadedAttachments(t *testing.T) {
 		cascadeTestEvent("$media-1", attachmentContents[0]),
 		cascadeTestEvent("$media-2", attachmentContents[1]),
 	)
-	require.NoError(t, a.RedactEvent(
+	require.NoError(t, a.RedactMessageWithAttachments(
 		context.Background(), cascadeTestRoomID, testActor(testActorID, "Alice"), primaryEventID, "deleted",
 	))
 
 	assert.Equal(t, []id.EventID{"$primary", "$media-1", "$media-2"}, intent.redactEventIDs)
 }
 
-func TestRedactEvent_PlainTextRedactsExactlyOneEvent(t *testing.T) {
+func TestRedactEvent_ReactionRemovalDoesNotScanForAttachments(t *testing.T) {
 	intent := &mockIntentAPI{}
 	admin := &mockAdminAPI{}
 	configureCascadeScan(admin)
@@ -144,15 +145,15 @@ func TestRedactEvent_PlainTextRedactsExactlyOneEvent(t *testing.T) {
 	}), admin)
 
 	require.NoError(t, a.RedactEvent(
-		context.Background(), cascadeTestRoomID, testActor(testActorID, "Alice"), "$plain", "deleted",
+		context.Background(), cascadeTestRoomID, testActor(testActorID, "Alice"), "$reaction", "removed",
 	))
 
-	assert.Equal(t, []id.EventID{"$plain"}, intent.redactEventIDs)
-	require.Len(t, admin.getEventContextCalls, 1)
-	require.Len(t, admin.getRoomMessagesCalls, 1)
+	assert.Equal(t, []id.EventID{"$reaction"}, intent.redactEventIDs)
+	assert.Empty(t, admin.getEventContextCalls)
+	assert.Empty(t, admin.getRoomMessagesCalls)
 }
 
-func TestRedactEvent_DoesNotRedactInterleavedForeignEvent(t *testing.T) {
+func TestRedactMessageWithAttachments_DoesNotRedactInterleavedForeignEvent(t *testing.T) {
 	intent := &mockIntentAPI{}
 	admin := &mockAdminAPI{}
 	configureCascadeScan(admin,
@@ -174,7 +175,7 @@ func TestRedactEvent_DoesNotRedactInterleavedForeignEvent(t *testing.T) {
 		expectedUserID(testActorID): intent,
 	}), admin)
 
-	require.NoError(t, a.RedactEvent(
+	require.NoError(t, a.RedactMessageWithAttachments(
 		context.Background(), cascadeTestRoomID, testActor(testActorID, "Alice"), "$primary", "deleted",
 	))
 
@@ -183,7 +184,7 @@ func TestRedactEvent_DoesNotRedactInterleavedForeignEvent(t *testing.T) {
 	assert.NotContains(t, intent.redactEventIDs, id.EventID("$other-message-attachment"))
 }
 
-func TestRedactEvent_AttachmentFailureIsBestEffort(t *testing.T) {
+func TestRedactMessageWithAttachments_AttachmentFailureIsBestEffort(t *testing.T) {
 	intent := &mockIntentAPI{
 		redactEventErrs: map[id.EventID]error{
 			"$media-1": assert.AnError,
@@ -198,10 +199,118 @@ func TestRedactEvent_AttachmentFailureIsBestEffort(t *testing.T) {
 		expectedUserID(testActorID): intent,
 	}), admin)
 
-	require.NoError(t, a.RedactEvent(
+	require.NoError(t, a.RedactMessageWithAttachments(
 		context.Background(), cascadeTestRoomID, testActor(testActorID, "Alice"), "$primary", "same reason",
 	))
 
 	assert.Equal(t, []id.EventID{"$primary", "$media-1", "$media-2"}, intent.redactEventIDs)
 	assert.Equal(t, []string{"same reason", "same reason", "same reason"}, intent.redactReasons)
+}
+
+func TestRedactMessageWithAttachments_UsesContextEndAndEventsAfter(t *testing.T) {
+	intent := &mockIntentAPI{}
+	admin := &mockAdminAPI{
+		getEventContextResult: &mautrix.RespContext{
+			End: "after-context-event",
+			EventsAfter: []*event.Event{
+				cascadeTestEvent("$media-1", map[string]any{attachmentParentEventIDField: "$primary"}),
+			},
+		},
+		getRoomMessagesResult: &mautrix.RespMessages{Chunk: []*event.Event{
+			cascadeTestEvent("$media-2", map[string]any{attachmentParentEventIDField: "$primary"}),
+		}},
+	}
+	a := newFullTestAdapter(newMockAS(intent, map[id.UserID]intentAPI{
+		expectedUserID(testActorID): intent,
+	}), admin)
+
+	require.NoError(t, a.RedactMessageWithAttachments(
+		context.Background(), cascadeTestRoomID, testActor(testActorID, "Alice"), "$primary", "deleted",
+	))
+
+	assert.Equal(t, []id.EventID{"$primary", "$media-1", "$media-2"}, intent.redactEventIDs)
+	require.Len(t, admin.getRoomMessagesCalls, 1)
+	assert.Equal(t, "after-context-event", admin.getRoomMessagesCalls[0].From)
+}
+
+type cascadeCaptureLogger struct {
+	adapterMockLogger
+	warnings []string
+}
+
+func (l *cascadeCaptureLogger) Warn(msg string, _ ...interface{}) {
+	l.warnings = append(l.warnings, msg)
+}
+
+func TestRedactMessageWithAttachments_EmptyContextEndLogsAndReturns(t *testing.T) {
+	intent := &mockIntentAPI{}
+	admin := &mockAdminAPI{getEventContextResult: &mautrix.RespContext{}}
+	a := newFullTestAdapter(newMockAS(intent, map[id.UserID]intentAPI{
+		expectedUserID(testActorID): intent,
+	}), admin)
+	logger := &cascadeCaptureLogger{}
+	a.logger = logger
+
+	require.NoError(t, a.RedactMessageWithAttachments(
+		context.Background(), cascadeTestRoomID, testActor(testActorID, "Alice"), "$primary", "deleted",
+	))
+
+	assert.Equal(t, []id.EventID{"$primary"}, intent.redactEventIDs)
+	assert.Empty(t, admin.getRoomMessagesCalls)
+	assert.Contains(t, logger.warnings, "Attachment event context had no forward pagination token")
+}
+
+func TestRedactMessageWithAttachments_PaginatesAcrossInterleavedEvents(t *testing.T) {
+	intent := &mockIntentAPI{}
+	admin := &mockAdminAPI{
+		getEventContextResult: &mautrix.RespContext{End: "page-1"},
+		getRoomMessagesResults: []*mautrix.RespMessages{
+			{Chunk: cascadePage(1, 4, 8), End: "page-2"},
+			{Chunk: cascadePage(5, 8, 8), End: "page-3"},
+			{Chunk: cascadePage(9, 10, 3)},
+		},
+	}
+	a := newFullTestAdapter(newMockAS(intent, map[id.UserID]intentAPI{
+		expectedUserID(testActorID): intent,
+	}), admin)
+
+	require.NoError(t, a.RedactMessageWithAttachments(
+		context.Background(), cascadeTestRoomID, testActor(testActorID, "Alice"), "$primary", "deleted",
+	))
+
+	expected := []id.EventID{"$primary"}
+	for i := 1; i <= 10; i++ {
+		expected = append(expected, id.EventID(fmt.Sprintf("$media-%d", i)))
+	}
+	assert.Equal(t, expected, intent.redactEventIDs)
+	require.Len(t, admin.getRoomMessagesCalls, 3)
+	assert.Equal(t, []string{"page-1", "page-2", "page-3"}, []string{
+		admin.getRoomMessagesCalls[0].From,
+		admin.getRoomMessagesCalls[1].From,
+		admin.getRoomMessagesCalls[2].From,
+	})
+}
+
+func cascadePage(firstAttachment, lastAttachment, foreignEvents int) []*event.Event {
+	events := make([]*event.Event, 0, lastAttachment-firstAttachment+1+foreignEvents)
+	attachment := firstAttachment
+	foreignEvent := 1
+	for attachment <= lastAttachment || foreignEvents > 0 {
+		if attachment <= lastAttachment {
+			events = append(events, cascadeTestEvent(
+				id.EventID(fmt.Sprintf("$media-%d", attachment)),
+				map[string]any{attachmentParentEventIDField: "$primary"},
+			))
+			attachment++
+		}
+		if foreignEvents > 0 {
+			events = append(events, cascadeTestEvent(
+				id.EventID(fmt.Sprintf("$foreign-%d-%d", firstAttachment, foreignEvent)),
+				map[string]any{"body": "unrelated"},
+			))
+			foreignEvents--
+			foreignEvent++
+		}
+	}
+	return events
 }

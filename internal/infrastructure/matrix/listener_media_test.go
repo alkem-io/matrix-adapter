@@ -84,9 +84,9 @@ func TestParseMessageEvent_DocumentID_FromGhost_Surfaced(t *testing.T) {
 	assert.Equal(t, "mediaX", msg.Attachments[0].MediaID)
 }
 
-// A legacy media event without MSC2530 filename metadata forwards body as
-// Content, matching develop, while also using it as the attachment display name.
-func TestParseMessageEvent_MediaEvent_NoFilenameForwardsBody(t *testing.T) {
+// A legacy media event without MSC2530 filename metadata uses body as the
+// attachment display name without duplicating it as message Content.
+func TestParseMessageEvent_MediaEvent_NoFilenameDoesNotDuplicateBody(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	evt := &event.Event{
@@ -106,7 +106,7 @@ func TestParseMessageEvent_MediaEvent_NoFilenameForwardsBody(t *testing.T) {
 
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
-	assert.Equal(t, "report.pdf", msg.Content)
+	assert.Empty(t, msg.Content)
 	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
@@ -181,7 +181,7 @@ func TestHandleMessageEvent_MediaEvent_Delivered(t *testing.T) {
 
 	select {
 	case m := <-got:
-		assert.Equal(t, "pic.png", m.Content, "legacy media body is forwarded")
+		assert.Empty(t, m.Content, "legacy media filename is not duplicated as text")
 		assert.Equal(t, roomUUID.String(), m.RoomID)
 		require.Len(t, m.Attachments, 1)
 		assert.Equal(t, "mid", m.Attachments[0].MediaID)

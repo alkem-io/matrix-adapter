@@ -49,9 +49,9 @@ func TestParseMessageEvent_MSC2530Caption_Preserved(t *testing.T) {
 	assert.Equal(t, "capmedia", msg.Attachments[0].MediaID)
 }
 
-// Legacy media has no separate filename field, so its body is the combined
-// name/caption and must retain develop's behavior of being forwarded as Content.
-func TestParseMessageEvent_LegacyBody_PreservedAsContent(t *testing.T) {
+// Legacy media has no separate filename field, so its body is the filename and
+// must not also surface as a redundant text line.
+func TestParseMessageEvent_LegacyBody_UsedOnlyAsDisplayName(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	evt := &event.Event{
@@ -71,16 +71,14 @@ func TestParseMessageEvent_LegacyBody_PreservedAsContent(t *testing.T) {
 
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
-	assert.Equal(t, "report.pdf", msg.Content, "legacy media body must be forwarded as Content")
+	assert.Empty(t, msg.Content, "legacy media filename must not be duplicated as Content")
 	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
 
-// A3 — when a top-level `filename` field is present, body is a CAPTION and is
-// preserved as Content even if it happens to equal the filename. The presence of
-// the field (not DisplayName==body) drives the decision, so a caption that
-// coincides with the filename is no longer dropped.
-func TestParseMessageEvent_FilenameEqualsBody_CaptionPreserved(t *testing.T) {
+// A body equal to the resolved filename is not a genuine caption, even when a
+// top-level filename field is present, so it is not duplicated as Content.
+func TestParseMessageEvent_FilenameEqualsBody_NotDuplicated(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	evt := &event.Event{
@@ -101,8 +99,7 @@ func TestParseMessageEvent_FilenameEqualsBody_CaptionPreserved(t *testing.T) {
 
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
-	assert.Equal(t, "report.pdf", msg.Content,
-		"a present filename field means body is a caption — preserved even when it equals the filename")
+	assert.Empty(t, msg.Content)
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
 

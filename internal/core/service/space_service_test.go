@@ -206,6 +206,9 @@ func (m *mockSpaceMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain
 func (m *mockSpaceMatrixPort) RedactEvent(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {
 	return nil
 }
+func (m *mockSpaceMatrixPort) RedactMessageWithAttachments(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {
+	return nil
+}
 func (m *mockSpaceMatrixPort) SendReaction(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) (id.EventID, error) {
 	return "", nil
 }

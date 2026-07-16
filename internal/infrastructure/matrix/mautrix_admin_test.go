@@ -37,6 +37,7 @@ type mockAdminAPI struct {
 	getCustomStateErr          error
 	getRoomMessagesResult      *mautrix.RespMessages
 	getRoomMessagesErr         error
+	getRoomMessagesResults     []*mautrix.RespMessages
 	getEventContextResult      *mautrix.RespContext
 	getEventContextErr         error
 	getEventResult             *event.Event
@@ -99,12 +100,16 @@ func (m *mockAdminAPI) GetCustomState(_ context.Context, _ id.RoomID, _ []string
 func (m *mockAdminAPI) GetRoomMessages(
 	_ context.Context, roomID id.RoomID, from, dir string, limit int,
 ) (*mautrix.RespMessages, error) {
+	callIndex := len(m.getRoomMessagesCalls)
 	m.getRoomMessagesCalls = append(m.getRoomMessagesCalls, getRoomMessagesCall{
 		RoomID: roomID,
 		From:   from,
 		Dir:    dir,
 		Limit:  limit,
 	})
+	if callIndex < len(m.getRoomMessagesResults) {
+		return m.getRoomMessagesResults[callIndex], m.getRoomMessagesErr
+	}
 	return m.getRoomMessagesResult, m.getRoomMessagesErr
 }
 

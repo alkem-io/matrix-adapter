@@ -72,6 +72,10 @@ type mockIntentAPI struct {
 	uploadBytesResult      *mautrix.RespMediaUpload
 	uploadBytesErr         error
 
+	// Optional per-call results for fan-out failure tests.
+	sendMessageEventResults []*mautrix.RespSendEvent
+	sendMessageEventErrs    []error
+
 	// Call tracking
 	ensureRegisteredCalled int
 	sendTextCalled         int
@@ -150,6 +154,7 @@ func (m *mockIntentAPI) EnsureJoined(_ context.Context, roomID id.RoomID, _ ...a
 }
 
 func (m *mockIntentAPI) SendMessageEvent(_ context.Context, roomID id.RoomID, eventType event.Type, contentJSON any, extra ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {
+	callIndex := m.sendMessageEventCalled
 	m.sendMessageEventCalled++
 	m.lastSendMsgEventRoomID = roomID
 	m.lastSendMsgEventType = eventType
@@ -161,7 +166,14 @@ func (m *mockIntentAPI) SendMessageEvent(_ context.Context, roomID id.RoomID, ev
 	}
 	m.sendMsgEventTxns = append(m.sendMsgEventTxns, txn)
 	m.sendMsgEventContents = append(m.sendMsgEventContents, contentJSON)
-	return m.sendMessageEventResult, m.sendMessageEventErr
+	result, err := m.sendMessageEventResult, m.sendMessageEventErr
+	if callIndex < len(m.sendMessageEventResults) {
+		result = m.sendMessageEventResults[callIndex]
+	}
+	if callIndex < len(m.sendMessageEventErrs) {
+		err = m.sendMessageEventErrs[callIndex]
+	}
+	return result, err
 }
 
 func (m *mockIntentAPI) SendStateEvent(_ context.Context, roomID id.RoomID, eventType event.Type, stateKey string, contentJSON any, _ ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {

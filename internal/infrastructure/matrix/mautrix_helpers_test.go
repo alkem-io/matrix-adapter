@@ -285,7 +285,7 @@ func TestParseMessageEvent_WithInReplyToFallback(t *testing.T) {
 	assert.Equal(t, "$parent-msg", msg.ThreadID)
 }
 
-func TestParseMessageEvent_EmptyBody_ReturnsNil(t *testing.T) {
+func TestParseMessageEvent_EmptyBody_ReturnsBlankMessage(t *testing.T) {
 	adapter := newTestAdapter("test.local")
 	roomID := id.RoomID("!room123:test.local")
 
@@ -303,10 +303,12 @@ func TestParseMessageEvent_EmptyBody_ReturnsNil(t *testing.T) {
 	}
 
 	msg := adapter.parseMessageEvent(evt, roomID)
-	assert.Nil(t, msg)
+	require.NotNil(t, msg)
+	assert.Empty(t, msg.Content)
+	assert.Equal(t, "$evt1", msg.ID)
 }
 
-func TestParseMessageEvent_NilContent_ReturnsNil(t *testing.T) {
+func TestParseMessageEvent_NilContent_ReturnsBlankMessage(t *testing.T) {
 	adapter := newTestAdapter("test.local")
 	roomID := id.RoomID("!room123:test.local")
 
@@ -319,7 +321,9 @@ func TestParseMessageEvent_NilContent_ReturnsNil(t *testing.T) {
 	}
 
 	msg := adapter.parseMessageEvent(evt, roomID)
-	assert.Nil(t, msg)
+	require.NotNil(t, msg)
+	assert.Empty(t, msg.Content)
+	assert.Equal(t, "$evt2", msg.ID)
 }
 
 func TestParseMessageEvent_RawJSONFallback(t *testing.T) {

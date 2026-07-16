@@ -460,7 +460,7 @@ func (h *RoomHandler) HandleDeleteMessage(ctx context.Context, payload []byte) (
 	}
 
 	sender := domain.NewActor(req.SenderActorID.UUID())
-	err := h.service.RedactEvent(ctx, roomID, sender, id.EventID(req.MessageID), req.Reason)
+	err := h.service.RedactMessageWithAttachments(ctx, roomID, sender, id.EventID(req.MessageID), req.Reason)
 	if err != nil {
 		return MapServiceError(err), nil
 	}

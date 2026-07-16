@@ -142,6 +142,12 @@ func (m *mockExtendedMatrixPort) RedactEvent(_ context.Context, _ id.RoomID, _ d
 	return m.redactEventErr
 }
 
+func (m *mockExtendedMatrixPort) RedactMessageWithAttachments(
+	_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string,
+) error {
+	return m.redactEventErr
+}
+
 func (m *mockExtendedMatrixPort) SendReaction(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) (id.EventID, error) {
 	return m.sendReactionResult, m.sendReactionErr
 }

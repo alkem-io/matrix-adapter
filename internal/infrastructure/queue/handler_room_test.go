@@ -987,6 +987,10 @@ func TestHandleDeleteMessage_Success(t *testing.T) {
 	if mock.capturedRedactEventRoomID != "!room1:test" {
 		t.Errorf("expected redact room ID '!room1:test', got %q", mock.capturedRedactEventRoomID)
 	}
+	if mock.redactMessageWithAttachmentsCalled != 1 || mock.redactEventCalled != 0 {
+		t.Errorf("message delete must use attachment cascade path, got cascade=%d plain=%d",
+			mock.redactMessageWithAttachmentsCalled, mock.redactEventCalled)
+	}
 }
 
 func TestHandleDeleteMessage_InvalidJSON(t *testing.T) {
@@ -1154,6 +1158,10 @@ func TestHandleRemoveReaction_Success(t *testing.T) {
 	// Verify the handler correctly forwarded the reaction ID for redaction
 	if mock.capturedRedactEventID != "$reaction1:test" {
 		t.Errorf("expected redacted event ID '$reaction1:test', got %q", mock.capturedRedactEventID)
+	}
+	if mock.redactEventCalled != 1 || mock.redactMessageWithAttachmentsCalled != 0 {
+		t.Errorf("reaction removal must use plain redaction, got plain=%d cascade=%d",
+			mock.redactEventCalled, mock.redactMessageWithAttachmentsCalled)
 	}
 }
 

@@ -767,15 +767,21 @@ func TestGetRoomMessages_Error(t *testing.T) {
 // --------------------------------------------------------------------------
 
 func TestGetEventContext_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	sa, err := NewSynapseAdmin("http://homeserver.test", "test-token")
+	if err != nil {
+		t.Fatalf("NewSynapseAdmin: %v", err)
+	}
+	sa.client.Client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
 		if !strings.Contains(r.URL.Path, "/context/") {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		if got := r.URL.Query().Get("limit"); got != "1" {
+			t.Errorf("expected context limit=1, got %q", got)
+		}
+		body, marshalErr := json.Marshal(map[string]interface{}{
 			"event": map[string]interface{}{
 				"type":             "m.room.message",
 				"event_id":         "$evt1:hs",
@@ -789,10 +795,16 @@ func TestGetEventContext_Success(t *testing.T) {
 			"events_after":  []interface{}{},
 			"state":         []interface{}{},
 		})
-	}))
-	defer srv.Close()
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(string(body))),
+		}, nil
+	})}
 
-	sa := newTestSynapseAdmin(t, srv)
 	resp, err := sa.GetEventContext(context.Background(), "!room1:hs", "$evt1:hs")
 	if err != nil {
 		t.Fatalf("GetEventContext: %v", err)

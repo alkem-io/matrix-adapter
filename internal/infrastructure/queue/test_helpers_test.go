@@ -100,7 +100,9 @@ type testMockMatrixPort struct {
 	sendReplyErr    error
 
 	// RedactEvent
-	redactEventErr error
+	redactEventErr                     error
+	redactEventCalled                  int
+	redactMessageWithAttachmentsCalled int
 
 	// SendReaction
 	sendReactionResult id.EventID
@@ -385,6 +387,16 @@ func (m *testMockMatrixPort) SendReply(_ context.Context, roomID id.RoomID, _ do
 }
 
 func (m *testMockMatrixPort) RedactEvent(_ context.Context, roomID id.RoomID, _ domain.Actor, eventID id.EventID, _ string) error {
+	m.redactEventCalled++
+	m.capturedRedactEventRoomID = roomID
+	m.capturedRedactEventID = eventID
+	return m.redactEventErr
+}
+
+func (m *testMockMatrixPort) RedactMessageWithAttachments(
+	_ context.Context, roomID id.RoomID, _ domain.Actor, eventID id.EventID, _ string,
+) error {
+	m.redactMessageWithAttachmentsCalled++
 	m.capturedRedactEventRoomID = roomID
 	m.capturedRedactEventID = eventID
 	return m.redactEventErr

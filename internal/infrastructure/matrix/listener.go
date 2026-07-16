@@ -959,9 +959,9 @@ func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
 // IS forwarded (ok=true, empty Content): only a genuinely absent/non-string
 // body with no attachment is dropped (F3/F4).
 //
-// Content semantics match develop: a present body is always forwarded. For
-// MSC2530 media it is the caption beside the separate filename; for legacy media
-// without filename it is the event's combined name/caption.
+// For media, body is surfaced only when it differs from the resolved attachment
+// display name. This preserves genuine captions while avoiding a duplicate text
+// line for legacy media where body is the filename.
 func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content string, attachment *domain.Attachment, ok bool) {
 	body, bodyPresent := inboundBody(evt)
 	attachment = extractAttachment(evt, trustDocumentID)
@@ -970,6 +970,9 @@ func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content stri
 		return "", nil, false
 	}
 
+	if attachment != nil && body == attachment.DisplayName {
+		body = ""
+	}
 	return body, attachment, true
 }
 

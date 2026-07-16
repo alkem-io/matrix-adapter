@@ -112,6 +112,9 @@ func (m *arMockMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Ac
 func (m *arMockMatrixPort) RedactEvent(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {
 	return nil
 }
+func (m *arMockMatrixPort) RedactMessageWithAttachments(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {
+	return nil
+}
 func (m *arMockMatrixPort) SendReaction(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) (id.EventID, error) {
 	return "", nil
 }

@@ -156,15 +156,14 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		return nil, fmt.Errorf("failed to create synapse admin client: %w", err)
 	}
 
-	adapter := &MautrixAdapter{
+	return &MautrixAdapter{
 		cfg:            cfg,
 		logger:         logger,
 		as:             &appserviceWrapper{as: as},
 		idMapper:       domain.NewIDMapper(homeserverDomain),
 		admin:          admin,
 		botDisplayName: cfg.Matrix.BotDisplayName,
-	}
-	return adapter, nil
+	}, nil
 }
 
 // safePrefix returns the first n characters of s, or all of s if shorter.
@@ -739,19 +738,23 @@ func (m *MautrixAdapter) SendMessage(
 	intent := m.as.Intent(userID)
 
 	var primaryEventID id.EventID
+	sentEventIDs := make([]id.EventID, 0, len(attachments)+1)
 	if content != "" {
 		resp, err := intent.SendText(ctx, roomID, content)
 		if err != nil {
 			return "", fmt.Errorf("failed to send message: %w", err)
 		}
 		primaryEventID = resp.EventID
+		sentEventIDs = append(sentEventIDs, resp.EventID)
 	}
 
 	for i := range attachments {
 		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], "", primaryEventID)
 		if err != nil {
+			m.rollbackFanOut(ctx, intent, roomID, sentEventIDs)
 			return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
 		}
+		sentEventIDs = append(sentEventIDs, eventID)
 		if primaryEventID == "" {
 			primaryEventID = eventID
 		}
@@ -913,6 +916,7 @@ func (m *MautrixAdapter) SendReply(
 	intent := m.as.Intent(userID)
 
 	var primaryEventID id.EventID
+	sentEventIDs := make([]id.EventID, 0, len(attachments)+1)
 	if content != "" {
 		msgContent := event.MessageEventContent{
 			MsgType:   event.MsgText,
@@ -925,13 +929,16 @@ func (m *MautrixAdapter) SendReply(
 			return "", fmt.Errorf("failed to send reply: %w", err)
 		}
 		primaryEventID = resp.EventID
+		sentEventIDs = append(sentEventIDs, resp.EventID)
 	}
 
 	for i := range attachments {
 		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID, primaryEventID)
 		if err != nil {
+			m.rollbackFanOut(ctx, intent, roomID, sentEventIDs)
 			return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
 		}
+		sentEventIDs = append(sentEventIDs, eventID)
 		if primaryEventID == "" {
 			primaryEventID = eventID
 		}
@@ -946,9 +953,8 @@ func (m *MautrixAdapter) SendReply(
 
 const (
 	attachmentParentEventIDField = "io.alkemio.parent_event_id"
-	// Sends are capped at 10 attachments. Two extra slots keep the lookup
-	// robust to the small window in which foreign room events may interleave.
-	attachmentCascadeScanLimit = 12
+	attachmentCascadePageSize    = 12
+	attachmentCascadeMaxEvents   = 60
 )
 
 var errAttachmentTooLarge = errors.New("attachment exceeds max size")
@@ -1018,6 +1024,26 @@ func (m *MautrixAdapter) sendAttachment(
 		return "", fmt.Errorf("failed to send media event: %w", err)
 	}
 	return sent.EventID, nil
+}
+
+// rollbackFanOut best-effort redacts events already sent by a failed fan-out.
+// Rollback failures are logged without replacing the original send error.
+func (m *MautrixAdapter) rollbackFanOut(
+	ctx context.Context, intent intentAPI, roomID id.RoomID, eventIDs []id.EventID,
+) {
+	req := mautrix.ReqRedact{Reason: "Rolling back incomplete message fan-out"}
+	for _, eventID := range eventIDs {
+		if eventID == "" {
+			continue
+		}
+		if _, err := intent.RedactEvent(ctx, roomID, eventID, req); err != nil {
+			m.logger.Warn("Failed to roll back event after message fan-out failure",
+				"room_id", roomID,
+				"event_id", eventID,
+				"error", err,
+			)
+		}
+	}
 }
 
 func attachmentTooLargeError(documentID string, maxBytes int64) error {
@@ -1155,31 +1181,43 @@ func mediaMsgType(mime string) string {
 	}
 }
 
-// RedactEvent redacts an event.
+// RedactEvent redacts exactly one event.
 func (m *MautrixAdapter) RedactEvent(
 	ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string,
 ) error {
-	userID, err := m.EnsureUser(ctx, actorID)
+	_, _, err := m.redactEvent(ctx, roomID, actorID, eventID, reason)
+	return err
+}
+
+// RedactMessageWithAttachments redacts a message and best-effort redacts the
+// attachment events emitted as part of the same outbound fan-out.
+func (m *MautrixAdapter) RedactMessageWithAttachments(
+	ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string,
+) error {
+	intent, req, err := m.redactEvent(ctx, roomID, actorID, eventID, reason)
 	if err != nil {
 		return err
 	}
+	m.redactAttachmentSiblings(ctx, intent, roomID, eventID, req)
+	return nil
+}
+
+func (m *MautrixAdapter) redactEvent(
+	ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string,
+) (intentAPI, mautrix.ReqRedact, error) {
+	userID, err := m.EnsureUser(ctx, actorID)
+	if err != nil {
+		return nil, mautrix.ReqRedact{}, err
+	}
 	intent := m.as.Intent(userID)
 
-	req := mautrix.ReqRedact{
-		Reason: reason,
-	}
+	req := mautrix.ReqRedact{Reason: reason}
 
 	_, err = intent.RedactEvent(ctx, roomID, eventID, req)
 	if err != nil {
-		return fmt.Errorf("failed to redact event: %w", err)
+		return nil, mautrix.ReqRedact{}, fmt.Errorf("failed to redact event: %w", err)
 	}
-
-	// The primary event is gone, so sibling discovery and redaction are
-	// necessarily best-effort. The context endpoint supplies a forward token
-	// anchored at the primary; the bounded /messages query then examines only
-	// the small contiguous fan-out window and filters on our explicit marker.
-	m.redactAttachmentSiblings(ctx, intent, roomID, eventID, req)
-	return nil
+	return intent, req, nil
 }
 
 func (m *MautrixAdapter) redactAttachmentSiblings(
@@ -1194,24 +1232,70 @@ func (m *MautrixAdapter) redactAttachmentSiblings(
 		)
 		return
 	}
-	if eventContext == nil || eventContext.End == "" {
-		return
-	}
-
-	resp, err := m.admin.GetRoomMessages(ctx, roomID, eventContext.End, "f", attachmentCascadeScanLimit)
-	if err != nil {
-		m.logger.Warn("Failed to scan for attachment events after primary redaction",
+	if eventContext == nil {
+		m.logger.Warn("Attachment event context was empty after primary redaction",
 			"room_id", roomID,
 			"primary_event_id", primaryEventID,
-			"error", err,
 		)
 		return
 	}
-	if resp == nil {
+
+	seen := make(map[id.EventID]struct{})
+	scanned := len(eventContext.EventsAfter)
+	m.redactMatchingAttachments(ctx, intent, roomID, primaryEventID, req, eventContext.EventsAfter, seen)
+
+	if eventContext.End == "" {
+		m.logger.Warn("Attachment event context had no forward pagination token",
+			"room_id", roomID,
+			"primary_event_id", primaryEventID,
+		)
 		return
 	}
 
-	for _, evt := range resp.Chunk {
+	from := eventContext.End
+	for scanned < attachmentCascadeMaxEvents {
+		limit := min(attachmentCascadePageSize, attachmentCascadeMaxEvents-scanned)
+		resp, err := m.admin.GetRoomMessages(ctx, roomID, from, "f", limit)
+		if err != nil {
+			m.logger.Warn("Failed to scan for attachment events after primary redaction",
+				"room_id", roomID,
+				"primary_event_id", primaryEventID,
+				"error", err,
+			)
+			return
+		}
+		if resp == nil {
+			return
+		}
+
+		scanned += len(resp.Chunk)
+		newMatches := m.redactMatchingAttachments(
+			ctx, intent, roomID, primaryEventID, req, resp.Chunk, seen,
+		)
+		if len(resp.Chunk) < limit || resp.End == "" || resp.End == from || newMatches == 0 {
+			return
+		}
+		from = resp.End
+	}
+
+	m.logger.Debug("Stopped attachment event scan at hard cap",
+		"room_id", roomID,
+		"primary_event_id", primaryEventID,
+		"events_scanned", scanned,
+	)
+}
+
+func (m *MautrixAdapter) redactMatchingAttachments(
+	ctx context.Context,
+	intent intentAPI,
+	roomID id.RoomID,
+	primaryEventID id.EventID,
+	req mautrix.ReqRedact,
+	events []*event.Event,
+	seen map[id.EventID]struct{},
+) int {
+	matches := 0
+	for _, evt := range events {
 		if evt == nil || evt.ID == primaryEventID || evt.Type != event.EventMessage {
 			continue
 		}
@@ -1219,6 +1303,11 @@ func (m *MautrixAdapter) redactAttachmentSiblings(
 		if !ok || id.EventID(parentEventID) != primaryEventID {
 			continue
 		}
+		if _, ok := seen[evt.ID]; ok {
+			continue
+		}
+		seen[evt.ID] = struct{}{}
+		matches++
 
 		if _, err := intent.RedactEvent(ctx, roomID, evt.ID, req); err != nil {
 			m.logger.Warn("Failed to redact attachment event",
@@ -1229,6 +1318,7 @@ func (m *MautrixAdapter) redactAttachmentSiblings(
 			)
 		}
 	}
+	return matches
 }
 
 // SendReaction sends a reaction to an event.
@@ -1272,19 +1362,7 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 
 	msg := m.parseMessageEvent(evt, roomID)
 	if msg == nil {
-		if evt.Type != event.EventMessage {
-			return nil, fmt.Errorf("event is not a message")
-		}
-		// Redacted and otherwise bodyless message events are still messages. Keep
-		// the by-ID read graceful, as develop did, while scan/live paths may skip
-		// events that have neither content nor an attachment.
-		return &domain.Message{
-			ID:             evt.ID.String(),
-			RoomID:         roomID.String(),
-			SenderMatrixID: evt.Sender.String(),
-			Timestamp:      time.UnixMilli(evt.Timestamp),
-			ThreadID:       extractThreadID(evt),
-		}, nil
+		return nil, fmt.Errorf("event is not a message")
 	}
 	return msg, nil
 }
@@ -1818,15 +1896,15 @@ func (m *MautrixAdapter) parseReactionEvent(evt *event.Event, roomID id.RoomID) 
 
 // parseMessageEvent extracts a domain.Message from a Matrix event.
 func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *domain.Message {
-	// Shared inbound-media helper (F10): applies MSC2530 caption semantics and
-	// the present-but-empty-body rule. ok=false ⇒ not a forwardable message
-	// (genuinely absent body and no attachment) ⇒ nil, so read-path callers skip
-	// non-message events as before. A present-but-empty body yields a Message
-	// with empty Content (so GetMessage doesn't error on it — F4).
-	content, attachment, ok := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender))
-	if !ok {
+	if evt.Type != event.EventMessage {
 		return nil
 	}
+
+	// Shared inbound-media helper (F10): applies MSC2530 caption semantics and
+	// the present-but-empty-body rule. Read paths keep bodyless message events as
+	// blank Messages so GetMessage can return them through this same population
+	// path; timeline scans exclude them with isBlankMessage below.
+	content, attachment, _ := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender))
 
 	msg := &domain.Message{
 		ID:             evt.ID.String(),

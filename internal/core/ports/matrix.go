@@ -61,6 +61,10 @@ type MatrixPort interface {
 	) (id.EventID, error)
 	// RedactEvent deletes an event from a room.
 	RedactEvent(ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string) error
+	// RedactMessageWithAttachments deletes a message and its outbound attachment sibling events.
+	RedactMessageWithAttachments(
+		ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string,
+	) error
 	// SendReaction adds an emoji reaction to an event.
 	SendReaction(
 		ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, emoji string,

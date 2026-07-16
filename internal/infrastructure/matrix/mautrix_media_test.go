@@ -24,7 +24,38 @@ import (
 const (
 	docID1 = "11111111-1111-4111-8111-111111111111"
 	docID2 = "22222222-2222-4222-8222-222222222222"
+	docID3 = "33333333-3333-4333-8333-333333333333"
 )
+
+func TestSendMessage_AttachmentFailureRollsBackPriorFanOutEvents(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
+	})
+	intent := &mockIntentAPI{
+		sendTextResult:    &mautrix.RespSendEvent{EventID: "$text"},
+		uploadBytesResult: &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/media")},
+		sendMessageEventResults: []*mautrix.RespSendEvent{
+			{EventID: "$attachment-1"},
+			nil,
+		},
+		sendMessageEventErrs: []error{nil, assert.AnError},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	_, err := a.SendMessage(
+		context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "files",
+		[]domain.Attachment{
+			{DocumentID: docID1, DisplayName: "one.png", MimeType: "image/png"},
+			{DocumentID: docID2, DisplayName: "two.png", MimeType: "image/png"},
+			{DocumentID: docID3, DisplayName: "three.png", MimeType: "image/png"},
+		},
+	)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "attachment 2 of 3 failed")
+	assert.Equal(t, 2, intent.sendMessageEventCalled, "the third attachment must not be attempted")
+	assert.Equal(t, []id.EventID{"$text", "$attachment-1"}, intent.redactEventIDs)
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -537,7 +568,7 @@ func TestGetMessage_MediaEvent_ReturnsAttachment(t *testing.T) {
 	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$m1")
 	require.NoError(t, err)
 	require.NotNil(t, msg)
-	assert.Equal(t, "photo.jpg", msg.Content, "legacy media body must be surfaced as Content")
+	assert.Empty(t, msg.Content, "legacy media filename must not be duplicated as Content")
 	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "media123", msg.Attachments[0].MediaID)
 	assert.Equal(t, docID1, msg.Attachments[0].DocumentID)
