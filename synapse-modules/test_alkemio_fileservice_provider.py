@@ -17,13 +17,13 @@ injects lightweight `sys.modules` shims for the handful of Synapse symbols the
 module imports at collection time — the production import path stays untouched.
 """
 
-import asyncio
 import types
 
 import pytest
 
 from twisted.internet import defer
 from twisted.internet.defer import TimeoutError as _TimeoutError
+from twisted.internet.task import Clock
 from twisted.python.failure import Failure
 
 import alkemio_fileservice_provider as mod
@@ -131,12 +131,31 @@ async def _araise(exc):
     raise exc
 
 
+def _result_of(d):
+    """Extract the result of a Deferred that has (or must have) fired synchronously."""
+    box = {}
+    d.addCallbacks(
+        lambda v: box.__setitem__("ok", v),
+        lambda f: box.__setitem__("err", f),
+    )
+    if "err" in box:
+        box["err"].raiseException()
+    if "ok" in box:
+        return box["ok"]
+    raise AssertionError("coroutine did not complete synchronously (still pending)")
+
+
 def _run(coro):
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+    """Drive a provider coroutine to synchronous completion (twisted driver).
+
+    The provider bounds three awaits with a reactor-level per-op timeout
+    (`_with_timeout` -> Deferred.addTimeout), so we drive coroutines with
+    twisted's own adapter and a `Clock` reactor rather than asyncio (asyncio
+    cannot await the twisted Deferreds `_with_timeout` produces). Stall tests
+    instead call `defer.ensureDeferred(...)`, advance `prov.reactor`, then
+    `_result_of(...)`.
+    """
+    return _result_of(defer.ensureDeferred(coro))
 
 
 def _make_provider(**config_overrides):
@@ -146,8 +165,10 @@ def _make_provider(**config_overrides):
     }
     base.update(config_overrides)
     cfg = FileServiceStorageProvider.parse_config(base)
+    # A twisted Clock stands in for the reactor: it provides callLater (needed by
+    # `_with_timeout`'s addTimeout) and lets stall tests advance virtual time.
     hs = types.SimpleNamespace(
-        get_reactor=lambda: object(),
+        get_reactor=Clock,
         config=types.SimpleNamespace(
             media=types.SimpleNamespace(media_store_path="/data/media_store")
         ),
@@ -466,6 +487,68 @@ def test_fetch_returns_none_on_request_timeout(monkeypatch):
     )
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
     assert responder is None
+
+
+# --- stalled-await per-op timeouts (treq's timeout only covers headers) ----
+
+
+def test_fetch_stalled_body_read_times_out_returns_none(monkeypatch):
+    # The by-reference GET returns 200 headers, but the JSON BODY read never
+    # resolves. treq's request timeout only covered the headers, so `_with_timeout`
+    # must fire and fetch must return None (a cache miss) rather than hang.
+    prov = _make_provider()
+    monkeypatch.setattr(
+        mod.treq,
+        "get",
+        lambda url, **kw: _aval(FakeResponse(200, json_body={"id": "doc-9"})),
+    )
+    # The body read never completes.
+    monkeypatch.setattr(mod.treq, "json_content", lambda r: defer.Deferred())
+
+    d = defer.ensureDeferred(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
+    # Still pending: the body read is stalled.
+    prov.reactor.advance(prov.timeout_s + 1)  # trip the per-op deadline
+    assert _result_of(d) is None
+
+
+def test_store_hung_open_times_out_raises(monkeypatch):
+    # A blocking open() on a wedged media-store mount never resolves. The
+    # `store_timeout_s` per-op deadline must fire so store_file RAISES (upload
+    # fails loudly under store_synchronous) rather than hanging. Nothing was
+    # opened, so no handle is leaked in the coroutine.
+    prov = _make_provider()
+    # The off-reactor open never completes.
+    monkeypatch.setattr(
+        mod, "defer_to_thread", lambda reactor, fn, *a: defer.Deferred()
+    )
+    posted = {"n": 0}
+    monkeypatch.setattr(
+        mod.treq,
+        "post",
+        lambda *a, **k: posted.__setitem__("n", posted["n"] + 1)
+        or _aval(FakeResponse(201)),
+    )
+
+    d = defer.ensureDeferred(prov.store_file("local_content/x", FakeFileInfo("m")))
+    prov.reactor.advance(prov.store_timeout_s + 1)  # trip the per-op deadline
+    with pytest.raises(_TimeoutError):
+        _result_of(d)
+    assert posted["n"] == 0  # never reached the post (open hung)
+
+
+def test_fetch_stalled_404_drain_still_returns_none(monkeypatch):
+    # Even if the small 404 body read stalls, the miss path still returns None:
+    # _drain_quietly bounds the drain and swallows the resulting timeout.
+    prov = _make_provider()
+    stalling = FakeResponse(404)
+    # content() never resolves.
+    stalling.content = lambda: defer.Deferred()
+    monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(stalling))
+    monkeypatch.setattr(mod.treq, "json_content", lambda r: _aval(r._json))
+
+    d = defer.ensureDeferred(prov.fetch("local_content/x", FakeFileInfo("missing")))
+    prov.reactor.advance(prov.timeout_s + 1)  # trip the drain deadline
+    assert _result_of(d) is None
 
 
 # --- streaming / responder (reactor code paths) ----------------------------

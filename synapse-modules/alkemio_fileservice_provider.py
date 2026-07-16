@@ -89,6 +89,24 @@ DEFAULT_STORE_TIMEOUT_S = 30.0
 _STORE_SUCCESS_CODE = 201
 
 
+async def _with_timeout(reactor, timeout_s, coro):
+    """
+    Bound ONE awaited operation by a reactor deadline. A stalled await raises
+    `defer.TimeoutError`.
+
+    This is a PURE per-call timeout: NO circuit breaker, NO cross-request/shared
+    health state, NO success/failure bookkeeping — it just fails one hung await
+    fast. It exists because treq's own `timeout=` only covers the request up to
+    the response HEADERS; the subsequent BODY read (and the threadpool open) have
+    no such guard and would otherwise hang the read/store path forever.
+    """
+    d = defer.ensureDeferred(coro)
+    # On deadline, addTimeout cancels `d` and converts the resulting
+    # CancelledError to a defer.TimeoutError on the errback chain.
+    d.addTimeout(timeout_s, reactor)
+    return await make_deferred_yieldable(d)
+
+
 class _ConsumerSink(Protocol):
     """
     Twisted body protocol that forwards a streamed HTTP response body straight
@@ -296,17 +314,21 @@ class FileServiceStorageProvider(StorageProvider):
             and not getattr(file_info, "url_cache", None)
         )
 
-    @staticmethod
-    async def _drain_quietly(resp) -> None:
+    async def _drain_quietly(self, resp) -> None:
         """
         Drain a response body best-effort, SWALLOWING any error.
 
         Used for the small bodies of miss/error responses (and the already-durable
-        201) so the connection can be reused. Its failure must never propagate: a
-        post-201 durable store must stay a success regardless of a drain error.
+        201) so the connection can be reused. The body read is bounded by
+        `timeout_s` (treq's `timeout=` only guards the headers) so a stalled drain
+        cannot hang the caller. Its failure — INCLUDING a drain timeout — must
+        never propagate: a 404 miss must still return None and a post-201 durable
+        store must stay a success regardless of a drain error.
         """
         try:
-            await make_deferred_yieldable(resp.content())
+            await _with_timeout(
+                self.reactor, self.timeout_s, resp.content()
+            )
         except Exception as exc:  # noqa: BLE001 - best-effort drain
             logger.debug("file-service response drain failed (ignored): %s", exc)
 
@@ -336,7 +358,16 @@ class FileServiceStorageProvider(StorageProvider):
         # Cooperator), so the file is never fully copied into memory nor read
         # synchronously on the reactor thread.
         cache_file = os.path.join(self.cache_path, path)
-        stream = await defer_to_thread(self.reactor, _open_stream, cache_file)
+        # Bound the open by `store_timeout_s` so a wedged media-store mount fails
+        # the upload fast instead of stalling the request forever. Caveat: this
+        # bounds the awaited REQUEST, not the blocking open() itself — a syscall
+        # parked in a threadpool thread can't be cancelled, so that thread stays
+        # parked until the mount recovers; bounding the request is what matters.
+        stream = await _with_timeout(
+            self.reactor,
+            self.store_timeout_s,
+            defer_to_thread(self.reactor, _open_stream, cache_file),
+        )
         try:
             # treq serialises the multipart body as form-fields (`data`) THEN
             # files, preserving dict insertion order — so storageBucketId /
@@ -422,7 +453,13 @@ class FileServiceStorageProvider(StorageProvider):
                 )
                 return None
 
-            meta = await make_deferred_yieldable(treq.json_content(meta_resp))
+            # Bound the JSON BODY read: treq's `timeout=` above only covered the
+            # by-reference response headers, so a backend that returns 200 headers
+            # then stalls the body would otherwise hang. On timeout the
+            # TimeoutError is caught by the outer `except` -> return None.
+            meta = await _with_timeout(
+                self.reactor, self.timeout_s, treq.json_content(meta_resp)
+            )
             if not isinstance(meta, dict):
                 # A null / non-object JSON body is a protocol error, not a doc:
                 # treat as a miss rather than swallowing an AttributeError.
