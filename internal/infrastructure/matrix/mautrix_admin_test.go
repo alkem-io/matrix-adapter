@@ -1359,7 +1359,9 @@ func TestAdminAPI_BuildLastMessage_WithReactions(t *testing.T) {
 		},
 	}
 	a := newAdminTestAdapter(nil)
-	msg, err := a.buildLastMessageWithReactions(events, "!room:test.local")
+	roomID := id.RoomID("!room:test.local")
+	parsed := a.parseMessageEvent(events[1], roomID)
+	msg, err := a.buildLastMessageWithReactions(events, parsed, roomID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1387,7 +1389,7 @@ func TestAdminAPI_BuildLastMessage_NoMessages(t *testing.T) {
 		},
 	}
 	a := newAdminTestAdapter(nil)
-	msg, err := a.buildLastMessageWithReactions(events, "!room:test.local")
+	msg, err := a.buildLastMessageWithReactions(events, nil, "!room:test.local")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1428,7 +1430,9 @@ func TestAdminAPI_BuildLastMessage_ReactionForDifferentMessage(t *testing.T) {
 		},
 	}
 	a := newAdminTestAdapter(nil)
-	msg, err := a.buildLastMessageWithReactions(events, "!room:test.local")
+	roomID := id.RoomID("!room:test.local")
+	parsed := a.parseMessageEvent(events[1], roomID)
+	msg, err := a.buildLastMessageWithReactions(events, parsed, roomID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -31,28 +31,6 @@ var ErrForbidden = errors.New("forbidden")
 // ErrInvalidParam indicates an invalid parameter.
 var ErrInvalidParam = errors.New("invalid parameter")
 
-// PartialSendError reports that a multi-event send (text and/or several
-// attachments) was only partially delivered: some events landed in the room
-// before a later one failed. It carries the primary event id that WAS delivered
-// so the caller can record what landed instead of treating the send as a total
-// failure and re-sending everything. Because the adapter is stateless, it cannot
-// roll back the delivered events; retries are made safe by per-event
-// idempotency-key transaction ids (see SendMessageRequest.IdempotencyKey).
-type PartialSendError struct {
-	// PrimaryEventID is the id of the first event that was successfully
-	// delivered (the text event if there was text, else the first attachment).
-	PrimaryEventID string
-	// Err is the underlying failure that aborted the remaining sends.
-	Err error
-}
-
-func (e *PartialSendError) Error() string {
-	return fmt.Sprintf("partial send (delivered primary event %s): %v", e.PrimaryEventID, e.Err)
-}
-
-// Unwrap exposes the underlying cause for errors.Is/As.
-func (e *PartialSendError) Unwrap() error { return e.Err }
-
 // ============================================================================
 // Error Detection Helpers
 // ============================================================================

@@ -582,20 +582,6 @@ export interface SendMessageRequest {
   content: string; // Markdown supported (may be empty if only attachments)
   parent_message_id?: MessageID; // For threads
   attachments?: AttachmentRef[]; // Media doc refs (<=10)
-  /**
-   * IdempotencyKey, when set, makes the send safe to retry: the adapter derives
-   * a deterministic Matrix transaction ID per emitted event from this key, so a
-   * retry with the same key is de-duplicated by the homeserver instead of
-   * producing duplicate text/attachment events. It must be unique per logical
-   * send and STABLE across retries of that same send (a request UUID minted by
-   * the caller). When empty, the adapter falls back to a deterministic key
-   * derived from the request content (room, sender, content, parent, and ordered
-   * attachment document ids), so retries are still de-duplicated. The one
-   * trade-off of the fallback: two byte-identical sends issued within Synapse's
-   * transaction-dedup window collapse to a single event; supply an explicit key
-   * to keep intentionally-identical sends distinct.
-   */
-  idempotency_key?: string;
 }
 /**
  * SendMessageResponse returns the message ID and timestamp.

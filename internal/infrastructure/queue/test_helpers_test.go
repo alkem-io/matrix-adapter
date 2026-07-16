@@ -185,18 +185,16 @@ type testMockMatrixPort struct {
 	capturedCreateRoomMembers     []domain.Actor
 
 	// SendMessage
-	capturedSendMessageRoomID         id.RoomID
-	capturedSendMessageSender         domain.Actor
-	capturedSendMessageContent        string
-	capturedSendMessageAttachments    []domain.Attachment
-	capturedSendMessageIdempotencyKey string
+	capturedSendMessageRoomID      id.RoomID
+	capturedSendMessageSender      domain.Actor
+	capturedSendMessageContent     string
+	capturedSendMessageAttachments []domain.Attachment
 
 	// SendReply
-	capturedSendReplyRoomID         id.RoomID
-	capturedSendReplyContent        string
-	capturedSendReplyThread         id.EventID
-	capturedSendReplyAttachments    []domain.Attachment
-	capturedSendReplyIdempotencyKey string
+	capturedSendReplyRoomID      id.RoomID
+	capturedSendReplyContent     string
+	capturedSendReplyThread      id.EventID
+	capturedSendReplyAttachments []domain.Attachment
 
 	// UpdateRoomState
 	capturedUpdateRoomStateRoomID   id.RoomID
@@ -370,21 +368,19 @@ func (m *testMockMatrixPort) KickUser(_ context.Context, roomID id.RoomID, userI
 	return m.kickUserErr
 }
 
-func (m *testMockMatrixPort) SendMessage(_ context.Context, roomID id.RoomID, sender domain.Actor, content string, attachments []domain.Attachment, idempotencyKey string) (id.EventID, error) {
+func (m *testMockMatrixPort) SendMessage(_ context.Context, roomID id.RoomID, sender domain.Actor, content string, attachments []domain.Attachment) (id.EventID, error) {
 	m.capturedSendMessageRoomID = roomID
 	m.capturedSendMessageSender = sender
 	m.capturedSendMessageContent = content
 	m.capturedSendMessageAttachments = attachments
-	m.capturedSendMessageIdempotencyKey = idempotencyKey
 	return m.sendMessageResult, m.sendMessageErr
 }
 
-func (m *testMockMatrixPort) SendReply(_ context.Context, roomID id.RoomID, _ domain.Actor, content string, threadID id.EventID, attachments []domain.Attachment, idempotencyKey string) (id.EventID, error) {
+func (m *testMockMatrixPort) SendReply(_ context.Context, roomID id.RoomID, _ domain.Actor, content string, threadID id.EventID, attachments []domain.Attachment) (id.EventID, error) {
 	m.capturedSendReplyRoomID = roomID
 	m.capturedSendReplyContent = content
 	m.capturedSendReplyThread = threadID
 	m.capturedSendReplyAttachments = attachments
-	m.capturedSendReplyIdempotencyKey = idempotencyKey
 	return m.sendReplyResult, m.sendReplyErr
 }
 

@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -726,30 +725,13 @@ func (m *MautrixAdapter) markRoomAsReadForUsers(
 	)
 }
 
-// sendDeadline bounds a single logical send (text + fetches + uploads) with the
-// configured SEND_TIMEOUT_SECONDS. Because the send topic is drained by a
-// bounded worker pool, an unbounded send could otherwise pin a worker for
-// minutes; this backstop guarantees forward progress even if the request
-// context has no deadline. The caller must always call the returned cancel.
-func (m *MautrixAdapter) sendDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
-	seconds := config.DefaultSendTimeoutSeconds
-	if m.cfg != nil {
-		seconds = m.cfg.SendTimeoutSeconds()
-	}
-	return context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
-}
-
 // SendMessage sends a message to a room. A non-empty text body is sent as a
 // single m.text event; each attachment is sent as its own media event
 // (m.image/m.file/...). Returns the primary event ID (the text event if there
 // is text, otherwise the first media event).
 func (m *MautrixAdapter) SendMessage(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment,
-	idempotencyKey string,
 ) (id.EventID, error) {
-	ctx, cancel := m.sendDeadline(ctx)
-	defer cancel()
-
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
 		return "", err
@@ -758,11 +740,7 @@ func (m *MautrixAdapter) SendMessage(
 
 	var primaryEventID id.EventID
 	if content != "" {
-		// Text always goes through SendMessageEvent: txnReq returns nil (no extra
-		// args) without an idempotency key, and a deterministic transaction ID
-		// with one — a single code path for both.
-		resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage,
-			&event.MessageEventContent{MsgType: event.MsgText, Body: content}, txnReq(idempotencyKey, "text")...)
+		resp, err := intent.SendText(ctx, roomID, content)
 		if err != nil {
 			return "", fmt.Errorf("failed to send message: %w", err)
 		}
@@ -770,9 +748,9 @@ func (m *MautrixAdapter) SendMessage(
 	}
 
 	for i := range attachments {
-		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], "", txnReq(idempotencyKey, attachmentTxnSuffix(i)))
+		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], "")
 		if err != nil {
-			return primaryEventID, partialSendError(primaryEventID, i, len(attachments), err)
+			return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
 		}
 		if primaryEventID == "" {
 			primaryEventID = eventID
@@ -780,19 +758,6 @@ func (m *MautrixAdapter) SendMessage(
 	}
 
 	return primaryEventID, nil
-}
-
-// partialSendError classifies an attachment-send failure. If earlier events
-// already landed in the room (primaryEventID != ""), it wraps the failure in a
-// domain.PartialSendError carrying the delivered id, so the caller records the
-// partial delivery instead of re-sending everything. If nothing has landed yet
-// (the first event failed), it returns the raw error — a clean total failure.
-func partialSendError(primaryEventID id.EventID, index, total int, cause error) error {
-	wrapped := fmt.Errorf("attachment %d of %d failed: %w", index+1, total, cause)
-	if primaryEventID == "" {
-		return wrapped
-	}
-	return &domain.PartialSendError{PrimaryEventID: primaryEventID.String(), Err: wrapped}
 }
 
 // ============================================================================
@@ -939,11 +904,8 @@ func (m *MautrixAdapter) setOrRedactState(
 // otherwise the first media event).
 func (m *MautrixAdapter) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
-	attachments []domain.Attachment, idempotencyKey string,
+	attachments []domain.Attachment,
 ) (id.EventID, error) {
-	ctx, cancel := m.sendDeadline(ctx)
-	defer cancel()
-
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
 		return "", err
@@ -965,7 +927,7 @@ func (m *MautrixAdapter) SendReply(
 			},
 		}
 
-		resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, &msgContent, txnReq(idempotencyKey, "text")...)
+		resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, &msgContent)
 		if err != nil {
 			return "", fmt.Errorf("failed to send reply: %w", err)
 		}
@@ -973,9 +935,9 @@ func (m *MautrixAdapter) SendReply(
 	}
 
 	for i := range attachments {
-		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID, txnReq(idempotencyKey, attachmentTxnSuffix(i)))
+		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID)
 		if err != nil {
-			return primaryEventID, partialSendError(primaryEventID, i, len(attachments), err)
+			return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
 		}
 		if primaryEventID == "" {
 			primaryEventID = eventID
@@ -1011,23 +973,9 @@ func (c *countingCapReader) Read(p []byte) (int, error) {
 // sendAttachment fetches a document's bytes from file-service, uploads them to
 // the homeserver, and sends a media event carrying the mxc URL, file info, and
 // the io.alkemio.document_id breadcrumb. When threadID is non-empty the event
-// is threaded under it. txn, when non-nil, carries a deterministic Matrix
-// transaction ID so a retry of this exact event is de-duplicated by the
-// homeserver.
-//
-// Upload/event ordering & at-least-once semantics (accepted, not fixable while
-// stateless): the byte upload happens before the txn-deduped event send. Matrix
-// media upload is NOT idempotent — there is no client-supplied transaction ID
-// for UploadBytes — so a retry re-uploads the bytes and mints a *fresh* mxc,
-// then the deduped SendMessageEvent returns the ORIGINAL event (with the
-// original mxc). The freshly-uploaded blob is therefore orphaned. Making upload
-// deterministic would require caching a document→mxc mapping, i.e. reintroducing
-// adapter state, which the constitution forbids. Orphaned media are unreferenced
-// by any event and are reclaimed by Synapse's media retention / purge, so this
-// is a bounded, self-healing cost of stateless at-least-once delivery.
+// is threaded under it.
 func (m *MautrixAdapter) sendAttachment(
 	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, threadID id.EventID,
-	txn []mautrix.ReqSendEvent,
 ) (id.EventID, error) {
 	resp, err := m.openDocumentFetch(ctx, att.DocumentID)
 	if err != nil {
@@ -1060,7 +1008,7 @@ func (m *MautrixAdapter) sendAttachment(
 	}
 	// info.size is the bytes actually streamed, never the caller-declared att.Size.
 	content := buildMediaContent(att, up.ContentURI, contentType, reader.n, threadID)
-	sent, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content, txn...)
+	sent, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content)
 	if err != nil {
 		return "", fmt.Errorf("failed to send media event: %w", err)
 	}
@@ -1079,8 +1027,8 @@ var fileServiceHTTPClient = &http.Client{Timeout: fileServiceFetchTimeout}
 
 // openDocumentFetch performs the GET against the file-service internal content
 // endpoint (GET {FILE_SERVICE_URL}/internal/file/{id}/content) and returns the
-// response with its headers available and the body UNREAD, so the caller can
-// size the budget reservation from resp.ContentLength before buffering bytes.
+// response with its headers available and the body unread so sendAttachment can
+// stream it directly to the homeserver.
 // A non-200 response is turned into an error here (and its body closed) so no
 // budget is reserved for a failed fetch. The caller MUST close resp.Body on the
 // success path. The request is bounded by fileServiceHTTPClient's timeout.
@@ -1116,57 +1064,6 @@ func (m *MautrixAdapter) openDocumentFetch(ctx context.Context, documentID strin
 	return resp, nil
 }
 
-// readDocumentBody reads and returns a document fetch's bytes and Content-Type.
-// The body is bounded by maxBytes to protect against a slow/hostile file-service
-// (read at most maxBytes+1 via io.LimitReader, then reject if it exceeds the
-// cap). The reservation sized from Content-Length is independent of this guard,
-// so a mis-stated length never lets a single fetch buffer more than the cap.
-func readDocumentBody(resp *http.Response, maxBytes int64, documentID string) ([]byte, string, error) {
-	// Read at most maxBytes+1 so we can detect (and reject) an oversized body
-	// without buffering the whole thing.
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to read document %s content: %w", documentID, err)
-	}
-	if int64(len(data)) > maxBytes {
-		return nil, "", fmt.Errorf("document %s exceeds max attachment size of %d bytes", documentID, maxBytes)
-	}
-	return data, resp.Header.Get("Content-Type"), nil
-}
-
-// fetchDocumentContent streams a document's bytes from the file-service internal
-// content endpoint. Returns the bytes and the response Content-Type. This is the
-// combined open+read used where budget sizing is not needed (e.g. tests); the
-// send path splits the two so it can reserve budget from Content-Length between
-// them (see sendAttachment).
-func (m *MautrixAdapter) fetchDocumentContent(ctx context.Context, documentID string) ([]byte, string, error) {
-	resp, err := m.openDocumentFetch(ctx, documentID)
-	if err != nil {
-		return nil, "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	return readDocumentBody(resp, m.cfg.MaxAttachmentBytes(), documentID)
-}
-
-// txnReq builds the optional ReqSendEvent carrying a deterministic Matrix
-// transaction ID (idempotencyKey + ":" + suffix) so a retry of the same logical
-// send is de-duplicated by the homeserver. When idempotencyKey is empty it
-// returns nil, leaving mautrix to mint a random transaction ID per call
-// (at-most-once semantics, no cross-retry dedup).
-func txnReq(idempotencyKey, suffix string) []mautrix.ReqSendEvent {
-	if idempotencyKey == "" {
-		return nil
-	}
-	return []mautrix.ReqSendEvent{{TransactionID: idempotencyKey + ":" + suffix}}
-}
-
-// attachmentTxnSuffix returns the per-attachment transaction-ID suffix; each
-// attachment in a send must get a distinct suffix so they are not de-duplicated
-// against one another.
-func attachmentTxnSuffix(index int) string {
-	return "att" + strconv.Itoa(index)
-}
-
 // buildMediaContent constructs the raw event content for a media message:
 // msgtype + body + url(mxc) + info, plus the io.alkemio.document_id breadcrumb
 // used for lookup-free read-translation of our own outbound media. A map is
@@ -1189,9 +1086,8 @@ func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType str
 		info["h"] = *att.Height
 	}
 
-	// att.DocumentID is guaranteed non-empty here (C5): HandleSendMessage rejects
-	// any attachment with an empty document_id, and fetchDocumentContent (which
-	// runs before this) rejects a non-UUID id — so the breadcrumb is never blank.
+	// HandleSendMessage rejects empty document ids, and openDocumentFetch validates
+	// the UUID before the media content is built, so this breadcrumb is never blank.
 	content := map[string]any{
 		"msgtype":                mediaMsgType(mime),
 		"body":                   att.DisplayName,
@@ -1290,7 +1186,19 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 
 	msg := m.parseMessageEvent(evt, roomID)
 	if msg == nil {
-		return nil, fmt.Errorf("event is not a message")
+		if evt.Type != event.EventMessage {
+			return nil, fmt.Errorf("event is not a message")
+		}
+		// Redacted and otherwise bodyless message events are still messages. Keep
+		// the by-ID read graceful, as develop did, while scan/live paths may skip
+		// events that have neither content nor an attachment.
+		return &domain.Message{
+			ID:             evt.ID.String(),
+			RoomID:         roomID.String(),
+			SenderMatrixID: evt.Sender.String(),
+			Timestamp:      time.UnixMilli(evt.Timestamp),
+			ThreadID:       extractThreadID(evt),
+		}, nil
 	}
 	return msg, nil
 }
@@ -1696,7 +1604,7 @@ func (m *MautrixAdapter) GetLastMessage(ctx context.Context, roomID id.RoomID) (
 			eventsScanned := len(allEvents) - len(resp.Chunk) + i + 1
 			lastMsgStats.record(eventsScanned, true, m.logger)
 			// Found a real message - collect reactions from all fetched events and return
-			return m.buildLastMessageWithReactions(allEvents, roomID)
+			return m.buildLastMessageWithReactions(allEvents, msg, roomID)
 		}
 
 		// No message found yet - continue with next batch if there are more events
@@ -1710,28 +1618,15 @@ func (m *MautrixAdapter) GetLastMessage(ctx context.Context, roomID id.RoomID) (
 	return nil, nil // No messages in room
 }
 
-// buildLastMessageWithReactions finds the last message and attaches its reactions.
-func (m *MautrixAdapter) buildLastMessageWithReactions(events []*event.Event, roomID id.RoomID) (*domain.Message, error) {
-	// Find the first m.room.message event that is a real (non-blank) message. A
-	// blank preview message is skipped so it never becomes the room's last
-	// message, matching the scan in GetLastMessage (A1).
-	var msg *domain.Message
-	for _, evt := range events {
-		if evt.Type != event.EventMessage {
-			continue
-		}
-		parsed := m.parseMessageEvent(evt, roomID)
-		if parsed == nil || isBlankMessage(parsed) {
-			continue
-		}
-		parsed.Reactions = []domain.Reaction{}
-		msg = parsed
-		break
-	}
-
+// buildLastMessageWithReactions attaches reactions to the message already parsed
+// by GetLastMessage while scanning the timeline.
+func (m *MautrixAdapter) buildLastMessageWithReactions(
+	events []*event.Event, msg *domain.Message, roomID id.RoomID,
+) (*domain.Message, error) {
 	if msg == nil {
 		return nil, nil
 	}
+	msg.Reactions = []domain.Reaction{}
 
 	// Collect reactions for this message
 	for _, evt := range events {

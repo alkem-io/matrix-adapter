@@ -1,9 +1,10 @@
 package matrix
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -17,12 +18,38 @@ import (
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 )
 
-// Valid UUID document ids — fetchDocumentContent validates the shape before
-// building the internal file-service URL.
+// Valid UUID document ids used by the file-service fetch path.
 const (
 	docID1 = "11111111-1111-4111-8111-111111111111"
 	docID2 = "22222222-2222-4222-8222-222222222222"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func stubFileService(t *testing.T, fn roundTripFunc) string {
+	t.Helper()
+	original := fileServiceHTTPClient
+	fileServiceHTTPClient = &http.Client{Transport: fn}
+	t.Cleanup(func() { fileServiceHTTPClient = original })
+	return "http://file-service.test"
+}
+
+func fileServiceResponse(status int, contentType string, body []byte) *http.Response {
+	header := make(http.Header)
+	if contentType != "" {
+		header.Set("Content-Type", contentType)
+	}
+	return &http.Response{
+		StatusCode:    status,
+		Header:        header,
+		Body:          io.NopCloser(bytes.NewReader(body)),
+		ContentLength: int64(len(body)),
+	}
+}
 
 // newMediaTestAdapter builds an adapter wired to a stub file-service and a mock
 // intent that records media uploads + sent events.
@@ -43,18 +70,16 @@ func newMediaTestAdapter(t *testing.T, fileServiceURL string, intent *mockIntent
 // file-service and uploaded via the mautrix client (both mocked).
 func TestSendMessage_WithImageAttachment(t *testing.T) {
 	var gotPath string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fileServiceURL := stubFileService(t, func(r *http.Request) (*http.Response, error) {
 		gotPath = r.URL.Path
-		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write([]byte("JPEGBYTES"))
-	}))
-	defer ts.Close()
+		return fileServiceResponse(http.StatusOK, "image/jpeg", []byte("JPEGBYTES")), nil
+	})
 
 	intent := &mockIntentAPI{
 		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/abc123")},
 		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$media1"},
 	}
-	a := newMediaTestAdapter(t, ts.URL, intent)
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
 
 	w, h := 1920, 1080
 	eventID, err := a.SendMessage(
@@ -70,7 +95,6 @@ func TestSendMessage_WithImageAttachment(t *testing.T) {
 			Width:       &w,
 			Height:      &h,
 		}},
-		"", // no idempotency key
 	)
 	require.NoError(t, err)
 	assert.Equal(t, id.EventID("$media1"), eventID)
@@ -106,17 +130,16 @@ func TestSendMessage_WithImageAttachment(t *testing.T) {
 // Text + attachment → 1 m.text event + 1 media event; the returned event ID is
 // the text event.
 func TestSendMessage_TextPlusAttachment(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/pdf")
-		_, _ = w.Write([]byte("PDF"))
-	}))
-	defer ts.Close()
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "application/pdf", []byte("PDF")), nil
+	})
 
 	intent := &mockIntentAPI{
+		sendTextResult:         &mautrix.RespSendEvent{EventID: "$text1"},
 		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/file9")},
-		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$text1"},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$media1"},
 	}
-	a := newMediaTestAdapter(t, ts.URL, intent)
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
 
 	eventID, err := a.SendMessage(
 		context.Background(),
@@ -129,14 +152,11 @@ func TestSendMessage_TextPlusAttachment(t *testing.T) {
 			MimeType:    "application/pdf",
 			Size:        3,
 		}},
-		"", // no idempotency key
 	)
 	require.NoError(t, err)
 	assert.Equal(t, id.EventID("$text1"), eventID, "primary event is the text event")
-	// Text now always goes through SendMessageEvent (unified with the media path),
-	// so both the text and the media event are SendMessageEvent calls.
-	assert.Equal(t, 0, intent.sendTextCalled, "text no longer uses the SendText helper")
-	require.Equal(t, 2, intent.sendMessageEventCalled)
+	assert.Equal(t, 1, intent.sendTextCalled)
+	require.Equal(t, 1, intent.sendMessageEventCalled)
 
 	content, ok := intent.lastSendMsgEventContent.(map[string]any)
 	require.True(t, ok)
@@ -146,13 +166,12 @@ func TestSendMessage_TextPlusAttachment(t *testing.T) {
 
 // A non-OK response from file-service surfaces as an error and no event is sent.
 func TestSendMessage_AttachmentFetchError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer ts.Close()
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusNotFound, "", nil), nil
+	})
 
 	intent := &mockIntentAPI{}
-	a := newMediaTestAdapter(t, ts.URL, intent)
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
 
 	_, err := a.SendMessage(
 		context.Background(),
@@ -160,100 +179,62 @@ func TestSendMessage_AttachmentFetchError(t *testing.T) {
 		testActor(testActorID, "Alice"),
 		"",
 		[]domain.Attachment{{DocumentID: docID1, DisplayName: "x", MimeType: "image/png"}},
-		"", // no idempotency key
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status 404")
 	assert.Equal(t, 0, intent.sendMessageEventCalled)
 }
 
-// M1 — with an idempotency key, the text event and each attachment event get a
-// distinct, deterministic Matrix transaction ID, so a retry of the same logical
-// send is de-duplicated by the homeserver rather than producing duplicates.
-func TestSendMessage_IdempotencyKey_DeterministicTxnIDs(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte("PNG"))
-	}))
-	defer ts.Close()
+func TestSendMessage_AttachmentWithoutFileServiceFailsClearly(t *testing.T) {
+	intent := &mockIntentAPI{}
+	a := newMediaTestAdapter(t, "", intent)
 
-	newIntent := func() *mockIntentAPI {
-		return &mockIntentAPI{
-			sendTextResult:         &mautrix.RespSendEvent{EventID: "$text"},
-			uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/a")},
-			sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$media"},
-		}
-	}
-
-	send := func(intent *mockIntentAPI) {
-		a := newMediaTestAdapter(t, ts.URL, intent)
-		_, err := a.SendMessage(
-			context.Background(),
-			"!room:test.local",
-			testActor(testActorID, "Alice"),
-			"caption",
-			[]domain.Attachment{
-				{DocumentID: docID1, DisplayName: "a.png", MimeType: "image/png"},
-				{DocumentID: docID2, DisplayName: "b.png", MimeType: "image/png"},
-			},
-			"req-key-42", // idempotency key
-		)
-		require.NoError(t, err)
-	}
-
-	intent1 := newIntent()
-	send(intent1)
-	// text routed through SendMessageEvent (so it can carry a txn) + 2 attachments.
-	require.Equal(t, []string{"req-key-42:text", "req-key-42:att0", "req-key-42:att1"}, intent1.sendMsgEventTxns)
-	// text did NOT use the txn-less SendText helper when a key is present.
-	assert.Equal(t, 0, intent1.sendTextCalled)
-
-	// A retry with the same key recomputes byte-for-byte identical txn IDs, so
-	// the homeserver de-duplicates each event.
-	intent2 := newIntent()
-	send(intent2)
-	assert.Equal(t, intent1.sendMsgEventTxns, intent2.sendMsgEventTxns)
+	_, err := a.SendMessage(
+		context.Background(),
+		"!room:test.local",
+		testActor(testActorID, "Alice"),
+		"",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "x", MimeType: "image/png"}},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file-service URL not configured")
+	assert.Equal(t, 0, intent.uploadBytesCalled)
+	assert.Equal(t, 0, intent.sendMessageEventCalled)
 }
 
-// Without an idempotency key, no deterministic transaction IDs are attached:
-// both the text and the attachment event go through SendMessageEvent with an
-// empty transaction ID (mautrix mints a random one per call).
-func TestSendMessage_NoIdempotencyKey_NoTxnIDs(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte("PNG"))
-	}))
-	defer ts.Close()
+// Text uses develop's SendText helper and media sends omit an explicit
+// transaction ID, leaving the SDK to mint a fresh random transaction per event.
+func TestSendMessage_UsesSDKGeneratedTransactions(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
+	})
 
 	intent := &mockIntentAPI{
+		sendTextResult:         &mautrix.RespSendEvent{EventID: "$text"},
 		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/a")},
 		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$media"},
 	}
-	a := newMediaTestAdapter(t, ts.URL, intent)
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
 	_, err := a.SendMessage(
 		context.Background(),
 		"!room:test.local",
 		testActor(testActorID, "Alice"),
 		"caption",
 		[]domain.Attachment{{DocumentID: docID1, DisplayName: "a.png", MimeType: "image/png"}},
-		"", // no key
 	)
 	require.NoError(t, err)
-	assert.Equal(t, 0, intent.sendTextCalled, "text no longer uses the SendText helper")
-	// text + single attachment, both via SendMessageEvent, neither with a txn.
-	require.Equal(t, []string{"", ""}, intent.sendMsgEventTxns)
+	assert.Equal(t, 1, intent.sendTextCalled)
+	require.Equal(t, []string{""}, intent.sendMsgEventTxns)
 }
 
-// M2 — fetchDocumentContent rejects a body larger than the configured max
-// attachment size instead of buffering it all into memory.
-func TestFetchDocumentContent_RejectsOversizedBody(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(make([]byte, 100)) // 100 bytes
-	}))
-	defer ts.Close()
+// The streaming send path rejects a body larger than the configured max.
+func TestSendAttachment_RejectsOversizedBody(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "", make([]byte, 100)), nil
+	})
 
 	intent := &mockIntentAPI{}
-	a := newMediaTestAdapter(t, ts.URL, intent)
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
 	a.cfg.FileService.MaxAttachmentBytes = 10 // cap below the 100-byte body
 
 	_, err := a.SendMessage(
@@ -262,31 +243,26 @@ func TestFetchDocumentContent_RejectsOversizedBody(t *testing.T) {
 		testActor(testActorID, "Alice"),
 		"",
 		[]domain.Attachment{{DocumentID: docID1, DisplayName: "big.bin", MimeType: "application/octet-stream"}},
-		"",
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds max attachment size")
 	assert.Equal(t, 0, intent.sendMessageEventCalled, "no event sent when fetch is rejected")
 }
 
-// M2 — fetchDocumentContent uses a client with a timeout, so a hung file-service
-// surfaces as an error rather than blocking forever.
-func TestFetchDocumentContent_TimesOut(t *testing.T) {
-	release := make(chan struct{})
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		<-release // block until the test releases it
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-	defer close(release)
-
-	// Swap in a short-timeout client for the duration of the test.
-	orig := fileServiceHTTPClient
-	fileServiceHTTPClient = &http.Client{Timeout: 50 * time.Millisecond}
-	defer func() { fileServiceHTTPClient = orig }()
+// The streaming send path uses a client timeout, so a hung file-service errors.
+func TestSendAttachment_FetchTimesOut(t *testing.T) {
+	original := fileServiceHTTPClient
+	fileServiceHTTPClient = &http.Client{
+		Timeout: 50 * time.Millisecond,
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}),
+	}
+	t.Cleanup(func() { fileServiceHTTPClient = original })
 
 	intent := &mockIntentAPI{}
-	a := newMediaTestAdapter(t, ts.URL, intent)
+	a := newMediaTestAdapter(t, "http://file-service.test", intent)
 
 	_, err := a.SendMessage(
 		context.Background(),
@@ -294,7 +270,6 @@ func TestFetchDocumentContent_TimesOut(t *testing.T) {
 		testActor(testActorID, "Alice"),
 		"",
 		[]domain.Attachment{{DocumentID: docID1, DisplayName: "x", MimeType: "image/png"}},
-		"",
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fetch document")
@@ -305,17 +280,15 @@ func TestFetchDocumentContent_TimesOut(t *testing.T) {
 // (possibly stale/spoofed) att.Size.
 func TestSendMessage_InfoSizeIsActualBytes(t *testing.T) {
 	body := []byte("ACTUAL-BYTES") // 12 bytes
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write(body)
-	}))
-	defer ts.Close()
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "image/png", body), nil
+	})
 
 	intent := &mockIntentAPI{
 		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/a")},
 		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$m"},
 	}
-	a := newMediaTestAdapter(t, ts.URL, intent)
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
 
 	_, err := a.SendMessage(
 		context.Background(),
@@ -324,7 +297,6 @@ func TestSendMessage_InfoSizeIsActualBytes(t *testing.T) {
 		"",
 		// att.Size deliberately disagrees with the real body length.
 		[]domain.Attachment{{DocumentID: docID1, DisplayName: "a.png", MimeType: "image/png", Size: 999999}},
-		"",
 	)
 	require.NoError(t, err)
 	content, ok := intent.lastSendMsgEventContent.(map[string]any)
@@ -338,17 +310,15 @@ func TestSendMessage_InfoSizeIsActualBytes(t *testing.T) {
 // relation on the media event: m.thread rel_type, event_id == threadID, and the
 // m.in_reply_to fallback.
 func TestSendReply_WithAttachment_CarriesThreadRelation(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte("PNG"))
-	}))
-	defer ts.Close()
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
+	})
 
 	intent := &mockIntentAPI{
 		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/m")},
 		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$media"},
 	}
-	a := newMediaTestAdapter(t, ts.URL, intent)
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
 
 	const threadID = id.EventID("$thread-root")
 	_, err := a.SendReply(
@@ -358,7 +328,6 @@ func TestSendReply_WithAttachment_CarriesThreadRelation(t *testing.T) {
 		"", // attachment-only reply
 		threadID,
 		[]domain.Attachment{{DocumentID: docID1, DisplayName: "a.png", MimeType: "image/png"}},
-		"",
 	)
 	require.NoError(t, err)
 
@@ -388,20 +357,18 @@ func TestMediaMsgType_VideoAudio(t *testing.T) {
 }
 
 func TestSendMessage_VideoAttachment_MapsToVideo(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "video/mp4")
-		_, _ = w.Write([]byte("MP4"))
-	}))
-	defer ts.Close()
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "video/mp4", []byte("MP4")), nil
+	})
 
 	intent := &mockIntentAPI{
 		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/v")},
 		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$v"},
 	}
-	a := newMediaTestAdapter(t, ts.URL, intent)
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
 
 	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
-		[]domain.Attachment{{DocumentID: docID1, DisplayName: "clip.mp4", MimeType: "video/mp4"}}, "")
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "clip.mp4", MimeType: "video/mp4"}})
 	require.NoError(t, err)
 
 	content, ok := intent.lastSendMsgEventContent.(map[string]any)
@@ -412,20 +379,18 @@ func TestSendMessage_VideoAttachment_MapsToVideo(t *testing.T) {
 // When the attachment carries no MIME, the file-service response Content-Type is
 // used both for the upload and the derived msgtype/info.mimetype.
 func TestSendMessage_MimeFallbackToResponseContentType(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "audio/ogg")
-		_, _ = w.Write([]byte("OGG"))
-	}))
-	defer ts.Close()
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "audio/ogg", []byte("OGG")), nil
+	})
 
 	intent := &mockIntentAPI{
 		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/au")},
 		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$au"},
 	}
-	a := newMediaTestAdapter(t, ts.URL, intent)
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
 
 	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
-		[]domain.Attachment{{DocumentID: docID1, DisplayName: "voice", MimeType: ""}}, "")
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "voice", MimeType: ""}})
 	require.NoError(t, err)
 
 	assert.Equal(t, "audio/ogg", intent.lastUploadBytesType, "upload uses the response Content-Type")
@@ -440,23 +405,21 @@ func TestSendMessage_MimeFallbackToResponseContentType(t *testing.T) {
 // Each attachment in a multi-attachment send gets its own event with a distinct
 // body (filename) and io.alkemio.document_id.
 func TestSendMessage_MultiAttachment_DistinctPerEvent(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte("PNG"))
-	}))
-	defer ts.Close()
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
+	})
 
 	intent := &mockIntentAPI{
 		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/x")},
 		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$x"},
 	}
-	a := newMediaTestAdapter(t, ts.URL, intent)
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
 
 	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
 		[]domain.Attachment{
 			{DocumentID: docID1, DisplayName: "first.png", MimeType: "image/png"},
 			{DocumentID: docID2, DisplayName: "second.png", MimeType: "image/png"},
-		}, "")
+		})
 	require.NoError(t, err)
 
 	require.Len(t, intent.sendMsgEventContents, 2)
@@ -486,12 +449,13 @@ func TestMaxAttachmentBytes_NonPositiveFallsBackToDefault(t *testing.T) {
 	assert.Equal(t, int64(1234), a.cfg.MaxAttachmentBytes())
 }
 
-// fetchDocumentContent rejects a non-UUID document id before any HTTP call.
-func TestFetchDocumentContent_RejectsNonUUID(t *testing.T) {
+// The real streaming send path rejects a non-UUID document id before any HTTP call.
+func TestSendAttachment_RejectsNonUUID(t *testing.T) {
 	intent := &mockIntentAPI{}
 	a := newMediaTestAdapter(t, "http://file-service:4000", intent)
 
-	_, _, err := a.fetchDocumentContent(context.Background(), "not-a-uuid")
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: "not-a-uuid", DisplayName: "bad.bin"}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid document id")
 }
@@ -538,21 +502,19 @@ func TestGetMessage_MediaEvent_ReturnsAttachment(t *testing.T) {
 func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 	t.Run("in-cap body streams through with streamed size", func(t *testing.T) {
 		body := []byte("STREAMED-BODY") // 13 bytes
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "image/png")
-			_, _ = w.Write(body)
-		}))
-		defer ts.Close()
+		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+			return fileServiceResponse(http.StatusOK, "image/png", body), nil
+		})
 
 		intent := &mockIntentAPI{
 			uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/s")},
 			sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$s"},
 		}
-		a := newMediaTestAdapter(t, ts.URL, intent)
+		a := newMediaTestAdapter(t, fileServiceURL, intent)
 		a.cfg.FileService.MaxAttachmentBytes = 1024 // well above the body
 
 		_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
-			[]domain.Attachment{{DocumentID: docID1, DisplayName: "s.png", MimeType: "image/png", Size: 999}}, "")
+			[]domain.Attachment{{DocumentID: docID1, DisplayName: "s.png", MimeType: "image/png", Size: 999}})
 		require.NoError(t, err)
 		require.Equal(t, 1, intent.uploadBytesCalled)
 		assert.Equal(t, body, intent.lastUploadBytesData, "the whole body streamed through to the upload")
@@ -565,20 +527,18 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 	})
 
 	t.Run("oversize body fails and sends no event", func(t *testing.T) {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/octet-stream")
-			_, _ = w.Write(make([]byte, 100)) // 100 bytes
-		}))
-		defer ts.Close()
+		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+			return fileServiceResponse(http.StatusOK, "application/octet-stream", make([]byte, 100)), nil
+		})
 
 		intent := &mockIntentAPI{
 			sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$never"},
 		}
-		a := newMediaTestAdapter(t, ts.URL, intent)
+		a := newMediaTestAdapter(t, fileServiceURL, intent)
 		a.cfg.FileService.MaxAttachmentBytes = 10 // below the 100-byte body
 
 		_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
-			[]domain.Attachment{{DocumentID: docID1, DisplayName: "big.bin", MimeType: "application/octet-stream"}}, "")
+			[]domain.Attachment{{DocumentID: docID1, DisplayName: "big.bin", MimeType: "application/octet-stream"}})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "exceeds max attachment size")
 		assert.Equal(t, 0, intent.sendMessageEventCalled, "no media event when the cap is exceeded")

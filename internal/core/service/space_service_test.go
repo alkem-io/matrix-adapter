@@ -197,10 +197,10 @@ func (m *mockSpaceMatrixPort) GetCustomState(_ context.Context, _ id.RoomID, _ [
 func (m *mockSpaceMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
 	return nil
 }
-func (m *mockSpaceMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment, _ string) (id.EventID, error) {
+func (m *mockSpaceMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (id.EventID, error) {
 	return "", nil
 }
-func (m *mockSpaceMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID, _ []domain.Attachment, _ string) (id.EventID, error) {
+func (m *mockSpaceMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID, _ []domain.Attachment) (id.EventID, error) {
 	return "", nil
 }
 func (m *mockSpaceMatrixPort) RedactEvent(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {

@@ -43,7 +43,7 @@ The service is configured via environment variables or a `config.yaml` file. The
 | `MATRIX_BOT_ACTOR_ID` | Bot Actor ID (UUID), also used as Matrix localpart | `00000000-0000-0000-0000-000000000000` |
 | `MATRIX_BOT_DISPLAY_NAME` | Display name for the bot user in Matrix | `Alkemio` |
 | `SYNAPSE_SERVER_SHARED_SECRET` | Synapse `registration_shared_secret` for auto-promoting bot to server admin | - |
-| `FILE_SERVICE_URL` | Internal base URL of the Alkemio file-service, used to fetch document bytes for outbound media attachments (`GET {url}/internal/file/{id}/content`) | - |
+| `FILE_SERVICE_URL` | Optional internal file-service base URL; required only when sending outbound media attachments (`GET {url}/internal/file/{id}/content`) | - |
 | `RABBITMQ_URL` | Full AMQP Connection URL | - |
 | `RABBITMQ_HOST` | RabbitMQ Host (if URL not set) | - |
 | `RABBITMQ_PORT` | RabbitMQ Port (if URL not set) | `5672` |

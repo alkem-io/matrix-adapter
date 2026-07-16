@@ -3,7 +3,6 @@ package queue
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -381,30 +380,13 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 			req.Content,
 			id.EventID(*req.ParentMessageID),
 			attachments,
-			req.IdempotencyKey,
 		)
 	} else {
 		// Send as regular message
-		eventID, err = h.service.SendMessage(ctx, roomID, sender, req.Content, attachments, req.IdempotencyKey)
+		eventID, err = h.service.SendMessage(ctx, roomID, sender, req.Content, attachments)
 	}
 
 	if err != nil {
-		// Partial send: some events (text and/or earlier attachments) already
-		// landed in the room before a later one failed. Report the delivered
-		// message id alongside a partial-failure error so the server can record
-		// what landed instead of treating the whole send as failed and
-		// re-sending everything. Retries are idempotent when an idempotency_key
-		// was supplied (per-event txn ids).
-		var partial *domain.PartialSendError
-		if errors.As(err, &partial) {
-			resp := MapServiceError(partial.Err)
-			resp.Error.Message = "partial send: " + resp.Error.Message
-			return dto.SendMessageResponse{
-				BaseResponse: resp,
-				MessageID:    dto.MessageID(partial.PrimaryEventID),
-				Timestamp:    time.Now().UnixMilli(),
-			}, nil
-		}
 		return MapServiceError(err), nil
 	}
 

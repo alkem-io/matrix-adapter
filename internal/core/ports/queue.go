@@ -9,12 +9,6 @@ import (
 // Handlers receive the message context for cancellation, timeout, and tracing support.
 type MessageHandler func(ctx context.Context, payload []byte) (interface{}, error)
 
-// PartitionKeyFunc extracts an ordering key from a raw message payload. Messages
-// that share a key are processed strictly in order; messages with different keys
-// may run concurrently. Returning an empty string routes the message to a single
-// default partition (still ordered relative to other empty-key messages).
-type PartitionKeyFunc func(payload []byte) string
-
 // QueuePort defines the interface for message queue operations.
 type QueuePort interface {
 	// Connect establishes a connection to the message queue.
@@ -24,27 +18,7 @@ type QueuePort interface {
 	// Publish sends a message to the specified topic.
 	Publish(topic string, payload interface{}) error
 	// Subscribe registers a handler for messages on the specified topic.
-	// Messages are processed one at a time in delivery order.
 	Subscribe(topic string, handler MessageHandler) error
-	// SubscribeOrdered registers a handler for messages on the specified topic
-	// with per-key ordering and bounded cross-key concurrency: messages sharing
-	// a partition key are processed sequentially in delivery order, while
-	// different keys progress concurrently up to the configured worker bound.
-	//
-	// A message is acknowledged when it is dispatched to the worker pool (not
-	// after its handler completes), which is what lets a slow key run without
-	// head-of-line-blocking other keys. Delivery semantics follow from that early
-	// ack:
-	//   - Once acked-on-enqueue, the broker does NOT redeliver, so a crash AFTER
-	//     the ack (while the handler is still running) loses that in-flight send
-	//     with no redelivery — at-most-once for handler execution.
-	//   - A crash in the narrow window BETWEEN enqueue and ack leaves the message
-	//     un-acked, so the broker MAY redeliver it.
-	// Either way recovery is the SERVER's RPC retry on timeout, made safe by a
-	// stable (caller-supplied or adapter-derived) idempotency key that yields
-	// identical Matrix transaction ids — so a retry/redelivery is de-duplicated
-	// rather than duplicated. Handlers must therefore be idempotent.
-	SubscribeOrdered(topic string, handler MessageHandler, keyFn PartitionKeyFunc) error
 	// PublishAndWait sends a message to the specified topic and waits for a reply
 	// using the AMQP RPC pattern (temporary exclusive reply queue + correlation_id).
 	PublishAndWait(ctx context.Context, topic string, payload interface{}, timeout time.Duration) ([]byte, error)

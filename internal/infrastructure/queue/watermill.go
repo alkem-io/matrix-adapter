@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
@@ -17,15 +16,6 @@ import (
 	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter/pkg/dto"
 )
-
-// messageSubscriber is the subset of the watermill AMQP subscriber that the
-// adapter depends on. Abstracting it lets SubscribeOrdered be exercised with a
-// fake subscriber in tests (proving cross-room concurrency + per-room ordering)
-// without a live broker.
-type messageSubscriber interface {
-	Subscribe(ctx context.Context, topic string) (<-chan *message.Message, error)
-	Close() error
-}
 
 // Metadata keys for AMQP native properties
 const (
@@ -78,24 +68,11 @@ func (m RPCMarshaler) Marshal(msg *message.Message) (stdAmqp.Publishing, error) 
 
 // WatermillAdapter implements the QueuePort interface using the Watermill library and RabbitMQ.
 type WatermillAdapter struct {
-	cfg       *config.Config
-	logger    ports.Logger
-	publisher *amqp.Publisher
-	// subscriber drains all one-at-a-time topics (PrefetchCount=1).
-	subscriber messageSubscriber
-	// orderedSubscriber drains only the room-partitioned send topic; its consume
-	// prefetch is raised to SendConcurrency so the broker keeps the worker pool
-	// fed with multiple in-flight deliveries (see SubscribeOrdered).
-	orderedSubscriber messageSubscriber
-	rpcConn           *stdAmqp.Connection // dedicated connection for RPC reply queues
-
-	// pools holds the ordered worker pools created by SubscribeOrdered so Close
-	// can drain in-flight work after the subscribers stop delivering.
-	pools []*orderedPool
-	// ingestWG tracks every ingest goroutine (both Subscribe and
-	// SubscribeOrdered) so Close can join them before draining the pools — a late
-	// enqueue (pool.wg.Add) must never race the pool's wait (pool.wg.Wait).
-	ingestWG sync.WaitGroup
+	cfg        *config.Config
+	logger     ports.Logger
+	publisher  *amqp.Publisher
+	subscriber *amqp.Subscriber
+	rpcConn    *stdAmqp.Connection // dedicated connection for RPC reply queues
 }
 
 // NewWatermillAdapter creates a new instance of WatermillAdapter.
@@ -119,29 +96,12 @@ func (w *WatermillAdapter) Connect(_ context.Context) error {
 	}
 	w.publisher = publisher
 
-	// Create Subscriber (PrefetchCount=1 from NewDurableQueueConfig: one-at-a-time
-	// topics stay strictly serial).
+	// Create Subscriber
 	subscriber, err := amqp.NewSubscriber(amqpConfig, watermill.NewStdLogger(false, false))
 	if err != nil {
 		return fmt.Errorf("failed to create AMQP subscriber: %w", err)
 	}
 	w.subscriber = subscriber
-
-	// Create the ordered-send subscriber on a DERIVED config (a value copy of
-	// amqpConfig) whose consume prefetch matches SendConcurrency. This is what
-	// gives the room-partitioned pool real cross-room concurrency: with
-	// PrefetchCount=1 the broker would withhold the next delivery until the
-	// current one is acked, serializing the pool to one in-flight send. Raising
-	// prefetch on a SEPARATE subscriber keeps every other topic at PrefetchCount=1.
-	orderedConfig := amqpConfig
-	orderedConfig.Consume.Qos.PrefetchCount = w.cfg.SendConcurrency()
-	orderedSubscriber, err := amqp.NewSubscriber(orderedConfig, watermill.NewStdLogger(false, false))
-	if err != nil {
-		_ = publisher.Close()
-		_ = subscriber.Close()
-		return fmt.Errorf("failed to create ordered AMQP subscriber: %w", err)
-	}
-	w.orderedSubscriber = orderedSubscriber
 
 	// Open a dedicated AMQP connection for RPC reply queues (PublishAndWait).
 	// Watermill's connection is internal and not exposed for raw channel operations.
@@ -149,7 +109,6 @@ func (w *WatermillAdapter) Connect(_ context.Context) error {
 	if err != nil {
 		_ = publisher.Close()
 		_ = subscriber.Close()
-		_ = orderedSubscriber.Close()
 		return fmt.Errorf("failed to create RPC AMQP connection: %w", err)
 	}
 	w.rpcConn = rpcConn
@@ -159,38 +118,15 @@ func (w *WatermillAdapter) Connect(_ context.Context) error {
 }
 
 // Close closes the connection to the RabbitMQ broker.
-//
-// Shutdown order matters and is strict (F6):
-//  1. Close both subscribers so no new deliveries arrive and the ingest
-//     goroutines' `range` loops end.
-//  2. Join the ingest goroutines (ingestWG) BEFORE draining the pools, so a late
-//     enqueue (pool.wg.Add) can never race the pool's wait (pool.wg.Wait) — that
-//     race is both a lost-work hazard and a WaitGroup-misuse panic.
-//  3. Drain in-flight pooled sends (pool.wait). Their handlers still publish RPC
-//     replies, so the publisher must outlive them.
-//  4. Tear down the publisher and RPC connection.
 func (w *WatermillAdapter) Close() error {
-	// 1. Stop deliveries.
-	if w.subscriber != nil {
-		if err := w.subscriber.Close(); err != nil {
-			w.logger.Error("Failed to close subscriber", "error", err)
-		}
-	}
-	if w.orderedSubscriber != nil {
-		if err := w.orderedSubscriber.Close(); err != nil {
-			w.logger.Error("Failed to close ordered subscriber", "error", err)
-		}
-	}
-	// 2. Join ingest goroutines before touching the pools.
-	w.ingestWG.Wait()
-	// 3. Drain in-flight pooled work.
-	for _, pool := range w.pools {
-		pool.wait()
-	}
-	// 4. Tear down publisher + RPC connection.
 	if w.publisher != nil {
 		if err := w.publisher.Close(); err != nil {
 			w.logger.Error("Failed to close publisher", "error", err)
+		}
+	}
+	if w.subscriber != nil {
+		if err := w.subscriber.Close(); err != nil {
+			w.logger.Error("Failed to close subscriber", "error", err)
 		}
 	}
 	if w.rpcConn != nil && !w.rpcConn.IsClosed() {
@@ -223,9 +159,7 @@ func (w *WatermillAdapter) Subscribe(topic string, handler ports.MessageHandler)
 		return err
 	}
 
-	w.ingestWG.Add(1)
 	go func() {
-		defer w.ingestWG.Done()
 		for msg := range messages {
 			w.processMessage(msg, handler)
 		}
@@ -234,141 +168,13 @@ func (w *WatermillAdapter) Subscribe(topic string, handler ports.MessageHandler)
 	return nil
 }
 
-// sendBacklogPerWorker sizes the ordered pool's total in-memory backlog bound as
-// a small multiple of the worker count. It gives distinct rooms a little queuing
-// headroom (so a burst doesn't immediately stall the broker) while keeping
-// resident memory bounded: at most SendConcurrency*sendBacklogPerWorker messages
-// sit in the pool at once, after which enqueue blocks and backpressure kicks in.
-const sendBacklogPerWorker = 4
-
-// orderedBacklogCapacity is the pool's total-backlog bound for the given worker
-// count: sendBacklogPerWorker messages per worker (>= workers, so every worker
-// can hold an in-flight message). The sole caller passes SendConcurrency(), which
-// is always >= 1, and newOrderedPool independently clamps both workers and
-// capacity — so this does not re-clamp (C4).
-func orderedBacklogCapacity(workers int) int {
-	return workers * sendBacklogPerWorker
-}
-
-// SubscribeOrdered subscribes with per-key ordering and bounded cross-key
-// concurrency (see ports.QueuePort.SubscribeOrdered). A single ingest goroutine
-// drains the ordered subscriber and dispatches each delivery to an orderedPool
-// keyed by keyFn(payload); the pool preserves per-key ordering while letting
-// distinct keys run concurrently up to cfg.SendConcurrency() workers.
-//
-// Concurrency mechanism (F1): watermill's AMQP consuming loop is synchronous —
-// it delivers one message and then blocks on that message's Ack before reading
-// the next delivery. If we acked only after the handler completed, a slow send
-// for room A would stall the loop and every other room would head-of-line-block,
-// so the pool would never hold more than one in-flight message. Instead the
-// ingest loop enqueues into the pool and ACKS IMMEDIATELY AFTER — which unblocks
-// the consuming loop so it can deliver the next room's message. Combined with the
-// ordered subscriber's raised prefetch, this yields genuine cross-room
-// concurrency.
-//
-// Backpressure (bounded memory): the pool's enqueue BLOCKS when its total
-// in-memory backlog reaches orderedBacklogCapacity(SendConcurrency). Because the
-// ingest loop enqueues THEN acks, a saturated pool (all runners busy + backlog
-// full) blocks the enqueue → the loop stops acking/reading → the broker stops
-// delivering (prefetch fills). So a slow room can never grow an unbounded
-// in-memory backlog (OOM); resident memory is capped at the backlog bound.
-//
-// Ordering vs. ack (delivery semantics): enqueue-then-ack means a delivery is
-// acked once it is safely resident in the bounded pool, BEFORE its handler
-// completes (early ack is what unblocks watermill's consuming loop for the next
-// key — the whole point of the concurrency design). Two consequences follow, and
-// they are consistent with ports.QueuePort.SubscribeOrdered:
-//   - After the ack, the broker does NOT redeliver, so a crash while the handler
-//     is still executing loses that in-flight send with no broker redelivery
-//     (at-most-once for execution). Shrinking this window further (e.g. acking
-//     only once the runner dequeues) would not remove it — any ack before
-//     durable completion has it, and waiting for completion would reintroduce the
-//     head-of-line blocking this design exists to avoid.
-//   - A crash in the narrow window between enqueue and ack leaves the message
-//     un-acked, so the broker MAY redeliver it.
-//
-// Recovery for the lost-after-ack case is the SERVER retrying the RPC on timeout
-// (a cross-repo dependency); both retry and redelivery are made safe by the
-// idempotency key (caller-supplied or the adapter's deterministic fallback),
-// which yields identical Matrix transaction ids so Synapse de-duplicates instead
-// of duplicating. The handler still runs — and still publishes its RPC reply —
-// inside the pool. On Close the subscribers stop delivering, the ingest goroutine
-// is joined, then the pool drains before the publisher/connection are torn down.
-func (w *WatermillAdapter) SubscribeOrdered(topic string, handler ports.MessageHandler, keyFn ports.PartitionKeyFunc) error {
-	messages, err := w.orderedSubscriber.Subscribe(context.Background(), topic)
-	if err != nil {
-		return err
-	}
-
-	workers := w.cfg.SendConcurrency()
-	pool := newOrderedPool(workers, orderedBacklogCapacity(workers), func(msg *message.Message) {
-		w.processOrderedMessage(msg, handler)
-	})
-	w.pools = append(w.pools, pool)
-
-	w.ingestWG.Add(1)
-	go func() {
-		defer w.ingestWG.Done()
-		for msg := range messages {
-			key := ""
-			if keyFn != nil {
-				key = keyFn(msg.Payload)
-			}
-			w.dispatchOrdered(pool, key, msg)
-		}
-	}()
-
-	return nil
-}
-
-// dispatchOrdered enqueues a delivery to the room-partitioned pool and then acks
-// it. The order matters: enqueue BLOCKS when the pool's backlog is full, so this
-// call (and thus the single ingest loop) stalls before acking — that is what
-// propagates backpressure to the broker and bounds resident memory. Acking right
-// after a successful enqueue unblocks watermill's consuming loop so the next
-// room's message can be delivered concurrently. A delivery is therefore acked
-// only once it is safely resident in the bounded pool.
-//
-// The delivery is detached from its AMQP context BEFORE enqueue: a runner may
-// start the handler the instant it is enqueued, and watermill cancels
-// msg.Context() as soon as the ack unblocks its loop, but the pooled handler must
-// run to completion (bounded by its own send deadline), so we swap in an
-// uncancelable context that still carries any request-scoped values.
-func (w *WatermillAdapter) dispatchOrdered(pool *orderedPool, key string, msg *message.Message) {
-	base := msg.Context()
-	if base == nil {
-		base = context.Background()
-	}
-	msg.SetContext(context.WithoutCancel(base))
-	pool.enqueue(key, msg) // blocks when the pool backlog is full (backpressure)
-	msg.Ack()
-}
-
-// processMessage runs a handler for a one-at-a-time topic and acks after it
-// completes (serial delivery, at-most-once).
 func (w *WatermillAdapter) processMessage(msg *message.Message, handler ports.MessageHandler) {
+	// Use the message context for proper cancellation and timeout support
 	ctx := msg.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	w.runHandler(ctx, msg, handler)
-	// Always ACK - retrying would cause duplicate operations
-	msg.Ack()
-}
 
-// processOrderedMessage runs a send handler for a message the ingest loop acks
-// right after enqueue (see dispatchOrdered). It does NOT ack again.
-func (w *WatermillAdapter) processOrderedMessage(msg *message.Message, handler ports.MessageHandler) {
-	ctx := msg.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	w.runHandler(ctx, msg, handler)
-}
-
-// runHandler invokes handler and publishes its RPC reply (if any). It never
-// acknowledges the delivery — ack timing is the caller's responsibility.
-func (w *WatermillAdapter) runHandler(ctx context.Context, msg *message.Message, handler ports.MessageHandler) {
 	resp, err := handler(ctx, msg.Payload)
 	if err != nil {
 		// This should never happen - handlers return error responses, not errors
@@ -383,6 +189,9 @@ func (w *WatermillAdapter) runHandler(ctx context.Context, msg *message.Message,
 		w.logErrorResponse(msg, resp)
 		w.sendReply(msg, resp)
 	}
+
+	// Always ACK - retrying would cause duplicate operations
+	msg.Ack()
 }
 
 // logErrorResponse logs structured error information when response indicates failure.

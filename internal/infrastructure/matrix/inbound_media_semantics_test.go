@@ -290,3 +290,22 @@ func TestGetMessage_EmptyBody_ReturnsMessage(t *testing.T) {
 	assert.Empty(t, msg.Content)
 	assert.Equal(t, "$e", msg.ID)
 }
+
+func TestGetMessage_AbsentBody_ReturnsMessage(t *testing.T) {
+	admin := &mockAdminAPI{
+		getEventResult: &event.Event{
+			ID:        id.EventID("$redacted"),
+			Sender:    id.UserID("@user:test.local"),
+			Type:      event.EventMessage,
+			Timestamp: 1700000000000,
+			Content:   event.Content{Raw: map[string]any{}},
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$redacted")
+	require.NoError(t, err, "bodyless message events must remain readable by ID")
+	require.NotNil(t, msg)
+	assert.Empty(t, msg.Content)
+	assert.Equal(t, "$redacted", msg.ID)
+}

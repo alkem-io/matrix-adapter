@@ -7,11 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/assert"
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter/internal/testutil"
 )
 
@@ -52,9 +50,8 @@ type mockExtendedMatrixPort struct {
 	kickUserErr    error
 
 	// SendMessage
-	sendMessageResult  id.EventID
-	sendMessageErr     error
-	lastIdempotencyKey string // captures the key the service forwarded to matrix
+	sendMessageResult id.EventID
+	sendMessageErr    error
 
 	// SendReply
 	sendReplyResult id.EventID
@@ -133,12 +130,11 @@ func (m *mockExtendedMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.U
 	return m.kickUserErr
 }
 
-func (m *mockExtendedMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment, key string) (id.EventID, error) {
-	m.lastIdempotencyKey = key
+func (m *mockExtendedMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (id.EventID, error) {
 	return m.sendMessageResult, m.sendMessageErr
 }
 
-func (m *mockExtendedMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID, _ []domain.Attachment, _ string) (id.EventID, error) {
+func (m *mockExtendedMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID, _ []domain.Attachment) (id.EventID, error) {
 	return m.sendReplyResult, m.sendReplyErr
 }
 
@@ -880,7 +876,7 @@ func TestSendMessage_Success(t *testing.T) {
 	}
 	svc := newTestService(matrix)
 
-	eventID, err := svc.SendMessage(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "hello", nil, "")
+	eventID, err := svc.SendMessage(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "hello", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -895,96 +891,10 @@ func TestSendMessage_Error(t *testing.T) {
 	}
 	svc := newTestService(matrix)
 
-	_, err := svc.SendMessage(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "hello", nil, "")
+	_, err := svc.SendMessage(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "hello", nil)
 	if err == nil {
 		t.Fatal("expected error from SendMessage")
 	}
-}
-
-// warnCountingLogger records how many Warn and Debug calls it saw (for the
-// unkeyed-send fallback-key logging).
-type warnCountingLogger struct {
-	warns  int
-	debugs int
-}
-
-func (l *warnCountingLogger) Debug(string, ...interface{}) { l.debugs++ }
-func (l *warnCountingLogger) Info(string, ...interface{})  {}
-func (l *warnCountingLogger) Warn(string, ...interface{})  { l.warns++ }
-func (l *warnCountingLogger) Error(string, ...interface{}) {}
-func (l *warnCountingLogger) With(...interface{}) ports.Logger {
-	return l
-}
-
-// C2 — an unkeyed multi-event send no longer WARNS (the fallback key makes it
-// retry-safe); it logs at Debug instead. A keyed send logs nothing.
-func TestSendMessage_UnkeyedMultiSend_DoesNotWarn(t *testing.T) {
-	att := []domain.Attachment{{DocumentID: "11111111-1111-4111-8111-111111111111"}}
-
-	tests := []struct {
-		name        string
-		attachments []domain.Attachment
-		key         string
-		wantWarns   int
-		wantDebugs  int
-	}{
-		{"attachments, no key → debug, no warn", att, "", 0, 1},
-		{"attachments, with key → no log", att, "req-1", 0, 0},
-		{"text only, no key → debug, no warn", nil, "", 0, 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			logger := &warnCountingLogger{}
-			svc := NewRoomService(&mockExtendedMatrixPort{}, logger, domain.NewIDMapper("test.local"))
-
-			_, err := svc.SendMessage(context.Background(), "!room:test.local",
-				domain.NewActor(uuid.New()), "hello", tt.attachments, tt.key)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if logger.warns != tt.wantWarns {
-				t.Errorf("expected %d warnings, got %d", tt.wantWarns, logger.warns)
-			}
-			if logger.debugs != tt.wantDebugs {
-				t.Errorf("expected %d debug logs, got %d", tt.wantDebugs, logger.debugs)
-			}
-		})
-	}
-}
-
-// A2 — with no caller key the service forwards a deterministic fallback key;
-// identical requests yield identical keys (retry-safe), an explicit key wins,
-// and any content difference changes the key.
-func TestSendMessage_FallbackIdempotencyKey(t *testing.T) {
-	room := id.RoomID("!room:test.local")
-	sender := domain.NewActor(uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
-	att := []domain.Attachment{{DocumentID: "11111111-1111-4111-8111-111111111111"}}
-
-	send := func(content string, attachments []domain.Attachment, key string) string {
-		m := &mockExtendedMatrixPort{}
-		svc := NewRoomService(m, &warnCountingLogger{}, domain.NewIDMapper("test.local"))
-		_, err := svc.SendMessage(context.Background(), room, sender, content, attachments, key)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		return m.lastIdempotencyKey
-	}
-
-	// Two identical unkeyed requests derive the same non-empty key (retry-safe).
-	k1 := send("hello", att, "")
-	k2 := send("hello", att, "")
-	assert.NotEmpty(t, k1, "an unkeyed send must forward a derived fallback key")
-	assert.Equal(t, k1, k2, "identical requests must derive identical keys")
-
-	// An explicit key always wins.
-	assert.Equal(t, "explicit-key", send("hello", att, "explicit-key"))
-
-	// Different content ⇒ different key.
-	assert.NotEqual(t, k1, send("goodbye", att, ""), "different content must change the key")
-
-	// Different attachment set ⇒ different key.
-	att2 := []domain.Attachment{{DocumentID: "22222222-2222-4222-8222-222222222222"}}
-	assert.NotEqual(t, k1, send("hello", att2, ""), "different attachments must change the key")
 }
 
 // ============================================================================
@@ -997,7 +907,7 @@ func TestSendReply_Success(t *testing.T) {
 	}
 	svc := newTestService(matrix)
 
-	eventID, err := svc.SendReply(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "reply text", "$thread:test.local", nil, "")
+	eventID, err := svc.SendReply(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "reply text", "$thread:test.local", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1012,7 +922,7 @@ func TestSendReply_Error(t *testing.T) {
 	}
 	svc := newTestService(matrix)
 
-	_, err := svc.SendReply(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "reply text", "$thread:test.local", nil, "")
+	_, err := svc.SendReply(context.Background(), "!room:test.local", domain.NewActor(uuid.New()), "reply text", "$thread:test.local", nil)
 	if err == nil {
 		t.Fatal("expected error from SendReply")
 	}

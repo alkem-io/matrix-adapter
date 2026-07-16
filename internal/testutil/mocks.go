@@ -29,9 +29,6 @@ func (m *MockQueuePort) Publish(topic string, payload interface{}) error { //nol
 func (m *MockQueuePort) Subscribe(_ string, _ ports.MessageHandler) error { //nolint:revive
 	return nil
 }
-func (m *MockQueuePort) SubscribeOrdered(_ string, _ ports.MessageHandler, _ ports.PartitionKeyFunc) error { //nolint:revive
-	return nil
-}
 func (m *MockQueuePort) PublishAndWait(_ context.Context, topic string, payload interface{}, _ time.Duration) ([]byte, error) { //nolint:revive
 	m.PublishedTopic = topic
 	m.PublishedPayload = payload

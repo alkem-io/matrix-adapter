@@ -83,10 +83,10 @@ func (m *mockMatrixPort) DeleteAlias(_ context.Context, _ string) error { return
 func (m *mockMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
 	return nil
 }
-func (m *mockMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment, _ string) (id.EventID, error) {
+func (m *mockMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (id.EventID, error) {
 	return "", nil
 }
-func (m *mockMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID, _ []domain.Attachment, _ string) (id.EventID, error) {
+func (m *mockMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID, _ []domain.Attachment) (id.EventID, error) {
 	return "", nil
 }
 func (m *mockMatrixPort) RedactEvent(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {
