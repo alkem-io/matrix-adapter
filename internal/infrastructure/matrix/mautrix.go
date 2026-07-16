@@ -1997,11 +1997,17 @@ func (m *MautrixAdapter) GetThreadMessages(
 		// failure (some replies recovered — use them, don't collapse to root-only)
 		// from a first-page failure (nothing recovered — root only), so incident
 		// triage isn't misled by a false "partial" claim on a total failure.
-		if len(chunk) > 0 {
+		switch {
+		case len(chunk) > 0:
 			m.logger.Warn("Thread relations truncated by error; returning partial replies",
 				"thread_root_id", threadRootID, "partial_replies", len(chunk), "error", err)
-		} else {
+		case rootMsg != nil:
 			m.logger.Warn("Failed to fetch thread relations; returning root message only",
+				"thread_root_id", threadRootID, "error", err)
+		default:
+			// No replies recovered AND the root is blank/redacted (rootMsg nil) — the
+			// function returns an empty slice, so don't claim a root will be returned.
+			m.logger.Warn("Failed to fetch thread relations; returning no messages",
 				"thread_root_id", threadRootID, "error", err)
 		}
 	}
