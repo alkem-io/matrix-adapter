@@ -28,11 +28,12 @@ const (
 )
 
 // A multi-attachment send is a fan-out of independent events, exactly like an
-// Element multi-image send: if one attachment fails, the events already sent
-// stay in the room (no rollback) and the error is returned so the caller can
-// retry the failed part. Matrix/Element provide no cross-event atomicity, so the
-// adapter must not reinvent it.
-func TestSendMessage_AttachmentFailure_LeavesPriorEventsNoRollback(t *testing.T) {
+// Element multi-image send. When something has ALREADY been delivered (here the
+// text event), a later attachment failure is a PARTIAL success: the delivered
+// primary is returned with a nil error (no rollback), so the sender's text does
+// not vanish and a server retry does not duplicate it. Matrix/Element provide no
+// cross-event atomicity, so the adapter must not reinvent it.
+func TestSendMessage_AttachmentFailure_WithText_ReturnsPrimaryNoError(t *testing.T) {
 	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
 		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
 	})
@@ -47,7 +48,7 @@ func TestSendMessage_AttachmentFailure_LeavesPriorEventsNoRollback(t *testing.T)
 	}
 	a := newMediaTestAdapter(t, fileServiceURL, intent)
 
-	_, err := a.SendMessage(
+	eventID, err := a.SendMessage(
 		context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "files",
 		[]domain.Attachment{
 			{DocumentID: docID1, DisplayName: "one.png", MimeType: "image/png"},
@@ -56,10 +57,38 @@ func TestSendMessage_AttachmentFailure_LeavesPriorEventsNoRollback(t *testing.T)
 		},
 	)
 
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "attachment 2 of 3 failed")
-	assert.Equal(t, 2, intent.sendMessageEventCalled, "the third attachment must not be attempted")
+	require.NoError(t, err, "partial failure with an already-delivered primary must not surface an error")
+	assert.Equal(t, id.EventID("$text"), eventID, "the already-delivered text event is returned as the primary")
+	assert.Equal(t, 2, intent.sendMessageEventCalled, "the third attachment must not be attempted (stop on first failure)")
 	assert.Empty(t, intent.redactEventIDs, "prior events are NOT rolled back (Element parity)")
+}
+
+// A text-less message whose FIRST attachment fails has delivered nothing, so the
+// error IS surfaced (primaryEventID == "") — the caller must retry the whole
+// send.
+func TestSendMessage_FirstAttachmentFailure_NoText_ReturnsError(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
+	})
+	intent := &mockIntentAPI{
+		uploadBytesResult:       &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/media")},
+		sendMessageEventResults: []*mautrix.RespSendEvent{nil},
+		sendMessageEventErrs:    []error{assert.AnError},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	eventID, err := a.SendMessage(
+		context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{
+			{DocumentID: docID1, DisplayName: "one.png", MimeType: "image/png"},
+			{DocumentID: docID2, DisplayName: "two.png", MimeType: "image/png"},
+		},
+	)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "attachment 1 of 2 failed")
+	assert.Empty(t, eventID, "nothing delivered, so no primary event id")
+	assert.Equal(t, 1, intent.sendMessageEventCalled, "the second attachment must not be attempted")
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

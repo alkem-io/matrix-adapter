@@ -751,12 +751,21 @@ func (m *MautrixAdapter) SendMessage(
 }
 
 // fanOutAttachments sends each attachment as its own independent media event.
-// There is no atomicity across the fan-out — Matrix/Element have none either: if
-// one attachment fails, the events already sent stay in the room and the error
-// is returned, so the caller retries the failed part exactly as an Element
-// multi-image send behaves (each image is its own event/message). primaryEventID
-// is the text event's id (empty for an attachment-only message, in which case
-// the first attachment becomes the primary); it is returned resolved.
+// There is no atomicity across the fan-out — Matrix/Element have none either:
+// each attachment is its own event/message, exactly like an Element multi-image
+// send. primaryEventID is the text event's id (empty for an attachment-only
+// message, in which case the first attachment becomes the primary); it is
+// returned resolved.
+//
+// Partial-success behaviour: if an attachment fails AFTER something has already
+// been delivered to the room (the text event, or an earlier attachment —
+// primaryEventID != ""), we log a warning and return the delivered primary with
+// a nil error. Collapsing that to a total failure would make the sender's
+// already-visible text vanish and a server retry duplicate it. Only when nothing
+// has been delivered yet (primaryEventID == "" — a text-less message whose FIRST
+// attachment fails) do we return the error. Either way we stop on first failure
+// (later attachments are not attempted), matching an Element send where a later
+// image fails but the message stays.
 //
 // The whole fan-out (all N<=10 attachments) is fetched, uploaded, and sent
 // SEQUENTIALLY within this single send's HandleSendMessage queue-handler
@@ -771,7 +780,12 @@ func (m *MautrixAdapter) fanOutAttachments(
 	for i := range attachments {
 		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID)
 		if err != nil {
-			return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
+			if primaryEventID == "" {
+				return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
+			}
+			m.logger.Warn("Attachment fan-out partial failure; primary already delivered",
+				"attachment", i+1, "total", len(attachments), "error", err)
+			return primaryEventID, nil
 		}
 		if primaryEventID == "" {
 			primaryEventID = eventID
@@ -1373,17 +1387,28 @@ func parseEventContent[T any](evt *event.Event) (*T, bool) {
 func (m *MautrixAdapter) GetReactionEventID(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID, emoji string, senderID domain.Actor,
 ) (id.EventID, error) {
-	chunk, err := m.admin.GetRelations(ctx, roomID, eventID, event.RelAnnotation, event.EventReaction)
-	if err != nil {
-		return "", fmt.Errorf("failed to get relations: %w", err)
-	}
+	// The shared GetRelations paginator has no early-stop by design: it is a single
+	// shared paginator (also used by thread reads), GetReactionEventID has no in-repo
+	// production caller, and the maxRelationsPages bound caps the worst case — adding
+	// an early-stop predicate would couple the admin layer to reaction-match semantics
+	// for marginal, caller-less benefit.
+	chunk, relErr := m.admin.GetRelations(ctx, roomID, eventID, event.RelAnnotation, event.EventReaction)
 
 	senderUserID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
 		return "", err
 	}
 
-	return m.findReactionByEmojiAndSender(chunk, senderUserID, emoji)
+	// Search the (possibly partial) chunk first: a reaction present on page 1 must be
+	// returned even if a later page hit a transient error. Only when it is NOT found do
+	// we consider relErr — the reaction might be on a dropped later page.
+	if evID, findErr := m.findReactionByEmojiAndSender(chunk, senderUserID, emoji); findErr == nil {
+		return evID, nil
+	}
+	if relErr != nil {
+		return "", fmt.Errorf("failed to get relations: %w", relErr)
+	}
+	return "", fmt.Errorf("reaction not found")
 }
 
 // findReactionByEmojiAndSender searches for a specific reaction in a list of events.
@@ -2037,6 +2062,12 @@ func (m *MautrixAdapter) GetThreadMessages(
 		messages = append(messages, *rootMsg)
 	}
 
+	// Deliberate best-effort return: thread reads USE the recovered partial chunk and
+	// succeed even when GetRelations reported a later-page error (already logged for
+	// operators in the switch above). Hard-failing a mostly-complete thread on a
+	// transient later-page error is worse UX than returning the recovered replies, and
+	// surfacing a truncated-vs-complete flag would require a cross-repo DTO change out
+	// of this slice's scope.
 	return messages, nil
 }
 

@@ -203,6 +203,10 @@ def _patch_async_helpers(monkeypatch):
     monkeypatch.setattr(
         mod, "defer_to_thread", lambda reactor, fn, *a: defer.execute(fn, *a)
     )
+    # store_file stats the local upload to scale the timeout by size; the fake
+    # cache path doesn't exist on disk, so default getsize to a small size
+    # (max() keeps the store_timeout_s floor). Size-scaling tests override this.
+    monkeypatch.setattr(mod.os.path, "getsize", lambda p: 1024)
 
 
 # --- parse_config ----------------------------------------------------------
@@ -354,6 +358,51 @@ def test_store_posts_verbatim_multipart_streamed(monkeypatch):
     # Handle closed; and the 201 reply body was DRAINED (keep-alive) not aborted.
     assert fake_file.closed is True
     assert store_resp.transport.stopped is False
+
+
+def test_store_scales_timeout_by_file_size(monkeypatch):
+    # A large-but-valid upload must get proportional time: treq's timeout= bounds
+    # the ENTIRE multipart upload, so a big file streaming past store_timeout_s
+    # would otherwise be killed mid-stream. effective_timeout = size / throughput
+    # when that exceeds the store_timeout_s floor.
+    prov = _make_provider()  # store_timeout_s defaults to 30s
+    captured = {}
+    store_resp = _drainable(201)
+
+    def fake_post(url, files=None, data=None, **kw):
+        captured["timeout"] = kw.get("timeout")
+        return _aval(store_resp)
+
+    monkeypatch.setattr(mod.treq, "post", fake_post)
+    monkeypatch.setattr(mod, "_open_stream", lambda p: FakeFile(b"x"))
+    # 100 MB at 1 MB/s implies a 100s deadline — well above the 30s floor.
+    big = 100 * 1_000_000
+    monkeypatch.setattr(mod.os.path, "getsize", lambda p: big)
+
+    _run(prov.store_file("local_content/x", FakeFileInfo("m")))
+
+    assert captured["timeout"] == big / mod._STORE_MIN_THROUGHPUT_BPS
+    assert captured["timeout"] > prov.store_timeout_s
+
+
+def test_store_small_file_uses_timeout_floor(monkeypatch):
+    # A small file's size-proportional deadline is below store_timeout_s, so the
+    # floor (store_timeout_s) is used.
+    prov = _make_provider()
+    captured = {}
+    store_resp = _drainable(201)
+
+    def fake_post(url, files=None, data=None, **kw):
+        captured["timeout"] = kw.get("timeout")
+        return _aval(store_resp)
+
+    monkeypatch.setattr(mod.treq, "post", fake_post)
+    monkeypatch.setattr(mod, "_open_stream", lambda p: FakeFile(b"x"))
+    monkeypatch.setattr(mod.os.path, "getsize", lambda p: 10)  # tiny
+
+    _run(prov.store_file("local_content/x", FakeFileInfo("m")))
+
+    assert captured["timeout"] == prov.store_timeout_s
 
 
 def test_store_raises_and_closes_handle_on_http_error(monkeypatch):
@@ -542,6 +591,34 @@ def test_fetch_global_lookup_then_streams(monkeypatch):
     assert unbuffered == [True, True]
     assert responder is not None
     assert isinstance(responder, _FileServiceResponder)
+
+
+def test_fetch_url_encodes_media_id_and_doc_id(monkeypatch):
+    # media_id (query value) and doc_id (path segment) must be percent-encoded so
+    # URL-reserved chars (&, /, #, ?) can't corrupt the request URL — mirrors the
+    # Go side's uuid.Parse + url.PathEscape.
+    prov = _make_provider()
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        if "by-reference" in url:
+            return _aval(_meta({"id": "a/b"}))
+        return _aval(FakeResponse(200))
+
+    monkeypatch.setattr(mod.treq, "get", fake_get)
+
+    responder = _run(prov.fetch("local_content/x", FakeFileInfo("a&b")))
+
+    # media_id "a&b" -> "a%26b" in the ref= query value (raw & would start a new param).
+    assert calls[0] == (
+        "http://file-service:4003/internal/file/by-reference?ref=a%26b"
+    )
+    assert "ref=a&b" not in calls[0]
+    # doc_id "a/b" -> "a%2Fb" in the path segment (raw / would add a path segment).
+    assert calls[1] == "http://file-service:4003/internal/file/a%2Fb/content"
+    assert "/a/b/content" not in calls[1]
+    assert responder is not None
 
 
 def test_fetch_by_reference_bom_body_parsed(monkeypatch):

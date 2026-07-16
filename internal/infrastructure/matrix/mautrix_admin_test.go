@@ -1430,19 +1430,29 @@ func TestAdminAPI_FindReaction_WrongEmoji(t *testing.T) {
 	}
 }
 
-// GetReactionEventID must PROPAGATE a GetRelations error, never conflate it with
-// "reaction not found": a transient error returning a partial set must surface as
-// an error so the caller doesn't wrongly conclude the reaction is gone and skip
-// its redaction.
-func TestGetReactionEventID_RelationsError_Propagates(t *testing.T) {
+// newReactionTestAdapter wires an appservice mock so EnsureUser (called for the
+// sender before the relations error is surfaced) can resolve the ghost intent.
+func newReactionTestAdapter(mock *mockAdminAPI) *MautrixAdapter {
+	intent := &mockIntentAPI{}
+	as := newMockAS(intent, map[id.UserID]intentAPI{expectedUserID(testActorID): intent})
+	return newFullTestAdapter(as, mock)
+}
+
+// GetReactionEventID must PROPAGATE a GetRelations error when the reaction is NOT
+// found in the partial chunk: a transient later-page error returning a partial
+// set (without the target reaction) must surface as an error so the caller
+// doesn't wrongly conclude the reaction is gone and skip its redaction — the
+// reaction could be on a dropped later page.
+func TestGetReactionEventID_RelationsError_NotFound_Propagates(t *testing.T) {
 	mock := &mockAdminAPI{
-		// Partial results alongside an error (later-page failure shape).
+		// Partial results alongside an error (later-page failure shape), WITHOUT the
+		// target reaction (different sender).
 		getRelationsResult: []*event.Event{
 			{Type: event.EventReaction, ID: "$other", Sender: "@user1:test.local"},
 		},
 		getRelationsErr: errors.New("later page failed"),
 	}
-	a := newAdminTestAdapter(mock)
+	a := newReactionTestAdapter(mock)
 
 	_, err := a.GetReactionEventID(
 		context.Background(), "!room:test.local", "$evt", "\U0001F44D",
@@ -1453,6 +1463,45 @@ func TestGetReactionEventID_RelationsError_Propagates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to get relations") {
 		t.Errorf("expected the propagated relations error, got %v", err)
+	}
+}
+
+// GetReactionEventID must return a reaction found in the partial (page-1) chunk
+// even when GetRelations reported a later-page error: the reaction is provably
+// present, so a truncated later page is irrelevant.
+func TestGetReactionEventID_FoundInPartialChunk_IgnoresLaterPageError(t *testing.T) {
+	senderUserID := expectedUserID(testActorID)
+	mock := &mockAdminAPI{
+		// Page 1 carries the matching reaction; a later page then failed.
+		getRelationsResult: []*event.Event{
+			{
+				Type:   event.EventReaction,
+				ID:     "$reaction_match",
+				Sender: senderUserID,
+				Content: event.Content{
+					Parsed: &event.ReactionEventContent{
+						RelatesTo: event.RelatesTo{
+							EventID: "$evt",
+							Key:     "\U0001F44D",
+							Type:    event.RelAnnotation,
+						},
+					},
+				},
+			},
+		},
+		getRelationsErr: errors.New("later page failed"),
+	}
+	a := newReactionTestAdapter(mock)
+
+	evID, err := a.GetReactionEventID(
+		context.Background(), "!room:test.local", "$evt", "\U0001F44D",
+		testActor(testActorID, ""),
+	)
+	if err != nil {
+		t.Fatalf("expected the reaction found on page 1 to be returned despite the later-page error, got %v", err)
+	}
+	if evID != "$reaction_match" {
+		t.Errorf("expected '$reaction_match', got %q", evID)
 	}
 }
 

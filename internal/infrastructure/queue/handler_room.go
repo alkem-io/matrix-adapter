@@ -22,6 +22,12 @@ import (
 // Matrix events.
 const maxAttachmentsPerMessage = 10
 
+// fallbackAttachmentName is used as the media event body/filename when an
+// attachment carries no display_name (e.g. a clipboard-pasted image or an E2EE
+// document). A nameless attachment should still be delivered with a sensible
+// body rather than failing the whole send.
+const fallbackAttachmentName = "attachment"
+
 // RoomHandler handles queue messages related to room operations.
 type RoomHandler struct {
 	service  *service.RoomService
@@ -92,9 +98,16 @@ func convertAttachmentRefsToDomain(refs []dto.AttachmentRef) []domain.Attachment
 	}
 	attachments := make([]domain.Attachment, 0, len(refs))
 	for _, r := range refs {
+		// A missing/whitespace display_name would flow to buildMediaContent as
+		// body: "", producing a nameless attachment in Element. Default it here so
+		// every caller of the conversion benefits and the send still proceeds.
+		displayName := r.DisplayName
+		if strings.TrimSpace(displayName) == "" {
+			displayName = fallbackAttachmentName
+		}
 		attachments = append(attachments, domain.Attachment{
 			DocumentID:  r.DocumentID,
-			DisplayName: r.DisplayName,
+			DisplayName: displayName,
 			MimeType:    r.MimeType,
 			Size:        r.Size,
 			Width:       r.Width,
@@ -364,12 +377,10 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 			return NewInvalidParamError(fmt.Sprintf(
 				"attachment[%d] document_id must be a valid UUID", i)), nil
 		}
-		// An empty display_name would flow to buildMediaContent as body: "",
-		// producing a nameless attachment in Element. Reject it up front.
-		if strings.TrimSpace(req.Attachments[i].DisplayName) == "" {
-			return NewInvalidParamError(fmt.Sprintf(
-				"attachment[%d] display_name is required", i)), nil
-		}
+		// An empty/whitespace display_name is NOT rejected: a legitimately nameless
+		// attachment (clipboard-pasted image, E2EE doc) must not fail the whole send.
+		// convertAttachmentRefsToDomain applies fallbackAttachmentName so the media
+		// event still gets a sensible body/filename.
 	}
 
 	// Resolve room alias to Matrix room ID

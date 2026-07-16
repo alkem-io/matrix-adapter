@@ -239,26 +239,15 @@ func (m *MautrixAdapter) handleMessageEditEvent(evt *event.Event) {
 		newContent, _ = evt.Content.Raw["body"].(string)
 	}
 
-	// Extract thread ID if present
-	// Check for explicit m.thread relation first (preferred), then fall back to m.in_reply_to
+	// Extract thread ID via the shared thread-extraction helper (single source of
+	// truth for the m.thread → event_id / m.in_reply_to → event_id parse). Note this
+	// is distinct from originalEventID above (the m.replace target — the edited
+	// message id): for an m.replace event rel_type is "m.replace", so the m.thread
+	// branch never matches and this falls through to the m.in_reply_to fallback.
 	var threadID *id.EventID
-	if relatesTo != nil {
-		// Check for explicit thread relation first (MSC3440)
-		if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
-			if threadEventID, ok := relatesTo["event_id"].(string); ok {
-				tid := id.EventID(threadEventID)
-				threadID = &tid
-			}
-		}
-		// Fallback to m.in_reply_to if no explicit thread relation
-		if threadID == nil {
-			if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
-				if threadEventID, ok := inReplyTo["event_id"].(string); ok {
-					tid := id.EventID(threadEventID)
-					threadID = &tid
-				}
-			}
-		}
+	if tid := extractThreadID(evt); tid != "" {
+		eid := id.EventID(tid)
+		threadID = &eid
 	}
 
 	go func(e *event.Event, sender uuid.UUID, origID, content string, tid *id.EventID) {

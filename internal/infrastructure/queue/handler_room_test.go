@@ -854,8 +854,9 @@ func TestHandleSendMessage_EmptyAttachmentDocumentID(t *testing.T) {
 }
 
 // An attachment with a valid document_id but an empty (or whitespace-only)
-// display_name is rejected before any Matrix event is emitted — an empty
-// display_name would surface as a nameless attachment (body: "") in Element.
+// display_name is NOT rejected: a legitimately nameless attachment
+// (clipboard-pasted image, E2EE doc) must still be sent. The conversion applies
+// fallbackAttachmentName so the media event gets a sensible body/filename.
 func TestHandleSendMessage_EmptyAttachmentDisplayName(t *testing.T) {
 	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$evt1:test"}
 	h := testRoomHandler(mock)
@@ -871,9 +872,12 @@ func TestHandleSendMessage_EmptyAttachmentDisplayName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertErrorCode(t, result, dto.ErrCodeInvalidParam)
-	if mock.capturedSendMessageRoomID != "" {
-		t.Error("SendMessage should not have been called when a display_name is empty")
+	assertSuccess(t, result)
+	if len(mock.capturedSendMessageAttachments) != 1 {
+		t.Fatalf("expected 1 attachment forwarded, got %d", len(mock.capturedSendMessageAttachments))
+	}
+	if got := mock.capturedSendMessageAttachments[0].DisplayName; got != fallbackAttachmentName {
+		t.Errorf("expected fallback display_name %q, got %q", fallbackAttachmentName, got)
 	}
 }
 

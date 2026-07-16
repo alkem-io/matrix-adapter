@@ -99,10 +99,15 @@ sync_embed() {
     return 0
   fi
 
-  # The first data key strictly after key_line bounds this literal block.
+  # The literal block scalar runs from key_line+1 while lines are blank or indented
+  # to the 4-space body indent. It ENDS at the first non-blank line NOT so indented
+  # (the next data key, a comment, ---, or EOF). Resume the tail there — NOT at the
+  # next data key — so YAML comments and blank lines BETWEEN this block's content and
+  # the next key are preserved (the awk `^  [A-Za-z_]...:` next-key scan skips them,
+  # which would otherwise silently swallow them on every sync).
   # Empty means the block runs to EOF (it is the last key in the ConfigMap).
-  local next_key
-  next_key="$(awk -v start="$key_line" 'NR > start && /^  [A-Za-z_][A-Za-z0-9_.-]*:/ { print NR; exit }' "$dest" || true)"
+  local block_end
+  block_end="$(awk -v start="$key_line" 'NR > start && $0 != "" && !/^    / { print NR; exit }' "$dest" || true)"
 
   local tmp
   tmp="$(mktemp)"
@@ -110,8 +115,8 @@ sync_embed() {
   # Indent by 4 spaces; on otherwise-blank lines, leave them truly blank
   # (matches the existing infra-ops style and produces deterministic output).
   sed -e 's/^/    /' -e 's/^    $//' "$canonical" >> "$tmp"
-  if [[ -n "${next_key:-}" ]]; then
-    tail -n +"$next_key" "$dest" >> "$tmp"
+  if [[ -n "${block_end:-}" ]]; then
+    tail -n +"$block_end" "$dest" >> "$tmp"
   fi
 
   if cmp -s "$tmp" "$dest"; then

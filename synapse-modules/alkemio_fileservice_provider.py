@@ -59,6 +59,7 @@ import logging
 import math
 import os
 from typing import TYPE_CHECKING, Optional
+from urllib.parse import quote
 
 from twisted.internet import defer
 from twisted.internet.defer import Deferred
@@ -91,6 +92,13 @@ DEFAULT_STORE_TIMEOUT_S = 30.0
 
 # The file-service create contract: a durable store is confirmed by 201 Created.
 _STORE_SUCCESS_CODE = 201
+
+# Minimum assumed upload throughput (bytes/sec) used to scale the store timeout by
+# file size. treq's timeout= bounds the ENTIRE multipart upload, so store_timeout_s
+# alone would kill a large-but-valid file that streams longer than the floor. 1 MB/s
+# is conservative for an in-cluster link; a genuinely stalled upload still fails once
+# it exceeds the size-proportional deadline.
+_STORE_MIN_THROUGHPUT_BPS = 1_000_000
 
 # The by-reference lookup returns tiny id-carrying document metadata. Cap the
 # body we will buffer so a (fast) oversized/garbage body can't balloon memory.
@@ -584,6 +592,17 @@ class FileServiceStorageProvider(StorageProvider):
                 "skipImageProcessing": "true",  # VERBATIM — read-back is exact
             }
 
+            # store_timeout_s is the FLOOR; scale it up by file size so a valid
+            # large upload isn't killed mid-stream. treq's timeout= bounds the
+            # ENTIRE multipart upload (request-body send through response headers),
+            # so a big-but-valid file streaming slower than store_timeout_s would
+            # otherwise fail under load. A genuinely stalled upload still fails once
+            # it exceeds this size-proportional deadline.
+            file_size = os.path.getsize(cache_file)
+            effective_timeout = max(
+                self.store_timeout_s, file_size / _STORE_MIN_THROUGHPUT_BPS
+            )
+
             # unbuffered=True so we can RELEASE the reply connection without
             # reading it (a buffered reply's stopProducing is a no-op).
             resp = await make_deferred_yieldable(
@@ -591,7 +610,7 @@ class FileServiceStorageProvider(StorageProvider):
                     url,
                     files=files,
                     data=data,
-                    timeout=self.store_timeout_s,
+                    timeout=effective_timeout,
                     unbuffered=True,
                     reactor=self.reactor,
                 )
@@ -639,9 +658,11 @@ class FileServiceStorageProvider(StorageProvider):
         correct degradation while file-service is unavailable.
         """
         media_id = file_info.file_id
+        # Percent-encode media_id as a QUERY value (safe="" so reserved chars like
+        # &, #, ?, / are all escaped) — mirrors the Go side's url.PathEscape.
         lookup_url = "%s/internal/file/by-reference?ref=%s" % (
             self.file_service_url,
-            media_id,
+            quote(media_id, safe=""),
         )
 
         try:
@@ -692,9 +713,11 @@ class FileServiceStorageProvider(StorageProvider):
                 )
                 return None
 
+            # Percent-encode doc_id as a PATH segment (safe="" so reserved chars
+            # like /, ?, # are escaped) — mirrors the Go side's url.PathEscape.
             content_url = "%s/internal/file/%s/content" % (
                 self.file_service_url,
-                doc_id,
+                quote(doc_id, safe=""),
             )
             content_resp = await make_deferred_yieldable(
                 treq.get(
