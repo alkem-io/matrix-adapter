@@ -285,7 +285,10 @@ class _BoundedBodyProtocol(Protocol):
         _stop_producing(getattr(self, "transport", None))
 
     # -- subclass hooks --
-    def _consume(self, data: bytes) -> None:  # pragma: no cover - overridden
+    def _consume(self, data: bytes) -> None:
+        # Default: discard. `_BodyDrainer` inherits this (its whole job is to
+        # drain+discard), so this IS reached in production for a small non-empty
+        # miss/error reply body. `_JsonBodyReader` overrides it to buffer.
         pass
 
     def _result(self):

@@ -684,6 +684,19 @@ def test_fetch_stalled_reply_drain_times_out_and_aborts(monkeypatch):
     assert stalling_miss.transport.stopped is True  # drain gave up -> aborted
 
 
+def test_fetch_small_nonempty_reply_body_drained_and_reused(monkeypatch):
+    # A miss/error reply carrying a small NON-EMPTY body (bytes fed through
+    # _BodyDrainer's inherited base `_consume` discard path, then a clean close ->
+    # base `_result()` None) must be DRAINED and the connection reused (NOT
+    # aborted) — distinct from the oversized-abort case.
+    prov = _make_provider()
+    small_miss = FakeResponse(404, auto_body=b'{"error":"not found"}')  # a few bytes
+    monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(small_miss))
+    responder = _run(prov.fetch("local_content/x", FakeFileInfo("missing")))
+    assert responder is None
+    assert small_miss.transport.stopped is False  # small body drained -> reused
+
+
 def test_fetch_oversized_reply_drain_aborts(monkeypatch):
     # A non-streamed reply body over `_MAX_DRAIN_BYTES` must abort (tear down)
     # after the cap rather than draining unbounded — and fetch still returns None.
