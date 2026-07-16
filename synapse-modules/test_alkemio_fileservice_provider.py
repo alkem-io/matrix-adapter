@@ -477,27 +477,36 @@ def test_store_open_not_routed_through_with_timeout(monkeypatch):
     # through `_with_timeout` (which adds a second make_deferred_yieldable that
     # would resume the upload under the sentinel logcontext). The autouse fixture
     # stubs make_deferred_yieldable to identity, so the wrap is invisible at
-    # runtime — spying `_with_timeout` and its timeout arg is the structural proxy.
-    # (`_with_timeout` IS legitimately used for the reply DRAIN, with `timeout_s`;
-    # the open, if wrapped, would show up with `store_timeout_s`.)
+    # runtime — we spy the DEFERRED `_with_timeout` is called with and assert the
+    # open's defer_to_thread Deferred is NOT among them. This is decoupled from
+    # whichever timeout constant the reply drain happens to use.
     prov = _make_provider()
-    assert prov.store_timeout_s != prov.timeout_s  # so the two are distinguishable
-    calls = []
+
+    open_deferreds = []
+
+    def capturing_dtt(reactor, fn, *a):
+        d = defer.execute(fn, *a)
+        open_deferreds.append(d)
+        return d
+
+    seen = []
     orig = mod._with_timeout
 
     async def spy(reactor, timeout_s, d):
-        calls.append(timeout_s)
+        seen.append(d)
         return await orig(reactor, timeout_s, d)
 
+    monkeypatch.setattr(mod, "defer_to_thread", capturing_dtt)
     monkeypatch.setattr(mod, "_with_timeout", spy)
     monkeypatch.setattr(mod, "_open_stream", lambda p: FakeFile(b"x"))
     monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(_drainable(201)))
 
     _run(prov.store_file("local_content/x", FakeFileInfo("m")))
-    # The open is NOT wrapped: `store_timeout_s` never reaches _with_timeout.
-    assert prov.store_timeout_s not in calls
-    # ...and the guard is not vacuous — the reply DRAIN does use _with_timeout.
-    assert prov.timeout_s in calls
+    assert open_deferreds  # the open went through defer_to_thread
+    # The open's Deferred is bounded by addTimeout DIRECTLY, never via _with_timeout.
+    assert all(od not in seen for od in open_deferreds)
+    # ...and the guard is not vacuous — the reply DRAIN does route through it.
+    assert seen
 
 
 # --- fetch -----------------------------------------------------------------
@@ -662,17 +671,28 @@ def test_fetch_stalled_body_read_times_out_and_releases_conn(monkeypatch):
 
 def test_fetch_stalled_reply_drain_times_out_and_aborts(monkeypatch):
     # A NON-streamed reply (a 404 miss) whose body STALLS: the keep-alive drain is
-    # bounded, so on timeout it aborts (tears the connection down) instead of
-    # hanging — and fetch still returns None. This is the drained-vs-aborted
-    # counterpart to the fast-drain (reused) misses above.
+    # bounded by DRAIN_TIMEOUT_S, so on timeout it aborts (tears the connection
+    # down) instead of hanging — and fetch still returns None. This is the
+    # drained-vs-aborted counterpart to the fast-drain (reused) misses above.
     prov = _make_provider()
     stalling_miss = FakeResponse(404, stall_body=True)
     monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(stalling_miss))
 
     d = defer.ensureDeferred(prov.fetch("local_content/x", FakeFileInfo("missing")))
-    prov.reactor.advance(prov.timeout_s + 1)  # trip the drain deadline
+    prov.reactor.advance(mod.DRAIN_TIMEOUT_S + 0.1)  # trip the SHORT drain deadline
     assert _result_of(d) is None
     assert stalling_miss.transport.stopped is True  # drain gave up -> aborted
+
+
+def test_fetch_oversized_reply_drain_aborts(monkeypatch):
+    # A non-streamed reply body over `_MAX_DRAIN_BYTES` must abort (tear down)
+    # after the cap rather than draining unbounded — and fetch still returns None.
+    prov = _make_provider()
+    big_miss = FakeResponse(404, auto_body=b"x" * (mod._MAX_DRAIN_BYTES + 1))
+    monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(big_miss))
+    responder = _run(prov.fetch("local_content/x", FakeFileInfo("missing")))
+    assert responder is None
+    assert big_miss.transport.stopped is True  # over the cap -> aborted
 
 
 # --- streaming / responder (reactor code paths) ----------------------------

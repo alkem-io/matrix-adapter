@@ -62,8 +62,11 @@ from typing import TYPE_CHECKING, Optional
 
 from twisted.internet import defer
 from twisted.internet.defer import Deferred
+from twisted.internet.error import ConnectionDone
 from twisted.internet.interfaces import IConsumer
 from twisted.internet.protocol import Protocol
+from twisted.web.client import ResponseDone
+from twisted.web.http import PotentialDataLoss
 
 import treq
 
@@ -93,9 +96,15 @@ _STORE_SUCCESS_CODE = 201
 # body we will buffer so a (fast) oversized/garbage body can't balloon memory.
 _MAX_META_BYTES = 1 << 20  # 1 MiB
 
+# Keep-alive drain bounds for non-streamed reply bodies (misses/errors, store
+# reply). The body is tiny in the common case; if it exceeds either bound the
+# backend is misbehaving, so we abort (tear down) rather than keep reading.
+DRAIN_TIMEOUT_S = 2.0
+_MAX_DRAIN_BYTES = 1 << 20  # 1 MiB
+
 
 class _BodyTooLarge(Exception):
-    """The by-reference metadata body exceeded `_MAX_META_BYTES`."""
+    """A response body exceeded its byte cap (`_MAX_META_BYTES`/`_MAX_DRAIN_BYTES`)."""
 
 
 class _OpenAfterTimeout(Exception):
@@ -194,11 +203,10 @@ class _ConsumerSink(Protocol):
         self._written += len(data)
 
     def connectionLost(self, reason=None) -> None:
-        # ResponseDone arrives here as a clean close; treat any clean close as
-        # "done" because the consumer has already received everything streamed.
-        from twisted.web.client import ResponseDone
-        from twisted.internet.error import ConnectionDone
-
+        # ResponseDone/ConnectionDone are a clean close. NOTE: unlike the body
+        # readers below, a streamed content body treats PotentialDataLoss (a
+        # truncated download) as a FAILURE — the consumer must not be told the
+        # media completed when bytes were lost.
         if self._producer_registered:
             try:
                 self._consumer.unregisterProducer()
@@ -232,82 +240,85 @@ class _DrainAndAbort(Protocol):
 
 def _body_end_is_clean(reason) -> bool:
     """True if a body protocol's connectionLost `reason` is a normal end."""
-    from twisted.web.client import ResponseDone
-    from twisted.web.http import PotentialDataLoss
-    from twisted.internet.error import ConnectionDone
-
     return reason is None or reason.check(
         ResponseDone, PotentialDataLoss, ConnectionDone
     )
 
 
-class _JsonBodyReader(Protocol):
+class _BoundedBodyProtocol(Protocol):
     """
-    Reads a (small, buffered) response body into memory, firing `finished` with
-    the collected bytes on a clean close. A clean, fully-read body returns the
-    connection to treq's keep-alive pool for reuse.
+    Shared skeleton for the body protocols WE own (instead of treq.json_content),
+    so a stalled/failed read can `abort()` the connection — treq's collect/content
+    Deferred has no canceller, so a timeout there would cancel the wait but leave
+    the socket open (pool leak).
 
-    We read the by-reference JSON body with a protocol WE own (instead of
-    treq.json_content) specifically so we can `abort()` it: treq's
-    collect/content Deferred has no canceller, so a timeout on that read would
-    cancel the wait but leave the underlying connection open (pool leak). On a
-    stalled/failed/oversized read `abort()` tears the connection down.
+    Single-sources: the fire-once `finished` handling, the byte cap (overflow ->
+    `_BodyTooLarge` + abort), the clean-close detection, and `abort()` via the one
+    teardown primitive. Subclasses override only `_consume(data)` (per-chunk) and
+    `_result()` (the value fired on a clean close).
     """
 
-    def __init__(self, finished: "Deferred[bytes]", max_bytes: int):
+    def __init__(self, finished: "Deferred", max_bytes: int):
         self._finished = finished
         self._max_bytes = max_bytes
-        self._chunks = []
         self._size = 0
 
     def dataReceived(self, data: bytes) -> None:
         self._size += len(data)
         if self._size > self._max_bytes:
-            # A fast oversized body must not buffer unboundedly: fail + abort.
+            # A fast oversized body must not read unboundedly: fail + abort.
             if not self._finished.called:
                 self._finished.errback(_BodyTooLarge(self._size))
             self.abort()
             return
+        self._consume(data)
+
+    def connectionLost(self, reason=None) -> None:
+        if self._finished.called:
+            return
+        if _body_end_is_clean(reason):
+            self._finished.callback(self._result())
+        else:
+            self._finished.errback(reason)
+
+    def abort(self) -> None:
+        _stop_producing(getattr(self, "transport", None))
+
+    # -- subclass hooks --
+    def _consume(self, data: bytes) -> None:  # pragma: no cover - overridden
+        pass
+
+    def _result(self):
+        return None
+
+
+class _JsonBodyReader(_BoundedBodyProtocol):
+    """
+    Buffers a small response body and fires `finished` with the collected bytes on
+    a clean close (a fully-read body returns the connection to the keep-alive pool
+    for reuse). Used for the by-reference doc metadata (we need its id).
+    """
+
+    def __init__(self, finished: "Deferred[bytes]", max_bytes: int):
+        super().__init__(finished, max_bytes)
+        self._chunks = []
+
+    def _consume(self, data: bytes) -> None:
         self._chunks.append(data)
 
-    def connectionLost(self, reason=None) -> None:
-        if self._finished.called:
-            return
-        if _body_end_is_clean(reason):
-            self._finished.callback(b"".join(self._chunks))
-        else:
-            self._finished.errback(reason)
-
-    def abort(self) -> None:
-        _stop_producing(getattr(self, "transport", None))
+    def _result(self) -> bytes:
+        return b"".join(self._chunks)
 
 
-class _BodyDrainer(Protocol):
+class _BodyDrainer(_BoundedBodyProtocol):
     """
-    Reads and DISCARDS a small non-streamed reply body, firing `finished` on a
-    clean close so the (unbuffered) connection is returned to treq's keep-alive
-    pool for REUSE — cheaper than tearing a fresh TCP(+TLS) connection down and
+    DISCARDS a small non-streamed reply body and fires `finished` (None) on a clean
+    close so the (unbuffered) connection is returned to treq's keep-alive pool for
+    REUSE — cheaper than tearing a fresh TCP(+TLS) connection down and
     re-handshaking on the next call. `abort()` tears it down if the drain must be
-    given up (timeout/error). Bytes are discarded, so memory is bounded even for
-    an unexpectedly large body (which the deadline caps in time).
+    given up (timeout / over the byte cap). Bytes are discarded (base `_consume`
+    is a no-op), so memory stays bounded and the byte cap caps a hostile body.
     """
-
-    def __init__(self, finished: "Deferred"):
-        self._finished = finished
-
-    def dataReceived(self, data: bytes) -> None:
-        pass  # discard — we only drain to free the connection for reuse
-
-    def connectionLost(self, reason=None) -> None:
-        if self._finished.called:
-            return
-        if _body_end_is_clean(reason):
-            self._finished.callback(None)
-        else:
-            self._finished.errback(reason)
-
-    def abort(self) -> None:
-        _stop_producing(getattr(self, "transport", None))
 
 
 class _FileServiceResponder(Responder):
@@ -444,19 +455,26 @@ class FileServiceStorageProvider(StorageProvider):
 
     async def _drain_and_release(self, resp) -> None:
         """
-        Drain+discard a small NON-streamed reply body (bounded by `timeout_s`) so
-        the unbuffered connection is returned to treq's keep-alive pool for REUSE.
-        On a stalled/failed drain, ABORT (tear down) instead. Best-effort — NEVER
-        raises: a drain/abort failure must not fail a durable 201 nor turn a miss
-        into an error. (Aborting every reply instead would lose keep-alive and
-        force a fresh TCP+TLS handshake per store/miss under load.)
+        Drain+discard a small NON-streamed reply body so the unbuffered connection
+        is returned to treq's keep-alive pool for REUSE. On a stalled/oversized/
+        failed drain, ABORT (tear down) instead. Best-effort — NEVER raises: a
+        drain/abort failure must not fail a durable 201 nor turn a miss into an
+        error. (Aborting every reply instead would lose keep-alive and force a
+        fresh TCP+TLS handshake per store/miss under load.)
+
+        The drain is a best-effort keep-alive courtesy, so it is bounded far
+        tighter than a real request: `DRAIN_TIMEOUT_S` (small reply drains in ~ms;
+        if it isn't done in ~2s the backend is stalling -> abort) and
+        `_MAX_DRAIN_BYTES` (a large/hostile body tears down after the cap). This
+        caps worst-case store/miss latency at ~DRAIN_TIMEOUT_S — the store already
+        succeeded on 201; the drain never blocks the upload.
         """
         finished = defer.Deferred()
-        drainer = _BodyDrainer(finished)
+        drainer = _BodyDrainer(finished, _MAX_DRAIN_BYTES)
         try:
             resp.deliverBody(drainer)
-            await _with_timeout(self.reactor, self.timeout_s, finished)
-        except Exception as exc:  # noqa: BLE001 - timeout / transport / sync raise
+            await _with_timeout(self.reactor, DRAIN_TIMEOUT_S, finished)
+        except Exception as exc:  # noqa: BLE001 - timeout / oversize / transport
             drainer.abort()  # give up the reuse; tear the connection down
             logger.debug(
                 "file-service reply drain failed, aborted: %s", exc
@@ -472,17 +490,18 @@ class FileServiceStorageProvider(StorageProvider):
         read we can ABORT the connection — treq's content Deferred has no
         canceller, so a bare timeout there would release the wait but LEAK the
         still-open connection. `deliverBody` AND `json.loads` are inside the try,
-        so a synchronous deliverBody raise OR a malformed body both abort + return
-        None. A size cap (`_MAX_META_BYTES`) bounds a fast oversized body. Parsing
-        is `json.loads(bytes)` — RFC 8259 JSON is UTF-8/16/32 and json's
-        detect_encoding handles those plus a BOM (do NOT decode via a Content-Type
-        charset, which drops BOM handling).
+        so a synchronous deliverBody raise, a stalled read, an oversized body, OR a
+        malformed body all ABORT the connection and RE-RAISE — the None cache-miss
+        mapping is done by the caller (`fetch`'s outer `except`). A size cap
+        (`_MAX_META_BYTES`) bounds a fast oversized body.
         """
         finished = defer.Deferred()  # type: Deferred[bytes]
         reader = _JsonBodyReader(finished, _MAX_META_BYTES)
         try:
             resp.deliverBody(reader)
             raw = await _with_timeout(self.reactor, self.timeout_s, finished)
+            # json.loads(bytes): JSON is UTF-8/16/32 per RFC 8259 (Content-Type
+            # charset param N/A for JSON); json.loads auto-detects encoding + BOM.
             return json.loads(raw)
         except Exception:
             reader.abort()  # release the stalled/broken/oversized/malformed conn
