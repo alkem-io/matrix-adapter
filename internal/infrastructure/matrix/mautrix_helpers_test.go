@@ -759,3 +759,46 @@ func TestParseReactionEvent_MultipleEmojis(t *testing.T) {
 		assert.Equal(t, emoji, reaction.Emoji)
 	}
 }
+
+// ============================================================================
+// resolveMediaMime
+// ============================================================================
+
+func TestResolveMediaMime(t *testing.T) {
+	cases := []struct {
+		name string
+		resp string // file-service response Content-Type
+		att  string // server-declared att.MimeType
+		want string
+	}{
+		{
+			name: "bare att, resp same base type with charset -> keep charset",
+			resp: "text/plain; charset=utf-8",
+			att:  "text/plain",
+			want: "text/plain; charset=utf-8",
+		},
+		{
+			name: "specific att overrides a different resp base type",
+			resp: "text/html",
+			att:  "text/plain",
+			want: "text/plain",
+		},
+		{
+			name: "att already has params -> keep att's charset (no resp override)",
+			resp: "text/plain; charset=utf-8",
+			att:  "text/plain; charset=ascii",
+			want: "text/plain; charset=ascii",
+		},
+		{
+			name: "generic att falls back to specific resp",
+			resp: "image/png",
+			att:  "application/octet-stream",
+			want: "image/png",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, resolveMediaMime(tc.resp, tc.att))
+		})
+	}
+}

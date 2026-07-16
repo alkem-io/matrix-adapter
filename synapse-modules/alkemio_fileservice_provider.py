@@ -630,18 +630,30 @@ class FileServiceStorageProvider(StorageProvider):
 
         def _guarded_open():
             fh = _open_stream(cache_file)
-            if timed_out:  # reads the enclosing flag (set by the timeout below)
-                try:
-                    fh.close()
-                except Exception:  # noqa: BLE001 - best-effort
-                    pass
-                raise _OpenAfterTimeout(cache_file)
-            # Stat for the size-proportional timeout HERE — off the reactor, in the
-            # threadpool — so a wedged mount cannot stall the whole Synapse worker
-            # (a reactor-side os.path.getsize would reintroduce the exact hazard the
-            # threaded open avoids).
-            size = os.path.getsize(cache_file)
-            return fh, size
+            ok = False
+            try:
+                if timed_out:  # reads the enclosing flag (set by the timeout below)
+                    raise _OpenAfterTimeout(cache_file)
+                # Stat for the size-proportional timeout HERE — off the reactor, in
+                # the threadpool — so a wedged mount cannot stall the whole Synapse
+                # worker (a reactor-side os.path.getsize would reintroduce the exact
+                # hazard the threaded open avoids).
+                size = os.path.getsize(cache_file)
+                if timed_out:  # the deadline may have fired DURING getsize (wedged mount)
+                    raise _OpenAfterTimeout(cache_file)
+                ok = True
+                return fh, size
+            finally:
+                # Close the handle on EVERY non-success exit — a timeout (either
+                # check) or a getsize raise (file unlinked between open and stat) —
+                # so the FD isn't leaked. The getsize window is now covered; the only
+                # residual TOCTOU is the tiny gap between the second `timed_out`
+                # check and `return` (no syscall in between).
+                if not ok:
+                    try:
+                        fh.close()
+                    except Exception:  # noqa: BLE001 - best-effort
+                        pass
 
         open_d = defer_to_thread(self.reactor, _guarded_open)
         open_d.addTimeout(self.store_timeout_s, self.reactor)
@@ -726,10 +738,21 @@ class FileServiceStorageProvider(StorageProvider):
         bucket, so a bucket-scoped lookup would miss.
 
         Returns a Responder on a 200 content hit, or None on ANY miss/failure
-        (404, >=400, transport error, per-request timeout, malformed body).
+        (404, non-200, transport error, per-request timeout, malformed body).
         Synapse treats None as a cache miss (media-not-found), which is the
         correct degradation while file-service is unavailable.
         """
+        if not self._is_user_upload(file_info):
+            # Symmetric with store_file: only local user-upload ORIGINALS are
+            # offloaded to file-service. Thumbnails, url-cache previews and remote
+            # media were never stored there — and a thumbnail file_info carries the
+            # SAME file_id as the original, so a by-reference lookup would resolve to
+            # the ORIGINAL document and stream full-size original bytes as e.g. a
+            # thumbnail (user-visible corruption). Return a clean miss so Synapse
+            # regenerates the thumbnail from the original / handles remote media its
+            # own way.
+            return None
+
         media_id = file_info.file_id
         # Percent-encode media_id as a QUERY value (safe="" so reserved chars like
         # &, #, ?, / are all escaped) — mirrors the Go side's url.PathEscape.

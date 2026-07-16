@@ -1082,7 +1082,16 @@ const fileServiceFetchTimeout = 60 * time.Second
 const fileServiceMinThroughputBytesPerSec = 1 << 20 // 1 MiB/s
 
 func mediaStreamTimeout(maxBytes int64) time.Duration {
-	return fileServiceFetchTimeout + time.Duration(maxBytes/fileServiceMinThroughputBytesPerSec)*time.Second
+	secs := maxBytes / fileServiceMinThroughputBytesPerSec
+	// Clamp the size-proportional part to a sane ceiling: an absurd config (e.g. a
+	// petabyte FILE_SERVICE_MAX_ATTACHMENT_BYTES) would otherwise overflow int64
+	// nanoseconds in the Duration multiply, wrap negative, and make every send fail
+	// on a negative context deadline.
+	const maxStreamSeconds = 3600 // 1h ceiling
+	if secs > maxStreamSeconds {
+		secs = maxStreamSeconds
+	}
+	return fileServiceFetchTimeout + time.Duration(secs)*time.Second
 }
 
 func newFileServiceHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
@@ -1195,16 +1204,27 @@ func threadRelation(threadID id.EventID) *event.RelatesTo {
 // resolveMediaMime picks the most specific media type and returns it in
 // canonical form: a lowercased "type/subtype" with any meaningful parameters
 // (e.g. "; charset=utf-8") preserved. The server-declared att.MimeType is
-// authoritative when specific; otherwise the file-service response Content-Type
-// is used. Empty, params-only, malformed, and application/octet-stream values
-// are treated as non-specific. The result drives the upload Content-Type, the
-// Matrix msgtype, and info.mimetype uniformly so they never disagree — and
-// because the type is lowercased, case-insensitive inputs (e.g. "Image/JPEG")
-// still classify correctly in mediaMsgType.
+// authoritative for the base TYPE when specific; otherwise the file-service
+// response Content-Type is used. Empty, params-only, malformed, and
+// application/octet-stream values are treated as non-specific. The result drives
+// the upload Content-Type, the Matrix msgtype, and info.mimetype uniformly so
+// they never disagree — and because the type is lowercased, case-insensitive
+// inputs (e.g. "Image/JPEG") still classify correctly in mediaMsgType.
+//
+// One refinement when att is specific: if file-service reports the SAME base type
+// but WITH parameters att lacks (server declares "text/plain", file-service
+// serves "text/plain; charset=utf-8"), prefer the response so the charset
+// survives to the upload Content-Type. If the base types DIFFER, att still wins
+// (a genuine server override).
 func resolveMediaMime(responseContentType, attMimeType string) string {
 	att := normalizeMediaType(attMimeType)
 	resp := normalizeMediaType(responseContentType)
 	if isSpecificMediaType(att) {
+		// att carries no params (att == baseType(att)) but resp is the same base
+		// type with params → keep resp's fuller form so charset isn't dropped.
+		if isSpecificMediaType(resp) && baseType(resp) == baseType(att) && att == baseType(att) && resp != att {
+			return resp
+		}
 		return att
 	}
 	if isSpecificMediaType(resp) {

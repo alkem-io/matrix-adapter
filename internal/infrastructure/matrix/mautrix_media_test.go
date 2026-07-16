@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"testing"
@@ -447,6 +448,12 @@ func TestMediaStreamTimeout_ScalesWithSize(t *testing.T) {
 	got := mediaStreamTimeout(big)
 	assert.Equal(t, fileServiceFetchTimeout+100*time.Second, got, "100 MiB adds 100s at 1 MiB/s")
 	assert.Greater(t, got, fileServiceFetchTimeout)
+
+	// Absurd config must not overflow int64-ns and wrap negative: the result is
+	// clamped to the floor + a 1h ceiling, and stays positive.
+	clamped := mediaStreamTimeout(math.MaxInt64)
+	assert.Equal(t, fileServiceFetchTimeout+3600*time.Second, clamped, "clamped to floor + 1h ceiling")
+	assert.Positive(t, clamped, "clamped duration must stay positive, never wrap negative")
 }
 
 // LOW(b) — info.size reflects the bytes actually uploaded, not the caller's

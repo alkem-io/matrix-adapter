@@ -520,6 +520,25 @@ def test_store_late_open_closes_late_handle(monkeypatch):
     assert fake_file.closed is True  # late handle self-closed, not leaked
 
 
+def test_store_guarded_open_getsize_raises_closes_handle(monkeypatch):
+    # The size stat runs in the guarded open (off-reactor). If getsize RAISES (the
+    # file was unlinked between open and stat), the handle must be CLOSED rather
+    # than leaked — the open succeeded, so only the finally can free the FD.
+    prov = _make_provider()
+    fake_file = FakeFile(b"x")
+
+    def boom_getsize(_path):
+        raise OSError("file unlinked between open and stat")
+
+    monkeypatch.setattr(mod, "_open_stream", lambda p: fake_file)
+    monkeypatch.setattr(mod.os.path, "getsize", boom_getsize)
+    monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(FakeResponse(201)))
+
+    with pytest.raises(OSError):
+        _run(prov.store_file("local_content/x", FakeFileInfo("m")))
+    assert fake_file.closed is True  # closed on the getsize-raise path, not leaked
+
+
 def test_store_open_not_routed_through_with_timeout(monkeypatch):
     # Structural logcontext guard: the cache-file open must be awaited via
     # addTimeout DIRECTLY on the already-yieldable defer_to_thread Deferred, never
@@ -559,6 +578,30 @@ def test_store_open_not_routed_through_with_timeout(monkeypatch):
 
 
 # --- fetch -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "file_info",
+    [
+        FakeFileInfo("MEDIAID", thumbnail=object()),
+        FakeFileInfo("MEDIAID", url_cache=1),
+        FakeFileInfo("MEDIAID", server_name="remote.host"),
+    ],
+    ids=["thumbnail", "url_cache", "remote"],
+)
+def test_fetch_skips_non_user_upload(monkeypatch, file_info):
+    # Symmetric with store_file: a thumbnail / url-cache / remote file_info must NOT
+    # hit file-service. A thumbnail file_info carries the SAME file_id as the
+    # original, so a by-reference lookup would resolve to the ORIGINAL and stream
+    # full-size bytes as the thumbnail (corruption). Clean miss, NO HTTP call.
+    prov = _make_provider()
+    called = {"get": False}
+    monkeypatch.setattr(
+        mod.treq, "get", lambda *a, **k: called.__setitem__("get", True)
+    )
+    responder = _run(prov.fetch("thumbnail/x", file_info))
+    assert responder is None
+    assert called["get"] is False  # never looked up by-reference
 
 
 def test_fetch_global_lookup_then_streams(monkeypatch):
