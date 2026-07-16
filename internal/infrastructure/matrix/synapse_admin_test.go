@@ -778,8 +778,8 @@ func TestGetEventContext_Success(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "/context/") {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		if got := r.URL.Query().Get("limit"); got != "1" {
-			t.Errorf("expected context limit=1, got %q", got)
+		if got := r.URL.Query().Get("limit"); got != "0" {
+			t.Errorf("expected context limit=0, got %q", got)
 		}
 		body, marshalErr := json.Marshal(map[string]interface{}{
 			"event": map[string]interface{}{

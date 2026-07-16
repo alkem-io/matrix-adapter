@@ -306,3 +306,25 @@ func TestGetMessage_AbsentBody_ReturnsMessage(t *testing.T) {
 	assert.Empty(t, msg.Content)
 	assert.Equal(t, "$redacted", msg.ID)
 }
+
+// A message event whose body is PRESENT but not a string is malformed; GetMessage
+// must error (matching develop) rather than silently return a blank Message. This
+// is distinct from an absent body (bodyless/redacted → empty-content Message).
+func TestGetMessage_MalformedBody_ReturnsError(t *testing.T) {
+	admin := &mockAdminAPI{
+		getEventResult: &event.Event{
+			ID:        id.EventID("$bad"),
+			Sender:    id.UserID("@user:test.local"),
+			Type:      event.EventMessage,
+			Timestamp: 1700000000000,
+			Content: event.Content{
+				Raw: map[string]any{"body": 12345, "msgtype": "m.text"},
+			},
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$bad")
+	require.Error(t, err, "a non-string body is malformed and must error")
+	assert.Nil(t, msg)
+}

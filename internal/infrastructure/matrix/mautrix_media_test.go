@@ -195,7 +195,6 @@ func TestSendMessage_TextPlusAttachment(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "m.file", content["msgtype"], "non-image MIME maps to m.file")
 	assert.Equal(t, docID1, content["io.alkemio.document_id"])
-	assert.Equal(t, "$text1", content[attachmentParentEventIDField])
 }
 
 // A non-OK response from file-service surfaces as an error and no event is sent.
@@ -507,10 +506,8 @@ func TestSendMessage_MultiAttachment_DistinctPerEvent(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "first.png", c0["body"])
 	assert.Equal(t, docID1, c0["io.alkemio.document_id"])
-	assert.NotContains(t, c0, attachmentParentEventIDField, "the first attachment is the primary event")
 	assert.Equal(t, "second.png", c1["body"])
 	assert.Equal(t, docID2, c1["io.alkemio.document_id"])
-	assert.Equal(t, "$x", c1[attachmentParentEventIDField])
 }
 
 // A non-positive configured max attachment size falls back to the built-in
@@ -604,6 +601,30 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 		info, ok := content["info"].(map[string]any)
 		require.True(t, ok)
 		assert.Equal(t, int64(len(body)), info["size"], "info.size is the streamed byte count")
+	})
+
+	t.Run("misreported (too-large) Content-Length still uploads (streamed length)", func(t *testing.T) {
+		body := []byte("SHORT") // 5 bytes actually served
+		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+			resp := fileServiceResponse(http.StatusOK, "image/png", body)
+			resp.ContentLength = 999 // declares far more than it serves (in-cap)
+			return resp, nil
+		})
+
+		intent := &mockIntentAPI{
+			uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/s")},
+			sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$s"},
+		}
+		a := newMediaTestAdapter(t, fileServiceURL, intent)
+		a.cfg.FileService.MaxAttachmentBytes = 1024
+
+		_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+			[]domain.Attachment{{DocumentID: docID1, DisplayName: "s.png", MimeType: "image/png"}})
+		require.NoError(t, err, "a short body under a larger declared length must still upload")
+		require.Equal(t, 1, intent.uploadBytesCalled)
+		assert.Equal(t, int64(-1), intent.lastUploadContentLength,
+			"upload streams with unknown length, never the declared Content-Length")
+		assert.Equal(t, body, intent.lastUploadBytesData)
 	})
 
 	t.Run("oversize body fails and sends no event", func(t *testing.T) {

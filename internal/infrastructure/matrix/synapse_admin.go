@@ -272,7 +272,7 @@ func (s *SynapseAdmin) GetRoomMessages(ctx context.Context, roomID id.RoomID, fr
 func (s *SynapseAdmin) GetEventContext(ctx context.Context, roomID id.RoomID, eventID id.EventID) (*mautrix.RespContext, error) {
 	var resp mautrix.RespContext
 	urlPath := s.buildURL("v1", "rooms", roomID, "context", eventID)
-	_, err := s.client.MakeRequest(ctx, http.MethodGet, urlPath+"?limit=1", nil, &resp)
+	_, err := s.client.MakeRequest(ctx, http.MethodGet, urlPath+"?limit=0", nil, &resp)
 	if err != nil {
 		return nil, err
 	}

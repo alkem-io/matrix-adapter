@@ -389,13 +389,6 @@ func (s *RoomService) RedactEvent(
 	return s.matrix.RedactEvent(ctx, roomID, actorID, eventID, reason)
 }
 
-// RedactMessageWithAttachments redacts a message and its outbound attachment events.
-func (s *RoomService) RedactMessageWithAttachments(
-	ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string,
-) error {
-	return s.matrix.RedactMessageWithAttachments(ctx, roomID, actorID, eventID, reason)
-}
-
 // SendReaction sends a reaction (emoji) to an event.
 func (s *RoomService) SendReaction(
 	ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, emoji string,

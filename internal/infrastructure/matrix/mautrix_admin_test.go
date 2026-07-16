@@ -38,8 +38,6 @@ type mockAdminAPI struct {
 	getRoomMessagesResult      *mautrix.RespMessages
 	getRoomMessagesErr         error
 	getRoomMessagesResults     []*mautrix.RespMessages
-	getEventContextResult      *mautrix.RespContext
-	getEventContextErr         error
 	getEventResult             *event.Event
 	getEventErr                error
 	getRelationsResult         []*event.Event
@@ -48,7 +46,6 @@ type mockAdminAPI struct {
 
 	// Call tracking
 	getRoomMessagesCalls []getRoomMessagesCall
-	getEventContextCalls []getEventContextCall
 	joinRoomCalls        []joinRoomCall
 }
 
@@ -57,11 +54,6 @@ type getRoomMessagesCall struct {
 	From   string
 	Dir    string
 	Limit  int
-}
-
-type getEventContextCall struct {
-	RoomID  id.RoomID
-	EventID id.EventID
 }
 
 type joinRoomCall struct {
@@ -111,16 +103,6 @@ func (m *mockAdminAPI) GetRoomMessages(
 		return m.getRoomMessagesResults[callIndex], m.getRoomMessagesErr
 	}
 	return m.getRoomMessagesResult, m.getRoomMessagesErr
-}
-
-func (m *mockAdminAPI) GetEventContext(
-	_ context.Context, roomID id.RoomID, eventID id.EventID,
-) (*mautrix.RespContext, error) {
-	m.getEventContextCalls = append(m.getEventContextCalls, getEventContextCall{
-		RoomID:  roomID,
-		EventID: eventID,
-	})
-	return m.getEventContextResult, m.getEventContextErr
 }
 
 func (m *mockAdminAPI) GetEvent(_ context.Context, _ id.RoomID, _ id.EventID) (*event.Event, error) {

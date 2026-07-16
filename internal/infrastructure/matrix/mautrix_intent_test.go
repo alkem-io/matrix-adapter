@@ -135,9 +135,10 @@ type mockIntentAPI struct {
 	buildClientURLResult      string
 
 	// Media
-	uploadBytesCalled   int
-	lastUploadBytesData []byte
-	lastUploadBytesType string
+	uploadBytesCalled       int
+	lastUploadBytesData     []byte
+	lastUploadBytesType     string
+	lastUploadContentLength int64
 }
 
 var _ intentAPI = (*mockIntentAPI)(nil)
@@ -278,6 +279,7 @@ func (m *mockIntentAPI) DeleteAlias(_ context.Context, _ id.RoomAlias) (*mautrix
 func (m *mockIntentAPI) UploadMedia(_ context.Context, req mautrix.ReqUploadMedia) (*mautrix.RespMediaUpload, error) {
 	m.uploadBytesCalled++
 	m.lastUploadBytesType = req.ContentType
+	m.lastUploadContentLength = req.ContentLength
 	if req.Content != nil {
 		data, err := io.ReadAll(req.Content)
 		m.lastUploadBytesData = data

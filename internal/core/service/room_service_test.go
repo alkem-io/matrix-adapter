@@ -92,9 +92,6 @@ func (m *mockMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Acto
 func (m *mockMatrixPort) RedactEvent(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {
 	return nil
 }
-func (m *mockMatrixPort) RedactMessageWithAttachments(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {
-	return nil
-}
 func (m *mockMatrixPort) SendReaction(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) (id.EventID, error) {
 	return "", nil
 }
