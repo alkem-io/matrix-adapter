@@ -416,3 +416,30 @@ func TestGetMessage_MediaEventNonStringBody_ReturnsAttachment(t *testing.T) {
 	require.Len(t, msg.Attachments, 1, "the media attachment must be surfaced")
 	assert.Equal(t, "x", msg.Attachments[0].MediaID)
 }
+
+// The media-event body short-circuit must require a VALID mxc url — the same
+// parser extractAttachment uses. A non-mxc url (e.g. http://) does not surface an
+// attachment, so a non-string body alongside it is genuinely malformed: GetMessage
+// must error rather than return a blank Message.
+func TestGetMessage_NonMxcUrlNonStringBody_ReturnsError(t *testing.T) {
+	admin := &mockAdminAPI{
+		getEventResult: &event.Event{
+			ID:        id.EventID("$evil"),
+			Sender:    id.UserID("@user:test.local"),
+			Type:      event.EventMessage,
+			Timestamp: 1700000000000,
+			Content: event.Content{
+				Raw: map[string]any{
+					"msgtype": "m.image",
+					"body":    12345,           // corrupt, non-string body
+					"url":     "http://evil/x", // NOT an mxc URI
+				},
+			},
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$evil")
+	require.Error(t, err, "a non-mxc url with a non-string body is malformed and must error")
+	assert.Nil(t, msg)
+}

@@ -23,6 +23,11 @@ func TestRawInt64_RangeAndSignGuards(t *testing.T) {
 	if v, ok := rawInt64(1e30); ok {
 		t.Errorf("rawInt64(1e30) must be rejected, got (%d, true)", v)
 	}
+	// Boundary: float64(math.MaxInt64) rounds UP to exactly 2^63, which overflows
+	// int64 (wraps to MinInt64); it must be rejected, not accepted.
+	if v, ok := rawInt64(float64(math.MaxInt64)); ok {
+		t.Errorf("rawInt64(2^63) must be rejected, got (%d, true)", v)
+	}
 	// Negative floats are not valid sizes/dimensions.
 	if v, ok := rawInt64(float64(-5)); ok {
 		t.Errorf("rawInt64(-5) must be rejected, got (%d, true)", v)

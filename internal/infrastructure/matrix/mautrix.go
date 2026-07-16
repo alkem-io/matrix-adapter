@@ -1327,18 +1327,22 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 // (develop errored here). An ABSENT body is NOT malformed: a bodyless/redacted
 // message event still resolves to an empty-content Message.
 //
-// A MEDIA event (non-empty mxc "url") is NEVER malformed on body grounds: it is a
-// valid attachment that parseMessageEvent/extractInboundMessage surface via the
-// url, and the timeline scans (GetRoomMessages/GetLastMessage) return it. Firing
-// here on a media event with a corrupt/non-string body would make GetMessage
-// error on a message the other read paths return, an inconsistent read path.
-// Only a non-string body with NO url is malformed.
+// A MEDIA event (a "url" that parses as a valid mxc URI) is NEVER malformed on
+// body grounds: it is a valid attachment that parseMessageEvent/extractInboundMessage
+// surface via the url, and the timeline scans (GetRoomMessages/GetLastMessage)
+// return it. Firing here on a media event with a corrupt/non-string body would make
+// GetMessage error on a message the other read paths return, an inconsistent read
+// path. The url must validate with the SAME parser extractAttachment uses
+// (id.ParseContentURI): a non-mxc url (e.g. "http://...") does not surface an
+// attachment, so a non-string body alongside it stays malformed.
 func malformedMessageBody(evt *event.Event) bool {
 	if evt.Type != event.EventMessage || evt.Content.Raw == nil {
 		return false
 	}
-	if url, ok := evt.Content.Raw["url"].(string); ok && url != "" {
-		return false
+	if urlStr, ok := evt.Content.Raw["url"].(string); ok && urlStr != "" {
+		if _, err := id.ParseContentURI(urlStr); err == nil {
+			return false
+		}
 	}
 	raw, present := evt.Content.Raw["body"]
 	if !present {

@@ -1013,11 +1013,13 @@ func (m *MautrixAdapter) isOwnAppserviceUser(userID id.UserID) bool {
 // an int produced by in-process construction) to an int64. It only carries
 // sizes/dimensions, which are non-negative: a NaN/Inf, negative, or int64-range-
 // overflowing float (e.g. a hostile info.size of 1e30) is rejected as (0, false)
-// rather than surfacing an implementation-defined garbage/negative int64.
+// rather than surfacing an implementation-defined garbage/negative int64. The
+// upper bound is `>=` because float64(math.MaxInt64) rounds UP to 2^63, so exactly
+// 2^63 would otherwise pass and int64(2^63) wraps to MinInt64.
 func rawInt64(v any) (int64, bool) {
 	switch n := v.(type) {
 	case float64:
-		if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > float64(math.MaxInt64) {
+		if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n >= float64(math.MaxInt64) {
 			return 0, false
 		}
 		return int64(n), true
