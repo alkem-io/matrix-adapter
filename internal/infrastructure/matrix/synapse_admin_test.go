@@ -997,6 +997,60 @@ func TestGetRelations_Success(t *testing.T) {
 	}
 }
 
+// GetRelations follows next_batch and accumulates every page. Simulates a thread
+// whose first page is all sticker replies (newest-first) and whose second page
+// carries an older message reply: without pagination the message reply would be
+// dropped. Also asserts the empty event-type filter omits the type path segment.
+func TestGetRelations_Paginates(t *testing.T) {
+	var gotFroms []string
+	var gotPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotFroms = append(gotFroms, r.URL.Query().Get("from"))
+		gotPaths = append(gotPaths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("from") == "" {
+			// Page 1: sticker replies + next_batch pointing at page 2.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"chunk": []map[string]interface{}{
+					{"type": "m.sticker", "event_id": "$s1:hs", "sender": "@a:hs", "origin_server_ts": 3000},
+					{"type": "m.sticker", "event_id": "$s2:hs", "sender": "@a:hs", "origin_server_ts": 2900},
+				},
+				"next_batch": "PAGE2",
+			})
+			return
+		}
+		// Page 2: an older message reply, no further next_batch.
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"chunk": []map[string]interface{}{
+				{"type": "m.room.message", "event_id": "$m1:hs", "sender": "@b:hs", "origin_server_ts": 1000},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	events, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{}, // empty type → all relation event types
+	)
+	if err != nil {
+		t.Fatalf("GetRelations: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected 3 accumulated relations across 2 pages, got %d", len(events))
+	}
+	if events[0].ID != "$s1:hs" || events[2].ID != "$m1:hs" {
+		t.Errorf("expected [stickers..., message], got %s .. %s", events[0].ID, events[2].ID)
+	}
+	if len(gotFroms) != 2 || gotFroms[0] != "" || gotFroms[1] != "PAGE2" {
+		t.Errorf("expected 2 requests with from=[\"\", \"PAGE2\"], got %v", gotFroms)
+	}
+	// Empty event-type must NOT add a trailing type segment after the relType.
+	if strings.HasSuffix(gotPaths[0], "/m.thread/") || strings.Contains(gotPaths[0], "/m.thread/m.") {
+		t.Errorf("expected no event-type path segment for empty type, got %s", gotPaths[0])
+	}
+}
+
 func TestGetRelations_Empty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

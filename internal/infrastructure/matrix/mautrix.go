@@ -1331,16 +1331,17 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 	return msg, nil
 }
 
-// malformedMessageBody reports whether a message-type event carries a "body" that
-// is present but not a string. An ABSENT body is NOT malformed: a bodyless/redacted
-// message event still resolves to an empty-content Message.
+// malformedMessageBody reports whether a message-like event (m.room.message or
+// m.sticker) carries a "body" that is present but not a string. An ABSENT body is
+// NOT malformed: a bodyless/redacted message event still resolves to an
+// empty-content Message.
 //
 // This is a PURE body check — it does NOT inspect url/mxc/msgtype/document_id.
 // Whether the event nonetheless carries usable media is decided by parseMessageEvent
 // (the single source of truth); GetMessage only consults this once parseMessageEvent
 // has surfaced no content and no attachment.
 func malformedMessageBody(evt *event.Event) bool {
-	if evt.Type != event.EventMessage || evt.Content.Raw == nil {
+	if !isMessageLikeEvent(evt) || evt.Content.Raw == nil {
 		return false
 	}
 	raw, present := evt.Content.Raw["body"]
@@ -1893,7 +1894,7 @@ func isMessageLikeEvent(evt *event.Event) bool {
 // media message with its attachment through the same extractInboundMessage path.
 // This also closes the GetMessage-on-a-sticker regression (previously errored).
 func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *domain.Message {
-	if evt.Type != event.EventMessage && evt.Type != event.EventSticker {
+	if !isMessageLikeEvent(evt) {
 		return nil
 	}
 

@@ -879,8 +879,9 @@ var mediaMsgTypes = map[string]struct{}{
 // An m.sticker (event.EventSticker) is handled as image media: it carries the
 // same url+info shape as an m.image but has NO msgtype field, so the
 // mediaMsgTypes gate is bypassed for stickers. A sticker with no info.mimetype
-// defaults to image/png (stickers are always images), so it still routes down
-// the image media path.
+// leaves att.MimeType empty — the adapter does not guess (a sticker may be
+// webp/gif/Lottie, not PNG); the true content-type is resolved downstream at
+// re-home, where file-service stores the actual blob content-type.
 //
 // The adapter never resolves these refs — it only surfaces them.
 func extractAttachment(evt *event.Event, trustDocumentID bool) *domain.Attachment {
@@ -906,13 +907,6 @@ func extractAttachment(evt *event.Event, trustDocumentID bool) *domain.Attachmen
 	}
 
 	applyMediaInfo(att, raw)
-
-	// A sticker with no info.mimetype defaults to image/png: stickers are always
-	// images, and a bare default keeps the attachment on the image media path
-	// rather than surfacing an empty mimetype.
-	if isSticker && att.MimeType == "" {
-		att.MimeType = "image/png"
-	}
 
 	// io.alkemio.document_id → DocumentID, but only from a trusted (own
 	// appservice) sender. Our own outbound media already lives in file-service as
@@ -987,12 +981,22 @@ func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
 // just the filename), so a body equal to the display name is dropped to avoid
 // rendering the filename as a duplicate text line. This also covers legacy media
 // where body IS the filename.
+//
+// A sticker's body is ALWAYS alt-text describing the image, never message text:
+// it feeds only the attachment DisplayName, so Content is forced empty. A normal
+// sticker (url present) → attachment + empty Content; a url-less sticker (e.g.
+// E2EE content.file) → empty Content and no attachment, i.e. a blank message
+// (filtered by isBlankMessage in scans), NOT a phantom alt-text line.
 func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content string, attachment *domain.Attachment, ok bool) {
 	body, bodyPresent := inboundBody(evt)
 	attachment = extractAttachment(evt, trustDocumentID)
 
 	if !bodyPresent && attachment == nil {
 		return "", nil, false
+	}
+
+	if evt.Type == event.EventSticker {
+		return "", attachment, true
 	}
 
 	if attachment != nil && body == attachment.DisplayName {

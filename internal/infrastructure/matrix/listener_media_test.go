@@ -232,9 +232,10 @@ func TestExtractAttachment_Sticker(t *testing.T) {
 	assert.Equal(t, 128, *att.Width)
 }
 
-// A sticker with no info.mimetype defaults to image/png (stickers are images),
-// keeping it on the image media path rather than an empty mimetype.
-func TestExtractAttachment_Sticker_DefaultsMimeToPNG(t *testing.T) {
+// A sticker with no info.mimetype leaves MimeType EMPTY — the adapter must not
+// guess (a sticker may be webp/gif/Lottie); the real content-type is resolved
+// downstream at re-home from the stored blob.
+func TestExtractAttachment_Sticker_AbsentMimeStaysEmpty(t *testing.T) {
 	evt := mediaEvent(map[string]any{
 		"body": "wave",
 		"url":  "mxc://test.local/nomime",
@@ -244,7 +245,48 @@ func TestExtractAttachment_Sticker_DefaultsMimeToPNG(t *testing.T) {
 	att := extractAttachment(evt, true)
 	require.NotNil(t, att)
 	assert.Equal(t, "nomime", att.MediaID)
-	assert.Equal(t, "image/png", att.MimeType, "sticker with absent mimetype defaults to image/png")
+	assert.Empty(t, att.MimeType, "sticker with absent mimetype must not be guessed")
+}
+
+// A sticker's body is alt-text, never message Content: a url-less sticker (e.g.
+// E2EE content.file, or a non-standard url) surfaces empty Content and NO
+// attachment — a blank message — NOT a phantom alt-text text line.
+func TestExtractInboundMessage_UrllessSticker_NoPhantomText(t *testing.T) {
+	evt := &event.Event{
+		Type: event.EventSticker,
+		Content: event.Content{
+			Raw: map[string]any{
+				"body": "party parrot", // alt-text only; no url the adapter can parse
+			},
+		},
+	}
+
+	content, attachment, ok := extractInboundMessage(evt, false)
+	assert.True(t, ok, "a present body keeps the event (blank message, not dropped)")
+	assert.Empty(t, content, "sticker alt-text must never surface as Content")
+	assert.Nil(t, attachment, "no parseable url → no attachment")
+	assert.True(t, isBlankMessage(&domain.Message{Content: content}), "url-less sticker is a blank message")
+}
+
+// A normal sticker (url present) still surfaces its attachment with empty Content.
+func TestExtractInboundMessage_Sticker_AttachmentEmptyContent(t *testing.T) {
+	evt := &event.Event{
+		Type: event.EventSticker,
+		Content: event.Content{
+			Raw: map[string]any{
+				"body": "party parrot",
+				"url":  "mxc://test.local/stickerid",
+				"info": map[string]any{"mimetype": "image/png"},
+			},
+		},
+	}
+
+	content, attachment, ok := extractInboundMessage(evt, false)
+	assert.True(t, ok)
+	assert.Empty(t, content)
+	require.NotNil(t, attachment)
+	assert.Equal(t, "stickerid", attachment.MediaID)
+	assert.Equal(t, "party parrot", attachment.DisplayName)
 }
 
 // A media msgtype carrying neither a parseable mxc URL nor a document id yields

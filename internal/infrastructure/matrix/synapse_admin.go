@@ -305,6 +305,11 @@ func (s *SynapseAdmin) GetTimestampToEvent(ctx context.Context, roomID id.RoomID
 	return resp.EventID, nil
 }
 
+// maxRelationsPages bounds GetRelations pagination so a pathological thread can
+// never loop unbounded. At the Synapse default page size (~50) this covers ~1000
+// relations, far beyond any real thread.
+const maxRelationsPages = 20
+
 // GetRelations retrieves relations (reactions, threads) for an event.
 // Uses the Matrix Client API (not Synapse Admin API) since no admin relations endpoint exists.
 // The admin access token is a normal client token — standard room access rules apply.
@@ -314,25 +319,49 @@ func (s *SynapseAdmin) GetTimestampToEvent(ctx context.Context, roomID id.RoomID
 // thread replies alongside m.room.message replies (the caller filters
 // client-side via isMessageLikeEvent). A non-empty eventType filters server-side
 // (e.g. m.reaction for annotation lookups).
+//
+// The fetch is PAGINATED: it follows the response next_batch token (bounded by
+// maxRelationsPages) and accumulates every page. A single unpaginated page of
+// newest-first relations could otherwise push older replies off the end — e.g.
+// many recent sticker replies burying an older message reply — silently dropping
+// real replies.
 func (s *SynapseAdmin) GetRelations(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID,
 	relType event.RelationType, eventType event.Type,
 ) ([]*event.Event, error) {
-	var urlPath string
+	var base string
 	if eventType.Type == "" {
-		urlPath = s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType)
+		base = s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType)
 	} else {
-		urlPath = s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType, eventType.Type)
+		base = s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType, eventType.Type)
 	}
 
-	var resp struct {
-		Chunk []*event.Event `json:"chunk"`
+	var all []*event.Event
+	from := ""
+	for page := 0; page < maxRelationsPages; page++ {
+		urlPath := base
+		if from != "" {
+			sep := "?"
+			if strings.Contains(base, "?") {
+				sep = "&"
+			}
+			urlPath = base + sep + "from=" + url.QueryEscape(from)
+		}
+
+		var resp struct {
+			Chunk     []*event.Event `json:"chunk"`
+			NextBatch string         `json:"next_batch"`
+		}
+		if _, err := s.client.MakeRequest(ctx, http.MethodGet, urlPath, nil, &resp); err != nil {
+			return nil, err
+		}
+		all = append(all, resp.Chunk...)
+		if resp.NextBatch == "" {
+			break
+		}
+		from = resp.NextBatch
 	}
-	_, err := s.client.MakeRequest(ctx, http.MethodGet, urlPath, nil, &resp)
-	if err != nil {
-		return nil, err
-	}
-	return resp.Chunk, nil
+	return all, nil
 }
 
 // JoinRoom forces a user to join a room (bypasses join rules for admin).

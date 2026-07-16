@@ -880,6 +880,32 @@ func TestGetMessage_Sticker_ReturnsAttachment(t *testing.T) {
 	assert.Equal(t, "image/png", msg.Attachments[0].MimeType)
 }
 
+// A sticker with a present-but-non-string body and no usable media is malformed:
+// malformedMessageBody now covers m.sticker (not just m.room.message), so
+// GetMessage errors "event is not a message" instead of returning a blank message.
+func TestGetMessage_Sticker_MalformedBody_Errors(t *testing.T) {
+	admin := &mockAdminAPI{
+		getEventResult: &event.Event{
+			ID:        id.EventID("$badsticker"),
+			Sender:    id.UserID("@element:test.local"),
+			Type:      event.EventSticker,
+			Timestamp: 1700000000000,
+			Content: event.Content{
+				Raw: map[string]any{
+					"body": map[string]any{"not": "a string"}, // present but non-string
+					// no url → no attachment
+				},
+			},
+		},
+	}
+	as := newMockAS(&mockIntentAPI{}, nil)
+	a := newFullTestAdapter(as, admin)
+
+	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$badsticker")
+	require.Error(t, err, "a malformed-body sticker with no media must error, not return a blank message")
+	assert.Nil(t, msg)
+}
+
 // A sticker in the unread window counts toward the unread total, exactly like an
 // m.room.message: countUnreadMessages uses isMessageLikeEvent. A mixed batch of a
 // text message and a sticker (both from another user) counts 2; before stickers
