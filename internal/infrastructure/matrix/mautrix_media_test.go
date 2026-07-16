@@ -27,7 +27,12 @@ const (
 	docID3 = "33333333-3333-4333-8333-333333333333"
 )
 
-func TestSendMessage_AttachmentFailureRollsBackPriorFanOutEvents(t *testing.T) {
+// A multi-attachment send is a fan-out of independent events, exactly like an
+// Element multi-image send: if one attachment fails, the events already sent
+// stay in the room (no rollback) and the error is returned so the caller can
+// retry the failed part. Matrix/Element provide no cross-event atomicity, so the
+// adapter must not reinvent it.
+func TestSendMessage_AttachmentFailure_LeavesPriorEventsNoRollback(t *testing.T) {
 	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
 		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
 	})
@@ -54,7 +59,7 @@ func TestSendMessage_AttachmentFailureRollsBackPriorFanOutEvents(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "attachment 2 of 3 failed")
 	assert.Equal(t, 2, intent.sendMessageEventCalled, "the third attachment must not be attempted")
-	assert.Equal(t, []id.EventID{"$text", "$attachment-1"}, intent.redactEventIDs)
+	assert.Empty(t, intent.redactEventIDs, "prior events are NOT rolled back (Element parity)")
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

@@ -738,35 +738,33 @@ func (m *MautrixAdapter) SendMessage(
 	intent := m.as.Intent(userID)
 
 	var primaryEventID id.EventID
-	sentEventIDs := make([]id.EventID, 0, len(attachments)+1)
 	if content != "" {
 		resp, err := intent.SendText(ctx, roomID, content)
 		if err != nil {
 			return "", fmt.Errorf("failed to send message: %w", err)
 		}
 		primaryEventID = resp.EventID
-		sentEventIDs = append(sentEventIDs, resp.EventID)
 	}
 
-	return m.fanOutAttachments(ctx, intent, roomID, attachments, "", primaryEventID, sentEventIDs)
+	return m.fanOutAttachments(ctx, intent, roomID, attachments, "", primaryEventID)
 }
 
-// fanOutAttachments sends each attachment as its own media event. On any failure
-// it best-effort rolls back every event already sent in this send (via
-// rollbackFanOut) and returns the error. primaryEventID is the text event's id
-// (empty for an attachment-only message, in which case the first attachment
-// becomes the primary); it is returned resolved.
+// fanOutAttachments sends each attachment as its own independent media event.
+// There is no atomicity across the fan-out — Matrix/Element have none either: if
+// one attachment fails, the events already sent stay in the room and the error
+// is returned, so the caller retries the failed part exactly as an Element
+// multi-image send behaves (each image is its own event/message). primaryEventID
+// is the text event's id (empty for an attachment-only message, in which case
+// the first attachment becomes the primary); it is returned resolved.
 func (m *MautrixAdapter) fanOutAttachments(
 	ctx context.Context, intent intentAPI, roomID id.RoomID,
-	attachments []domain.Attachment, threadID, primaryEventID id.EventID, sentEventIDs []id.EventID,
+	attachments []domain.Attachment, threadID, primaryEventID id.EventID,
 ) (id.EventID, error) {
 	for i := range attachments {
 		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID)
 		if err != nil {
-			m.rollbackFanOut(ctx, intent, roomID, sentEventIDs)
 			return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
 		}
-		sentEventIDs = append(sentEventIDs, eventID)
 		if primaryEventID == "" {
 			primaryEventID = eventID
 		}
@@ -927,7 +925,6 @@ func (m *MautrixAdapter) SendReply(
 	intent := m.as.Intent(userID)
 
 	var primaryEventID id.EventID
-	sentEventIDs := make([]id.EventID, 0, len(attachments)+1)
 	if content != "" {
 		msgContent := event.MessageEventContent{
 			MsgType:   event.MsgText,
@@ -940,10 +937,9 @@ func (m *MautrixAdapter) SendReply(
 			return "", fmt.Errorf("failed to send reply: %w", err)
 		}
 		primaryEventID = resp.EventID
-		sentEventIDs = append(sentEventIDs, resp.EventID)
 	}
 
-	return m.fanOutAttachments(ctx, intent, roomID, attachments, threadID, primaryEventID, sentEventIDs)
+	return m.fanOutAttachments(ctx, intent, roomID, attachments, threadID, primaryEventID)
 }
 
 // ============================================================================
@@ -1024,32 +1020,6 @@ func (m *MautrixAdapter) sendAttachment(
 		return "", fmt.Errorf("failed to send media event: %w", err)
 	}
 	return sent.EventID, nil
-}
-
-// rollbackFanOut best-effort redacts events already sent by a failed fan-out.
-// Rollback failures are logged without replacing the original send error.
-//
-// This is intentionally best-effort: the adapter is stateless and the server
-// does not auto-retry a failed send RPC, so if a rollback redaction itself
-// fails the send simply degrades to at-most-once (the user resends). We do not
-// add idempotency/coordination to make rollback atomic — that complexity is not
-// warranted for a rare fetch/upload failure mid-fan-out.
-func (m *MautrixAdapter) rollbackFanOut(
-	ctx context.Context, intent intentAPI, roomID id.RoomID, eventIDs []id.EventID,
-) {
-	req := mautrix.ReqRedact{Reason: "Rolling back incomplete message fan-out"}
-	for _, eventID := range eventIDs {
-		if eventID == "" {
-			continue
-		}
-		if _, err := intent.RedactEvent(ctx, roomID, eventID, req); err != nil {
-			m.logger.Warn("Failed to roll back event after message fan-out failure",
-				"room_id", roomID,
-				"event_id", eventID,
-				"error", err,
-			)
-		}
-	}
 }
 
 func attachmentTooLargeError(documentID string, maxBytes int64) error {
