@@ -1152,8 +1152,10 @@ func threadRelation(threadID id.EventID) *event.RelatesTo {
 // as non-specific. The result drives the upload Content-Type, the Matrix
 // msgtype, and info.mimetype uniformly so they never disagree.
 func resolveMediaMime(responseContentType, attMimeType string) string {
-	attMimeType = baseMediaType(attMimeType)
-	responseContentType = baseMediaType(responseContentType)
+	// Return the ORIGINAL (parameterized) value — parameters like "; charset=utf-8"
+	// are meaningful for specific types and must survive into the upload
+	// Content-Type and info.mimetype. baseMediaType is used only for the
+	// specificity decision, so "application/octet-stream; x" still reads as generic.
 	if isSpecificMime(attMimeType) {
 		return attMimeType
 	}
@@ -1170,8 +1172,7 @@ func resolveMediaMime(responseContentType, attMimeType string) string {
 }
 
 // baseMediaType strips MIME parameters (e.g. "; charset=utf-8"), trims space, and
-// lowercases, so the specificity check and msgtype mapping see a bare
-// "type/subtype" (otherwise "application/octet-stream; x" would read as specific).
+// lowercases, yielding a bare "type/subtype" for comparison only.
 func baseMediaType(contentType string) string {
 	if i := strings.IndexByte(contentType, ';'); i >= 0 {
 		contentType = contentType[:i]
@@ -1180,7 +1181,8 @@ func baseMediaType(contentType string) string {
 }
 
 func isSpecificMime(mime string) bool {
-	return mime != "" && mime != "application/octet-stream"
+	base := baseMediaType(mime)
+	return base != "" && base != "application/octet-stream"
 }
 
 // mediaMsgType maps a MIME type to the appropriate Matrix message msgtype.
@@ -1264,25 +1266,16 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 		return nil, fmt.Errorf("event is not a message")
 	}
 
-	if msg := m.parseMessageEvent(evt, roomID); msg != nil {
-		return msg, nil
+	// Only m.room.message events resolve to a Message (with attachments for media).
+	// A non-message event (reaction, m.sticker, ...) errors rather than being
+	// coerced to bare text — resolving a sticker to its alt-text would drop the
+	// image and surface a phantom text message. The server tracks message ids
+	// distinctly, so message.get is not called with such ids.
+	msg := m.parseMessageEvent(evt, roomID)
+	if msg == nil {
+		return nil, fmt.Errorf("event is not a message")
 	}
-
-	// Non-message event type (e.g. a state/custom event carrying a body): preserve
-	// develop's leniency and resolve a content-bearing event to its body, so a
-	// caller fetching such an id keeps working. Media events resolve above via
-	// parseMessageEvent; bodyless non-message events (reactions, redactions) error.
-	if body, present := inboundBody(evt); present {
-		return &domain.Message{
-			ID:             evt.ID.String(),
-			RoomID:         roomID.String(),
-			Content:        body,
-			SenderMatrixID: evt.Sender.String(),
-			Timestamp:      time.UnixMilli(evt.Timestamp),
-			ThreadID:       extractThreadID(evt),
-		}, nil
-	}
-	return nil, fmt.Errorf("event is not a message")
+	return msg, nil
 }
 
 // malformedMessageBody reports whether a message-type event carries a "body" that

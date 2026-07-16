@@ -78,10 +78,39 @@ func TestParseMessageEvent_LegacyBody_UsedOnlyAsDisplayName(t *testing.T) {
 
 // A body equal to the resolved filename is not a genuine caption, even when a
 // top-level filename field is present, so it is not duplicated as Content.
-// MSC2530: when an explicit top-level `filename` field is present, `body` is a
-// caption — even if it coincidentally equals the filename — and must be
-// preserved, not dropped as a redundant filename.
-func TestParseMessageEvent_CaptionEqualsFilename_Preserved(t *testing.T) {
+// MSC2530: a caption exists only when body differs from the filename. A genuine
+// caption (body != filename) is surfaced as Content, with the filename as the
+// attachment display name.
+func TestParseMessageEvent_GenuineCaption_Preserved(t *testing.T) {
+	a := newTestAdapter("test.local")
+
+	evt := &event.Event{
+		ID:        id.EventID("$cap"),
+		Sender:    expectedUserID(testActorID),
+		Type:      event.EventMessage,
+		Timestamp: 1700000000000,
+		Content: event.Content{
+			Raw: map[string]any{
+				"msgtype":  "m.file",
+				"body":     "please review this",
+				"filename": "report.pdf",
+				"url":      "mxc://test.local/capmedia",
+				"info":     map[string]any{"mimetype": "application/pdf"},
+			},
+		},
+	}
+
+	msg := a.parseMessageEvent(evt, "!room:test.local")
+	require.NotNil(t, msg)
+	assert.Equal(t, "please review this", msg.Content, "a caption differing from the filename is surfaced")
+	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
+}
+
+// MSC2530: when body == filename there is NO caption (body is just the filename),
+// even with an explicit filename field present, so it is dropped — otherwise a
+// spec-compliant captionless upload would render its filename as a duplicate text
+// line.
+func TestParseMessageEvent_FilenameEqualsBody_NoCaption(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	evt := &event.Event{
@@ -102,7 +131,7 @@ func TestParseMessageEvent_CaptionEqualsFilename_Preserved(t *testing.T) {
 
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
-	assert.Equal(t, "report.pdf", msg.Content, "a filename field means body is a caption, preserved even if equal")
+	assert.Empty(t, msg.Content, "body equal to the filename is not a caption")
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
 
