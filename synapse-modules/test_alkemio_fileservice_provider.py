@@ -17,10 +17,14 @@ injects lightweight `sys.modules` shims for the handful of Synapse symbols the
 module imports at collection time — the production import path stays untouched.
 """
 
-import asyncio
 import types
 
 import pytest
+
+from twisted.internet import defer as _tdefer
+from twisted.internet.defer import TimeoutError as _TimeoutError
+from twisted.internet.task import Clock
+from twisted.python.failure import Failure
 
 import alkemio_fileservice_provider as mod
 from alkemio_fileservice_provider import (
@@ -127,12 +131,30 @@ async def _aval(x):
     return x
 
 
+def _result_of(d):
+    """Extract the result of a Deferred that has (or must have) fired synchronously."""
+    box = {}
+    d.addCallbacks(
+        lambda v: box.__setitem__("ok", v),
+        lambda f: box.__setitem__("err", f),
+    )
+    if "err" in box:
+        box["err"].raiseException()
+    if "ok" in box:
+        return box["ok"]
+    raise AssertionError("coroutine did not complete synchronously (still pending)")
+
+
 def _run(coro):
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+    """Drive a provider coroutine to synchronous completion (twisted driver).
+
+    The provider now wraps its guarded body in twisted's reactor-level timeout
+    (`_bounded`), so we drive coroutines with twisted's own coroutine adapter (and
+    a `Clock` reactor) rather than asyncio — otherwise the twisted Deferreds the
+    provider awaits could not be awaited. Timeout tests instead call
+    `_tdefer.ensureDeferred(...)`, advance `prov.reactor`, then `_result_of(...)`.
+    """
+    return _result_of(_tdefer.ensureDeferred(coro))
 
 
 def _make_provider(**config_overrides):
@@ -142,8 +164,10 @@ def _make_provider(**config_overrides):
     }
     base.update(config_overrides)
     cfg = FileServiceStorageProvider.parse_config(base)
+    # A twisted Clock stands in for the reactor: it provides callLater (needed by
+    # `_bounded`'s addTimeout) and lets timeout tests advance virtual time.
     hs = types.SimpleNamespace(
-        get_reactor=lambda: object(),
+        get_reactor=Clock,
         config=types.SimpleNamespace(
             media=types.SimpleNamespace(media_store_path="/data/media_store")
         ),
@@ -221,6 +245,11 @@ def test_parse_config_present_but_null_falls_back_to_default():
         # as 1/0.
         {"cb_fail_threshold": True},
         {"timeout_s": False},
+        # finding 0: an astronomically large int makes int() succeed but
+        # math.isfinite(value) raise OverflowError — it must surface as a clean
+        # ValueError at boot, not a raw traceback.
+        {"cb_fail_threshold": 10 ** 400},
+        {"timeout_s": 10 ** 400},
     ],
 )
 def test_parse_config_rejects_non_positive_or_bad_tuning(overrides):
@@ -394,9 +423,11 @@ def test_fetch_global_lookup_then_streams(monkeypatch):
     monkeypatch.setattr(mod.treq, "get", fake_get)
     monkeypatch.setattr(mod.treq, "json_content", lambda r: _aval(r._json))
 
-    # Pre-load a real failure; success at RESPONSE-RECEIVED must clear it, proving
-    # success is recorded when the content 200 arrives — NOT deferred to stream
-    # completion (the body is never streamed in this test).
+    # Pre-load a real failure. Response-received (`on_response`) resolves the
+    # request but in CLOSED it deliberately does NOT reset the failure count —
+    # otherwise a truncating backend (which always returns a 200 first) could
+    # never accumulate failures and trip the breaker (finding 4). So the pre-
+    # existing failure survives; only a HALF_OPEN probe response resets.
     prov._read_breaker.on_failure()
     assert prov._read_breaker._failures == 1
 
@@ -410,9 +441,10 @@ def test_fetch_global_lookup_then_streams(monkeypatch):
     assert "bucketId" not in calls[0]
     assert calls[1] == "http://file-service:4003/internal/file/doc-9/content"
     assert responder is not None
-    # New contract (findings 0,1,2,7): success recorded at response-received.
+    # Response-received resolved the request without opening; CLOSED failure count
+    # is left intact (not zeroed) so post-response truncations can still shed.
     assert prov._read_breaker.state == _CLOSED
-    assert prov._read_breaker._failures == 0
+    assert prov._read_breaker._failures == 1
 
 
 def test_fetch_success_resolves_half_open_probe_at_response(monkeypatch):
@@ -503,6 +535,60 @@ def test_fetch_content_404_is_neutral(monkeypatch):
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
     assert responder is None
     assert prov._read_breaker._failures == 1  # neutral, not a failure
+
+
+# --- bounded-await timeouts (no wedge) -------------------------------------
+
+
+def test_fetch_stalled_body_read_times_out_and_resolves_breaker(monkeypatch):
+    # Findings 1/5: treq's request timeout only guards up to headers. A backend
+    # that returns by-reference 200 headers then STALLS the JSON body read would
+    # hang the await forever — the `timeout_s` reactor deadline must fire, the
+    # fetch resolves as a failure (breaker resolved, no wedge), and returns None.
+    prov = _make_provider()
+    monkeypatch.setattr(
+        mod.treq,
+        "get",
+        lambda url, **kw: _aval(FakeResponse(200, json_body={"id": "doc-9"})),
+    )
+    # The by-reference JSON body read never completes.
+    monkeypatch.setattr(mod.treq, "json_content", lambda r: _tdefer.Deferred())
+
+    d = _tdefer.ensureDeferred(
+        prov.fetch("local_content/x", FakeFileInfo("MEDIAID"))
+    )
+    # Still pending: the body read is stalled.
+    prov.reactor.advance(prov.timeout_s + 1)  # trip the reactor deadline
+    result = _result_of(d)
+    assert result is None
+    assert prov._read_breaker._failures == 1  # resolved as a failure, not wedged
+
+
+def test_store_hung_open_times_out_and_resolves_breaker(monkeypatch):
+    # Findings 1/5: a blocking open() on a wedged media-store mount neither
+    # returns nor raises. The `store_timeout_s` reactor deadline must fire so the
+    # store fails loudly (store_synchronous) with the write breaker resolved.
+    prov = _make_provider(cb_fail_threshold=1)
+    # The off-reactor open never completes.
+    monkeypatch.setattr(
+        mod, "defer_to_thread", lambda reactor, fn, *a: _tdefer.Deferred()
+    )
+    posted = {"n": 0}
+    monkeypatch.setattr(
+        mod.treq,
+        "post",
+        lambda *a, **k: posted.__setitem__("n", posted["n"] + 1)
+        or _aval(FakeResponse(201)),
+    )
+
+    d = _tdefer.ensureDeferred(
+        prov.store_file("local_content/x", FakeFileInfo("m"))
+    )
+    prov.reactor.advance(prov.store_timeout_s + 1)  # trip the reactor deadline
+    with pytest.raises(_TimeoutError):
+        _result_of(d)
+    assert posted["n"] == 0  # never reached the post (open hung)
+    assert prov._write_breaker.state == _OPEN  # resolved as a failure, not wedged
 
 
 def test_fetch_malformed_meta_body_is_failure(monkeypatch):
@@ -698,22 +784,95 @@ def test_responder_write_to_consumer_streams_bytes_to_consumer():
     assert result["written"] == len(b"CONTENT")
 
 
-def test_responder_write_to_consumer_sync_deliverbody_raise_errbacks():
-    # Finding 8: a synchronous raise inside deliverBody must not leave the caller
-    # hanging on `finished` — it errbacks instead.
+def test_responder_sync_deliverbody_raise_errbacks_and_aborts():
+    # Findings 2/3/8: a SYNCHRONOUS deliverBody raise must (a) errback `finished`
+    # so the caller does not hang, and (b) leave `_streamed` False so `__exit__`
+    # aborts/releases the unbuffered connection. Driven INSIDE `with` so __exit__
+    # runs. It must NOT feed the breaker (setup failure, not a backend event).
     response = FakeResponse(200, body=b"CONTENT")
+    calls = {"n": 0}
+    orig_deliver = response.deliverBody
 
-    def boom(protocol):
-        raise RuntimeError("deliverBody exploded synchronously")
+    def boom_first_then_abort(protocol):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("deliverBody exploded synchronously")
+        # Second call is the __exit__ abort path — deliver normally so the
+        # _DrainAndAbort protocol runs and stops the transport.
+        orig_deliver(protocol)
 
-    response.deliverBody = boom
-    responder = _FileServiceResponder(response)
+    response.deliverBody = boom_first_then_abort
+
+    breaker = _CircuitBreaker(fail_threshold=5, reset_timeout=10)
+    responder = _FileServiceResponder(response, on_stream_failure=breaker.on_failure)
     consumer = FakeConsumer()
 
     errors = {}
-    d = responder.write_to_consumer(consumer)
-    d.addErrback(lambda f: errors.__setitem__("err", f) or None)
-    assert "err" in errors  # fired synchronously, caller does not hang
+    with responder:
+        d = responder.write_to_consumer(consumer)
+        d.addErrback(lambda f: errors.__setitem__("err", f) or None)
+
+    assert "err" in errors  # errback fired synchronously, caller does not hang
+    # __exit__ aborted the connection (delivered to the aborting protocol).
+    assert isinstance(response.delivered_to, _DrainAndAbort)
+    assert response.transport.stopped is True
+    # A setup failure is not a backend mid-stream event.
+    assert breaker._failures == 0
+
+
+def test_responder_records_failure_on_mid_stream_truncation():
+    # Finding 4: content-GET 200 then an abnormal mid-stream end (truncation/RST)
+    # records exactly one read failure so a truncating backend is shed.
+    breaker = _CircuitBreaker(fail_threshold=5, reset_timeout=10)
+    response = FakeResponse(200, body=b"CONTENT")
+    responder = _FileServiceResponder(response, on_stream_failure=breaker.on_failure)
+    consumer = FakeConsumer()
+
+    with responder:
+        d = responder.write_to_consumer(consumer)
+        d.addErrback(lambda f: None)  # consume the propagated failure
+        sink = response.delivered_to
+        sink.dataReceived(b"CON")  # partial body
+        sink.connectionLost(Failure(RuntimeError("truncated")))  # abnormal end
+
+    assert breaker._failures == 1
+
+
+def test_responder_clean_stream_records_no_breaker_mutation():
+    # Finding 4: a NORMAL full completion records nothing (success already booked
+    # at response-received). A pre-existing failure count is left untouched.
+    breaker = _CircuitBreaker(fail_threshold=5, reset_timeout=10)
+    breaker.on_failure()  # pre-existing failure = 1
+    response = FakeResponse(200, body=b"CONTENT")
+    responder = _FileServiceResponder(response, on_stream_failure=breaker.on_failure)
+    consumer = FakeConsumer()
+
+    with responder:
+        responder.write_to_consumer(consumer)
+        sink = response.delivered_to
+        sink.dataReceived(b"CONTENT")
+        sink.connectionLost(None)  # clean completion
+
+    assert breaker._failures == 1  # unchanged
+
+
+def test_repeated_truncations_open_breaker():
+    # Finding 4: response-received (on_response) does not reset in CLOSED, so
+    # repeated 200-then-truncate cycles accumulate failures and OPEN the breaker.
+    breaker = _CircuitBreaker(fail_threshold=3, reset_timeout=10)
+    for _ in range(3):
+        breaker.on_response()  # content-200 (CLOSED: no-op, does not reset)
+        response = FakeResponse(200, body=b"X")
+        responder = _FileServiceResponder(
+            response, on_stream_failure=breaker.on_failure
+        )
+        consumer = FakeConsumer()
+        with responder:
+            d = responder.write_to_consumer(consumer)
+            d.addErrback(lambda f: None)
+            sink = response.delivered_to
+            sink.connectionLost(Failure(RuntimeError("truncated")))
+    assert breaker.state == _OPEN
 
 
 def test_responder_exit_without_stream_aborts_connection():
