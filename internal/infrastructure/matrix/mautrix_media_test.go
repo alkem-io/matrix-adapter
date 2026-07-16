@@ -164,6 +164,7 @@ func TestSendMessage_TextPlusAttachment(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "m.file", content["msgtype"], "non-image MIME maps to m.file")
 	assert.Equal(t, docID1, content["io.alkemio.document_id"])
+	assert.Equal(t, "$text1", content[attachmentParentEventIDField])
 }
 
 // A non-OK response from file-service surfaces as an error and no event is sent.
@@ -475,8 +476,10 @@ func TestSendMessage_MultiAttachment_DistinctPerEvent(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "first.png", c0["body"])
 	assert.Equal(t, docID1, c0["io.alkemio.document_id"])
+	assert.NotContains(t, c0, attachmentParentEventIDField, "the first attachment is the primary event")
 	assert.Equal(t, "second.png", c1["body"])
 	assert.Equal(t, docID2, c1["io.alkemio.document_id"])
+	assert.Equal(t, "$x", c1[attachmentParentEventIDField])
 }
 
 // A non-positive configured max attachment size falls back to the built-in

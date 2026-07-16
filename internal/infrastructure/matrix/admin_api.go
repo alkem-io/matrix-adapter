@@ -20,6 +20,7 @@ type adminAPI interface {
 	GetStateEventContent(ctx context.Context, roomID id.RoomID, eventType string) (map[string]interface{}, error)
 	GetCustomState(ctx context.Context, roomID id.RoomID, eventTypes []string) (map[string]map[string]interface{}, error)
 	GetRoomMessages(ctx context.Context, roomID id.RoomID, from, dir string, limit int) (*mautrix.RespMessages, error)
+	GetEventContext(ctx context.Context, roomID id.RoomID, eventID id.EventID) (*mautrix.RespContext, error)
 	GetEvent(ctx context.Context, roomID id.RoomID, eventID id.EventID) (*event.Event, error)
 	GetRelations(ctx context.Context, roomID id.RoomID, eventID id.EventID, relType event.RelationType, eventType event.Type) ([]*event.Event, error)
 	JoinRoom(ctx context.Context, roomID id.RoomID, userID id.UserID) error

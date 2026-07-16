@@ -748,7 +748,7 @@ func (m *MautrixAdapter) SendMessage(
 	}
 
 	for i := range attachments {
-		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], "")
+		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], "", primaryEventID)
 		if err != nil {
 			return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
 		}
@@ -928,7 +928,7 @@ func (m *MautrixAdapter) SendReply(
 	}
 
 	for i := range attachments {
-		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID)
+		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID, primaryEventID)
 		if err != nil {
 			return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
 		}
@@ -943,6 +943,13 @@ func (m *MautrixAdapter) SendReply(
 // ============================================================================
 // Media (byte bridge) — stateless: fetch from file-service, push to Synapse
 // ============================================================================
+
+const (
+	attachmentParentEventIDField = "io.alkemio.parent_event_id"
+	// Sends are capped at 10 attachments. Two extra slots keep the lookup
+	// robust to the small window in which foreign room events may interleave.
+	attachmentCascadeScanLimit = 12
+)
 
 var errAttachmentTooLarge = errors.New("attachment exceeds max size")
 
@@ -966,9 +973,11 @@ func (c *countingCapReader) Read(p []byte) (int, error) {
 // sendAttachment fetches a document's bytes from file-service, uploads them to
 // the homeserver, and sends a media event carrying the mxc URL, file info, and
 // the io.alkemio.document_id breadcrumb. When threadID is non-empty the event
-// is threaded under it.
+// is threaded under it. Non-primary attachments additionally carry a top-level
+// parentEventID marker so deletion can find them without consuming m.relates_to.
 func (m *MautrixAdapter) sendAttachment(
-	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, threadID id.EventID,
+	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment,
+	threadID, parentEventID id.EventID,
 ) (id.EventID, error) {
 	resp, err := m.openDocumentFetch(ctx, att.DocumentID)
 	if err != nil {
@@ -1003,7 +1012,7 @@ func (m *MautrixAdapter) sendAttachment(
 		return "", fmt.Errorf("failed to upload media: %w", err)
 	}
 	// info.size is the bytes actually streamed, never the caller-declared att.Size.
-	content := buildMediaContent(att, up.ContentURI, contentType, reader.n, threadID)
+	content := buildMediaContent(att, up.ContentURI, contentType, reader.n, threadID, parentEventID)
 	sent, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content)
 	if err != nil {
 		return "", fmt.Errorf("failed to send media event: %w", err)
@@ -1081,9 +1090,13 @@ func (m *MautrixAdapter) openDocumentFetch(ctx context.Context, documentID strin
 // buildMediaContent constructs the raw event content for a media message:
 // msgtype + body + url(mxc) + info, plus the io.alkemio.document_id breadcrumb
 // used for lookup-free read-translation of our own outbound media. A map is
-// used (rather than event.MessageEventContent) so the custom field can be set
-// as a top-level event property.
-func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType string, size int64, threadID id.EventID) map[string]any {
+// used (rather than event.MessageEventContent) so custom fields can be set as
+// top-level event properties. parentEventID is empty only for a primary media
+// event in an attachment-only message.
+func buildMediaContent(
+	att domain.Attachment, mxc id.ContentURI, contentType string, size int64,
+	threadID, parentEventID id.EventID,
+) map[string]any {
 	info := map[string]any{
 		"mimetype": contentType,
 		"size":     size,
@@ -1107,6 +1120,9 @@ func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType str
 
 	if threadID != "" {
 		content["m.relates_to"] = threadRelation(threadID)
+	}
+	if parentEventID != "" {
+		content[attachmentParentEventIDField] = parentEventID.String()
 	}
 
 	return content
@@ -1157,7 +1173,62 @@ func (m *MautrixAdapter) RedactEvent(
 	if err != nil {
 		return fmt.Errorf("failed to redact event: %w", err)
 	}
+
+	// The primary event is gone, so sibling discovery and redaction are
+	// necessarily best-effort. The context endpoint supplies a forward token
+	// anchored at the primary; the bounded /messages query then examines only
+	// the small contiguous fan-out window and filters on our explicit marker.
+	m.redactAttachmentSiblings(ctx, intent, roomID, eventID, req)
 	return nil
+}
+
+func (m *MautrixAdapter) redactAttachmentSiblings(
+	ctx context.Context, intent intentAPI, roomID id.RoomID, primaryEventID id.EventID, req mautrix.ReqRedact,
+) {
+	eventContext, err := m.admin.GetEventContext(ctx, roomID, primaryEventID)
+	if err != nil {
+		m.logger.Warn("Failed to locate attachment events after primary redaction",
+			"room_id", roomID,
+			"primary_event_id", primaryEventID,
+			"error", err,
+		)
+		return
+	}
+	if eventContext == nil || eventContext.End == "" {
+		return
+	}
+
+	resp, err := m.admin.GetRoomMessages(ctx, roomID, eventContext.End, "f", attachmentCascadeScanLimit)
+	if err != nil {
+		m.logger.Warn("Failed to scan for attachment events after primary redaction",
+			"room_id", roomID,
+			"primary_event_id", primaryEventID,
+			"error", err,
+		)
+		return
+	}
+	if resp == nil {
+		return
+	}
+
+	for _, evt := range resp.Chunk {
+		if evt == nil || evt.ID == primaryEventID || evt.Type != event.EventMessage {
+			continue
+		}
+		parentEventID, ok := evt.Content.Raw[attachmentParentEventIDField].(string)
+		if !ok || id.EventID(parentEventID) != primaryEventID {
+			continue
+		}
+
+		if _, err := intent.RedactEvent(ctx, roomID, evt.ID, req); err != nil {
+			m.logger.Warn("Failed to redact attachment event",
+				"room_id", roomID,
+				"primary_event_id", primaryEventID,
+				"attachment_event_id", evt.ID,
+				"error", err,
+			)
+		}
+	}
 }
 
 // SendReaction sends a reaction to an event.

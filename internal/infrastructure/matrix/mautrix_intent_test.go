@@ -104,6 +104,9 @@ type mockIntentAPI struct {
 	lastLeaveRoomID            id.RoomID
 	lastRedactRoomID           id.RoomID
 	lastRedactEventID          id.EventID
+	redactEventIDs             []id.EventID
+	redactReasons              []string
+	redactEventErrs            map[id.EventID]error
 	lastDisplayName            string
 	lastMakeRequestMethod      string
 	lastMakeRequestURL         string
@@ -192,10 +195,19 @@ func (m *mockIntentAPI) SendText(_ context.Context, roomID id.RoomID, text strin
 	return m.sendTextResult, m.sendTextErr
 }
 
-func (m *mockIntentAPI) RedactEvent(_ context.Context, roomID id.RoomID, eventID id.EventID, _ ...mautrix.ReqRedact) (*mautrix.RespSendEvent, error) {
+func (m *mockIntentAPI) RedactEvent(
+	_ context.Context, roomID id.RoomID, eventID id.EventID, extra ...mautrix.ReqRedact,
+) (*mautrix.RespSendEvent, error) {
 	m.redactEventCalled++
 	m.lastRedactRoomID = roomID
 	m.lastRedactEventID = eventID
+	m.redactEventIDs = append(m.redactEventIDs, eventID)
+	if len(extra) > 0 {
+		m.redactReasons = append(m.redactReasons, extra[0].Reason)
+	}
+	if err := m.redactEventErrs[eventID]; err != nil {
+		return m.redactEventResult, err
+	}
 	return m.redactEventResult, m.redactEventErr
 }
 

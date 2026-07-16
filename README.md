@@ -227,6 +227,13 @@ uploads them to the homeserver, and sends one Matrix media event
 event (when text is present) plus N media events. `content` may be empty when
 the message is attachment-only.
 
+Every non-primary media event also carries
+`io.alkemio.parent_event_id = <primary event id>`. This top-level marker leaves
+the event's single `m.relates_to` available for `m.thread`. When the primary is
+deleted, the adapter uses its forward timeline token to scan a bounded window
+and best-effort redact only media events with the matching parent marker. No
+message-to-event mapping is persisted.
+
 Inbound media events are translated onto `communication.message.received`:
 each carries a `ReceivedAttachment` (`media_id` parsed from the mxc URL,
 `mime_type`/`size`/dimensions from `info`, and `document_id` when the event
