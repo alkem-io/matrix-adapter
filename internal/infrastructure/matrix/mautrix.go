@@ -1992,16 +1992,15 @@ func (m *MautrixAdapter) GetThreadMessages(
 	// reply scan below filters to message-like events via isMessageLikeEvent.
 	// Filtering server-side by m.room.message would drop threaded sticker replies.
 	chunk, err := m.admin.GetRelations(ctx, roomID, threadRootID, event.RelThread, event.Type{})
+	if err != nil {
+		// Best-effort: GetRelations returns (partial, err), so a later-page failure
+		// still yields the replies fetched so far. Use them (don't collapse to
+		// root-only) and log that the thread's relations were truncated by an error.
+		m.logger.Warn("Thread relations truncated by error; returning partial replies",
+			"thread_root_id", threadRootID, "partial_replies", len(chunk), "error", err)
+	}
 
 	messages := make([]domain.Message, 0)
-	if err != nil {
-		// If no relations found, return just the root message
-		m.logger.Debug("No thread relations found, returning only root", "thread_root_id", threadRootID)
-		if rootMsg != nil {
-			messages = append(messages, *rootMsg)
-		}
-		return messages, nil
-	}
 
 	// Parse thread reply messages (relations API returns newest-first). This is a
 	// history scan, so blank preview messages (present-but-empty body, no

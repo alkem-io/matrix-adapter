@@ -330,13 +330,14 @@ const maxRelationsPages = 20
 // many recent sticker replies burying an older message reply — silently dropping
 // real replies.
 //
-// Error handling favors partial completeness over failing the whole read:
-//   - the FIRST page failing → return (nil, err): a genuine failure with nothing
-//     to show.
+// On error it returns BOTH the pages accumulated so far AND the error, leaving the
+// best-effort-vs-fail decision to each caller (this is a SHARED helper — thread
+// reads want partial replies, reaction lookups must not treat an error as
+// "not found"):
+//   - the FIRST page failing → return (nil, err): nothing accumulated yet.
 //   - a LATER page failing (including a context deadline mid-pagination) → return
-//     the pages accumulated so far with a nil error. Best-effort degradation: a
-//     transient blip on page N must not collapse a multi-page thread to nothing
-//     (GetThreadMessages treats an error as "no relations" → root only).
+//     (partial, err): the pages fetched so far plus the error, so a caller can
+//     use the partial set or propagate as it sees fit.
 func (s *SynapseAdmin) GetRelations(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID,
 	relType event.RelationType, eventType event.Type,
@@ -369,8 +370,9 @@ func (s *SynapseAdmin) GetRelations(
 				return nil, err
 			}
 			// Later-page failure (transient error or context deadline): return what
-			// we already fetched rather than discarding whole pages of replies.
-			return all, nil
+			// we already fetched ALONGSIDE the error, so the caller decides whether to
+			// use the partial set (thread reads) or propagate (reaction lookups).
+			return all, err
 		}
 		all = append(all, resp.Chunk...)
 		if resp.NextBatch == "" {

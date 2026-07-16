@@ -986,9 +986,11 @@ func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
 // it feeds only the attachment DisplayName, so Content is forced empty. A normal
 // sticker (url present) → attachment + empty Content. A url-less sticker (e.g.
 // E2EE content.file, or a non-parseable url) has no extractable media and no
-// surface-able Content, so it is DROPPED (ok=false) on every path — live-sync
-// (handleMessageEvent has no isBlankMessage guard) and read/scan alike —
-// consistent with how a bodyless m.room.message returns ok=false.
+// surface-able Content, so it returns ok=false. That ok=false is what drops it on
+// the LIVE-SYNC path (handleMessageEvent, which has no isBlankMessage guard). On
+// the read/scan paths parseMessageEvent discards ok, so the url-less sticker
+// becomes a blank (empty-content, no-attachment) Message instead — which
+// isBlankMessage then excludes from timeline/scan results.
 func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content string, attachment *domain.Attachment, ok bool) {
 	body, bodyPresent := inboundBody(evt)
 	attachment = extractAttachment(evt, trustDocumentID)

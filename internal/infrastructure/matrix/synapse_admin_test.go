@@ -1051,10 +1051,10 @@ func TestGetRelations_Paginates(t *testing.T) {
 	}
 }
 
-// A later-page failure returns the pages accumulated so far (best-effort), not an
-// error: page 1 succeeds with a next_batch, page 2 returns 500 → GetRelations
-// yields page 1's relations with no error, so a transient blip can't collapse a
-// multi-page thread to nothing.
+// A later-page failure returns BOTH the pages accumulated so far AND the error:
+// page 1 succeeds with a next_batch, page 2 returns 500 → GetRelations yields page
+// 1's relations together with a non-nil error, leaving the best-effort-vs-fail
+// choice to each caller.
 func TestGetRelations_LaterPageError_ReturnsPartial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1077,11 +1077,11 @@ func TestGetRelations_LaterPageError_ReturnsPartial(t *testing.T) {
 		context.Background(), "!room1:hs", "$root:hs",
 		event.RelThread, event.Type{},
 	)
-	if err != nil {
-		t.Fatalf("expected no error on later-page failure (partial results), got %v", err)
+	if err == nil {
+		t.Fatal("expected a non-nil error alongside the partial results on later-page failure")
 	}
 	if len(events) != 1 || events[0].ID != "$m1:hs" {
-		t.Fatalf("expected page 1's relation returned, got %d events", len(events))
+		t.Fatalf("expected page 1's relation returned alongside the error, got %d events", len(events))
 	}
 }
 

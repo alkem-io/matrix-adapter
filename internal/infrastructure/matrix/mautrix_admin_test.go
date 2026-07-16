@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -704,6 +705,56 @@ func TestAdminAPI_GetThreadMessages_RootOnly(t *testing.T) {
 	}
 }
 
+// Best-effort: when GetRelations returns partial replies ALONGSIDE an error
+// (later-page failure), GetThreadMessages uses those replies (root + partial),
+// rather than collapsing to root-only. Simulated via the mock returning both a
+// result and an error.
+func TestAdminAPI_GetThreadMessages_PartialRepliesOnError(t *testing.T) {
+	threadRootID := id.EventID("$root_partial")
+	mock := &mockAdminAPI{
+		getEventResult: &event.Event{
+			Type:      event.EventMessage,
+			ID:        threadRootID,
+			Sender:    "@user1:test.local",
+			Timestamp: time.Now().UnixMilli(),
+			Content: event.Content{
+				Parsed: &event.MessageEventContent{MsgType: event.MsgText, Body: "Root message"},
+			},
+		},
+		getRelationsResult: []*event.Event{
+			{
+				Type:      event.EventMessage,
+				ID:        "$reply_partial",
+				Sender:    "@user2:test.local",
+				Timestamp: time.Now().UnixMilli(),
+				Content: event.Content{
+					Parsed: &event.MessageEventContent{
+						MsgType:   event.MsgText,
+						Body:      "Partial reply",
+						RelatesTo: &event.RelatesTo{Type: event.RelThread, EventID: threadRootID},
+					},
+				},
+			},
+		},
+		getRelationsErr: errors.New("later page failed"), // partial + err
+	}
+	a := newAdminTestAdapter(mock)
+	msgs, err := a.GetThreadMessages(context.Background(), "!room:test.local", threadRootID)
+	if err != nil {
+		t.Fatalf("unexpected error (thread read is best-effort): %v", err)
+	}
+	// Expect: the partial reply + the root (not root-only).
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (partial reply + root), got %d", len(msgs))
+	}
+	if msgs[0].Content != "Partial reply" {
+		t.Errorf("expected the partial reply surfaced, got %q", msgs[0].Content)
+	}
+	if msgs[1].Content != "Root message" {
+		t.Errorf("expected root appended last, got %q", msgs[1].Content)
+	}
+}
+
 // A threaded sticker reply surfaces in GetThreadMessages as media, and the
 // relations query passes an EMPTY event-type filter so Synapse returns all
 // m.thread relations (m.room.message AND m.sticker) rather than filtering
@@ -1376,6 +1427,32 @@ func TestAdminAPI_FindReaction_WrongEmoji(t *testing.T) {
 	_, err := a.findReactionByEmojiAndSender(events, "@user1:test.local", "\U0001F44D")
 	if err == nil {
 		t.Fatal("expected error when emoji doesn't match")
+	}
+}
+
+// GetReactionEventID must PROPAGATE a GetRelations error, never conflate it with
+// "reaction not found": a transient error returning a partial set must surface as
+// an error so the caller doesn't wrongly conclude the reaction is gone and skip
+// its redaction.
+func TestGetReactionEventID_RelationsError_Propagates(t *testing.T) {
+	mock := &mockAdminAPI{
+		// Partial results alongside an error (later-page failure shape).
+		getRelationsResult: []*event.Event{
+			{Type: event.EventReaction, ID: "$other", Sender: "@user1:test.local"},
+		},
+		getRelationsErr: errors.New("later page failed"),
+	}
+	a := newAdminTestAdapter(mock)
+
+	_, err := a.GetReactionEventID(
+		context.Background(), "!room:test.local", "$evt", "\U0001F44D",
+		testActor(testActorID, ""),
+	)
+	if err == nil {
+		t.Fatal("expected the GetRelations error to propagate, not a not-found result")
+	}
+	if !strings.Contains(err.Error(), "failed to get relations") {
+		t.Errorf("expected the propagated relations error, got %v", err)
 	}
 }
 
