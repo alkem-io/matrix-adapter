@@ -1993,11 +1993,17 @@ func (m *MautrixAdapter) GetThreadMessages(
 	// Filtering server-side by m.room.message would drop threaded sticker replies.
 	chunk, err := m.admin.GetRelations(ctx, roomID, threadRootID, event.RelThread, event.Type{})
 	if err != nil {
-		// Best-effort: GetRelations returns (partial, err), so a later-page failure
-		// still yields the replies fetched so far. Use them (don't collapse to
-		// root-only) and log that the thread's relations were truncated by an error.
-		m.logger.Warn("Thread relations truncated by error; returning partial replies",
-			"thread_root_id", threadRootID, "partial_replies", len(chunk), "error", err)
+		// Best-effort: GetRelations returns (partial, err). Distinguish a later-page
+		// failure (some replies recovered — use them, don't collapse to root-only)
+		// from a first-page failure (nothing recovered — root only), so incident
+		// triage isn't misled by a false "partial" claim on a total failure.
+		if len(chunk) > 0 {
+			m.logger.Warn("Thread relations truncated by error; returning partial replies",
+				"thread_root_id", threadRootID, "partial_replies", len(chunk), "error", err)
+		} else {
+			m.logger.Warn("Failed to fetch thread relations; returning root message only",
+				"thread_root_id", threadRootID, "error", err)
+		}
 	}
 
 	messages := make([]domain.Message, 0)
