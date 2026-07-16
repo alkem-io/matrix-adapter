@@ -915,16 +915,9 @@ func (m *MautrixAdapter) SendReply(
 	var primaryEventID id.EventID
 	if content != "" {
 		msgContent := event.MessageEventContent{
-			MsgType: event.MsgText,
-			Body:    content,
-			RelatesTo: &event.RelatesTo{
-				Type:    event.RelThread,
-				EventID: threadID,
-				InReplyTo: &event.InReplyTo{
-					EventID: threadID,
-				},
-				IsFallingBack: true,
-			},
+			MsgType:   event.MsgText,
+			Body:      content,
+			RelatesTo: threadRelation(threadID),
 		}
 
 		resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, &msgContent)
@@ -989,6 +982,9 @@ func (m *MautrixAdapter) sendAttachment(
 	}
 
 	maxBytes := m.cfg.MaxAttachmentBytes()
+	if resp.ContentLength > 0 && resp.ContentLength > maxBytes {
+		return "", attachmentTooLargeError(att.DocumentID, maxBytes)
+	}
 	reader := &countingCapReader{r: resp.Body, max: maxBytes}
 	// Pass a known, in-cap length so Synapse gets Content-Length; otherwise stream chunked.
 	contentLength := int64(-1)
@@ -1002,7 +998,7 @@ func (m *MautrixAdapter) sendAttachment(
 	})
 	if err != nil {
 		if errors.Is(err, errAttachmentTooLarge) || reader.n > maxBytes {
-			return "", fmt.Errorf("document %s exceeds max attachment size of %d bytes", att.DocumentID, maxBytes)
+			return "", attachmentTooLargeError(att.DocumentID, maxBytes)
 		}
 		return "", fmt.Errorf("failed to upload media: %w", err)
 	}
@@ -1015,15 +1011,32 @@ func (m *MautrixAdapter) sendAttachment(
 	return sent.EventID, nil
 }
 
-// fileServiceFetchTimeout bounds a single document fetch from file-service so a
-// slow or hung file-service can't block a send indefinitely. It is a backstop
-// in addition to any deadline already on the request context.
+func attachmentTooLargeError(documentID string, maxBytes int64) error {
+	return fmt.Errorf("document %s exceeds max attachment size of %d bytes", documentID, maxBytes)
+}
+
+// fileServiceFetchTimeout bounds connection establishment and the wait for
+// file-service response headers. The streamed response body remains governed by
+// the send context rather than a fixed wall-clock timeout.
 const fileServiceFetchTimeout = 60 * time.Second
 
-// fileServiceHTTPClient is a dedicated client (with a timeout) for fetching
-// document bytes. http.DefaultClient has no timeout, so it is deliberately not
-// used here.
-var fileServiceHTTPClient = &http.Client{Timeout: fileServiceFetchTimeout}
+func newFileServiceHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
+	return &http.Client{Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: fileServiceFetchTimeout, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+		ExpectContinueTimeout: time.Second,
+	}}
+}
+
+// fileServiceHTTPClient bounds connection phases and header wait without a
+// Client.Timeout, which would also cap reading a large body while it is streamed
+// onward to Synapse.
+var fileServiceHTTPClient = newFileServiceHTTPClient(fileServiceFetchTimeout)
 
 // openDocumentFetch performs the GET against the file-service internal content
 // endpoint (GET {FILE_SERVICE_URL}/internal/file/{id}/content) and returns the
@@ -1031,7 +1044,8 @@ var fileServiceHTTPClient = &http.Client{Timeout: fileServiceFetchTimeout}
 // stream it directly to the homeserver.
 // A non-200 response is turned into an error here (and its body closed) so no
 // budget is reserved for a failed fetch. The caller MUST close resp.Body on the
-// success path. The request is bounded by fileServiceHTTPClient's timeout.
+// success path. Connection setup and response-header wait are transport-bounded;
+// reading the success body is bounded by the request context.
 func (m *MautrixAdapter) openDocumentFetch(ctx context.Context, documentID string) (*http.Response, error) {
 	if m.cfg == nil {
 		return nil, fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
@@ -1070,13 +1084,8 @@ func (m *MautrixAdapter) openDocumentFetch(ctx context.Context, documentID strin
 // used (rather than event.MessageEventContent) so the custom field can be set
 // as a top-level event property.
 func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType string, size int64, threadID id.EventID) map[string]any {
-	mime := att.MimeType
-	if mime == "" {
-		mime = contentType
-	}
-
 	info := map[string]any{
-		"mimetype": mime,
+		"mimetype": contentType,
 		"size":     size,
 	}
 	if att.Width != nil {
@@ -1089,7 +1098,7 @@ func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType str
 	// HandleSendMessage rejects empty document ids, and openDocumentFetch validates
 	// the UUID before the media content is built, so this breadcrumb is never blank.
 	content := map[string]any{
-		"msgtype":                mediaMsgType(mime),
+		"msgtype":                mediaMsgType(contentType),
 		"body":                   att.DisplayName,
 		"url":                    mxc.String(),
 		"info":                   info,
@@ -1097,17 +1106,23 @@ func buildMediaContent(att domain.Attachment, mxc id.ContentURI, contentType str
 	}
 
 	if threadID != "" {
-		content["m.relates_to"] = map[string]any{
-			"rel_type": "m.thread",
-			"event_id": threadID.String(),
-			"m.in_reply_to": map[string]any{
-				"event_id": threadID.String(),
-			},
-			"is_falling_back": true,
-		}
+		content["m.relates_to"] = threadRelation(threadID)
 	}
 
 	return content
+}
+
+// threadRelation is the single typed construction used by text and media
+// replies, keeping their MSC3440 relation shape identical.
+func threadRelation(threadID id.EventID) *event.RelatesTo {
+	return &event.RelatesTo{
+		Type:    event.RelThread,
+		EventID: threadID,
+		InReplyTo: &event.InReplyTo{
+			EventID: threadID,
+		},
+		IsFallingBack: true,
+	}
 }
 
 // mediaMsgType maps a MIME type to the appropriate Matrix message msgtype.

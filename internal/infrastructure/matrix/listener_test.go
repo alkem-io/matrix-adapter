@@ -467,6 +467,34 @@ func TestExtractThreadIDFromMessage_ThreadRelation(t *testing.T) {
 	}
 }
 
+func TestExtractThreadIDFromMessage_RawThreadRelation(t *testing.T) {
+	threadRoot := id.EventID("$thread_root_from_get_event")
+	evt := &event.Event{
+		Type: event.EventMessage,
+		Content: event.Content{
+			// GetEvent-style content: Parsed is nil and the relation exists only
+			// in Raw.
+			Raw: map[string]any{
+				"m.relates_to": map[string]any{
+					"rel_type": "m.thread",
+					"event_id": threadRoot.String(),
+				},
+			},
+		},
+	}
+	if evt.Content.Parsed != nil {
+		t.Fatal("expected GetEvent-style event to have nil Parsed content")
+	}
+
+	got := adapter().extractThreadIDFromMessage(evt)
+	if got == nil {
+		t.Fatal("expected non-nil thread ID from raw relation")
+	}
+	if *got != threadRoot {
+		t.Errorf("expected %q, got %q", threadRoot, *got)
+	}
+}
+
 func TestExtractThreadIDFromMessage_InReplyToFallback(t *testing.T) {
 	replyTo := id.EventID("$reply_target_002")
 	evt := &event.Event{

@@ -3,7 +3,9 @@ package matrix
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -227,8 +229,8 @@ func TestSendMessage_UsesSDKGeneratedTransactions(t *testing.T) {
 	require.Equal(t, []string{""}, intent.sendMsgEventTxns)
 }
 
-// The streaming send path rejects a body larger than the configured max.
-func TestSendAttachment_RejectsOversizedBody(t *testing.T) {
+// A declared Content-Length over the cap is rejected before UploadMedia starts.
+func TestSendAttachment_RejectsDeclaredOversizeBeforeUpload(t *testing.T) {
 	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
 		return fileServiceResponse(http.StatusOK, "", make([]byte, 100)), nil
 	})
@@ -246,20 +248,31 @@ func TestSendAttachment_RejectsOversizedBody(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds max attachment size")
+	assert.Equal(t, 0, intent.uploadBytesCalled, "declared oversize must not start UploadMedia")
 	assert.Equal(t, 0, intent.sendMessageEventCalled, "no event sent when fetch is rejected")
 }
 
-// The streaming send path uses a client timeout, so a hung file-service errors.
-func TestSendAttachment_FetchTimesOut(t *testing.T) {
+// Response-header wait remains bounded without applying a Client.Timeout to the
+// streamed response body.
+func TestSendAttachment_ResponseHeaderTimesOut(t *testing.T) {
 	original := fileServiceHTTPClient
-	fileServiceHTTPClient = &http.Client{
-		Timeout: 50 * time.Millisecond,
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			<-req.Context().Done()
-			return nil, req.Context().Err()
-		}),
-	}
+	fileServiceHTTPClient = newFileServiceHTTPClient(50 * time.Millisecond)
 	t.Cleanup(func() { fileServiceHTTPClient = original })
+	assert.Zero(t, fileServiceHTTPClient.Timeout, "streamed body must not have a whole-request timeout")
+
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	})
+	transport, ok := fileServiceHTTPClient.Transport.(*http.Transport)
+	require.True(t, ok)
+	transport.Proxy = nil
+	transport.DialContext = func(context.Context, string, string) (net.Conn, error) {
+		return clientConn, nil
+	}
+	// Drain the request but deliberately never send response headers.
+	go func() { _, _ = io.Copy(io.Discard, serverConn) }()
 
 	intent := &mockIntentAPI{}
 	a := newMediaTestAdapter(t, "http://file-service.test", intent)
@@ -335,15 +348,22 @@ func TestSendReply_WithAttachment_CarriesThreadRelation(t *testing.T) {
 	content, ok := intent.lastSendMsgEventContent.(map[string]any)
 	require.True(t, ok)
 
-	relates, ok := content["m.relates_to"].(map[string]any)
-	require.True(t, ok, "media event must carry m.relates_to")
-	assert.Equal(t, "m.thread", relates["rel_type"])
-	assert.Equal(t, threadID.String(), relates["event_id"])
-	assert.Equal(t, true, relates["is_falling_back"])
+	relates, ok := content["m.relates_to"].(*event.RelatesTo)
+	require.True(t, ok, "media event must carry a typed m.relates_to")
+	assert.Equal(t, event.RelThread, relates.Type)
+	assert.Equal(t, threadID, relates.EventID)
+	assert.True(t, relates.IsFallingBack)
+	require.NotNil(t, relates.InReplyTo)
+	assert.Equal(t, threadID, relates.InReplyTo.EventID)
 
-	inReplyTo, ok := relates["m.in_reply_to"].(map[string]any)
-	require.True(t, ok, "thread relation must include the m.in_reply_to fallback")
-	assert.Equal(t, threadID.String(), inReplyTo["event_id"])
+	relationJSON, err := json.Marshal(relates)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"rel_type":"m.thread",
+		"event_id":"$thread-root",
+		"m.in_reply_to":{"event_id":"$thread-root"},
+		"is_falling_back":true
+	}`, string(relationJSON), "typed relation must preserve the existing wire shape")
 }
 
 // A video/audio MIME maps to the m.video / m.audio msgtype (outbound), both via
@@ -400,6 +420,32 @@ func TestSendMessage_MimeFallbackToResponseContentType(t *testing.T) {
 	info, ok := content["info"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "audio/ogg", info["mimetype"])
+}
+
+// The file-service response header is authoritative for both upload metadata
+// and Matrix event classification, even when the attachment hint disagrees.
+func TestSendMessage_ResponseContentTypeWinsMimeDisagreement(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
+	})
+
+	intent := &mockIntentAPI{
+		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/png")},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$png"},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "image", MimeType: "application/octet-stream"}})
+	require.NoError(t, err)
+
+	assert.Equal(t, "image/png", intent.lastUploadBytesType)
+	content, ok := intent.lastSendMsgEventContent.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "m.image", content["msgtype"])
+	info, ok := content["info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "image/png", info["mimetype"])
 }
 
 // Each attachment in a multi-attachment send gets its own event with a distinct
@@ -488,7 +534,7 @@ func TestGetMessage_MediaEvent_ReturnsAttachment(t *testing.T) {
 	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$m1")
 	require.NoError(t, err)
 	require.NotNil(t, msg)
-	assert.Empty(t, msg.Content, "media filename must not be surfaced as Content")
+	assert.Equal(t, "photo.jpg", msg.Content, "legacy media body must be surfaced as Content")
 	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "media123", msg.Attachments[0].MediaID)
 	assert.Equal(t, docID1, msg.Attachments[0].DocumentID)
@@ -528,7 +574,9 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 
 	t.Run("oversize body fails and sends no event", func(t *testing.T) {
 		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
-			return fileServiceResponse(http.StatusOK, "application/octet-stream", make([]byte, 100)), nil
+			resp := fileServiceResponse(http.StatusOK, "application/octet-stream", make([]byte, 100))
+			resp.ContentLength = -1 // exercise the streaming cap backstop
+			return resp, nil
 		})
 
 		intent := &mockIntentAPI{

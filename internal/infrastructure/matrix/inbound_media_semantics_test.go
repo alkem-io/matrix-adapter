@@ -49,9 +49,9 @@ func TestParseMessageEvent_MSC2530Caption_Preserved(t *testing.T) {
 	assert.Equal(t, "capmedia", msg.Attachments[0].MediaID)
 }
 
-// Legacy media (body IS the filename; no separate `filename` field) must blank
-// Content so clients don't render a filename text bubble beside the media.
-func TestParseMessageEvent_LegacyFilenameBody_BlanksContent(t *testing.T) {
+// Legacy media has no separate filename field, so its body is the combined
+// name/caption and must retain develop's behavior of being forwarded as Content.
+func TestParseMessageEvent_LegacyBody_PreservedAsContent(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	evt := &event.Event{
@@ -71,7 +71,7 @@ func TestParseMessageEvent_LegacyFilenameBody_BlanksContent(t *testing.T) {
 
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
-	assert.Empty(t, msg.Content, "legacy filename-as-body must not appear as Content")
+	assert.Equal(t, "report.pdf", msg.Content, "legacy media body must be forwarded as Content")
 	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }

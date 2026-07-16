@@ -91,12 +91,14 @@ func Load() (*Config, error) {
 		}
 	}
 
-	loadEnvVars(cfg)
+	if err := loadEnvVars(cfg); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
 
-func loadEnvVars(cfg *Config) {
+func loadEnvVars(cfg *Config) error {
 	// Override with Env Vars (Consistent with TS Service)
 	if v := os.Getenv("ENVIRONMENT"); v != "" {
 		cfg.App.Environment = v
@@ -107,18 +109,21 @@ func loadEnvVars(cfg *Config) {
 
 	loadMatrixEnv(cfg)
 	loadRabbitMQEnv(cfg)
-	loadFileServiceEnv(cfg)
+	return loadFileServiceEnv(cfg)
 }
 
-func loadFileServiceEnv(cfg *Config) {
+func loadFileServiceEnv(cfg *Config) error {
 	if v := os.Getenv("FILE_SERVICE_URL"); v != "" {
 		cfg.FileService.URL = v
 	}
 	if v := os.Getenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			cfg.FileService.MaxAttachmentBytes = n
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid FILE_SERVICE_MAX_ATTACHMENT_BYTES %q: %w", v, err)
 		}
+		cfg.FileService.MaxAttachmentBytes = n
 	}
+	return nil
 }
 
 func loadMatrixEnv(cfg *Config) {

@@ -347,9 +347,10 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 		}
 	}
 
-	// Defense-in-depth: the server owns attachment validation, but cap the count
-	// and reject empty document refs so a malformed request fails fast with a
-	// clear error instead of part-way through emitting Matrix events.
+	// Defense-in-depth: the server owns attachment validation, but validate every
+	// knowable document ref before resolving the room or emitting any Matrix
+	// events. This leaves only genuine infrastructure failures able to interrupt
+	// the text + media fan-out part-way through.
 	if len(req.Attachments) > maxAttachmentsPerMessage {
 		return NewInvalidParamError(fmt.Sprintf(
 			"too many attachments: %d (max %d)", len(req.Attachments), maxAttachmentsPerMessage)), nil
@@ -357,6 +358,10 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 	for i := range req.Attachments {
 		if req.Attachments[i].DocumentID == "" {
 			return NewInvalidParamError(fmt.Sprintf("attachment[%d] document_id is required", i)), nil
+		}
+		if _, err := uuid.Parse(req.Attachments[i].DocumentID); err != nil {
+			return NewInvalidParamError(fmt.Sprintf(
+				"attachment[%d] document_id must be a valid UUID", i)), nil
 		}
 	}
 

@@ -92,13 +92,15 @@ func TestLoad_FileServiceEnvOverrides(t *testing.T) {
 		assert.Equal(t, int64(1048576), cfg.FileService.MaxAttachmentBytes)
 	})
 
-	t.Run("invalid max attachment bytes is ignored (falls back to default)", func(t *testing.T) {
+	t.Run("invalid max attachment bytes fails config loading", func(t *testing.T) {
 		t.Setenv("FILE_SERVICE_URL", "http://file-service:4000")
 		t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "not-a-number")
 
 		cfg, err := Load()
-		require.NoError(t, err)
-		assert.Equal(t, int64(0), cfg.FileService.MaxAttachmentBytes, "unparseable value leaves it unset")
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "invalid FILE_SERVICE_MAX_ATTACHMENT_BYTES")
+		assert.Contains(t, err.Error(), "not-a-number")
 	})
 }
 

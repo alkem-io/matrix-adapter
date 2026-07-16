@@ -749,12 +749,13 @@ func TestHandleSendMessage_WithAttachments(t *testing.T) {
 	h := testRoomHandler(mock)
 
 	w, hgt := 800, 600
+	documentID := uuid.NewString()
 	payload := mustMarshal(t, dto.SendMessageRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
 		SenderActorID: dto.AlkemioActorID(uuid.New()),
 		Content:       "", // attachment-only: empty content must be accepted
 		Attachments: []dto.AttachmentRef{{
-			DocumentID:  "doc-1",
+			DocumentID:  documentID,
 			DisplayName: "pic.png",
 			MimeType:    "image/png",
 			Size:        123,
@@ -773,11 +774,35 @@ func TestHandleSendMessage_WithAttachments(t *testing.T) {
 		t.Fatalf("expected 1 attachment forwarded, got %d", len(mock.capturedSendMessageAttachments))
 	}
 	att := mock.capturedSendMessageAttachments[0]
-	if att.DocumentID != "doc-1" || att.DisplayName != "pic.png" || att.MimeType != "image/png" || att.Size != 123 {
+	if att.DocumentID != documentID || att.DisplayName != "pic.png" || att.MimeType != "image/png" || att.Size != 123 {
 		t.Errorf("attachment not forwarded correctly: %+v", att)
 	}
 	if att.Width == nil || *att.Width != 800 || att.Height == nil || *att.Height != 600 {
 		t.Errorf("attachment dims not forwarded: w=%v h=%v", att.Width, att.Height)
+	}
+}
+
+// A malformed document_id is rejected before the handler invokes the send
+// service, so a text event cannot be posted before media validation fails.
+func TestHandleSendMessage_NonUUIDAttachmentDocumentIDRejectedBeforeSend(t *testing.T) {
+	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$evt1:test"}
+	h := testRoomHandler(mock)
+
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Content:       "must not be posted",
+		Attachments: []dto.AttachmentRef{
+			{DocumentID: "not-a-uuid", DisplayName: "x", MimeType: "image/png"},
+		},
+	})
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertErrorCode(t, result, dto.ErrCodeInvalidParam)
+	if mock.capturedSendMessageRoomID != "" {
+		t.Error("SendMessage must not be called when any document_id is malformed")
 	}
 }
 

@@ -416,12 +416,11 @@ func (m *MautrixAdapter) handleReactionRedaction(e *event.Event, s uuid.UUID, re
 }
 
 // extractThreadIDFromMessage extracts the thread ID from a message event if present,
-// as an *id.EventID (nil when the event carries no thread/reply). It shares the
-// single parsed-relation extractor (threadIDFromParsed) with the live-sync/read
-// paths so the two can't diverge (C1) — this is just the pointer-returning
-// adapter over that string result.
+// as an *id.EventID (nil when the event carries no thread/reply). It uses the
+// same raw-preferring extractor as live sync and reads, because GetEvent responses
+// can carry m.relates_to only in Content.Raw.
 func (m *MautrixAdapter) extractThreadIDFromMessage(originalEvt *event.Event) *id.EventID {
-	tid := threadIDFromParsed(originalEvt)
+	tid := extractThreadID(originalEvt)
 	if tid == "" {
 		return nil
 	}
@@ -931,21 +930,6 @@ func attachmentDisplayName(raw map[string]interface{}) string {
 	return ""
 }
 
-// rawHasFilename reports whether the event carries a top-level MSC2530 `filename`
-// field (a non-empty string). Its PRESENCE — not whether it equals body —
-// decides caption semantics (A3): a present `filename` means `body` is a human
-// caption to keep as Content (even when body happens to equal the filename); an
-// absent `filename` means `body` IS the filename (legacy media) and Content is
-// blanked. Comparing DisplayName==body would wrongly drop a caption that happens
-// to equal the filename, which is why the decision is field-presence based.
-func rawHasFilename(evt *event.Event) bool {
-	if evt.Content.Raw == nil {
-		return false
-	}
-	filename, ok := evt.Content.Raw["filename"].(string)
-	return ok && filename != ""
-}
-
 // applyMediaInfo copies the media event's info block (mime/size/dimensions) onto
 // the attachment. A missing or malformed info block leaves the fields zeroed.
 func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
@@ -975,13 +959,9 @@ func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
 // IS forwarded (ok=true, empty Content): only a genuinely absent/non-string
 // body with no attachment is dropped (F3/F4).
 //
-// Content semantics for media events (MSC2530): a modern client sets
-// body=caption and a separate top-level `filename`. When a `filename` field is
-// present, body is a caption and is KEPT as Content — even when body happens to
-// equal the filename (A3). When there is NO `filename` field, body IS the
-// filename (legacy media) — already carried as the attachment's DisplayName — so
-// Content is blanked, so clients don't render a filename text bubble beside the
-// media.
+// Content semantics match develop: a present body is always forwarded. For
+// MSC2530 media it is the caption beside the separate filename; for legacy media
+// without filename it is the event's combined name/caption.
 func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content string, attachment *domain.Attachment, ok bool) {
 	body, bodyPresent := inboundBody(evt)
 	attachment = extractAttachment(evt, trustDocumentID)
@@ -990,16 +970,7 @@ func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content stri
 		return "", nil, false
 	}
 
-	content = body
-	// Caption decision is by PRESENCE of the top-level `filename` field, not by
-	// DisplayName==body (A3): a media event WITHOUT a `filename` field is legacy
-	// (body IS the filename) → blank Content so clients don't render a filename
-	// text bubble beside the media. A media event WITH a `filename` field carries
-	// body as a caption → keep it, even if it happens to equal the filename.
-	if attachment != nil && !rawHasFilename(evt) {
-		content = ""
-	}
-	return content, attachment, true
+	return body, attachment, true
 }
 
 // inboundBody returns the message body and whether a body is present. A body is
