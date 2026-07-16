@@ -173,6 +173,45 @@ func TestExtractAttachment_VideoAudio(t *testing.T) {
 	assert.Equal(t, "audio/ogg", audio.MimeType)
 }
 
+// Redacting a threaded sticker preserves its thread linkage, exactly like a
+// redacted m.room.message: processRedactedEvent routes EventSticker through the
+// message branch (which extracts the thread id), not the default branch (which
+// drops it).
+func TestProcessRedactedEvent_Sticker_PreservesThreadID(t *testing.T) {
+	a := newTestAdapter("test.local")
+
+	got := make(chan domain.MessageRedactedEvent, 1)
+	a.eventHandlers = EventHandlers{
+		OnMessageRedacted: func(e domain.MessageRedactedEvent) error { got <- e; return nil },
+	}
+
+	redactionEvt := &event.Event{ID: id.EventID("$redaction"), Timestamp: 1700000000000}
+	originalSticker := &event.Event{
+		ID:   id.EventID("$sticker"),
+		Type: event.EventSticker,
+		Content: event.Content{
+			Raw: map[string]any{
+				"body": "party parrot",
+				"url":  "mxc://test.local/stickerid",
+				"m.relates_to": map[string]any{
+					"rel_type": "m.thread",
+					"event_id": "$threadroot",
+				},
+			},
+		},
+	}
+
+	a.processRedactedEvent(redactionEvt, uuid.New(), "$sticker", uuid.New(), "spam", originalSticker)
+
+	select {
+	case e := <-got:
+		require.NotNil(t, e.ThreadID, "redacted sticker must carry its thread id")
+		assert.Equal(t, "$threadroot", e.ThreadID.String())
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a message-redaction event for the redacted sticker")
+	}
+}
+
 // An m.sticker is image-like media despite carrying NO msgtype field: the
 // EventSticker type bypasses the mediaMsgTypes gate and the url+info surface an
 // attachment. body (alt-text) becomes the DisplayName; MediaID is the mxc id.

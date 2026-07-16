@@ -45,8 +45,9 @@ type mockAdminAPI struct {
 	joinRoomErr                error
 
 	// Call tracking
-	getRoomMessagesCalls []getRoomMessagesCall
-	joinRoomCalls        []joinRoomCall
+	getRoomMessagesCalls  []getRoomMessagesCall
+	joinRoomCalls         []joinRoomCall
+	getRelationsEventType event.Type // records the eventType filter of the last GetRelations call
 }
 
 type getRoomMessagesCall struct {
@@ -109,7 +110,8 @@ func (m *mockAdminAPI) GetEvent(_ context.Context, _ id.RoomID, _ id.EventID) (*
 	return m.getEventResult, m.getEventErr
 }
 
-func (m *mockAdminAPI) GetRelations(_ context.Context, _ id.RoomID, _ id.EventID, _ event.RelationType, _ event.Type) ([]*event.Event, error) {
+func (m *mockAdminAPI) GetRelations(_ context.Context, _ id.RoomID, _ id.EventID, _ event.RelationType, eventType event.Type) ([]*event.Event, error) {
+	m.getRelationsEventType = eventType
 	return m.getRelationsResult, m.getRelationsErr
 }
 
@@ -699,6 +701,59 @@ func TestAdminAPI_GetThreadMessages_RootOnly(t *testing.T) {
 	}
 	if msgs[0].Content != "Lone message" {
 		t.Errorf("expected 'Lone message', got %q", msgs[0].Content)
+	}
+}
+
+// A threaded sticker reply surfaces in GetThreadMessages as media, and the
+// relations query passes an EMPTY event-type filter so Synapse returns all
+// m.thread relations (m.room.message AND m.sticker) rather than filtering
+// stickers out server-side.
+func TestAdminAPI_GetThreadMessages_StickerReply(t *testing.T) {
+	threadRootID := id.EventID("$root_sticker_thread")
+	mock := &mockAdminAPI{
+		getEventResult: &event.Event{
+			Type:      event.EventMessage,
+			ID:        threadRootID,
+			Sender:    "@user1:test.local",
+			Timestamp: time.Now().UnixMilli(),
+			Content: event.Content{
+				Parsed: &event.MessageEventContent{MsgType: event.MsgText, Body: "Root message"},
+			},
+		},
+		getRelationsResult: []*event.Event{
+			{
+				Type:      event.EventSticker,
+				ID:        "$sreply",
+				Sender:    "@element:test.local",
+				Timestamp: time.Now().UnixMilli(),
+				Content: event.Content{
+					Raw: map[string]any{
+						"body": "party parrot",
+						"url":  "mxc://test.local/stickerid",
+						"info": map[string]any{"mimetype": "image/png"},
+						"m.relates_to": map[string]any{
+							"rel_type": "m.thread",
+							"event_id": threadRootID.String(),
+						},
+					},
+				},
+			},
+		},
+	}
+	a := newAdminTestAdapter(mock)
+	msgs, err := a.GetThreadMessages(context.Background(), "!room:test.local", threadRootID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Expect: the sticker reply + the root (root appended last).
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (sticker reply + root), got %d", len(msgs))
+	}
+	if len(msgs[0].Attachments) != 1 || msgs[0].Attachments[0].MediaID != "stickerid" {
+		t.Errorf("expected sticker reply with MediaID 'stickerid', got %+v", msgs[0].Attachments)
+	}
+	if mock.getRelationsEventType.Type != "" {
+		t.Errorf("expected empty event-type filter (all thread relations), got %q", mock.getRelationsEventType.Type)
 	}
 }
 

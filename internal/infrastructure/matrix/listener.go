@@ -389,7 +389,9 @@ func (m *MautrixAdapter) processRedactedEvent(e *event.Event, s uuid.UUID, redac
 	switch originalEvt.Type {
 	case event.EventReaction:
 		m.handleReactionRedaction(e, s, redactedID, alkemioRoomID, originalEvt)
-	case event.EventMessage:
+	case event.EventMessage, event.EventSticker:
+		// A sticker is a message; redacting one preserves its thread linkage the
+		// same way a redacted m.room.message does (the default branch would drop it).
 		threadID := m.extractThreadIDFromMessage(originalEvt)
 		m.emitMessageRedaction(e, s, redactedID, alkemioRoomID, reason, threadID)
 	default:

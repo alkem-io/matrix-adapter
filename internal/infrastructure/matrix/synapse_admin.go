@@ -308,11 +308,22 @@ func (s *SynapseAdmin) GetTimestampToEvent(ctx context.Context, roomID id.RoomID
 // GetRelations retrieves relations (reactions, threads) for an event.
 // Uses the Matrix Client API (not Synapse Admin API) since no admin relations endpoint exists.
 // The admin access token is a normal client token — standard room access rules apply.
+//
+// An empty eventType (event.Type{}) omits the type path segment, so the endpoint
+// returns ALL event types carrying the relation — required to include m.sticker
+// thread replies alongside m.room.message replies (the caller filters
+// client-side via isMessageLikeEvent). A non-empty eventType filters server-side
+// (e.g. m.reaction for annotation lookups).
 func (s *SynapseAdmin) GetRelations(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID,
 	relType event.RelationType, eventType event.Type,
 ) ([]*event.Event, error) {
-	urlPath := s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType, eventType.Type)
+	var urlPath string
+	if eventType.Type == "" {
+		urlPath = s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType)
+	} else {
+		urlPath = s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType, eventType.Type)
+	}
 
 	var resp struct {
 		Chunk []*event.Event `json:"chunk"`

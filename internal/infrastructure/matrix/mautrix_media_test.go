@@ -880,6 +880,54 @@ func TestGetMessage_Sticker_ReturnsAttachment(t *testing.T) {
 	assert.Equal(t, "image/png", msg.Attachments[0].MimeType)
 }
 
+// A sticker in the unread window counts toward the unread total, exactly like an
+// m.room.message: countUnreadMessages uses isMessageLikeEvent. A mixed batch of a
+// text message and a sticker (both from another user) counts 2; before stickers
+// were message-like the sticker would have been skipped.
+func TestCountUnreadMessages_CountsStickers(t *testing.T) {
+	other := id.UserID("@element:test.local")
+	me := expectedUserID(testActorID)
+	intent := &mockIntentAPI{
+		messagesResult: &mautrix.RespMessages{
+			Chunk: []*event.Event{
+				{Type: event.EventMessage, ID: "$t1", Sender: other, Content: event.Content{
+					Raw: map[string]any{"msgtype": "m.text", "body": "hi"},
+				}},
+				{Type: event.EventSticker, ID: "$s1", Sender: other, Content: event.Content{
+					Raw: map[string]any{"body": "party parrot", "url": "mxc://test.local/stickerid"},
+				}},
+			},
+			End: "", // no more events → scan stops after this batch
+		},
+	}
+	a := newFullTestAdapter(newMockAS(intent, nil), &mockAdminAPI{})
+
+	count, ok := a.countUnreadMessages(context.Background(), intent, "!room:test.local", nil, me)
+	require.True(t, ok, "scan completes (all events seen)")
+	assert.Equal(t, 2, count, "both the text message and the sticker count as unread")
+}
+
+// A sticker from the querying user themself is NOT counted (self-authored), same
+// as a self-authored m.room.message.
+func TestCountUnreadMessages_SkipsOwnSticker(t *testing.T) {
+	me := expectedUserID(testActorID)
+	intent := &mockIntentAPI{
+		messagesResult: &mautrix.RespMessages{
+			Chunk: []*event.Event{
+				{Type: event.EventSticker, ID: "$s1", Sender: me, Content: event.Content{
+					Raw: map[string]any{"body": "wave", "url": "mxc://test.local/x"},
+				}},
+			},
+			End: "",
+		},
+	}
+	a := newFullTestAdapter(newMockAS(intent, nil), &mockAdminAPI{})
+
+	count, ok := a.countUnreadMessages(context.Background(), intent, "!room:test.local", nil, me)
+	require.True(t, ok)
+	assert.Equal(t, 0, count, "a self-authored sticker is not unread")
+}
+
 // Streaming upload: a body within the cap streams straight through to Synapse
 // (no whole-file buffering) and the media event's info.size is the streamed byte
 // count; a body larger than the cap fails with the oversize error and sends no

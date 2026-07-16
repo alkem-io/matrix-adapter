@@ -1986,8 +1986,11 @@ func (m *MautrixAdapter) GetThreadMessages(
 		rootMsg = parsed
 	}
 
-	// Get thread replies using admin relations API
-	chunk, err := m.admin.GetRelations(ctx, roomID, threadRootID, event.RelThread, event.EventMessage)
+	// Get thread replies using admin relations API. Pass an empty event type so
+	// Synapse returns ALL m.thread relations (m.room.message AND m.sticker); the
+	// reply scan below filters to message-like events via isMessageLikeEvent.
+	// Filtering server-side by m.room.message would drop threaded sticker replies.
+	chunk, err := m.admin.GetRelations(ctx, roomID, threadRootID, event.RelThread, event.Type{})
 
 	messages := make([]domain.Message, 0)
 	if err != nil {
@@ -2855,7 +2858,8 @@ func (m *MautrixAdapter) getFullyReadMarker(
 	return &result.EventID
 }
 
-// countUnreadMessages counts m.room.message events backward from the latest event,
+// countUnreadMessages counts message-like events (m.room.message and m.sticker)
+// backward from the latest event,
 // stopping when the receipt event ID is found or 200 events have been scanned.
 // If receiptEventID is nil, counts ALL non-self messages (for rooms with no receipt).
 // Returns (count, true) if receipt found or all events scanned.
@@ -2900,8 +2904,9 @@ func (m *MautrixAdapter) countUnreadMessages(
 				)
 				return count, true
 			}
-			// Count message events not from the user
-			if evt.Type == event.EventMessage && evt.Sender != userID {
+			// Count message events not from the user. A sticker is a message, so it
+			// counts toward unread the same as an m.room.message (isMessageLikeEvent).
+			if isMessageLikeEvent(evt) && evt.Sender != userID {
 				count++
 			}
 		}
