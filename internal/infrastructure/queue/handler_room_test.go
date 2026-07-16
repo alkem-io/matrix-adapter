@@ -853,6 +853,30 @@ func TestHandleSendMessage_EmptyAttachmentDocumentID(t *testing.T) {
 	}
 }
 
+// An attachment with a valid document_id but an empty (or whitespace-only)
+// display_name is rejected before any Matrix event is emitted — an empty
+// display_name would surface as a nameless attachment (body: "") in Element.
+func TestHandleSendMessage_EmptyAttachmentDisplayName(t *testing.T) {
+	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$evt1:test"}
+	h := testRoomHandler(mock)
+
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Attachments: []dto.AttachmentRef{
+			{DocumentID: uuid.NewString(), DisplayName: "   ", MimeType: "image/png"},
+		},
+	})
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertErrorCode(t, result, dto.ErrCodeInvalidParam)
+	if mock.capturedSendMessageRoomID != "" {
+		t.Error("SendMessage should not have been called when a display_name is empty")
+	}
+}
+
 func TestHandleSendMessage_RoomNotFound(t *testing.T) {
 	mock := &testMockMatrixPort{
 		resolveAliasErr: domain.ErrRoomNotFound,

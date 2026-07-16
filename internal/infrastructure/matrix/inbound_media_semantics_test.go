@@ -386,3 +386,33 @@ func TestGetMessage_MalformedBody_ReturnsError(t *testing.T) {
 	require.Error(t, err, "a non-string body is malformed and must error")
 	assert.Nil(t, msg)
 }
+
+// A MEDIA event (valid mxc url + msgtype) is a valid attachment regardless of its
+// body: the timeline scans (GetRoomMessages/GetLastMessage) return it via the url,
+// so GetMessage must too. A corrupt/non-string body must NOT make GetMessage error
+// on it — that would be an inconsistent read path. Only a non-string body with NO
+// url is malformed.
+func TestGetMessage_MediaEventNonStringBody_ReturnsAttachment(t *testing.T) {
+	admin := &mockAdminAPI{
+		getEventResult: &event.Event{
+			ID:        id.EventID("$mbad"),
+			Sender:    id.UserID("@user:test.local"),
+			Type:      event.EventMessage,
+			Timestamp: 1700000000000,
+			Content: event.Content{
+				Raw: map[string]any{
+					"msgtype": "m.image",
+					"body":    12345, // corrupt, non-string body
+					"url":     "mxc://test.local/x",
+				},
+			},
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$mbad")
+	require.NoError(t, err, "a media event is valid regardless of its body")
+	require.NotNil(t, msg)
+	require.Len(t, msg.Attachments, 1, "the media attachment must be surfaced")
+	assert.Equal(t, "x", msg.Attachments[0].MediaID)
+}

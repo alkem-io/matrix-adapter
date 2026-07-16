@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -362,6 +363,12 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 		if _, err := uuid.Parse(req.Attachments[i].DocumentID); err != nil {
 			return NewInvalidParamError(fmt.Sprintf(
 				"attachment[%d] document_id must be a valid UUID", i)), nil
+		}
+		// An empty display_name would flow to buildMediaContent as body: "",
+		// producing a nameless attachment in Element. Reject it up front.
+		if strings.TrimSpace(req.Attachments[i].DisplayName) == "" {
+			return NewInvalidParamError(fmt.Sprintf(
+				"attachment[%d] display_name is required", i)), nil
 		}
 	}
 

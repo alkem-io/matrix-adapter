@@ -1,6 +1,7 @@
 package matrix
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -13,6 +14,39 @@ import (
 
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 )
+
+// rawInt64 coerces JSON numbers for size/w/h, which are non-negative; a NaN/Inf,
+// negative, or int64-overflowing float (e.g. a hostile info.size of 1e30) must be
+// rejected rather than surfacing an implementation-defined garbage/negative int64.
+func TestRawInt64_RangeAndSignGuards(t *testing.T) {
+	// Overflow: 1e30 far exceeds math.MaxInt64.
+	if v, ok := rawInt64(1e30); ok {
+		t.Errorf("rawInt64(1e30) must be rejected, got (%d, true)", v)
+	}
+	// Negative floats are not valid sizes/dimensions.
+	if v, ok := rawInt64(float64(-5)); ok {
+		t.Errorf("rawInt64(-5) must be rejected, got (%d, true)", v)
+	}
+	// NaN / +Inf / -Inf are rejected.
+	if _, ok := rawInt64(math.NaN()); ok {
+		t.Error("rawInt64(NaN) must be rejected")
+	}
+	if _, ok := rawInt64(math.Inf(1)); ok {
+		t.Error("rawInt64(+Inf) must be rejected")
+	}
+	if _, ok := rawInt64(math.Inf(-1)); ok {
+		t.Error("rawInt64(-Inf) must be rejected")
+	}
+	// A normal in-range value still coerces.
+	got, ok := rawInt64(float64(9))
+	if !ok || got != 9 {
+		t.Errorf("rawInt64(9.0) = (%d, %v), want (9, true)", got, ok)
+	}
+	// Non-float numeric kinds still work.
+	if got, ok := rawInt64(int(42)); !ok || got != 42 {
+		t.Errorf("rawInt64(int 42) = (%d, %v), want (42, true)", got, ok)
+	}
+}
 
 // isOwnAppserviceUser trusts only UUID-localpart users on our own homeserver.
 func TestIsOwnAppserviceUser(t *testing.T) {

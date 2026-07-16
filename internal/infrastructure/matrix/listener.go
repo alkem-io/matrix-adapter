@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -1009,16 +1010,23 @@ func (m *MautrixAdapter) isOwnAppserviceUser(userID id.UserID) bool {
 }
 
 // rawInt64 coerces a JSON-decoded numeric value (float64 from encoding/json, or
-// an int produced by in-process construction) to an int64.
+// an int produced by in-process construction) to an int64. It only carries
+// sizes/dimensions, which are non-negative: a NaN/Inf, negative, or int64-range-
+// overflowing float (e.g. a hostile info.size of 1e30) is rejected as (0, false)
+// rather than surfacing an implementation-defined garbage/negative int64.
 func rawInt64(v any) (int64, bool) {
 	switch n := v.(type) {
 	case float64:
+		if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > float64(math.MaxInt64) {
+			return 0, false
+		}
 		return int64(n), true
 	case int:
 		return int64(n), true
 	case int64:
 		return n, true
 	case json.Number:
+		// Int64 already errors on out-of-range values; keep returning false there.
 		i, err := n.Int64()
 		return i, err == nil
 	default:

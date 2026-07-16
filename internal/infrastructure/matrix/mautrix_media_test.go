@@ -563,10 +563,11 @@ func TestSendMessage_MixedCaseResponseContentTypeLowercased(t *testing.T) {
 	assert.Equal(t, "image/jpeg", info["mimetype"])
 }
 
-// A specific parameterized Content-Type must keep its parameters (charset) in
-// the resolved media type so they survive into upload Content-Type and
-// info.mimetype. Guards [3].
-func TestSendMessage_SpecificParameterizedTypePreservesCharset(t *testing.T) {
+// A parameterized Content-Type keeps its parameters (charset) ONLY on the upload
+// Content-Type — where charset must survive for text — but the event's
+// info.mimetype and msgtype get the BARE type (params stripped), matching Matrix's
+// convention that FileInfo.mimetype is an unparameterized type/subtype. Guards [8].
+func TestSendMessage_ParameterizedTypeBareInEventFullOnUpload(t *testing.T) {
 	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
 		return fileServiceResponse(http.StatusOK, "text/plain; charset=utf-8", []byte("hi")), nil
 	})
@@ -581,13 +582,13 @@ func TestSendMessage_SpecificParameterizedTypePreservesCharset(t *testing.T) {
 		[]domain.Attachment{{DocumentID: docID1, DisplayName: "note.txt", MimeType: "application/octet-stream"}})
 	require.NoError(t, err)
 
-	assert.Equal(t, "text/plain; charset=utf-8", intent.lastUploadBytesType, "charset preserved on upload")
+	assert.Equal(t, "text/plain; charset=utf-8", intent.lastUploadBytesType, "charset preserved on upload Content-Type")
 	content, ok := intent.lastSendMsgEventContent.(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "m.file", content["msgtype"], "text/* classifies as m.file")
 	info, ok := content["info"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "text/plain; charset=utf-8", info["mimetype"], "charset retained in info.mimetype")
+	assert.Equal(t, "text/plain", info["mimetype"], "info.mimetype is the bare type, charset stripped")
 }
 
 // A malformed/params-only att.MimeType AND response Content-Type must not leak

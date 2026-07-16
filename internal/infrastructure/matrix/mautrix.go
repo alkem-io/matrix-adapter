@@ -758,11 +758,12 @@ func (m *MautrixAdapter) SendMessage(
 // is the text event's id (empty for an attachment-only message, in which case
 // the first attachment becomes the primary); it is returned resolved.
 //
-// Attachments are streamed and sent SEQUENTIALLY, on purpose: it preserves their
-// visible order in the room (events are ordered by send), and each send is its
-// own queue handler so one user's multi-attachment send never blocks another
-// room. Parallelizing the uploads would still require an ordered send afterward
-// for marginal gain on a bounded (<=10) attachment list.
+// The whole fan-out (all N<=10 attachments) is fetched, uploaded, and sent
+// SEQUENTIALLY within this single send's HandleSendMessage queue-handler
+// invocation, on purpose: sequential order preserves the attachments' visible
+// order in the room (events are ordered by send). Parallelizing the uploads
+// would still require an ordered send afterward for marginal gain on a bounded
+// (<=10) attachment list.
 func (m *MautrixAdapter) fanOutAttachments(
 	ctx context.Context, intent intentAPI, roomID id.RoomID,
 	attachments []domain.Attachment, threadID, primaryEventID id.EventID,
@@ -992,11 +993,13 @@ func (m *MautrixAdapter) sendAttachment(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Use the most specific media type available and apply it consistently to the
-	// upload Content-Type, the event msgtype, and info.mimetype. The server-declared
-	// att.MimeType is authoritative when specific; fall back to the file-service
-	// response Content-Type when att is generic/empty (some object stores serve
-	// application/octet-stream regardless of the real type).
+	// Use the most specific media type available. The server-declared att.MimeType
+	// is authoritative when specific; fall back to the file-service response
+	// Content-Type when att is generic/empty (some object stores serve
+	// application/octet-stream regardless of the real type). The FULL resolved type
+	// (with any params such as "; charset=utf-8") drives the upload Content-Type so
+	// charset survives for text; the BARE type (params stripped) drives the event
+	// msgtype and info.mimetype, which are conventionally unparameterized.
 	contentType := resolveMediaMime(resp.Header.Get("Content-Type"), att.MimeType)
 
 	maxBytes := m.cfg.MaxAttachmentBytes()
@@ -1025,7 +1028,8 @@ func (m *MautrixAdapter) sendAttachment(
 		return "", fmt.Errorf("failed to upload media: %w", err)
 	}
 	// info.size is the bytes actually streamed, never the caller-declared att.Size.
-	content := buildMediaContent(att, up.ContentURI, contentType, reader.n, threadID)
+	// The bare type (params stripped) is used for info.mimetype and msgtype.
+	content := buildMediaContent(att, up.ContentURI, baseType(contentType), reader.n, threadID)
 	sent, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content)
 	if err != nil {
 		return "", fmt.Errorf("failed to send media event: %w", err)
@@ -1102,12 +1106,14 @@ func (m *MautrixAdapter) openDocumentFetch(ctx context.Context, documentID strin
 // used for lookup-free read-translation of our own outbound media. A map is
 // used (rather than event.MessageEventContent) so custom fields can be set as
 // top-level event properties.
+// bareMimeType is the resolved media type with any parameters stripped
+// (see baseType) — Matrix info.mimetype and msgtype are conventionally bare.
 func buildMediaContent(
-	att domain.Attachment, mxc id.ContentURI, contentType string, size int64,
+	att domain.Attachment, mxc id.ContentURI, bareMimeType string, size int64,
 	threadID id.EventID,
 ) map[string]any {
 	info := map[string]any{
-		"mimetype": contentType,
+		"mimetype": bareMimeType,
 		"size":     size,
 	}
 	if att.Width != nil {
@@ -1120,7 +1126,7 @@ func buildMediaContent(
 	// HandleSendMessage rejects empty document ids, and openDocumentFetch validates
 	// the UUID before the media content is built, so this breadcrumb is never blank.
 	content := map[string]any{
-		"msgtype":                mediaMsgType(contentType),
+		"msgtype":                mediaMsgType(bareMimeType),
 		"body":                   att.DisplayName,
 		"url":                    mxc.String(),
 		"info":                   info,
@@ -1204,13 +1210,22 @@ func validMediaType(t string) bool {
 	return slash > 0 && slash < len(t)-1
 }
 
+// baseType strips any parameters (e.g. "; charset=utf-8") from a media type,
+// returning the bare "type/subtype". Matrix FileInfo.mimetype and the event
+// msgtype are conventionally a bare type — a parameterized value can defeat a
+// client's exact-match preview/thumbnail logic — whereas the upload Content-Type
+// must keep params (charset) intact.
+func baseType(s string) string {
+	if i := strings.IndexByte(s, ';'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return strings.TrimSpace(s)
+}
+
 // isSpecificMediaType reports whether a normalized media type is more specific
 // than application/octet-stream. normalized is "" or "type/subtype[; params]".
 func isSpecificMediaType(normalized string) bool {
-	base := normalized
-	if i := strings.IndexByte(normalized, ';'); i >= 0 {
-		base = normalized[:i]
-	}
+	base := baseType(normalized)
 	return base != "" && base != "application/octet-stream"
 }
 
@@ -1311,8 +1326,18 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 // is present but not a string — a corrupt event that is not a usable message
 // (develop errored here). An ABSENT body is NOT malformed: a bodyless/redacted
 // message event still resolves to an empty-content Message.
+//
+// A MEDIA event (non-empty mxc "url") is NEVER malformed on body grounds: it is a
+// valid attachment that parseMessageEvent/extractInboundMessage surface via the
+// url, and the timeline scans (GetRoomMessages/GetLastMessage) return it. Firing
+// here on a media event with a corrupt/non-string body would make GetMessage
+// error on a message the other read paths return, an inconsistent read path.
+// Only a non-string body with NO url is malformed.
 func malformedMessageBody(evt *event.Event) bool {
 	if evt.Type != event.EventMessage || evt.Content.Raw == nil {
+		return false
+	}
+	if url, ok := evt.Content.Raw["url"].(string); ok && url != "" {
 		return false
 	}
 	raw, present := evt.Content.Raw["body"]
