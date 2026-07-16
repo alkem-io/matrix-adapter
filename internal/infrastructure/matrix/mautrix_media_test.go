@@ -536,6 +536,87 @@ func TestSendMessage_SpecificAttMimeBeatsGenericResponseType(t *testing.T) {
 	assert.Equal(t, "image/png", info["mimetype"])
 }
 
+// A mixed-/upper-case file-service Content-Type must be lowercased so the
+// derived msgtype classifies as inline media (m.image) rather than m.file, and
+// info.mimetype/upload Content-Type are stored lowercased. Guards [0].
+func TestSendMessage_MixedCaseResponseContentTypeLowercased(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "Image/JPEG", []byte("JPG")), nil
+	})
+
+	intent := &mockIntentAPI{
+		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/jpg")},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$jpg"},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "image", MimeType: ""}})
+	require.NoError(t, err)
+
+	assert.Equal(t, "image/jpeg", intent.lastUploadBytesType, "upload Content-Type lowercased")
+	content, ok := intent.lastSendMsgEventContent.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "m.image", content["msgtype"], "mixed-case image/* still classifies as m.image")
+	info, ok := content["info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "image/jpeg", info["mimetype"])
+}
+
+// A specific parameterized Content-Type must keep its parameters (charset) in
+// the resolved media type so they survive into upload Content-Type and
+// info.mimetype. Guards [3].
+func TestSendMessage_SpecificParameterizedTypePreservesCharset(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "text/plain; charset=utf-8", []byte("hi")), nil
+	})
+
+	intent := &mockIntentAPI{
+		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/txt")},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$txt"},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "note.txt", MimeType: "application/octet-stream"}})
+	require.NoError(t, err)
+
+	assert.Equal(t, "text/plain; charset=utf-8", intent.lastUploadBytesType, "charset preserved on upload")
+	content, ok := intent.lastSendMsgEventContent.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "m.file", content["msgtype"], "text/* classifies as m.file")
+	info, ok := content["info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "text/plain; charset=utf-8", info["mimetype"], "charset retained in info.mimetype")
+}
+
+// A malformed/params-only att.MimeType AND response Content-Type must not leak
+// into upload metadata; the resolver collapses to application/octet-stream.
+// Guards [1].
+func TestSendMessage_MalformedTypesCollapseToOctetStream(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "; charset=utf-8", []byte("x")), nil
+	})
+
+	intent := &mockIntentAPI{
+		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/bin")},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$bin"},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "blob", MimeType: "; charset=x"}})
+	require.NoError(t, err)
+
+	assert.Equal(t, "application/octet-stream", intent.lastUploadBytesType, "malformed types collapse to octet-stream")
+	content, ok := intent.lastSendMsgEventContent.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "m.file", content["msgtype"])
+	info, ok := content["info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "application/octet-stream", info["mimetype"])
+}
+
 // Each attachment in a multi-attachment send gets its own event with a distinct
 // body (filename) and io.alkemio.document_id.
 func TestSendMessage_MultiAttachment_DistinctPerEvent(t *testing.T) {

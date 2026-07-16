@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -1146,43 +1147,51 @@ func threadRelation(threadID id.EventID) *event.RelatesTo {
 	}
 }
 
-// resolveMediaMime picks the most specific media type. The server-declared
-// att.MimeType is authoritative when specific; otherwise the file-service
-// response Content-Type is used. Empty and application/octet-stream are treated
-// as non-specific. The result drives the upload Content-Type, the Matrix
-// msgtype, and info.mimetype uniformly so they never disagree.
+// resolveMediaMime picks the most specific media type and returns it in
+// canonical form: a lowercased "type/subtype" with any meaningful parameters
+// (e.g. "; charset=utf-8") preserved. The server-declared att.MimeType is
+// authoritative when specific; otherwise the file-service response Content-Type
+// is used. Empty, params-only, malformed, and application/octet-stream values
+// are treated as non-specific. The result drives the upload Content-Type, the
+// Matrix msgtype, and info.mimetype uniformly so they never disagree — and
+// because the type is lowercased, case-insensitive inputs (e.g. "Image/JPEG")
+// still classify correctly in mediaMsgType.
 func resolveMediaMime(responseContentType, attMimeType string) string {
-	// Return the ORIGINAL (parameterized) value — parameters like "; charset=utf-8"
-	// are meaningful for specific types and must survive into the upload
-	// Content-Type and info.mimetype. baseMediaType is used only for the
-	// specificity decision, so "application/octet-stream; x" still reads as generic.
-	if isSpecificMime(attMimeType) {
-		return attMimeType
+	att, attOK := normalizeMediaType(attMimeType)
+	resp, respOK := normalizeMediaType(responseContentType)
+	if attOK && isSpecificMediaType(att) {
+		return att
 	}
-	if isSpecificMime(responseContentType) {
-		return responseContentType
+	if respOK && isSpecificMediaType(resp) {
+		return resp
 	}
-	if attMimeType != "" {
-		return attMimeType
+	if attOK {
+		return att
 	}
-	if responseContentType != "" {
-		return responseContentType
+	if respOK {
+		return resp
 	}
 	return "application/octet-stream"
 }
 
-// baseMediaType strips MIME parameters (e.g. "; charset=utf-8"), trims space, and
-// lowercases, yielding a bare "type/subtype" for comparison only.
-func baseMediaType(contentType string) string {
-	if i := strings.IndexByte(contentType, ';'); i >= 0 {
-		contentType = contentType[:i]
+// normalizeMediaType parses contentType via the stdlib mime package and returns
+// the canonical lowercased "type/subtype[; params]" form. ok is false when
+// there is no valid media type — empty, params-only, or otherwise malformed
+// input — so such values collapse to application/octet-stream in
+// resolveMediaMime rather than leaking into upload metadata.
+func normalizeMediaType(contentType string) (string, bool) {
+	mediatype, params, err := mime.ParseMediaType(contentType)
+	if err != nil || mediatype == "" {
+		return "", false
 	}
-	return strings.ToLower(strings.TrimSpace(contentType))
+	return mime.FormatMediaType(mediatype, params), true
 }
 
-func isSpecificMime(mime string) bool {
-	base := baseMediaType(mime)
-	return base != "" && base != "application/octet-stream"
+// isSpecificMediaType reports whether a NORMALIZED media type is more specific
+// than application/octet-stream.
+func isSpecificMediaType(normalized string) bool {
+	mediatype, _, err := mime.ParseMediaType(normalized)
+	return err == nil && mediatype != "" && mediatype != "application/octet-stream"
 }
 
 // mediaMsgType maps a MIME type to the appropriate Matrix message msgtype.
