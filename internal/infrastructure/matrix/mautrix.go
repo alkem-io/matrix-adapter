@@ -1323,7 +1323,9 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 	// string body with nothing usable is a malformed event, not a blank message.
 	// Deferring to parseMessageEvent here avoids replicating extractAttachment's
 	// media-detection (url + document_id + msgtype) in the malformed check.
-	if msg.Content == "" && len(msg.Attachments) == 0 && malformedMessageBody(evt) {
+	// isBlankMessage is the same "nothing renderable" test the scanning read paths
+	// use, so all read paths share one blank-message definition.
+	if isBlankMessage(msg) && malformedMessageBody(evt) {
 		return nil, fmt.Errorf("event is not a message")
 	}
 	return msg, nil
