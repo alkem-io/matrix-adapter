@@ -673,6 +673,86 @@ func TestSendMessage_SubtypeLessTypeRejected(t *testing.T) {
 	assert.Equal(t, "application/octet-stream", info["mimetype"])
 }
 
+// A malformed BASE type (internal space) is NOT recoverable: mime.ParseMediaType
+// rejects "image/png bad", and the recovery path must re-validate the base
+// rather than leak it. It collapses to application/octet-stream, not m.image.
+func TestSendMessage_MalformedBaseTypeSpaceRejected(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "", []byte("x")), nil
+	})
+
+	intent := &mockIntentAPI{
+		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/bin")},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$bin"},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "blob", MimeType: "image/png bad"}})
+	require.NoError(t, err)
+
+	assert.Equal(t, "application/octet-stream", intent.lastUploadBytesType)
+	content, ok := intent.lastSendMsgEventContent.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "m.file", content["msgtype"])
+	info, ok := content["info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "application/octet-stream", info["mimetype"])
+}
+
+// A control character in the base type would, if leaked into the UploadMedia
+// Content-Type header, be rejected by net/http and HARD-FAIL the send. The
+// resolver must collapse it to application/octet-stream so the upload succeeds.
+// This is the header-injection regression guard: assert err == nil.
+func TestSendMessage_ControlCharBaseTypeCollapsesAndSendSucceeds(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "", []byte("x")), nil
+	})
+
+	intent := &mockIntentAPI{
+		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/bin")},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$bin"},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "blob", MimeType: "image/png\x00x"}})
+	require.NoError(t, err, "control-char type must not reach the upload header and hard-fail the send")
+
+	assert.Equal(t, "application/octet-stream", intent.lastUploadBytesType)
+	content, ok := intent.lastSendMsgEventContent.(map[string]any)
+	require.True(t, ok)
+	info, ok := content["info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "application/octet-stream", info["mimetype"])
+}
+
+// An extra path segment ("image/png/x") is a malformed base that ParseMediaType
+// rejects; it must not leak and collapses to application/octet-stream.
+func TestSendMessage_ExtraSegmentBaseTypeRejected(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "", []byte("x")), nil
+	})
+
+	intent := &mockIntentAPI{
+		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/bin")},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$bin"},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "blob", MimeType: "image/png/x"}})
+	require.NoError(t, err)
+
+	assert.Equal(t, "application/octet-stream", intent.lastUploadBytesType)
+	content, ok := intent.lastSendMsgEventContent.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "m.file", content["msgtype"])
+	info, ok := content["info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "application/octet-stream", info["mimetype"])
+}
+
 // Each attachment in a multi-attachment send gets its own event with a distinct
 // body (filename) and io.alkemio.document_id.
 func TestSendMessage_MultiAttachment_DistinctPerEvent(t *testing.T) {

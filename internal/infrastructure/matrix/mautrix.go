@@ -1174,32 +1174,31 @@ func resolveMediaMime(responseContentType, attMimeType string) string {
 	return "application/octet-stream"
 }
 
-// normalizeMediaType returns a lowercased "type/subtype[; params]" for a
-// Content-Type. It canonicalizes valid input (preserving parameters such as
-// charset), recovers the bare "type/subtype" when a PARAMETER is malformed
-// (rather than discarding a usable type), and returns "" when there is no valid
-// "type/subtype" (empty, params-only, or a bare type with no subtype).
+// normalizeMediaType returns a lowercased, canonical "type/subtype[; params]"
+// for a Content-Type, or "" when there is no valid media type. Valid input is
+// canonicalized (preserving parameters such as charset). When only a PARAMETER
+// is malformed, the bare "type/subtype" is recovered and RE-PARSED with
+// mime.ParseMediaType so a malformed BASE type (bad token chars, whitespace,
+// extra segments, control characters) still collapses to "" rather than leaking
+// into the upload Content-Type header or the event's info.mimetype.
 func normalizeMediaType(contentType string) string {
-	if strings.TrimSpace(contentType) == "" {
-		return ""
-	}
-	// Full parse canonicalizes case + parameters (keeps charset).
 	if mediatype, params, err := mime.ParseMediaType(contentType); err == nil && validMediaType(mediatype) {
 		return mime.FormatMediaType(mediatype, params)
 	}
-	// Malformed parameters: recover just the base type.
+	// Parse failed — possibly only a parameter was malformed. Recover the base
+	// (before the first ';') and re-validate it via ParseMediaType.
 	base := contentType
 	if i := strings.IndexByte(base, ';'); i >= 0 {
 		base = base[:i]
 	}
-	base = strings.ToLower(strings.TrimSpace(base))
-	if !validMediaType(base) {
-		return ""
+	if mediatype, _, err := mime.ParseMediaType(base); err == nil && validMediaType(mediatype) {
+		return mediatype
 	}
-	return base
+	return ""
 }
 
-// validMediaType reports whether t is a "type/subtype" with both parts non-empty.
+// validMediaType reports whether t is "type/subtype" with a non-empty subtype
+// (mime.ParseMediaType accepts a bare type like "image" with no subtype).
 func validMediaType(t string) bool {
 	slash := strings.IndexByte(t, '/')
 	return slash > 0 && slash < len(t)-1
