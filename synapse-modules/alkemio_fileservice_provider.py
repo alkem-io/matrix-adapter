@@ -54,6 +54,7 @@ file by that workflow. Never hand-edit the downstream confmap copies; change thi
 file and let the sync workflow roll it forward.
 """
 
+import json
 import logging
 import math
 import os
@@ -89,18 +90,31 @@ DEFAULT_STORE_TIMEOUT_S = 30.0
 _STORE_SUCCESS_CODE = 201
 
 
-async def _with_timeout(reactor, timeout_s, coro):
+class _OpenAfterTimeout(Exception):
     """
-    Bound ONE awaited operation by a reactor deadline. A stalled await raises
+    Raised by the guarded cache-file open when it completes AFTER the store has
+    already timed out. The handle has been closed by the guard; nothing consumes
+    this exception (the awaited Deferred was already cancelled by the deadline) —
+    it exists only to make the dead path explicit and self-closing.
+    """
+
+
+async def _with_timeout(reactor, timeout_s, d):
+    """
+    Bound ONE raw (treq) Deferred by a reactor deadline. A stalled read raises
     `defer.TimeoutError`.
 
     This is a PURE per-call timeout: NO circuit breaker, NO cross-request/shared
-    health state, NO success/failure bookkeeping — it just fails one hung await
+    health state, NO success/failure bookkeeping — it just fails one hung read
     fast. It exists because treq's own `timeout=` only covers the request up to
-    the response HEADERS; the subsequent BODY read (and the threadpool open) have
-    no such guard and would otherwise hang the read/store path forever.
+    the response HEADERS; the subsequent BODY read has no such guard and would
+    otherwise hang the read path forever.
+
+    Only for RAW treq deferreds (json/content body reads) that are NOT
+    logcontext-managed — `make_deferred_yieldable` here is correct. Do NOT use it
+    for `defer_to_thread`, which is already logcontext-wrapped (a second wrap would
+    resume under the sentinel context); bound that one with `addTimeout` directly.
     """
-    d = defer.ensureDeferred(coro)
     # On deadline, addTimeout cancels `d` and converts the resulting
     # CancelledError to a defer.TimeoutError on the errback chain.
     d.addTimeout(timeout_s, reactor)
@@ -179,6 +193,49 @@ class _DrainAndAbort(Protocol):
 
     def dataReceived(self, data: bytes) -> None:  # pragma: no cover - aborted
         pass
+
+
+class _JsonBodyReader(Protocol):
+    """
+    Reads a (small, buffered) response body into memory, firing `finished` with
+    the collected bytes on a clean close.
+
+    We read the by-reference JSON body with a protocol WE own (instead of
+    treq.json_content) specifically so we can `abort()` it: treq's
+    collect/content Deferred has no canceller, so a timeout on that read would
+    cancel the wait but leave the underlying connection open (pool leak). On a
+    stalled/failed read `abort()` tears the connection down — the same
+    stopProducing() release `_DrainAndAbort` uses, adapted to this buffered read.
+    """
+
+    def __init__(self, finished: "Deferred[bytes]"):
+        self._finished = finished
+        self._chunks = []
+
+    def dataReceived(self, data: bytes) -> None:
+        self._chunks.append(data)
+
+    def connectionLost(self, reason=None) -> None:
+        from twisted.web.client import ResponseDone
+        from twisted.web.http import PotentialDataLoss
+        from twisted.internet.error import ConnectionDone
+
+        if self._finished.called:
+            return
+        if reason is None or reason.check(
+            ResponseDone, PotentialDataLoss, ConnectionDone
+        ):
+            self._finished.callback(b"".join(self._chunks))
+        else:
+            self._finished.errback(reason)
+
+    def abort(self) -> None:
+        transport = getattr(self, "transport", None)
+        if transport is not None:
+            try:
+                transport.stopProducing()
+            except Exception:  # noqa: BLE001 - best-effort release
+                pass
 
 
 class _FileServiceResponder(Responder):
@@ -332,6 +389,27 @@ class FileServiceStorageProvider(StorageProvider):
         except Exception as exc:  # noqa: BLE001 - best-effort drain
             logger.debug("file-service response drain failed (ignored): %s", exc)
 
+    async def _read_json_body(self, resp):
+        """
+        Read + JSON-parse the by-reference response body, bounded by `timeout_s`.
+
+        Reads via a protocol we own (`_JsonBodyReader`) rather than
+        `treq.json_content` so that on a stalled/failed body read we can ABORT the
+        connection — treq's content Deferred has no canceller, so a bare timeout
+        there would release the wait but LEAK the still-open connection (pool
+        exhaustion -> every fetch then misses). On any error the reader is
+        aborted and the error propagates to fetch's `except` -> return None.
+        """
+        finished = defer.Deferred()  # type: Deferred[bytes]
+        reader = _JsonBodyReader(finished)
+        resp.deliverBody(reader)
+        try:
+            raw = await _with_timeout(self.reactor, self.timeout_s, finished)
+        except Exception:
+            reader.abort()  # release the stalled/broken connection
+            raise
+        return json.loads(raw)
+
     # -- StorageProvider API ------------------------------------------------
 
     async def store_file(self, path: str, file_info: "FileInfo") -> None:
@@ -358,16 +436,41 @@ class FileServiceStorageProvider(StorageProvider):
         # Cooperator), so the file is never fully copied into memory nor read
         # synchronously on the reactor thread.
         cache_file = os.path.join(self.cache_path, path)
+
         # Bound the open by `store_timeout_s` so a wedged media-store mount fails
-        # the upload fast instead of stalling the request forever. Caveat: this
-        # bounds the awaited REQUEST, not the blocking open() itself — a syscall
-        # parked in a threadpool thread can't be cancelled, so that thread stays
-        # parked until the mount recovers; bounding the request is what matters.
-        stream = await _with_timeout(
-            self.reactor,
-            self.store_timeout_s,
-            defer_to_thread(self.reactor, _open_stream, cache_file),
-        )
+        # the upload fast instead of stalling the request forever. Two caveats
+        # handled here:
+        #  - `defer_to_thread` already returns a logcontext-wrapped Deferred, so we
+        #    add the deadline with `addTimeout` DIRECTLY and await it WITHOUT a
+        #    second `make_deferred_yieldable` (that would resume the rest of the
+        #    upload under the sentinel logcontext).
+        #  - the deadline cancels the awaited REQUEST, but a blocking open() parked
+        #    in a threadpool thread cannot be cancelled; when the mount recovers the
+        #    syscall returns a handle to an already-cancelled Deferred and the
+        #    `finally: stream.close()` below never runs (stream is unbound). The
+        #    `_guarded_open` closure below closes that late handle itself. (Tiny
+        #    TOCTOU window if open() returns exactly as the flag is set — accepted.)
+        opened = {"timed_out": False}
+
+        def _guarded_open():
+            fh = _open_stream(cache_file)
+            if opened["timed_out"]:
+                try:
+                    fh.close()
+                except Exception:  # noqa: BLE001 - best-effort
+                    pass
+                raise _OpenAfterTimeout(cache_file)
+            return fh
+
+        open_d = defer_to_thread(self.reactor, _guarded_open)
+        open_d.addTimeout(self.store_timeout_s, self.reactor)
+        try:
+            stream = await open_d
+        except Exception:
+            # Timeout (or open error): flag so a LATE open() self-closes its handle.
+            opened["timed_out"] = True
+            raise
+
         try:
             # treq serialises the multipart body as form-fields (`data`) THEN
             # files, preserving dict insertion order — so storageBucketId /
@@ -453,13 +556,13 @@ class FileServiceStorageProvider(StorageProvider):
                 )
                 return None
 
-            # Bound the JSON BODY read: treq's `timeout=` above only covered the
-            # by-reference response headers, so a backend that returns 200 headers
-            # then stalls the body would otherwise hang. On timeout the
-            # TimeoutError is caught by the outer `except` -> return None.
-            meta = await _with_timeout(
-                self.reactor, self.timeout_s, treq.json_content(meta_resp)
-            )
+            # Read + parse the JSON BODY, bounded by `timeout_s` (treq's `timeout=`
+            # above only covered the by-reference response HEADERS, so a backend
+            # that returns 200 headers then stalls the body would otherwise hang).
+            # `_read_json_body` owns the read so it can ABORT the connection on a
+            # stalled/failed body read (no pool leak). On timeout/error the
+            # exception is caught by the outer `except` -> return None.
+            meta = await self._read_json_body(meta_resp)
             if not isinstance(meta, dict):
                 # A null / non-object JSON body is a protocol error, not a doc:
                 # treat as a miss rather than swallowing an AttributeError.

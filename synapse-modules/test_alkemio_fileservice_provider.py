@@ -17,6 +17,7 @@ injects lightweight `sys.modules` shims for the handful of Synapse symbols the
 module imports at collection time — the production import path stays untouched.
 """
 
+import json
 import types
 
 import pytest
@@ -25,6 +26,7 @@ from twisted.internet import defer
 from twisted.internet.defer import TimeoutError as _TimeoutError
 from twisted.internet.task import Clock
 from twisted.python.failure import Failure
+from twisted.web.client import ResponseDone
 
 import alkemio_fileservice_provider as mod
 from alkemio_fileservice_provider import (
@@ -61,21 +63,33 @@ class FakeTransport:
 
 
 class FakeResponse:
-    def __init__(self, code, json_body=None, body=b"", content_error=None):
+    def __init__(
+        self,
+        code,
+        json_body=None,
+        body=b"",
+        content_error=None,
+        deliver_json=False,
+        stall_body=False,
+    ):
         self.code = code
         self._json = json_body
         self._body = body
         self._content_error = content_error
+        # deliver_json: a by-reference meta response — deliverBody auto-feeds the
+        # JSON bytes then closes cleanly (mimics the buffered body read).
+        self._deliver_json = deliver_json
+        # stall_body: deliverBody connects but never delivers (mimics a stalled
+        # backend body); the caller must abort to release it.
+        self._stall_body = stall_body
         self.delivered_to = None
         self.transport = None
 
     def content(self):
+        # treq's content() returns a Deferred (not logcontext-managed).
         if self._content_error is not None:
-            async def _raise():
-                raise self._content_error
-
-            return _raise()
-        return _aval(self._body)
+            return defer.fail(Failure(self._content_error))
+        return defer.succeed(self._body)
 
     def deliverBody(self, protocol):
         # Mimic Twisted: hand the body protocol a producer transport so its
@@ -83,6 +97,16 @@ class FakeResponse:
         self.delivered_to = protocol
         self.transport = FakeTransport()
         protocol.makeConnection(self.transport)
+        if self._stall_body:
+            return  # never delivers; the caller must abort to release it
+        if self._deliver_json:
+            protocol.dataReceived(json.dumps(self._json).encode())
+            protocol.connectionLost(Failure(ResponseDone()))
+
+
+def _meta(obj):
+    """A by-reference meta response whose body auto-delivers as JSON."""
+    return FakeResponse(200, json_body=obj, deliver_json=True)
 
 
 class FakeConsumer:
@@ -178,13 +202,13 @@ def _make_provider(**config_overrides):
 
 @pytest.fixture(autouse=True)
 def _patch_async_helpers(monkeypatch):
-    # make_deferred_yieldable / defer_to_thread just pass the awaitable through.
+    # make_deferred_yieldable passes the awaitable through. defer_to_thread runs
+    # the function synchronously and returns a (fired) Deferred — the provider now
+    # calls addTimeout on it, so it must be a real Deferred, not a coroutine.
     monkeypatch.setattr(mod, "make_deferred_yieldable", lambda d: d)
-
-    async def _defer_to_thread(reactor, fn, *args):
-        return fn(*args)
-
-    monkeypatch.setattr(mod, "defer_to_thread", _defer_to_thread)
+    monkeypatch.setattr(
+        mod, "defer_to_thread", lambda reactor, fn, *a: defer.execute(fn, *a)
+    )
 
 
 # --- parse_config ----------------------------------------------------------
@@ -397,11 +421,10 @@ def test_fetch_global_lookup_then_streams(monkeypatch):
         calls.append(url)
         timeouts.append(kw.get("timeout"))
         if "by-reference" in url:
-            return _aval(FakeResponse(200, json_body={"id": "doc-9"}))
+            return _aval(_meta({"id": "doc-9"}))
         return _aval(FakeResponse(200, body=b"CONTENT"))
 
     monkeypatch.setattr(mod.treq, "get", fake_get)
-    monkeypatch.setattr(mod.treq, "json_content", lambda r: _aval(r._json))
 
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
 
@@ -427,7 +450,6 @@ def test_fetch_returns_none_on_by_reference_404(monkeypatch):
         return _aval(FakeResponse(404))
 
     monkeypatch.setattr(mod.treq, "get", fake_get)
-    monkeypatch.setattr(mod.treq, "json_content", lambda r: _aval(r._json))
 
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("missing")))
     assert responder is None
@@ -440,11 +462,10 @@ def test_fetch_returns_none_on_content_404(monkeypatch):
 
     def fake_get(url, **kw):
         if "by-reference" in url:
-            return _aval(FakeResponse(200, json_body={"id": "doc-9"}))
+            return _aval(_meta({"id": "doc-9"}))
         return _aval(FakeResponse(404))
 
     monkeypatch.setattr(mod.treq, "get", fake_get)
-    monkeypatch.setattr(mod.treq, "json_content", lambda r: _aval(r._json))
 
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
     assert responder is None
@@ -453,7 +474,6 @@ def test_fetch_returns_none_on_content_404(monkeypatch):
 def test_fetch_returns_none_on_lookup_5xx(monkeypatch):
     prov = _make_provider()
     monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(FakeResponse(500)))
-    monkeypatch.setattr(mod.treq, "json_content", lambda r: _aval(r._json))
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
     assert responder is None
 
@@ -462,10 +482,7 @@ def test_fetch_returns_none_on_malformed_meta_body(monkeypatch):
     # A null / non-object JSON body must be treated as a miss, not a swallowed
     # AttributeError.
     prov = _make_provider()
-    monkeypatch.setattr(
-        mod.treq, "get", lambda url, **kw: _aval(FakeResponse(200, json_body=None))
-    )
-    monkeypatch.setattr(mod.treq, "json_content", lambda r: _aval(r._json))
+    monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(_meta(None)))
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
     assert responder is None
 
@@ -492,22 +509,34 @@ def test_fetch_returns_none_on_request_timeout(monkeypatch):
 # --- stalled-await per-op timeouts (treq's timeout only covers headers) ----
 
 
-def test_fetch_stalled_body_read_times_out_returns_none(monkeypatch):
+def test_fetch_stalled_body_read_times_out_and_releases_conn(monkeypatch):
     # The by-reference GET returns 200 headers, but the JSON BODY read never
-    # resolves. treq's request timeout only covered the headers, so `_with_timeout`
-    # must fire and fetch must return None (a cache miss) rather than hang.
+    # resolves. treq's request timeout only covered the headers, so the per-op
+    # deadline must fire, fetch must return None (a cache miss), AND the stalled
+    # connection must be released (aborted) — not leaked (finding 1).
     prov = _make_provider()
-    monkeypatch.setattr(
-        mod.treq,
-        "get",
-        lambda url, **kw: _aval(FakeResponse(200, json_body={"id": "doc-9"})),
-    )
-    # The body read never completes.
-    monkeypatch.setattr(mod.treq, "json_content", lambda r: defer.Deferred())
+    stalling_meta = FakeResponse(200, stall_body=True)  # deliverBody never delivers
+    monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(stalling_meta))
 
     d = defer.ensureDeferred(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
     # Still pending: the body read is stalled.
     prov.reactor.advance(prov.timeout_s + 1)  # trip the per-op deadline
+    assert _result_of(d) is None
+    # The stalled body connection was aborted (transport.stopProducing called).
+    assert stalling_meta.transport.stopped is True
+
+
+def test_fetch_stalled_404_drain_still_returns_none(monkeypatch):
+    # Even if the small 404 body read stalls, the miss path still returns None:
+    # _drain_quietly bounds the drain and swallows the resulting timeout.
+    prov = _make_provider()
+    stalling = FakeResponse(404)
+    # content() never resolves.
+    stalling.content = lambda: defer.Deferred()
+    monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(stalling))
+
+    d = defer.ensureDeferred(prov.fetch("local_content/x", FakeFileInfo("missing")))
+    prov.reactor.advance(prov.timeout_s + 1)  # trip the drain deadline
     assert _result_of(d) is None
 
 
@@ -536,19 +565,33 @@ def test_store_hung_open_times_out_raises(monkeypatch):
     assert posted["n"] == 0  # never reached the post (open hung)
 
 
-def test_fetch_stalled_404_drain_still_returns_none(monkeypatch):
-    # Even if the small 404 body read stalls, the miss path still returns None:
-    # _drain_quietly bounds the drain and swallows the resulting timeout.
+def test_store_late_open_closes_late_handle(monkeypatch):
+    # The realistic case: open() completes AFTER the store already timed out
+    # (mount recovered). The guarded open must CLOSE the late-returned handle
+    # itself so the FD is not orphaned (findings 2/3/5).
     prov = _make_provider()
-    stalling = FakeResponse(404)
-    # content() never resolves.
-    stalling.content = lambda: defer.Deferred()
-    monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(stalling))
-    monkeypatch.setattr(mod.treq, "json_content", lambda r: _aval(r._json))
+    fake_file = FakeFile(b"x")
+    monkeypatch.setattr(mod, "_open_stream", lambda p: fake_file)
 
-    d = defer.ensureDeferred(prov.fetch("local_content/x", FakeFileInfo("missing")))
-    prov.reactor.advance(prov.timeout_s + 1)  # trip the drain deadline
-    assert _result_of(d) is None
+    captured = {}
+
+    def fake_dtt(reactor, fn, *a):
+        captured["fn"] = fn  # the guarded-open closure
+        return defer.Deferred()  # never fires on its own
+
+    monkeypatch.setattr(mod, "defer_to_thread", fake_dtt)
+    monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(FakeResponse(201)))
+
+    d = defer.ensureDeferred(prov.store_file("local_content/x", FakeFileInfo("m")))
+    prov.reactor.advance(prov.store_timeout_s + 1)  # timeout -> store raises
+    with pytest.raises(_TimeoutError):
+        _result_of(d)
+    assert fake_file.closed is False  # nothing opened yet
+
+    # Now the "thread" completes late (mount recovered): run the guarded open.
+    with pytest.raises(mod._OpenAfterTimeout):
+        captured["fn"]()
+    assert fake_file.closed is True  # late handle self-closed, not leaked
 
 
 # --- streaming / responder (reactor code paths) ----------------------------
