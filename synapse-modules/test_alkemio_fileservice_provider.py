@@ -62,14 +62,20 @@ class FakeTransport:
 
 
 class FakeResponse:
-    def __init__(self, code, json_body=None, body=b""):
+    def __init__(self, code, json_body=None, body=b"", content_error=None):
         self.code = code
         self._json = json_body
         self._body = body
+        self._content_error = content_error
         self.delivered_to = None
         self.transport = None
 
     def content(self):
+        if self._content_error is not None:
+            async def _raise():
+                raise self._content_error
+
+            return _raise()
         return _aval(self._body)
 
     def deliverBody(self, protocol):
@@ -206,6 +212,15 @@ def test_parse_config_present_but_null_falls_back_to_default():
         {"store_timeout_s": -5},
         {"cb_reset_timeout_s": 0},
         {"timeout_s": "not-a-number"},
+        # finding 5: NaN sneaks past `<= 0` (all NaN comparisons are False) and
+        # +inf passes `> 0` — both must be rejected as non-finite.
+        {"timeout_s": float("nan")},
+        {"timeout_s": float("inf")},
+        {"store_timeout_s": float("-inf")},
+        # finding 6: bool is an int subclass — YAML `true`/`false` must NOT pass
+        # as 1/0.
+        {"cb_fail_threshold": True},
+        {"timeout_s": False},
     ],
 )
 def test_parse_config_rejects_non_positive_or_bad_tuning(overrides):
@@ -307,6 +322,40 @@ def test_store_rejects_non_201_success(monkeypatch, code):
     assert prov._write_breaker.state == _OPEN
 
 
+def test_store_201_durable_despite_drain_error(monkeypatch):
+    # Finding 4: once 201 is confirmed the store is durable; a failure while
+    # draining the response body must NOT turn a successful store into a failure.
+    prov = _make_provider()
+    fake_file = FakeFile(b"x")
+    resp = FakeResponse(201, content_error=RuntimeError("connection reset on drain"))
+    monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(resp))
+    monkeypatch.setattr(mod, "_open_stream", lambda p: fake_file)
+
+    # Must NOT raise.
+    _run(prov.store_file("local_content/x", FakeFileInfo("m")))
+    assert prov._write_breaker.state == _CLOSED  # recorded as success
+    assert fake_file.closed is True
+
+
+def test_store_open_failure_resolves_breaker_no_wedge(monkeypatch):
+    # Finding 0: a failure BEFORE the post (here the file open) must still resolve
+    # the write breaker — a HALF_OPEN probe must never wedge un-resolved.
+    prov = _make_provider(cb_fail_threshold=1)
+
+    def boom(_path):
+        raise OSError("cache file vanished")
+
+    posted = {"called": False}
+    monkeypatch.setattr(mod, "_open_stream", boom)
+    monkeypatch.setattr(
+        mod.treq, "post", lambda *a, **k: posted.__setitem__("called", True)
+    )
+    with pytest.raises(OSError):
+        _run(prov.store_file("local_content/x", FakeFileInfo("m")))
+    assert posted["called"] is False  # never reached the post
+    assert prov._write_breaker.state == _OPEN  # failure recorded exactly once
+
+
 def test_store_write_outage_does_not_block_reads(monkeypatch):
     # Finding: a store (write) outage MUST NOT open the breaker guarding fetch.
     prov = _make_provider(cb_fail_threshold=1)
@@ -345,6 +394,12 @@ def test_fetch_global_lookup_then_streams(monkeypatch):
     monkeypatch.setattr(mod.treq, "get", fake_get)
     monkeypatch.setattr(mod.treq, "json_content", lambda r: _aval(r._json))
 
+    # Pre-load a real failure; success at RESPONSE-RECEIVED must clear it, proving
+    # success is recorded when the content 200 arrives — NOT deferred to stream
+    # completion (the body is never streamed in this test).
+    prov._read_breaker.on_failure()
+    assert prov._read_breaker._failures == 1
+
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
 
     # global lookup: NO bucketId query param
@@ -355,9 +410,56 @@ def test_fetch_global_lookup_then_streams(monkeypatch):
     assert "bucketId" not in calls[0]
     assert calls[1] == "http://file-service:4003/internal/file/doc-9/content"
     assert responder is not None
-    # Success is NOT recorded until the body streams to completion (finding 6):
-    # the read breaker is still closed but success has not fired.
+    # New contract (findings 0,1,2,7): success recorded at response-received.
     assert prov._read_breaker.state == _CLOSED
+    assert prov._read_breaker._failures == 0
+
+
+def test_fetch_success_resolves_half_open_probe_at_response(monkeypatch):
+    # A HALF_OPEN read probe resolves the instant the 200 arrives — it does NOT
+    # stay HALF_OPEN for the whole download (finding 1). We drive the read breaker
+    # OPEN, let the reset window elapse, then a successful fetch (response
+    # received) must leave it CLOSED even though no body was streamed.
+    t = {"now": 0.0}
+    prov = _make_provider(cb_fail_threshold=1, cb_reset_timeout_s=10)
+    prov._read_breaker._clock = lambda: t["now"]
+    prov._read_breaker.on_failure()  # threshold=1 -> OPEN
+    assert prov._read_breaker.state == _OPEN
+
+    def fake_get(url, **kw):
+        if "by-reference" in url:
+            return _aval(FakeResponse(200, json_body={"id": "doc-9"}))
+        return _aval(FakeResponse(200, body=b"CONTENT"))
+
+    monkeypatch.setattr(mod.treq, "get", fake_get)
+    monkeypatch.setattr(mod.treq, "json_content", lambda r: _aval(r._json))
+
+    t["now"] = 11.0  # reset window elapsed -> next call is the single probe
+    responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
+    assert responder is not None
+    assert prov._read_breaker.state == _CLOSED  # probe resolved at response
+
+
+def test_fetch_404_drain_error_stays_neutral(monkeypatch):
+    # Finding 3: a 404 records neutral, and a failure while draining its small
+    # body must NOT reach the outer except and invert neutral into a failure.
+    prov = _make_provider()
+    prov._read_breaker.on_failure()
+    assert prov._read_breaker._failures == 1
+
+    def fake_get(url, **kw):
+        return _aval(
+            FakeResponse(404, content_error=RuntimeError("drain blew up"))
+        )
+
+    monkeypatch.setattr(mod.treq, "get", fake_get)
+    monkeypatch.setattr(mod.treq, "json_content", lambda r: _aval(r._json))
+
+    responder = _run(prov.fetch("local_content/x", FakeFileInfo("missing")))
+    assert responder is None
+    # Neutral survived the drain error: still 1 failure, still CLOSED (not 2).
+    assert prov._read_breaker.state == _CLOSED
+    assert prov._read_breaker._failures == 1
 
 
 def test_fetch_returns_none_on_real_404_miss_neutral(monkeypatch):
@@ -577,61 +679,48 @@ def test_consumer_sink_reports_mid_stream_failure():
     assert "err" in errors
 
 
-def test_responder_write_to_consumer_streams_and_records_success():
-    outcomes = []
+def test_responder_write_to_consumer_streams_bytes_to_consumer():
+    # The responder streams bytes through; it deliberately does NOT touch the
+    # breaker (the read breaker is resolved in fetch at response-received).
     response = FakeResponse(200, body=b"CONTENT")
-    responder = _FileServiceResponder(
-        response,
-        on_success=lambda: outcomes.append("success"),
-        on_failure=lambda: outcomes.append("failure"),
-        on_neutral=lambda: outcomes.append("neutral"),
-    )
+    responder = _FileServiceResponder(response)
     consumer = FakeConsumer()
 
+    result = {}
     with responder:
-        responder.write_to_consumer(consumer)
+        d = responder.write_to_consumer(consumer)
+        d.addCallback(lambda n: result.__setitem__("written", n))
         sink = response.delivered_to
         sink.dataReceived(b"CONTENT")
         sink.connectionLost(None)  # clean completion
 
     assert bytes(consumer.data) == b"CONTENT"
-    # Success is recorded on stream completion (not before) — and exactly once.
-    assert outcomes == ["success"]
+    assert result["written"] == len(b"CONTENT")
 
 
-def test_responder_stream_failure_records_failure():
-    from twisted.python.failure import Failure
-
-    outcomes = []
+def test_responder_write_to_consumer_sync_deliverbody_raise_errbacks():
+    # Finding 8: a synchronous raise inside deliverBody must not leave the caller
+    # hanging on `finished` — it errbacks instead.
     response = FakeResponse(200, body=b"CONTENT")
-    responder = _FileServiceResponder(
-        response,
-        on_success=lambda: outcomes.append("success"),
-        on_failure=lambda: outcomes.append("failure"),
-        on_neutral=lambda: outcomes.append("neutral"),
-    )
+
+    def boom(protocol):
+        raise RuntimeError("deliverBody exploded synchronously")
+
+    response.deliverBody = boom
+    responder = _FileServiceResponder(response)
     consumer = FakeConsumer()
 
-    with responder:
-        responder.write_to_consumer(consumer)
-        sink = response.delivered_to
-        sink.dataReceived(b"CON")
-        sink.connectionLost(Failure(RuntimeError("mid-stream drop")))
-
-    assert outcomes == ["failure"]
+    errors = {}
+    d = responder.write_to_consumer(consumer)
+    d.addErrback(lambda f: errors.__setitem__("err", f) or None)
+    assert "err" in errors  # fired synchronously, caller does not hang
 
 
-def test_responder_exit_without_stream_aborts_and_is_neutral():
+def test_responder_exit_without_stream_aborts_connection():
     # Finding 2: entering then exiting WITHOUT streaming must release/abort the
-    # unbuffered connection and free the breaker trial as neutral.
-    outcomes = []
+    # unbuffered connection (pool safety) — independent of the breaker.
     response = FakeResponse(200, body=b"CONTENT")
-    responder = _FileServiceResponder(
-        response,
-        on_success=lambda: outcomes.append("success"),
-        on_failure=lambda: outcomes.append("failure"),
-        on_neutral=lambda: outcomes.append("neutral"),
-    )
+    responder = _FileServiceResponder(response)
 
     with responder:
         pass  # Synapse never calls write_to_consumer (client disconnect)
@@ -640,15 +729,11 @@ def test_responder_exit_without_stream_aborts_and_is_neutral():
     # the transport (connection released, not leaked).
     assert isinstance(response.delivered_to, _DrainAndAbort)
     assert response.transport.stopped is True
-    assert outcomes == ["neutral"]
 
 
 def test_responder_fully_streamed_then_exit_does_not_double_abort():
-    outcomes = []
     response = FakeResponse(200, body=b"CONTENT")
-    responder = _FileServiceResponder(
-        response, on_success=lambda: outcomes.append("success")
-    )
+    responder = _FileServiceResponder(response)
     consumer = FakeConsumer()
 
     with responder:
@@ -659,4 +744,3 @@ def test_responder_fully_streamed_then_exit_does_not_double_abort():
 
     # __exit__ after a full stream must NOT abort again (streamed path).
     assert not isinstance(response.delivered_to, _DrainAndAbort)
-    assert outcomes == ["success"]

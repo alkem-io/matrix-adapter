@@ -45,6 +45,7 @@ file and let the sync workflow roll it forward.
 """
 
 import logging
+import math
 import os
 from typing import TYPE_CHECKING, Optional
 
@@ -127,7 +128,6 @@ class _CircuitBreaker:
         self._state = _CLOSED
         self._failures = 0
         self._opened_at = None  # type: Optional[float]
-        self._trial_in_flight = False
 
     @property
     def state(self) -> str:
@@ -137,16 +137,18 @@ class _CircuitBreaker:
         if self._state == _CLOSED:
             return
         if self._state == _HALF_OPEN:
-            # A probe is already being trialled — hold everyone else off until it
-            # resolves (success/failure/neutral). This is what makes HALF_OPEN
-            # admit exactly one call under concurrent callers.
+            # A probe is already being trialled. The single-trial guarantee is
+            # enforced purely by the state machine: OPEN -> HALF_OPEN happens
+            # exactly once (below), and every subsequent before_call() in
+            # HALF_OPEN short-circuits here until the probe resolves. No extra
+            # flag needed — and safe without a lock because these methods never
+            # await (see class docstring).
             raise _CircuitOpenError(
                 "%s circuit is half-open (trial call in flight)" % self._name
             )
         # OPEN
         if (self._clock() - self._opened_at) >= self._reset_timeout:
             self._state = _HALF_OPEN
-            self._trial_in_flight = True
             logger.info(
                 "%s circuit half-open: admitting a single trial call", self._name
             )
@@ -164,7 +166,6 @@ class _CircuitBreaker:
             # the next probe only fires after another full reset window.
             self._state = _OPEN
             self._opened_at = self._clock()
-            self._trial_in_flight = False
             logger.warning("%s circuit re-OPEN: trial call failed", self._name)
             return
         if self._state == _OPEN:
@@ -175,7 +176,6 @@ class _CircuitBreaker:
         if self._failures >= self._fail_threshold:
             self._state = _OPEN
             self._opened_at = self._clock()
-            self._trial_in_flight = False
             logger.warning(
                 "%s circuit OPEN after %d consecutive failures",
                 self._name,
@@ -187,8 +187,7 @@ class _CircuitBreaker:
         if self._state == _HALF_OPEN:
             # The probe reached the service and got a valid HTTP response (the
             # service IS up; the doc is simply absent). Count the probe as passed
-            # so recovery is not stalled waiting for a cache HIT, and free the
-            # trial slot so other callers are admitted again.
+            # so recovery is not stalled waiting for a cache HIT.
             logger.info(
                 "%s circuit closed: trial call returned a clean miss", self._name
             )
@@ -199,7 +198,6 @@ class _CircuitBreaker:
         self._state = _CLOSED
         self._failures = 0
         self._opened_at = None
-        self._trial_in_flight = False
 
 
 class _ConsumerSink(Protocol):
@@ -263,9 +261,6 @@ class _DrainAndAbort(Protocol):
     torn down / returned to the pool instead of leaking a half-open socket.
     """
 
-    def __init__(self, done: "Optional[Deferred]" = None):
-        self._done = done
-
     def makeConnection(self, transport) -> None:
         Protocol.makeConnection(self, transport)
         # Abort the underlying connection: the response-body transport is an
@@ -278,56 +273,39 @@ class _DrainAndAbort(Protocol):
     def dataReceived(self, data: bytes) -> None:  # pragma: no cover - aborted
         pass
 
-    def connectionLost(self, reason=None) -> None:
-        if self._done is not None and not self._done.called:
-            self._done.callback(None)
-
 
 class _FileServiceResponder(Responder):
     """
     Streams a file-service content response into the media consumer without
     buffering the whole blob in memory.
 
-    Lifecycle guarantees (finding 2 / finding 6):
-    - The read circuit breaker is resolved ONLY once the stream truly resolves:
-      success on a fully-streamed body, failure on a mid-stream connection error.
-    - If Synapse enters the `with` block but never calls `write_to_consumer`
-      (client disconnect / exception before streaming), `__exit__` ABORTS the
-      unbuffered connection so the treq pool is not exhausted, and frees the
-      breaker trial as a neutral outcome (not the service's fault).
+    The responder deliberately does NOT touch the circuit breaker. The read
+    breaker outcome is decided entirely in `fetch`, at RESPONSE-RECEIVED time
+    (200 -> success): a breaker probe must resolve on "is file-service reachable
+    and responding", which a slow/large body stream (minutes) must not gate. A
+    mid-stream body drop is a network/client event, not a file-service-health
+    signal, so it correctly does not feed the breaker.
+
+    Connection lifecycle (finding 2): if Synapse enters the `with` block but never
+    calls `write_to_consumer` (client disconnect / exception before streaming),
+    `__exit__` ABORTS the unbuffered connection so the treq pool is not exhausted.
     """
 
-    def __init__(self, response, on_success=None, on_failure=None, on_neutral=None):
+    def __init__(self, response):
         self._response = response
-        self._on_success = on_success
-        self._on_failure = on_failure
-        self._on_neutral = on_neutral
-        self._resolved = False
         self._streamed = False
         self._aborted = False
-
-    def _resolve(self, callback) -> None:
-        # The breaker outcome for one fetch is recorded exactly once.
-        if self._resolved:
-            return
-        self._resolved = True
-        if callback is not None:
-            callback()
 
     def write_to_consumer(self, consumer: IConsumer) -> "Deferred[int]":
         self._streamed = True
         finished = defer.Deferred()  # type: Deferred[int]
-
-        def _ok(written):
-            self._resolve(self._on_success)
-            return written
-
-        def _err(failure):
-            self._resolve(self._on_failure)
-            return failure
-
-        finished.addCallbacks(_ok, _err)
-        self._response.deliverBody(_ConsumerSink(consumer, finished))
+        try:
+            self._response.deliverBody(_ConsumerSink(consumer, finished))
+        except Exception as exc:  # noqa: BLE001 - a synchronous deliverBody raise
+            # ...must not hang the caller waiting on `finished`; surface it as an
+            # errback instead (finding 8).
+            if not finished.called:
+                finished.errback(exc)
         return make_deferred_yieldable(finished)
 
     def _abort(self) -> None:
@@ -345,9 +323,8 @@ class _FileServiceResponder(Responder):
     def __exit__(self, exc_type, exc_val, exc_tb):
         if not self._streamed:
             # Body was never consumed (client disconnect / exception). Release the
-            # unbuffered connection and free the breaker trial as neutral.
+            # unbuffered connection so the treq pool is not exhausted.
             self._abort()
-            self._resolve(self._on_neutral)
         return None
 
 
@@ -449,6 +426,22 @@ class FileServiceStorageProvider(StorageProvider):
             and not getattr(file_info, "url_cache", None)
         )
 
+    @staticmethod
+    async def _drain_quietly(resp) -> None:
+        """
+        Drain a response body best-effort, SWALLOWING any error.
+
+        Used for the small bodies of miss/error responses (and the already-durable
+        201) so the connection can be reused. Its failure must never propagate:
+        a drain error must not invert a neutral 404 into a breaker failure
+        (finding 3) nor turn a durable 201 store into a reported failure
+        (finding 4).
+        """
+        try:
+            await make_deferred_yieldable(resp.content())
+        except Exception as exc:  # noqa: BLE001 - best-effort drain
+            logger.debug("file-service response drain failed (ignored): %s", exc)
+
     # -- StorageProvider API ------------------------------------------------
 
     async def store_file(self, path: str, file_info: "FileInfo") -> None:
@@ -470,70 +463,87 @@ class FileServiceStorageProvider(StorageProvider):
             )
             raise
 
-        # The freshly-uploaded file lives in the local media cache at
-        # media_store_path + `path` (the relative path Synapse hands us, e.g.
-        # `local_content/aa/bb/<rest>`). Synapse's FileInfo has NO `upload_path`
-        # attribute — derive the absolute path the same way the on-disk store does
-        # (matching synapse-s3-storage-provider). Opening it is blocking I/O — do
-        # it off the reactor; treq then STREAMS the handle into the multipart body
-        # via its MultiPartProducer (chunked, cooperative), so the file is never
-        # fully copied into memory.
-        cache_file = os.path.join(self.cache_path, path)
-        stream = await defer_to_thread(self.reactor, _open_stream, cache_file)
-
+        # Everything after before_call() is wrapped so the write breaker records
+        # EXACTLY ONE outcome on every exit path (a HALF_OPEN probe must never be
+        # able to leave the breaker un-resolved / wedged — e.g. if the open below
+        # raises). `recorded` guards against double-recording.
         url = "%s/internal/file" % self.file_service_url
-        # treq serialises the multipart body as form-fields (`data`) THEN files,
-        # preserving dict insertion order — so storageBucketId / externalReference
-        # / skipImageProcessing precede the file part, which file-service requires
-        # (it reads the metadata fields before consuming the streamed file).
-        files = {"file": (media_id, stream)}
-        data = {
-            "storageBucketId": self.matrix_media_bucket_id,
-            "externalReference": media_id,
-            "skipImageProcessing": "true",  # VERBATIM — Synapse read-back is exact
-        }
-
+        stream = None
+        recorded = False
         try:
-            try:
-                resp = await make_deferred_yieldable(
-                    treq.post(
-                        url,
-                        files=files,
-                        data=data,
-                        timeout=self.store_timeout_s,
-                        reactor=self.reactor,
-                    )
+            # The freshly-uploaded file lives in the local media cache at
+            # media_store_path + `path` (the relative path Synapse hands us, e.g.
+            # `local_content/aa/bb/<rest>`). Synapse's FileInfo has NO `upload_path`
+            # attribute — derive the absolute path the same way the on-disk store
+            # does (matching synapse-s3-storage-provider). Opening it is blocking
+            # I/O — do it off the reactor; treq then STREAMS the handle into the
+            # multipart body via twisted's cooperative FileBodyProducer (chunked
+            # 64 KiB reads scheduled on a Cooperator), so the file is never fully
+            # copied into memory nor read synchronously on the reactor thread.
+            cache_file = os.path.join(self.cache_path, path)
+            stream = await defer_to_thread(self.reactor, _open_stream, cache_file)
+
+            # treq serialises the multipart body as form-fields (`data`) THEN
+            # files, preserving dict insertion order — so storageBucketId /
+            # externalReference / skipImageProcessing precede the file part, which
+            # file-service requires (it reads the metadata fields before consuming
+            # the streamed file).
+            files = {"file": (media_id, stream)}
+            data = {
+                "storageBucketId": self.matrix_media_bucket_id,
+                "externalReference": media_id,
+                "skipImageProcessing": "true",  # VERBATIM — read-back is exact
+            }
+
+            resp = await make_deferred_yieldable(
+                treq.post(
+                    url,
+                    files=files,
+                    data=data,
+                    timeout=self.store_timeout_s,
+                    reactor=self.reactor,
                 )
-            except Exception as exc:  # noqa: BLE001 - convert any transport error
-                self._write_breaker.on_failure()
-                logger.error(
-                    "file-service store failed for media_id=%s: %s", media_id, exc
-                )
-                raise
+            )
 
             if resp.code != _STORE_SUCCESS_CODE:
                 # Only 201 Created confirms a durable store. A 2xx-non-201, a 3xx
                 # redirect, or a 4xx/5xx is NOT a confirmed store — trip the write
                 # breaker and fail loudly (store_synchronous surfaces it).
                 self._write_breaker.on_failure()
-                await make_deferred_yieldable(resp.content())  # drain
+                recorded = True
+                await self._drain_quietly(resp)
                 raise RuntimeError(
                     "file-service store returned HTTP %d (expected %d) for media_id=%s"
                     % (resp.code, _STORE_SUCCESS_CODE, media_id)
                 )
 
+            # 201: the media is durably stored. From here the store has SUCCEEDED
+            # — a failure while draining the (already-consumed) response body must
+            # NOT turn a durable store into a reported failure under
+            # store_synchronous=true (finding 4).
             self._write_breaker.on_success()
-            await make_deferred_yieldable(resp.content())  # drain so conn is reusable
+            recorded = True
+            await self._drain_quietly(resp)  # best-effort; conn reuse only
             logger.debug(
                 "Stored media_id=%s in file-service bucket=%s",
                 media_id,
                 self.matrix_media_bucket_id,
             )
+        except Exception as exc:  # noqa: BLE001 - convert any transport/IO error
+            if not recorded:
+                # Open failed, transport failed, or any other error before a
+                # definitive outcome: record the single failure here.
+                self._write_breaker.on_failure()
+                logger.error(
+                    "file-service store failed for media_id=%s: %s", media_id, exc
+                )
+            raise
         finally:
-            try:
-                stream.close()
-            except Exception:  # noqa: BLE001 - best-effort
-                pass
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:  # noqa: BLE001 - best-effort
+                    pass
 
     async def fetch(self, path: str, file_info: "FileInfo") -> Optional[Responder]:
         """
@@ -559,19 +569,30 @@ class FileServiceStorageProvider(StorageProvider):
             media_id,
         )
 
+        # The read breaker records EXACTLY ONE outcome per fetch, decided here
+        # around the request/response — NEVER deferred to body-stream completion
+        # (a large/slow stream must not gate a reachability probe). Contract:
+        #   - success  : a usable response was received (content GET -> 200).
+        #   - neutral  : a clean miss (by-reference 404, or content 404 from a
+        #                doc removed mid-fetch) — leaves the failure count intact.
+        #   - failure  : no usable response (exception/timeout/>=500, malformed
+        #                body, missing id).
+        # 404 branches drain their small body via `_drain_quietly` so a drain
+        # error can NEVER reach the outer `except` and invert neutral into a
+        # failure (finding 3). Each hard-error branch records on_failure exactly
+        # once and returns, so the outer `except` only fires for errors that
+        # bypassed the explicit branches.
         try:
             meta_resp = await make_deferred_yieldable(
                 treq.get(lookup_url, timeout=self.timeout_s, reactor=self.reactor)
             )
             if meta_resp.code == 404:
-                # A clean by-reference miss (doc absent) is neither success nor
-                # fault: leave the failure count untouched.
                 self._read_breaker.on_neutral()
-                await make_deferred_yieldable(meta_resp.content())
+                await self._drain_quietly(meta_resp)
                 return None
             if meta_resp.code >= 400:
                 self._read_breaker.on_failure()
-                await make_deferred_yieldable(meta_resp.content())
+                await self._drain_quietly(meta_resp)
                 logger.error(
                     "file-service by-reference HTTP %d for media_id=%s",
                     meta_resp.code,
@@ -616,7 +637,7 @@ class FileServiceStorageProvider(StorageProvider):
                 # The doc was deleted between the by-reference lookup and the
                 # content GET: a race, not a fault. Treat as a neutral miss.
                 self._read_breaker.on_neutral()
-                await make_deferred_yieldable(content_resp.content())
+                await self._drain_quietly(content_resp)
                 logger.info(
                     "file-service content 404 (doc removed mid-fetch) for "
                     "doc_id=%s media_id=%s",
@@ -626,7 +647,7 @@ class FileServiceStorageProvider(StorageProvider):
                 return None
             if content_resp.code >= 400:
                 self._read_breaker.on_failure()
-                await make_deferred_yieldable(content_resp.content())
+                await self._drain_quietly(content_resp)
                 logger.error(
                     "file-service content HTTP %d for doc_id=%s media_id=%s",
                     content_resp.code,
@@ -635,18 +656,15 @@ class FileServiceStorageProvider(StorageProvider):
                 )
                 return None
 
-            # Do NOT record success yet: the read has only succeeded once the body
-            # streams to completion. The responder records success on a clean
-            # stream, failure on a mid-stream error, neutral if never consumed.
+            # 200: the response is obtained, so file-service is reachable and
+            # responding — record success NOW (resolves a HALF_OPEN probe the
+            # instant the response arrives, independent of how long the body
+            # takes to stream). The responder does not touch the breaker.
+            self._read_breaker.on_success()
             logger.debug(
                 "Serving media_id=%s from file-service doc_id=%s", media_id, doc_id
             )
-            return _FileServiceResponder(
-                content_resp,
-                on_success=self._read_breaker.on_success,
-                on_failure=self._read_breaker.on_failure,
-                on_neutral=self._read_breaker.on_neutral,
-            )
+            return _FileServiceResponder(content_resp)
 
         except Exception as exc:  # noqa: BLE001
             self._read_breaker.on_failure()
@@ -660,18 +678,31 @@ def _positive_number(config: dict, key: str, default, cast):
     """
     Coerce a numeric config value, falling back to `default` when the key is
     absent OR present-but-null (YAML `key:` with no value yields None, which
-    would otherwise blow up `float(None)`/`int(None)`). Rejects non-positive
-    values: a 0 fail-threshold would open the breaker immediately and a 0 timeout
-    is nonsensical.
+    would otherwise blow up `float(None)`/`int(None)`). Rejects values that are
+    not a finite positive number:
+      - bool is an int subclass, so a YAML `true`/`false` would otherwise pass as
+        1/0 — reject it explicitly (finding 6);
+      - NaN slips past `<= 0` (all NaN comparisons are False) and +inf passes
+        `> 0`, so require `math.isfinite` (finding 5);
+      - a 0 fail-threshold would open the breaker immediately and a 0/negative
+        timeout is nonsensical — require strictly positive.
     """
     raw = config.get(key)
     if raw is None:
         raw = default
+    if isinstance(raw, bool):
+        raise ValueError(
+            "FileServiceStorageProvider: '%s' must be a number, not a bool" % key
+        )
     try:
         value = cast(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise ValueError(
             "FileServiceStorageProvider: '%s' must be a number, got %r" % (key, raw)
+        )
+    if not math.isfinite(value):
+        raise ValueError(
+            "FileServiceStorageProvider: '%s' must be finite, got %r" % (key, value)
         )
     if value <= 0:
         raise ValueError(
