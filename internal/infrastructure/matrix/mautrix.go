@@ -1309,10 +1309,10 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 	// parseMessageEvent is the SINGLE authority on "is there usable content or an
 	// attachment": it runs extractInboundMessage, which surfaces an attachment via
 	// BOTH the mxc url and the trusted io.alkemio.document_id breadcrumb and applies
-	// the msgtype rules. A non-message event (reaction, m.sticker, ...) yields nil
-	// and errors — resolving a sticker to its alt-text would drop the image and
-	// surface a phantom text message. The server tracks message ids distinctly, so
-	// message.get is not called with such ids.
+	// the msgtype rules. m.room.message and m.sticker are accepted (a sticker
+	// surfaces as image media with its attachment); a non-message event (reaction,
+	// redaction, ...) yields nil and errors. The server tracks message ids
+	// distinctly, so message.get is not called with such ids.
 	msg := m.parseMessageEvent(evt, roomID)
 	if msg == nil {
 		return nil, fmt.Errorf("event is not a message")
@@ -1624,7 +1624,7 @@ func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) 
 	messages := make([]domain.Message, 0, len(resp.Chunk))
 
 	for _, evt := range resp.Chunk {
-		if evt.Type != event.EventMessage {
+		if !isMessageLikeEvent(evt) {
 			continue
 		}
 
@@ -1741,7 +1741,7 @@ func (m *MautrixAdapter) GetLastMessage(ctx context.Context, roomID id.RoomID) (
 		// message (present-but-empty body, no attachment) must NOT be surfaced as
 		// the room's last message (A1) — keep scanning older events for a real one.
 		for i, evt := range resp.Chunk {
-			if evt.Type != event.EventMessage {
+			if !isMessageLikeEvent(evt) {
 				continue
 			}
 			msg := m.parseMessageEvent(evt, roomID)
@@ -1878,9 +1878,22 @@ func (m *MautrixAdapter) parseReactionEvent(evt *event.Event, roomID id.RoomID) 
 	}
 }
 
+// isMessageLikeEvent reports whether an event carries message content
+// parseMessageEvent can surface: an m.room.message or an m.sticker (which mautrix
+// models as MessageEventContent). Timeline/thread scans use this as their
+// pre-filter so they never drift from parseMessageEvent's accepted set.
+func isMessageLikeEvent(evt *event.Event) bool {
+	return evt.Type == event.EventMessage || evt.Type == event.EventSticker
+}
+
 // parseMessageEvent extracts a domain.Message from a Matrix event.
+//
+// m.sticker (event.EventSticker) is accepted alongside m.room.message: mautrix
+// models a sticker as MessageEventContent (body/url/info), so it surfaces as a
+// media message with its attachment through the same extractInboundMessage path.
+// This also closes the GetMessage-on-a-sticker regression (previously errored).
 func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *domain.Message {
-	if evt.Type != event.EventMessage {
+	if evt.Type != event.EventMessage && evt.Type != event.EventSticker {
 		return nil
 	}
 
@@ -1991,7 +2004,7 @@ func (m *MautrixAdapter) GetThreadMessages(
 	// attachment) are skipped (A1); the explicitly-requested thread root above is
 	// kept regardless, matching GetMessage-by-id semantics.
 	for _, evt := range chunk {
-		if evt.Type != event.EventMessage {
+		if !isMessageLikeEvent(evt) {
 			continue
 		}
 

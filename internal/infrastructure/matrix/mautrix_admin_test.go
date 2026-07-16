@@ -897,6 +897,48 @@ func TestAdminAPI_GetLastMessage_Success(t *testing.T) {
 	}
 }
 
+// A timeline scan (GetLastMessage) surfaces an m.sticker as a media message with
+// its attachment, not dropped: parseMessageEvent accepts EventSticker and the
+// attachment makes isBlankMessage false so the scan keeps it.
+func TestAdminAPI_GetLastMessage_Sticker(t *testing.T) {
+	mock := &mockAdminAPI{
+		getRoomMessagesResult: &mautrix.RespMessages{
+			Chunk: []*event.Event{
+				{
+					Type:      event.EventSticker,
+					ID:        "$sticker",
+					Sender:    "@element:test.local",
+					Timestamp: time.Now().UnixMilli(),
+					Content: event.Content{
+						Raw: map[string]any{
+							"body": "party parrot",
+							"url":  "mxc://test.local/stickerid",
+							"info": map[string]any{"mimetype": "image/png"},
+						},
+					},
+				},
+			},
+		},
+	}
+	a := newAdminTestAdapter(mock)
+	msg, err := a.GetLastMessage(context.Background(), "!room:test.local")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg == nil {
+		t.Fatal("expected the sticker to surface as a media message, got nil")
+	}
+	if len(msg.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(msg.Attachments))
+	}
+	if msg.Attachments[0].MediaID != "stickerid" {
+		t.Errorf("expected MediaID 'stickerid', got %q", msg.Attachments[0].MediaID)
+	}
+	if msg.Content != "" {
+		t.Errorf("expected empty Content, got %q", msg.Content)
+	}
+}
+
 func TestAdminAPI_GetLastMessage_NoMessages(t *testing.T) {
 	mock := &mockAdminAPI{
 		getRoomMessagesResult: &mautrix.RespMessages{

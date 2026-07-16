@@ -847,6 +847,39 @@ func TestGetMessage_MediaEvent_ReturnsAttachment(t *testing.T) {
 	assert.Equal(t, "photo.jpg", msg.Attachments[0].DisplayName)
 }
 
+// Regression: GetMessage on an m.sticker event id returns the media message WITH
+// its attachment (previously errored "event is not a message" because
+// parseMessageEvent rejected any non-m.room.message type). A sticker surfaces
+// image media (MediaID = mxc id, DisplayName = alt-text) with empty Content.
+func TestGetMessage_Sticker_ReturnsAttachment(t *testing.T) {
+	admin := &mockAdminAPI{
+		getEventResult: &event.Event{
+			ID:        id.EventID("$sticker1"),
+			Sender:    id.UserID("@element:test.local"), // a normal Element user
+			Type:      event.EventSticker,               // no msgtype field on stickers
+			Timestamp: 1700000000000,
+			Content: event.Content{
+				Raw: map[string]any{
+					"body": "party parrot",
+					"url":  "mxc://test.local/stickerid",
+					"info": map[string]any{"mimetype": "image/png", "w": float64(128), "h": float64(128)},
+				},
+			},
+		},
+	}
+	as := newMockAS(&mockIntentAPI{}, nil)
+	a := newFullTestAdapter(as, admin)
+
+	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$sticker1")
+	require.NoError(t, err, "GetMessage on a sticker must not error (regression)")
+	require.NotNil(t, msg)
+	assert.Empty(t, msg.Content, "sticker alt-text must not be duplicated as Content")
+	require.Len(t, msg.Attachments, 1)
+	assert.Equal(t, "stickerid", msg.Attachments[0].MediaID, "MediaID is the re-home key")
+	assert.Equal(t, "party parrot", msg.Attachments[0].DisplayName)
+	assert.Equal(t, "image/png", msg.Attachments[0].MimeType)
+}
+
 // Streaming upload: a body within the cap streams straight through to Synapse
 // (no whole-file buffering) and the media event's info.size is the streamed byte
 // count; a body larger than the cap fails with the oversize error and sends no

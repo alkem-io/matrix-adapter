@@ -173,6 +173,41 @@ func TestExtractAttachment_VideoAudio(t *testing.T) {
 	assert.Equal(t, "audio/ogg", audio.MimeType)
 }
 
+// An m.sticker is image-like media despite carrying NO msgtype field: the
+// EventSticker type bypasses the mediaMsgTypes gate and the url+info surface an
+// attachment. body (alt-text) becomes the DisplayName; MediaID is the mxc id.
+func TestExtractAttachment_Sticker(t *testing.T) {
+	evt := mediaEvent(map[string]any{
+		"body": "party parrot", // alt-text, no filename field
+		"url":  "mxc://test.local/stickerid",
+		"info": map[string]any{"mimetype": "image/png", "w": float64(128), "h": float64(128)},
+	})
+	evt.Type = event.EventSticker
+
+	att := extractAttachment(evt, true)
+	require.NotNil(t, att)
+	assert.Equal(t, "stickerid", att.MediaID, "sticker mxc id is the re-home key")
+	assert.Equal(t, "party parrot", att.DisplayName)
+	assert.Equal(t, "image/png", att.MimeType)
+	require.NotNil(t, att.Width)
+	assert.Equal(t, 128, *att.Width)
+}
+
+// A sticker with no info.mimetype defaults to image/png (stickers are images),
+// keeping it on the image media path rather than an empty mimetype.
+func TestExtractAttachment_Sticker_DefaultsMimeToPNG(t *testing.T) {
+	evt := mediaEvent(map[string]any{
+		"body": "wave",
+		"url":  "mxc://test.local/nomime",
+	})
+	evt.Type = event.EventSticker
+
+	att := extractAttachment(evt, true)
+	require.NotNil(t, att)
+	assert.Equal(t, "nomime", att.MediaID)
+	assert.Equal(t, "image/png", att.MimeType, "sticker with absent mimetype defaults to image/png")
+}
+
 // A media msgtype carrying neither a parseable mxc URL nor a document id yields
 // no attachment (no dead both-empty record).
 func TestExtractAttachment_NoRefs_ReturnsNil(t *testing.T) {
@@ -227,5 +262,53 @@ func TestHandleMessageEvent_MediaEvent_Delivered(t *testing.T) {
 		assert.Equal(t, "pic.png", m.Attachments[0].DisplayName)
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected a message to be delivered to OnMessage")
+	}
+}
+
+// An inbound m.sticker from a normal Element user routes through processEvent →
+// handleMessageEvent and surfaces exactly ONE attachment (MediaID = the sticker
+// mxc id, DisplayName = alt-text) with empty Content — the same shape as an
+// inbound image, so the server's inbound-media re-home pipeline re-homes it by
+// MediaID.
+func TestProcessEvent_Sticker_DeliveredAsMedia(t *testing.T) {
+	roomUUID := uuid.New()
+	alias := "#" + roomUUID.String() + ":test.local"
+	botIntent := &mockIntentAPI{
+		getAliasesResult: &mautrix.RespAliasList{Aliases: []id.RoomAlias{id.RoomAlias(alias)}},
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	got := make(chan domain.Message, 1)
+	a.eventHandlers = EventHandlers{
+		OnMessage: func(m domain.Message) error { got <- m; return nil },
+	}
+
+	evt := &event.Event{
+		ID:        id.EventID("$sticker1"),
+		Sender:    expectedUserID(testActorID),
+		Type:      event.EventSticker, // sticker has no msgtype field
+		RoomID:    "!room:test.local",
+		Timestamp: 1700000000000,
+		Content: event.Content{
+			Raw: map[string]any{
+				"body": "party parrot",
+				"url":  "mxc://test.local/stickerid",
+				"info": map[string]any{"mimetype": "image/png", "w": float64(128), "h": float64(128)},
+			},
+		},
+	}
+
+	a.processEvent(evt)
+
+	select {
+	case m := <-got:
+		assert.Empty(t, m.Content, "sticker alt-text is not duplicated as text")
+		assert.Equal(t, roomUUID.String(), m.RoomID)
+		require.Len(t, m.Attachments, 1)
+		assert.Equal(t, "stickerid", m.Attachments[0].MediaID, "MediaID carries the re-home key")
+		assert.Equal(t, "party parrot", m.Attachments[0].DisplayName)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected the sticker to be delivered to OnMessage as media")
 	}
 }

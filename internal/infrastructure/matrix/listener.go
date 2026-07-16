@@ -72,7 +72,10 @@ func (m *MautrixAdapter) processEvent(evt *event.Event) {
 	}
 
 	switch evt.Type {
-	case event.EventMessage:
+	case event.EventMessage, event.EventSticker:
+		// m.sticker is its own event type but mautrix treats it as equivalent to
+		// m.room.message (MessageEventContent with body/url/info). Route it through
+		// the same handler so an inbound sticker flows as image-like media.
 		m.handleMessageEvent(evt)
 	case event.EventReaction:
 		m.handleReactionEvent(evt)
@@ -871,15 +874,24 @@ var mediaMsgTypes = map[string]struct{}{
 // other sender the DocumentID is dropped and only MediaID is surfaced, routing
 // the event down the Element-origin (re-home) path.
 //
+// An m.sticker (event.EventSticker) is handled as image media: it carries the
+// same url+info shape as an m.image but has NO msgtype field, so the
+// mediaMsgTypes gate is bypassed for stickers. A sticker with no info.mimetype
+// defaults to image/png (stickers are always images), so it still routes down
+// the image media path.
+//
 // The adapter never resolves these refs — it only surfaces them.
 func extractAttachment(evt *event.Event, trustDocumentID bool) *domain.Attachment {
 	raw := evt.Content.Raw
 	if raw == nil {
 		return nil
 	}
-	msgtype, _ := raw["msgtype"].(string)
-	if _, ok := mediaMsgTypes[msgtype]; !ok {
-		return nil
+	isSticker := evt.Type == event.EventSticker
+	if !isSticker {
+		msgtype, _ := raw["msgtype"].(string)
+		if _, ok := mediaMsgTypes[msgtype]; !ok {
+			return nil
+		}
 	}
 
 	att := &domain.Attachment{DisplayName: attachmentDisplayName(raw)}
@@ -892,6 +904,13 @@ func extractAttachment(evt *event.Event, trustDocumentID bool) *domain.Attachmen
 	}
 
 	applyMediaInfo(att, raw)
+
+	// A sticker with no info.mimetype defaults to image/png: stickers are always
+	// images, and a bare default keeps the attachment on the image media path
+	// rather than surfacing an empty mimetype.
+	if isSticker && att.MimeType == "" {
+		att.MimeType = "image/png"
+	}
 
 	// io.alkemio.document_id → DocumentID, but only from a trusted (own
 	// appservice) sender. Our own outbound media already lives in file-service as
