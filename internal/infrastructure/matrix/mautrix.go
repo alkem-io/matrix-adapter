@@ -748,8 +748,20 @@ func (m *MautrixAdapter) SendMessage(
 		sentEventIDs = append(sentEventIDs, resp.EventID)
 	}
 
+	return m.fanOutAttachments(ctx, intent, roomID, attachments, "", primaryEventID, sentEventIDs)
+}
+
+// fanOutAttachments sends each attachment as its own media event. On any failure
+// it best-effort rolls back every event already sent in this send (via
+// rollbackFanOut) and returns the error. primaryEventID is the text event's id
+// (empty for an attachment-only message, in which case the first attachment
+// becomes the primary); it is returned resolved.
+func (m *MautrixAdapter) fanOutAttachments(
+	ctx context.Context, intent intentAPI, roomID id.RoomID,
+	attachments []domain.Attachment, threadID, primaryEventID id.EventID, sentEventIDs []id.EventID,
+) (id.EventID, error) {
 	for i := range attachments {
-		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], "")
+		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID)
 		if err != nil {
 			m.rollbackFanOut(ctx, intent, roomID, sentEventIDs)
 			return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
@@ -759,7 +771,6 @@ func (m *MautrixAdapter) SendMessage(
 			primaryEventID = eventID
 		}
 	}
-
 	return primaryEventID, nil
 }
 
@@ -932,19 +943,7 @@ func (m *MautrixAdapter) SendReply(
 		sentEventIDs = append(sentEventIDs, resp.EventID)
 	}
 
-	for i := range attachments {
-		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID)
-		if err != nil {
-			m.rollbackFanOut(ctx, intent, roomID, sentEventIDs)
-			return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
-		}
-		sentEventIDs = append(sentEventIDs, eventID)
-		if primaryEventID == "" {
-			primaryEventID = eventID
-		}
-	}
-
-	return primaryEventID, nil
+	return m.fanOutAttachments(ctx, intent, roomID, attachments, threadID, primaryEventID, sentEventIDs)
 }
 
 // ============================================================================
@@ -979,8 +978,7 @@ func (c *countingCapReader) Read(p []byte) (int, error) {
 // sendAttachment fetches a document's bytes from file-service, uploads them to
 // the homeserver, and sends a media event carrying the mxc URL, file info, and
 // the io.alkemio.document_id breadcrumb. When threadID is non-empty the event
-// is threaded under it. Non-primary attachments additionally carry a top-level
-// parentEventID marker so deletion can find them without consuming m.relates_to.
+// is threaded under it.
 func (m *MautrixAdapter) sendAttachment(
 	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment,
 	threadID id.EventID,
@@ -991,10 +989,12 @@ func (m *MautrixAdapter) sendAttachment(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = att.MimeType
-	}
+	// Use the most specific media type available and apply it consistently to the
+	// upload Content-Type, the event msgtype, and info.mimetype. The server-declared
+	// att.MimeType is authoritative when specific; fall back to the file-service
+	// response Content-Type when att is generic/empty (some object stores serve
+	// application/octet-stream regardless of the real type).
+	contentType := resolveMediaMime(resp.Header.Get("Content-Type"), att.MimeType)
 
 	maxBytes := m.cfg.MaxAttachmentBytes()
 	if resp.ContentLength > 0 && resp.ContentLength > maxBytes {
@@ -1088,13 +1088,10 @@ var fileServiceHTTPClient = newFileServiceHTTPClient(fileServiceFetchTimeout)
 // success path. Connection setup and response-header wait are transport-bounded;
 // reading the success body is bounded by the request context.
 func (m *MautrixAdapter) openDocumentFetch(ctx context.Context, documentID string) (*http.Response, error) {
-	if m.cfg == nil {
+	if m.cfg == nil || m.cfg.FileService.URL == "" {
 		return nil, fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
 	}
 	baseURL := m.cfg.FileService.URL
-	if baseURL == "" {
-		return nil, fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
-	}
 	// Defense-in-depth on the internal fetch path: document ids are UUIDs, so
 	// validate the shape and path-escape before interpolating into the URL.
 	if _, err := uuid.Parse(documentID); err != nil {
@@ -1123,8 +1120,7 @@ func (m *MautrixAdapter) openDocumentFetch(ctx context.Context, documentID strin
 // msgtype + body + url(mxc) + info, plus the io.alkemio.document_id breadcrumb
 // used for lookup-free read-translation of our own outbound media. A map is
 // used (rather than event.MessageEventContent) so custom fields can be set as
-// top-level event properties. parentEventID is empty only for a primary media
-// event in an attachment-only message.
+// top-level event properties.
 func buildMediaContent(
 	att domain.Attachment, mxc id.ContentURI, contentType string, size int64,
 	threadID id.EventID,
@@ -1168,6 +1164,31 @@ func threadRelation(threadID id.EventID) *event.RelatesTo {
 		},
 		IsFallingBack: true,
 	}
+}
+
+// resolveMediaMime picks the most specific media type. The server-declared
+// att.MimeType is authoritative when specific; otherwise the file-service
+// response Content-Type is used. Empty and application/octet-stream are treated
+// as non-specific. The result drives the upload Content-Type, the Matrix
+// msgtype, and info.mimetype uniformly so they never disagree.
+func resolveMediaMime(responseContentType, attMimeType string) string {
+	if isSpecificMime(attMimeType) {
+		return attMimeType
+	}
+	if isSpecificMime(responseContentType) {
+		return responseContentType
+	}
+	if attMimeType != "" {
+		return attMimeType
+	}
+	if responseContentType != "" {
+		return responseContentType
+	}
+	return "application/octet-stream"
+}
+
+func isSpecificMime(mime string) bool {
+	return mime != "" && mime != "application/octet-stream"
 }
 
 // mediaMsgType maps a MIME type to the appropriate Matrix message msgtype.
@@ -1877,9 +1898,12 @@ func (m *MautrixAdapter) GetThreadMessages(
 		return nil, fmt.Errorf("failed to get thread root message: %w", err)
 	}
 
-	// Parse the root message
+	// Parse the root message. A blank (present-but-empty body, no attachment)
+	// root — e.g. a redacted thread root — is dropped so the thread view does not
+	// show a spurious empty first message (matches develop and the reply scan
+	// below).
 	var rootMsg *domain.Message
-	if parsed := m.parseMessageEvent(rootEvt, roomID); parsed != nil {
+	if parsed := m.parseMessageEvent(rootEvt, roomID); parsed != nil && !isBlankMessage(parsed) {
 		parsed.Reactions = []domain.Reaction{}
 		rootMsg = parsed
 	}

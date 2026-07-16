@@ -479,6 +479,33 @@ func TestSendMessage_ResponseContentTypeWinsMimeDisagreement(t *testing.T) {
 	assert.Equal(t, "image/png", info["mimetype"])
 }
 
+// The server-declared att.MimeType is authoritative when specific: a generic
+// file-service Content-Type (application/octet-stream) must NOT override a
+// precise att.MimeType, so the media still renders inline (m.image), not m.file.
+func TestSendMessage_SpecificAttMimeBeatsGenericResponseType(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "application/octet-stream", []byte("PNG")), nil
+	})
+
+	intent := &mockIntentAPI{
+		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/png")},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$png"},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "image", MimeType: "image/png"}})
+	require.NoError(t, err)
+
+	assert.Equal(t, "image/png", intent.lastUploadBytesType)
+	content, ok := intent.lastSendMsgEventContent.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "m.image", content["msgtype"], "specific att.MimeType must win over generic octet-stream")
+	info, ok := content["info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "image/png", info["mimetype"])
+}
+
 // Each attachment in a multi-attachment send gets its own event with a distinct
 // body (filename) and io.alkemio.document_id.
 func TestSendMessage_MultiAttachment_DistinctPerEvent(t *testing.T) {
