@@ -62,35 +62,23 @@ class FakeTransport:
         self.stopped = True
 
 
-class FakeHeaders:
-    """Minimal twisted Headers stand-in exposing getRawHeaders."""
-
-    def __init__(self, content_type=None):
-        self._ct = content_type
-
-    def getRawHeaders(self, name, default=None):
-        n = name.decode() if isinstance(name, (bytes, bytearray)) else name
-        if n.lower() == "content-type" and self._ct is not None:
-            return [self._ct]
-        return default
-
-
 class FakeResponse:
     """
     An UNBUFFERED response stand-in.
 
-    - `_release(resp)` -> deliverBody(_DrainAndAbort) -> makeConnection ->
-      transport.stopProducing() sets `transport.stopped` (assertable release).
-    - meta reads: pass `auto_body` (bytes) so deliverBody feeds the body then
-      closes cleanly, mimicking the real by-reference read via `_JsonBodyReader`.
-    - `stall_body=True`: deliverBody connects but never delivers (stalled body).
+    - abort path (`_abort_connection` / a stalled drain-or-read): deliverBody ->
+      makeConnection -> transport.stopProducing() sets `transport.stopped`.
+    - drain/keep-alive path: `auto_body` (incl. b"") makes deliverBody feed the
+      body then close cleanly -> the drainer completes -> connection reused
+      (transport.stopped stays False).
+    - `stall_body=True`: deliverBody connects but never delivers (stalled body ->
+      the caller times out and aborts).
     """
 
-    def __init__(self, code, auto_body=None, stall_body=False, headers=None):
+    def __init__(self, code, auto_body=None, stall_body=False):
         self.code = code
         self._auto_body = auto_body
         self._stall_body = stall_body
-        self.headers = headers if headers is not None else FakeHeaders()
         self.delivered_to = None
         self.transport = None
 
@@ -101,15 +89,20 @@ class FakeResponse:
         if self._stall_body:
             return  # never delivers; caller must abort to release it
         if self._auto_body is not None:
-            protocol.dataReceived(self._auto_body)
-            protocol.connectionLost(Failure(ResponseDone()))
+            if self._auto_body:
+                protocol.dataReceived(self._auto_body)
+            protocol.connectionLost(Failure(ResponseDone()))  # clean close -> reused
 
 
-def _meta(obj, content_type="application/json"):
+def _meta(obj):
     """A by-reference meta response whose body auto-delivers as JSON."""
-    return FakeResponse(
-        200, auto_body=json.dumps(obj).encode(), headers=FakeHeaders(content_type)
-    )
+    return FakeResponse(200, auto_body=json.dumps(obj).encode())
+
+
+def _drainable(code):
+    """A non-streamed reply whose (empty) body drains cleanly -> connection reused
+    (transport NOT aborted)."""
+    return FakeResponse(code, auto_body=b"")
 
 
 class FakeConsumer:
@@ -320,7 +313,7 @@ def test_store_skips_non_user_upload(monkeypatch):
 def test_store_posts_verbatim_multipart_streamed(monkeypatch):
     prov = _make_provider()
     captured = {}
-    store_resp = FakeResponse(201)
+    store_resp = _drainable(201)
 
     def fake_post(url, files=None, data=None, **kw):
         captured["url"] = url
@@ -350,7 +343,7 @@ def test_store_posts_verbatim_multipart_streamed(monkeypatch):
         captured["data"]["storageBucketId"]
         == "00000000-0000-0000-0000-0000000000ff"
     )
-    # Per-request timeout + unbuffered (so the reply can be released, not read).
+    # Per-request timeout + unbuffered (so the reply can be drained/released).
     assert captured["timeout"] == prov.store_timeout_s
     assert captured["unbuffered"] is True
     # The body must be the STREAMED file handle, not a fully-buffered bytes blob.
@@ -358,22 +351,23 @@ def test_store_posts_verbatim_multipart_streamed(monkeypatch):
     assert body is fake_file
     assert not isinstance(body, (bytes, bytearray))
     assert hasattr(body, "read")
-    # The handle is closed, and the 201 reply connection is RELEASED (not read).
+    # Handle closed; and the 201 reply body was DRAINED (keep-alive) not aborted.
     assert fake_file.closed is True
-    assert store_resp.transport.stopped is True
+    assert store_resp.transport.stopped is False
 
 
 def test_store_raises_and_closes_handle_on_http_error(monkeypatch):
     prov = _make_provider()
     fake_file = FakeFile(b"x")
-    err_resp = FakeResponse(500)
+    err_resp = _drainable(500)
     monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(err_resp))
     monkeypatch.setattr(mod, "_open_stream", lambda p: fake_file)
     with pytest.raises(RuntimeError):
         _run(prov.store_file("local_content/x", FakeFileInfo("m")))
-    # finally: closes the handle even on the error path; and the reply is released.
+    # finally: closes the handle even on the error path; the small error body is
+    # drained (keep-alive), not aborted.
     assert fake_file.closed is True
-    assert err_resp.transport.stopped is True
+    assert err_resp.transport.stopped is False
 
 
 @pytest.mark.parametrize("code", [200, 202, 204, 301, 302])
@@ -381,13 +375,32 @@ def test_store_rejects_non_201_success(monkeypatch, code):
     # A 2xx-non-201 or a 3xx is NOT a confirmed durable store.
     prov = _make_provider()
     fake_file = FakeFile(b"x")
-    resp = FakeResponse(code)
+    resp = _drainable(code)
     monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(resp))
     monkeypatch.setattr(mod, "_open_stream", lambda p: fake_file)
     with pytest.raises(RuntimeError):
         _run(prov.store_file("local_content/x", FakeFileInfo("m")))
     assert fake_file.closed is True
-    assert resp.transport.stopped is True  # released
+    assert resp.transport.stopped is False  # drained (reused), not aborted
+
+
+def test_store_201_durable_despite_release_failure(monkeypatch):
+    # Once 201 is confirmed the store is durable; a failure while draining/
+    # releasing the reply body must NOT turn a successful store into a failure.
+    prov = _make_provider()
+    fake_file = FakeFile(b"x")
+    resp = FakeResponse(201)
+
+    def boom_deliver(protocol):
+        raise RuntimeError("connection reset while draining the 201 reply")
+
+    resp.deliverBody = boom_deliver
+    monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(resp))
+    monkeypatch.setattr(mod, "_open_stream", lambda p: fake_file)
+
+    # Must NOT raise — the durable store stands.
+    _run(prov.store_file("local_content/x", FakeFileInfo("m")))
+    assert fake_file.closed is True
 
 
 def test_store_post_timeout_raises_and_closes_handle(monkeypatch):
@@ -460,12 +473,15 @@ def test_store_late_open_closes_late_handle(monkeypatch):
 
 def test_store_open_not_routed_through_with_timeout(monkeypatch):
     # Structural logcontext guard: the cache-file open must be awaited via
-    # addTimeout DIRECTLY, never through `_with_timeout` (which adds a second
-    # make_deferred_yieldable that would resume the upload under the sentinel
-    # logcontext). A re-introduced double-wrap makes this fail. The autouse fixture
-    # stubs make_deferred_yieldable to identity, so we cannot see the wrap at
-    # runtime — spying `_with_timeout` is the structural proxy.
+    # addTimeout DIRECTLY on the already-yieldable defer_to_thread Deferred, never
+    # through `_with_timeout` (which adds a second make_deferred_yieldable that
+    # would resume the upload under the sentinel logcontext). The autouse fixture
+    # stubs make_deferred_yieldable to identity, so the wrap is invisible at
+    # runtime — spying `_with_timeout` and its timeout arg is the structural proxy.
+    # (`_with_timeout` IS legitimately used for the reply DRAIN, with `timeout_s`;
+    # the open, if wrapped, would show up with `store_timeout_s`.)
     prov = _make_provider()
+    assert prov.store_timeout_s != prov.timeout_s  # so the two are distinguishable
     calls = []
     orig = mod._with_timeout
 
@@ -475,20 +491,13 @@ def test_store_open_not_routed_through_with_timeout(monkeypatch):
 
     monkeypatch.setattr(mod, "_with_timeout", spy)
     monkeypatch.setattr(mod, "_open_stream", lambda p: FakeFile(b"x"))
-    monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(FakeResponse(201)))
+    monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(_drainable(201)))
 
     _run(prov.store_file("local_content/x", FakeFileInfo("m")))
-    assert calls == []  # store (incl. the open) never routes through _with_timeout
-
-    # Sanity: the spy is not vacuous — the by-reference body read DOES use it.
-    def fake_get(url, **kw):
-        if "by-reference" in url:
-            return _aval(_meta({"id": "doc-9"}))
-        return _aval(FakeResponse(200))
-
-    monkeypatch.setattr(mod.treq, "get", fake_get)
-    _run(prov.fetch("local_content/x", FakeFileInfo("m")))
-    assert calls  # the by-reference read was wrapped by _with_timeout
+    # The open is NOT wrapped: `store_timeout_s` never reaches _with_timeout.
+    assert prov.store_timeout_s not in calls
+    # ...and the guard is not vacuous — the reply DRAIN does use _with_timeout.
+    assert prov.timeout_s in calls
 
 
 # --- fetch -----------------------------------------------------------------
@@ -526,15 +535,14 @@ def test_fetch_global_lookup_then_streams(monkeypatch):
     assert isinstance(responder, _FileServiceResponder)
 
 
-def test_fetch_by_reference_charset_decoded(monkeypatch):
-    # [3] The body must be decoded using the declared Content-Type charset, not a
-    # blind utf-8. A latin-1 body with a byte invalid in utf-8 must still parse.
+def test_fetch_by_reference_bom_body_parsed(monkeypatch):
+    # [0] The body is parsed with json.loads(BYTES) — RFC 8259 JSON is UTF-8/16/32
+    # and json's detect_encoding handles a UTF-8 BOM. A BOM-prefixed body must
+    # parse (the old charset-decode path raised "Unexpected UTF-8 BOM" and lost
+    # the doc as a false miss).
     prov = _make_provider()
-    raw = json.dumps({"id": "id-\xe9"}, ensure_ascii=False).encode("latin-1")
-    assert b"\xe9" in raw  # invalid as standalone utf-8; valid latin-1
-    meta = FakeResponse(
-        200, auto_body=raw, headers=FakeHeaders("application/json; charset=latin-1")
-    )
+    bom_body = b"\xef\xbb\xbf" + json.dumps({"id": "doc-9"}).encode()
+    meta = FakeResponse(200, auto_body=bom_body)
     calls = []
 
     def fake_get(url, **kw):
@@ -546,8 +554,8 @@ def test_fetch_by_reference_charset_decoded(monkeypatch):
     monkeypatch.setattr(mod.treq, "get", fake_get)
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
     assert responder is not None
-    # The decoded id drove the content URL, proving charset-correct parsing.
-    assert calls[1] == "http://file-service:4003/internal/file/id-\xe9/content"
+    # Parsed the BOM-prefixed id and proceeded to the content GET.
+    assert calls[1] == "http://file-service:4003/internal/file/doc-9/content"
 
 
 def test_fetch_by_reference_body_over_cap_aborts(monkeypatch):
@@ -561,10 +569,10 @@ def test_fetch_by_reference_body_over_cap_aborts(monkeypatch):
     assert big.transport.stopped is True  # oversized body aborted
 
 
-def test_fetch_returns_none_on_by_reference_404_and_releases(monkeypatch):
+def test_fetch_returns_none_on_by_reference_404_and_drains(monkeypatch):
     prov = _make_provider()
     calls = []
-    miss = FakeResponse(404)
+    miss = _drainable(404)
 
     def fake_get(url, **kw):
         calls.append(url)
@@ -575,13 +583,13 @@ def test_fetch_returns_none_on_by_reference_404_and_releases(monkeypatch):
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("missing")))
     assert responder is None
     assert len(calls) == 1  # only the by-reference lookup ran
-    assert miss.transport.stopped is True  # released without reading a body
+    assert miss.transport.stopped is False  # small body drained (keep-alive)
 
 
-def test_fetch_returns_none_on_content_404_and_releases(monkeypatch):
+def test_fetch_returns_none_on_content_404_and_drains(monkeypatch):
     # Doc deleted between the by-reference lookup and the content GET.
     prov = _make_provider()
-    content_miss = FakeResponse(404)
+    content_miss = _drainable(404)
 
     def fake_get(url, **kw):
         if "by-reference" in url:
@@ -592,16 +600,16 @@ def test_fetch_returns_none_on_content_404_and_releases(monkeypatch):
 
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
     assert responder is None
-    assert content_miss.transport.stopped is True  # released
+    assert content_miss.transport.stopped is False  # drained (keep-alive)
 
 
-def test_fetch_returns_none_on_lookup_5xx_and_releases(monkeypatch):
+def test_fetch_returns_none_on_lookup_5xx_and_drains(monkeypatch):
     prov = _make_provider()
-    err = FakeResponse(500)
+    err = _drainable(500)
     monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(err))
     responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
     assert responder is None
-    assert err.transport.stopped is True  # released
+    assert err.transport.stopped is False  # drained (keep-alive)
 
 
 def test_fetch_returns_none_on_malformed_meta_body(monkeypatch):
@@ -650,6 +658,21 @@ def test_fetch_stalled_body_read_times_out_and_releases_conn(monkeypatch):
     assert _result_of(d) is None
     # The stalled body connection was aborted (transport.stopProducing called).
     assert stalling_meta.transport.stopped is True
+
+
+def test_fetch_stalled_reply_drain_times_out_and_aborts(monkeypatch):
+    # A NON-streamed reply (a 404 miss) whose body STALLS: the keep-alive drain is
+    # bounded, so on timeout it aborts (tears the connection down) instead of
+    # hanging — and fetch still returns None. This is the drained-vs-aborted
+    # counterpart to the fast-drain (reused) misses above.
+    prov = _make_provider()
+    stalling_miss = FakeResponse(404, stall_body=True)
+    monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(stalling_miss))
+
+    d = defer.ensureDeferred(prov.fetch("local_content/x", FakeFileInfo("missing")))
+    prov.reactor.advance(prov.timeout_s + 1)  # trip the drain deadline
+    assert _result_of(d) is None
+    assert stalling_miss.transport.stopped is True  # drain gave up -> aborted
 
 
 # --- streaming / responder (reactor code paths) ----------------------------

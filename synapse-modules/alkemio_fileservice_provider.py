@@ -129,44 +129,35 @@ async def _with_timeout(reactor, timeout_s, d):
     return await make_deferred_yieldable(d)
 
 
-def _release(resp) -> None:
+def _stop_producing(transport) -> None:
     """
-    Release a non-streamed response's connection by ABORTING it WITHOUT reading
-    the body — the single primitive for every response we don't stream (misses,
-    errors, the store 201/POST reply). Best-effort and idempotent-ish.
+    Best-effort connection TEARDOWN — the single place the abort primitive lives.
 
-    This only actually frees the socket because the response is UNBUFFERED: treq
-    wraps a response in `_BufferedResponse` only when `not unbuffered`, and that
-    wrapper's `deliverBody` merely replays an in-memory buffer, so stopProducing
-    is a no-op on it (the old buffered-drain bug). An unbuffered response hands a
-    real body transport (Twisted's TransportProxyProducer), whose stopProducing()
-    tears the underlying HTTP/1.1 connection down. `_DrainAndAbort` connects then
-    immediately stops — the same release `_FileServiceResponder` uses.
+    `stopProducing()` on a response-body transport aborts the underlying HTTP/1.1
+    connection. It only actually frees the socket because our responses are
+    UNBUFFERED: treq wraps a response in `_BufferedResponse` only when
+    `not unbuffered`, and that wrapper's `deliverBody` merely replays an in-memory
+    buffer (stopProducing is a no-op on it — the old buffered-drain bug). An
+    unbuffered response hands a real body transport (Twisted's
+    TransportProxyProducer), whose stopProducing() tears the connection down.
+    """
+    if transport is None:
+        return
+    try:
+        transport.stopProducing()
+    except Exception as exc:  # noqa: BLE001 - best-effort teardown
+        logger.debug("file-service connection teardown failed (ignored): %s", exc)
+
+
+def _abort_connection(resp) -> None:
+    """
+    Abort an unconsumed response's connection WITHOUT reading its body — used for a
+    body we will never read (an abandoned content stream). Best-effort.
     """
     try:
         resp.deliverBody(_DrainAndAbort())
     except Exception as exc:  # noqa: BLE001 - best-effort release
-        logger.debug("file-service connection release failed (ignored): %s", exc)
-
-
-def _charset_of(resp) -> "Optional[str]":
-    """Return the declared charset of a response's Content-Type, else None."""
-    try:
-        raw = resp.headers.getRawHeaders("content-type")
-        if not raw:
-            raw = resp.headers.getRawHeaders(b"content-type")
-        if not raw:
-            return None
-        value = raw[-1]
-        if isinstance(value, bytes):
-            value = value.decode("ascii", "replace")
-        for part in value.split(";")[1:]:
-            key, _, val = part.strip().partition("=")
-            if key.strip().lower() == "charset":
-                return val.strip().strip("\"'").lower() or None
-    except Exception:  # noqa: BLE001 - malformed header -> caller defaults to utf-8
-        return None
-    return None
+        logger.debug("file-service connection abort failed (ignored): %s", exc)
 
 
 class _ConsumerSink(Protocol):
@@ -232,28 +223,35 @@ class _DrainAndAbort(Protocol):
 
     def makeConnection(self, transport) -> None:
         Protocol.makeConnection(self, transport)
-        # Abort the underlying connection: the response-body transport is an
-        # IProducer, and stopProducing() tears the connection down.
-        try:
-            transport.stopProducing()
-        except Exception:  # noqa: BLE001 - best-effort release
-            pass
+        # Abort the underlying connection as soon as the body is delivered.
+        _stop_producing(transport)
 
     def dataReceived(self, data: bytes) -> None:  # pragma: no cover - aborted
         pass
 
 
+def _body_end_is_clean(reason) -> bool:
+    """True if a body protocol's connectionLost `reason` is a normal end."""
+    from twisted.web.client import ResponseDone
+    from twisted.web.http import PotentialDataLoss
+    from twisted.internet.error import ConnectionDone
+
+    return reason is None or reason.check(
+        ResponseDone, PotentialDataLoss, ConnectionDone
+    )
+
+
 class _JsonBodyReader(Protocol):
     """
     Reads a (small, buffered) response body into memory, firing `finished` with
-    the collected bytes on a clean close.
+    the collected bytes on a clean close. A clean, fully-read body returns the
+    connection to treq's keep-alive pool for reuse.
 
     We read the by-reference JSON body with a protocol WE own (instead of
     treq.json_content) specifically so we can `abort()` it: treq's
     collect/content Deferred has no canceller, so a timeout on that read would
     cancel the wait but leave the underlying connection open (pool leak). On a
-    stalled/failed read `abort()` tears the connection down — the same
-    stopProducing() release `_DrainAndAbort` uses, adapted to this buffered read.
+    stalled/failed/oversized read `abort()` tears the connection down.
     """
 
     def __init__(self, finished: "Deferred[bytes]", max_bytes: int):
@@ -273,26 +271,43 @@ class _JsonBodyReader(Protocol):
         self._chunks.append(data)
 
     def connectionLost(self, reason=None) -> None:
-        from twisted.web.client import ResponseDone
-        from twisted.web.http import PotentialDataLoss
-        from twisted.internet.error import ConnectionDone
-
         if self._finished.called:
             return
-        if reason is None or reason.check(
-            ResponseDone, PotentialDataLoss, ConnectionDone
-        ):
+        if _body_end_is_clean(reason):
             self._finished.callback(b"".join(self._chunks))
         else:
             self._finished.errback(reason)
 
     def abort(self) -> None:
-        transport = getattr(self, "transport", None)
-        if transport is not None:
-            try:
-                transport.stopProducing()
-            except Exception:  # noqa: BLE001 - best-effort release
-                pass
+        _stop_producing(getattr(self, "transport", None))
+
+
+class _BodyDrainer(Protocol):
+    """
+    Reads and DISCARDS a small non-streamed reply body, firing `finished` on a
+    clean close so the (unbuffered) connection is returned to treq's keep-alive
+    pool for REUSE — cheaper than tearing a fresh TCP(+TLS) connection down and
+    re-handshaking on the next call. `abort()` tears it down if the drain must be
+    given up (timeout/error). Bytes are discarded, so memory is bounded even for
+    an unexpectedly large body (which the deadline caps in time).
+    """
+
+    def __init__(self, finished: "Deferred"):
+        self._finished = finished
+
+    def dataReceived(self, data: bytes) -> None:
+        pass  # discard — we only drain to free the connection for reuse
+
+    def connectionLost(self, reason=None) -> None:
+        if self._finished.called:
+            return
+        if _body_end_is_clean(reason):
+            self._finished.callback(None)
+        else:
+            self._finished.errback(reason)
+
+    def abort(self) -> None:
+        _stop_producing(getattr(self, "transport", None))
 
 
 class _FileServiceResponder(Responder):
@@ -332,7 +347,9 @@ class _FileServiceResponder(Responder):
         if self._aborted:
             return
         self._aborted = True
-        _release(self._response)  # abort the unconsumed unbuffered connection
+        # An abandoned content stream is potentially a full media file — ABORT it
+        # (don't drain), and __exit__ is sync so it can't await a drain anyway.
+        _abort_connection(self._response)
 
     def __enter__(self):
         return self
@@ -425,29 +442,51 @@ class FileServiceStorageProvider(StorageProvider):
             and not getattr(file_info, "url_cache", None)
         )
 
+    async def _drain_and_release(self, resp) -> None:
+        """
+        Drain+discard a small NON-streamed reply body (bounded by `timeout_s`) so
+        the unbuffered connection is returned to treq's keep-alive pool for REUSE.
+        On a stalled/failed drain, ABORT (tear down) instead. Best-effort — NEVER
+        raises: a drain/abort failure must not fail a durable 201 nor turn a miss
+        into an error. (Aborting every reply instead would lose keep-alive and
+        force a fresh TCP+TLS handshake per store/miss under load.)
+        """
+        finished = defer.Deferred()
+        drainer = _BodyDrainer(finished)
+        try:
+            resp.deliverBody(drainer)
+            await _with_timeout(self.reactor, self.timeout_s, finished)
+        except Exception as exc:  # noqa: BLE001 - timeout / transport / sync raise
+            drainer.abort()  # give up the reuse; tear the connection down
+            logger.debug(
+                "file-service reply drain failed, aborted: %s", exc
+            )
+
     async def _read_json_body(self, resp):
         """
         Read + JSON-parse the by-reference response body, bounded by `timeout_s`.
 
         The ONLY response whose body we read (we need the doc id). Everything else
-        is `_release`d without reading. Reads via a protocol we own
-        (`_JsonBodyReader`) rather than `treq.json_content` so that on a
-        stalled/failed/oversized body read we can ABORT the connection — treq's
-        content Deferred has no canceller, so a bare timeout there would release
-        the wait but LEAK the still-open connection. `deliverBody` is inside the
-        try so even a SYNCHRONOUS deliverBody raise still aborts. A size cap
-        (`_MAX_META_BYTES`) bounds a fast oversized body, and the declared
-        Content-Type charset (else UTF-8) is used to decode.
+        is `_drain_and_release`d. Reads via a protocol we own (`_JsonBodyReader`)
+        rather than `treq.json_content` so that on a stalled/failed/oversized body
+        read we can ABORT the connection — treq's content Deferred has no
+        canceller, so a bare timeout there would release the wait but LEAK the
+        still-open connection. `deliverBody` AND `json.loads` are inside the try,
+        so a synchronous deliverBody raise OR a malformed body both abort + return
+        None. A size cap (`_MAX_META_BYTES`) bounds a fast oversized body. Parsing
+        is `json.loads(bytes)` — RFC 8259 JSON is UTF-8/16/32 and json's
+        detect_encoding handles those plus a BOM (do NOT decode via a Content-Type
+        charset, which drops BOM handling).
         """
         finished = defer.Deferred()  # type: Deferred[bytes]
         reader = _JsonBodyReader(finished, _MAX_META_BYTES)
         try:
             resp.deliverBody(reader)
             raw = await _with_timeout(self.reactor, self.timeout_s, finished)
+            return json.loads(raw)
         except Exception:
-            reader.abort()  # release the stalled/broken/oversized connection
+            reader.abort()  # release the stalled/broken/oversized/malformed conn
             raise
-        return json.loads(raw.decode(_charset_of(resp) or "utf-8"))
 
     # -- StorageProvider API ------------------------------------------------
 
@@ -539,18 +578,18 @@ class FileServiceStorageProvider(StorageProvider):
             if resp.code != _STORE_SUCCESS_CODE:
                 # Only 201 Created confirms a durable store. A 2xx-non-201, a 3xx
                 # redirect, or a 4xx/5xx is NOT a confirmed store — fail loudly.
-                # We never need the reply body: release the connection, don't read.
-                _release(resp)
+                # We never need the reply body: drain it (keep-alive), then fail.
+                await self._drain_and_release(resp)
                 raise RuntimeError(
                     "file-service store returned HTTP %d (expected %d) for media_id=%s"
                     % (resp.code, _STORE_SUCCESS_CODE, media_id)
                 )
 
             # 201: the media is durably stored. We don't need the created-doc body
-            # (the media_id<->doc mapping lives on externalReference), so release
-            # the connection without reading — releasing can't stall or fail the
-            # already-durable store.
-            _release(resp)
+            # (the media_id<->doc mapping lives on externalReference), so drain the
+            # reply (best-effort, keep-alive) — a drain error can't stall or fail
+            # the already-durable store.
+            await self._drain_and_release(resp)
             logger.debug(
                 "Stored media_id=%s in file-service bucket=%s",
                 media_id,
@@ -595,11 +634,11 @@ class FileServiceStorageProvider(StorageProvider):
                 )
             )
             if meta_resp.code == 404:
-                # Clean by-reference miss (doc absent): release, don't read.
-                _release(meta_resp)
+                # Clean by-reference miss (doc absent): drain (keep-alive).
+                await self._drain_and_release(meta_resp)
                 return None
             if meta_resp.code >= 400:
-                _release(meta_resp)
+                await self._drain_and_release(meta_resp)
                 logger.error(
                     "file-service by-reference HTTP %d for media_id=%s",
                     meta_resp.code,
@@ -608,10 +647,10 @@ class FileServiceStorageProvider(StorageProvider):
                 return None
 
             # The ONLY body we read: the by-reference 200 doc metadata (we need the
-            # id). Bounded, size-capped, charset-decoded, and self-aborting on any
-            # error (see `_read_json_body`). treq's `timeout=` above only covered
-            # the HEADERS, so this guards the body read. On error the exception is
-            # caught by the outer `except` -> return None.
+            # id). Bounded, size-capped, and self-aborting on any error (see
+            # `_read_json_body`). treq's `timeout=` above only covered the HEADERS,
+            # so this guards the body read. On error the exception is caught by the
+            # outer `except` -> return None.
             meta = await self._read_json_body(meta_resp)
             if not isinstance(meta, dict):
                 # A null / non-object JSON body is a protocol error, not a doc:
@@ -645,8 +684,8 @@ class FileServiceStorageProvider(StorageProvider):
             )
             if content_resp.code == 404:
                 # The doc was deleted between the by-reference lookup and the
-                # content GET: a race. Treat as a clean miss: release, don't read.
-                _release(content_resp)
+                # content GET: a race. Treat as a clean miss: drain (keep-alive).
+                await self._drain_and_release(content_resp)
                 logger.info(
                     "file-service content 404 (doc removed mid-fetch) for "
                     "doc_id=%s media_id=%s",
@@ -655,7 +694,7 @@ class FileServiceStorageProvider(StorageProvider):
                 )
                 return None
             if content_resp.code >= 400:
-                _release(content_resp)
+                await self._drain_and_release(content_resp)
                 logger.error(
                     "file-service content HTTP %d for doc_id=%s media_id=%s",
                     content_resp.code,
