@@ -239,16 +239,13 @@ func (m *MautrixAdapter) handleMessageEditEvent(evt *event.Event) {
 		newContent, _ = evt.Content.Raw["body"].(string)
 	}
 
-	// Extract thread ID via the shared thread-extraction helper (single source of
-	// truth for the m.thread → event_id / m.in_reply_to → event_id parse). Note this
-	// is distinct from originalEventID above (the m.replace target — the edited
-	// message id): for an m.replace event rel_type is "m.replace", so the m.thread
-	// branch never matches and this falls through to the m.in_reply_to fallback.
-	var threadID *id.EventID
-	if tid := extractThreadID(evt); tid != "" {
-		eid := id.EventID(tid)
-		threadID = &eid
-	}
+	// Extract thread ID via the shared *id.EventID helper (single source of truth
+	// for the m.thread → event_id / m.in_reply_to → event_id parse; returns nil when
+	// there is no thread/reply). Note this is distinct from originalEventID above
+	// (the m.replace target — the edited message id): for an m.replace event rel_type
+	// is "m.replace", so the m.thread branch never matches and this falls through to
+	// the m.in_reply_to fallback.
+	threadID := m.extractThreadIDFromMessage(evt)
 
 	go func(e *event.Event, sender uuid.UUID, origID, content string, tid *id.EventID) {
 		ctx := context.Background()

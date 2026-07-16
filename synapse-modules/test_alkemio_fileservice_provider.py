@@ -689,6 +689,48 @@ def test_fetch_returns_none_on_content_404_and_drains(monkeypatch):
     assert content_miss.transport.stopped is False  # drained (keep-alive)
 
 
+@pytest.mark.parametrize("code", [204, 302])
+def test_fetch_content_non_200_is_miss_not_streamed(monkeypatch, code):
+    # Strict 200: a 2xx-non-200 (204) or a 3xx redirect (treq doesn't follow) on
+    # the content GET must be a MISS (drained), NOT streamed as media.
+    prov = _make_provider()
+    content_resp = _drainable(code)
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        if "by-reference" in url:
+            return _aval(_meta({"id": "doc-9"}))
+        return _aval(content_resp)
+
+    monkeypatch.setattr(mod.treq, "get", fake_get)
+
+    responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
+    assert responder is None  # not streamed
+    assert len(calls) == 2  # by-reference + content GET both ran
+    assert content_resp.transport.stopped is False  # drained (keep-alive), not aborted
+
+
+@pytest.mark.parametrize("code", [204, 302])
+def test_fetch_by_reference_non_200_is_miss_not_parsed(monkeypatch, code):
+    # Strict 200: a 2xx-non-200 or a 3xx redirect on the by-reference GET must be a
+    # MISS (drained), NOT parsed as a doc body.
+    prov = _make_provider()
+    meta_resp = _drainable(code)
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        return _aval(meta_resp)
+
+    monkeypatch.setattr(mod.treq, "get", fake_get)
+
+    responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
+    assert responder is None
+    assert len(calls) == 1  # only the by-reference lookup ran (no content GET)
+    assert meta_resp.transport.stopped is False  # drained (keep-alive), not parsed
+
+
 def test_fetch_returns_none_on_lookup_5xx_and_drains(monkeypatch):
     prov = _make_provider()
     err = _drainable(500)
@@ -907,3 +949,83 @@ def test_responder_fully_streamed_then_exit_does_not_double_abort():
 
     # __exit__ after a full stream must NOT abort again (streamed path).
     assert not isinstance(response.delivered_to, _DrainAndAbort)
+
+
+# --- content stream: time-to-first-byte (TTFB) timeout ---------------------
+
+
+def test_consumer_sink_ttfb_timeout_aborts_and_errbacks():
+    # 200 headers then NO body byte before the TTFB deadline: the sink aborts the
+    # (unbuffered) connection and errbacks `finished` so Synapse maps the Responder
+    # to a media error instead of hanging on a silent stream.
+    clock = Clock()
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+    errors = {}
+    finished.addErrback(lambda f: errors.__setitem__("err", f) or None)
+
+    sink = _ConsumerSink(consumer, finished, reactor=clock, ttfb_timeout=5.0)
+    transport = FakeTransport()
+    sink.makeConnection(transport)
+    assert consumer.producer is transport  # producer registered for backpressure
+    assert clock.getDelayedCalls()  # TTFB deadline scheduled
+
+    clock.advance(5.1)  # no first byte -> trip the deadline
+
+    assert "err" in errors
+    assert errors["err"].check(_TimeoutError)  # a TimeoutError, not a hang
+    assert transport.stopped is True  # connection aborted
+    assert consumer.unregistered is True
+
+
+def test_consumer_sink_first_byte_cancels_ttfb():
+    # The first byte cancels the TTFB timer; afterwards client backpressure governs
+    # (a paused producer stops dataReceived) and NO further timeout fires even if
+    # the clock advances far — a slow client must not be mistaken for a stall.
+    clock = Clock()
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+    result = {}
+    finished.addCallback(lambda n: result.__setitem__("written", n))
+
+    sink = _ConsumerSink(consumer, finished, reactor=clock, ttfb_timeout=5.0)
+    sink.makeConnection(FakeTransport())
+    assert clock.getDelayedCalls()  # TTFB scheduled
+
+    sink.dataReceived(b"AB")  # first byte
+    assert not clock.getDelayedCalls()  # TTFB cancelled
+
+    clock.advance(100)  # would have fired; must NOT abort or errback now
+    assert not finished.called  # still streaming (backpressure, not a stall)
+
+    sink.dataReceived(b"C")
+    sink.connectionLost(None)  # clean close
+    assert result["written"] == 3
+    assert bytes(consumer.data) == b"ABC"
+
+
+def test_fetch_content_stream_ttfb_wired_through_responder(monkeypatch):
+    # End-to-end: fetch() threads reactor + timeout_s into the responder, so a
+    # 200-then-silent content stream aborts on the TTFB deadline when Synapse calls
+    # write_to_consumer.
+    prov = _make_provider()
+    content = FakeResponse(200, stall_body=True)  # headers OK, body never delivers
+
+    def fake_get(url, **kw):
+        if "by-reference" in url:
+            return _aval(_meta({"id": "doc-9"}))
+        return _aval(content)
+
+    monkeypatch.setattr(mod.treq, "get", fake_get)
+
+    responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
+    assert responder is not None
+
+    consumer = FakeConsumer()
+    errors = {}
+    d = responder.write_to_consumer(consumer)
+    d.addErrback(lambda f: errors.__setitem__("err", f) or None)
+
+    prov.reactor.advance(prov.timeout_s + 1)  # trip the TTFB deadline
+    assert "err" in errors
+    assert content.transport.stopped is True  # connection aborted

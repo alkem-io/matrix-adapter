@@ -379,6 +379,76 @@ func TestSendAttachment_ResponseHeaderTimesOut(t *testing.T) {
 	assert.Equal(t, 0, intent.sendMessageEventCalled)
 }
 
+// ctxBlockingReader blocks Read until the request context is cancelled, then
+// returns that error — modelling a file-service that streams headers then stalls
+// mid-body. Its unblocking proves the size-proportional deadline (mediaCtx)
+// bounds the streamed body read, not just the header wait.
+type ctxBlockingReader struct{ ctx context.Context }
+
+func (r *ctxBlockingReader) Read(_ []byte) (int, error) {
+	<-r.ctx.Done()
+	return 0, r.ctx.Err()
+}
+
+func (r *ctxBlockingReader) Close() error { return nil }
+
+// A mid-body stall from file-service must NOT hang the send forever (it would
+// wedge the single sequential watermill consumer). sendAttachment bounds the
+// fetch+upload with mediaStreamTimeout via the fetch context; a short parent
+// deadline is inherited (WithTimeout takes the EARLIER deadline), so the stalled
+// body read is cancelled quickly rather than blocking for the 60s+ floor.
+func TestSendAttachment_BodyStall_DeadlineCancels(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(req *http.Request) (*http.Response, error) {
+		header := make(http.Header)
+		header.Set("Content-Type", "image/png")
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        header,
+			Body:          &ctxBlockingReader{ctx: req.Context()},
+			ContentLength: -1,
+		}, nil
+	})
+	intent := &mockIntentAPI{
+		uploadBytesResult: &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/media")},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	var err error
+	go func() {
+		_, err = a.SendMessage(
+			ctx, "!room:test.local", testActor(testActorID, "Alice"), "",
+			[]domain.Attachment{{DocumentID: docID1, DisplayName: "x", MimeType: "image/png"}},
+		)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sendAttachment hung past the media deadline; the streamed body read was not bounded")
+	}
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, 0, intent.sendMessageEventCalled, "no media event on a deadline-cancelled fetch")
+}
+
+// mediaStreamTimeout is the floor (fileServiceFetchTimeout) for small payloads
+// and scales up proportionally with the per-attachment cap for large ones.
+func TestMediaStreamTimeout_ScalesWithSize(t *testing.T) {
+	assert.Equal(t, fileServiceFetchTimeout, mediaStreamTimeout(0), "zero-size stays at the floor")
+	assert.Equal(t, fileServiceFetchTimeout, mediaStreamTimeout(fileServiceMinThroughputBytesPerSec-1),
+		"below one throughput-second stays at the floor")
+
+	big := int64(100) * fileServiceMinThroughputBytesPerSec // 100 MiB
+	got := mediaStreamTimeout(big)
+	assert.Equal(t, fileServiceFetchTimeout+100*time.Second, got, "100 MiB adds 100s at 1 MiB/s")
+	assert.Greater(t, got, fileServiceFetchTimeout)
+}
+
 // LOW(b) — info.size reflects the bytes actually uploaded, not the caller's
 // (possibly stale/spoofed) att.Size.
 func TestSendMessage_InfoSizeIsActualBytes(t *testing.T) {

@@ -1001,7 +1001,18 @@ func (m *MautrixAdapter) sendAttachment(
 	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment,
 	threadID id.EventID,
 ) (id.EventID, error) {
-	resp, err := m.openDocumentFetch(ctx, att.DocumentID)
+	// The streamed fetch+upload (openDocumentFetch → UploadMedia, including the
+	// resp.Body reads UploadMedia drives) is bounded by a size-proportional
+	// wall-clock deadline: the AMQP/watermill message context carries NO deadline,
+	// and processMessage runs messages SEQUENTIALLY in one goroutine, so a mid-body
+	// stall from file-service would otherwise wedge the entire room-ops consumer.
+	// On deadline the fetch request context cancels, unblocking any parked body
+	// read, and the deferred resp.Body.Close() cleans up.
+	maxBytes := m.cfg.MaxAttachmentBytes()
+	mediaCtx, cancel := context.WithTimeout(ctx, mediaStreamTimeout(maxBytes))
+	defer cancel()
+
+	resp, err := m.openDocumentFetch(mediaCtx, att.DocumentID)
 	if err != nil {
 		return "", err
 	}
@@ -1016,7 +1027,6 @@ func (m *MautrixAdapter) sendAttachment(
 	// msgtype and info.mimetype, which are conventionally unparameterized.
 	contentType := resolveMediaMime(resp.Header.Get("Content-Type"), att.MimeType)
 
-	maxBytes := m.cfg.MaxAttachmentBytes()
 	if resp.ContentLength > 0 && resp.ContentLength > maxBytes {
 		return "", attachmentTooLargeError(att.DocumentID, maxBytes)
 	}
@@ -1030,7 +1040,9 @@ func (m *MautrixAdapter) sendAttachment(
 	// shorter than the declared length, a declared upload would EOF early and
 	// fail. countingCapReader still enforces the per-attachment max, and the
 	// declared > cap case is already rejected above.
-	up, err := intent.UploadMedia(ctx, mautrix.ReqUploadMedia{
+	//
+	// mediaCtx (size-proportional deadline) bounds the upload's body reads too.
+	up, err := intent.UploadMedia(mediaCtx, mautrix.ReqUploadMedia{
 		Content:       reader,
 		ContentLength: -1,
 		ContentType:   contentType,
@@ -1056,9 +1068,22 @@ func attachmentTooLargeError(documentID string, maxBytes int64) error {
 }
 
 // fileServiceFetchTimeout bounds connection establishment and the wait for
-// file-service response headers. The streamed response body remains governed by
-// the send context rather than a fixed wall-clock timeout.
+// file-service response headers. The streamed response body is additionally
+// bounded by mediaStreamTimeout (a size-proportional wall-clock deadline applied
+// via the fetch context in sendAttachment), so a mid-body stall cannot hang the
+// send indefinitely.
 const fileServiceFetchTimeout = 60 * time.Second
+
+// Streamed media (fetch from file-service → upload to Synapse) is bounded by a
+// size-proportional deadline: a stalled body must not wedge the single
+// sequential watermill consumer. fileServiceFetchTimeout is the floor (covers
+// connect + header wait); large bodies get proportional extra time at an assumed
+// minimum throughput.
+const fileServiceMinThroughputBytesPerSec = 1 << 20 // 1 MiB/s
+
+func mediaStreamTimeout(maxBytes int64) time.Duration {
+	return fileServiceFetchTimeout + time.Duration(maxBytes/fileServiceMinThroughputBytesPerSec)*time.Second
+}
 
 func newFileServiceHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
 	return &http.Client{Transport: &http.Transport{

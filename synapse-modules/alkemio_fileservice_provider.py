@@ -26,11 +26,15 @@ file-service is the sole durable store.
                  bucketId, because the server may have MOVED the doc into a
                  conversation bucket during inbound re-home), then stream
                  GET /internal/file/{id}/content back through a Responder.
-                 Cache miss or ANY failure (404 / >=400 / transport / timeout /
+                 Cache miss or ANY failure (non-200 / transport / timeout /
                  malformed body) -> return None, which Synapse treats as a cache
                  miss (media-not-found) — the correct degradation during an
-                 outage. Each backend request carries its own `timeout_s` so a
-                 hung file-service fails fast rather than stalling the read path.
+                 outage. Timeout model: connection + headers + metadata-read +
+                 drain are each bounded by `timeout_s`; the streamed content body
+                 is bounded by a TIME-TO-FIRST-BYTE deadline (also `timeout_s`),
+                 after which legitimate slow-client backpressure governs. A fixed
+                 whole-body deadline is deliberately AVOIDED — it cannot
+                 distinguish a file-service stall from client backpressure.
 
 The provider holds NO durable state; the media_id <-> document mapping lives on
 the file-service document's opaque `externalReference`. It follows the standard
@@ -189,11 +193,20 @@ class _ConsumerSink(Protocol):
     amount of data in memory.
     """
 
-    def __init__(self, consumer: IConsumer, finished: "Deferred[int]"):
+    def __init__(
+        self,
+        consumer: IConsumer,
+        finished: "Deferred[int]",
+        reactor=None,
+        ttfb_timeout=None,
+    ):
         self._consumer = consumer
         self._finished = finished
         self._written = 0
         self._producer_registered = False
+        self._reactor = reactor
+        self._ttfb_timeout = ttfb_timeout
+        self._ttfb = None  # pending time-to-first-byte timeout call (IDelayedCall)
 
     def makeConnection(self, transport) -> None:
         Protocol.makeConnection(self, transport)
@@ -206,15 +219,57 @@ class _ConsumerSink(Protocol):
         except (AttributeError, RuntimeError):
             self._producer_registered = False
 
+        # Time-to-first-byte deadline: file-service returning 200 then going silent
+        # BEFORE any body byte must not hang the media request (and hold the
+        # unbuffered connection open). This is a TTFB timeout ONLY — before the
+        # first byte the consumer hasn't paused anything, so an idle read is a real
+        # stall; AFTER the first byte, legitimate slow-client backpressure (a paused
+        # producer stops dataReceived) governs, which an idle timer cannot
+        # distinguish from a server stall, so we impose no further deadline.
+        if self._reactor is not None and self._ttfb_timeout is not None:
+            self._ttfb = self._reactor.callLater(
+                self._ttfb_timeout, self._on_ttfb_timeout
+            )
+
+    def _cancel_ttfb(self) -> None:
+        if self._ttfb is not None and self._ttfb.active():
+            self._ttfb.cancel()
+        self._ttfb = None
+
+    def _on_ttfb_timeout(self) -> None:
+        # No body byte arrived within the deadline: abort the (unbuffered)
+        # connection and fail so Synapse maps the Responder to a media error.
+        self._ttfb = None
+        if self._finished.called:
+            return
+        if self._producer_registered:
+            try:
+                self._consumer.unregisterProducer()
+            except (AttributeError, RuntimeError):
+                pass
+            self._producer_registered = False
+        _stop_producing(getattr(self, "transport", None))
+        self._finished.errback(
+            defer.TimeoutError(
+                "file-service content stall: no body within %ss" % self._ttfb_timeout
+            )
+        )
+
     def dataReceived(self, data: bytes) -> None:
+        # First byte arrived — cancel the TTFB deadline; from here client
+        # backpressure governs and we impose no further timeout.
+        self._cancel_ttfb()
         self._consumer.write(data)
         self._written += len(data)
 
     def connectionLost(self, reason=None) -> None:
-        # ResponseDone/ConnectionDone are a clean close. NOTE: unlike the body
-        # readers below, a streamed content body treats PotentialDataLoss (a
-        # truncated download) as a FAILURE — the consumer must not be told the
-        # media completed when bytes were lost.
+        # ResponseDone/ConnectionDone are a clean close. INTENTIONAL divergence
+        # from `_body_end_is_clean` (which the small metadata/drain readers use and
+        # which accepts PotentialDataLoss): a streamed content body treats
+        # PotentialDataLoss (a truncated download, no clean terminator) as a
+        # FAILURE — the consumer must NOT be told the media completed when bytes may
+        # be missing. Only ResponseDone/ConnectionDone count as success here.
+        self._cancel_ttfb()
         if self._producer_registered:
             try:
                 self._consumer.unregisterProducer()
@@ -346,15 +401,21 @@ class _FileServiceResponder(Responder):
     `_abort` is idempotent, so the normal fully-streamed path never double-aborts.
     """
 
-    def __init__(self, response):
+    def __init__(self, response, reactor=None, ttfb_timeout=None):
         self._response = response
         self._streamed = False
         self._aborted = False
+        self._reactor = reactor
+        self._ttfb_timeout = ttfb_timeout
 
     def write_to_consumer(self, consumer: IConsumer) -> "Deferred[int]":
         finished = defer.Deferred()  # type: Deferred[int]
         try:
-            self._response.deliverBody(_ConsumerSink(consumer, finished))
+            self._response.deliverBody(
+                _ConsumerSink(
+                    consumer, finished, self._reactor, self._ttfb_timeout
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - a synchronous deliverBody raise
             # deliverBody never took ownership of the connection and `_streamed`
             # stays False, so `__exit__` will abort/release it. Surface the error
@@ -491,6 +552,13 @@ class FileServiceStorageProvider(StorageProvider):
                 "file-service reply drain failed, aborted: %s", exc
             )
 
+    async def _release_and_miss(self, resp, message, *args):
+        """Drain+release an unexpected-status reply, log it as an error, and return
+        None (a cache miss). Shared by the by-reference and content GET guards."""
+        await self._drain_and_release(resp)
+        logger.error(message, *args)
+        return None
+
     async def _read_json_body(self, resp):
         """
         Read + JSON-parse the by-reference response body, bounded by `timeout_s`.
@@ -568,12 +636,17 @@ class FileServiceStorageProvider(StorageProvider):
                 except Exception:  # noqa: BLE001 - best-effort
                     pass
                 raise _OpenAfterTimeout(cache_file)
-            return fh
+            # Stat for the size-proportional timeout HERE — off the reactor, in the
+            # threadpool — so a wedged mount cannot stall the whole Synapse worker
+            # (a reactor-side os.path.getsize would reintroduce the exact hazard the
+            # threaded open avoids).
+            size = os.path.getsize(cache_file)
+            return fh, size
 
         open_d = defer_to_thread(self.reactor, _guarded_open)
         open_d.addTimeout(self.store_timeout_s, self.reactor)
         try:
-            stream = await open_d
+            stream, file_size = await open_d
         except Exception:
             # Timeout (or open error): flag so a LATE open() self-closes its handle.
             timed_out = True
@@ -597,8 +670,8 @@ class FileServiceStorageProvider(StorageProvider):
             # ENTIRE multipart upload (request-body send through response headers),
             # so a big-but-valid file streaming slower than store_timeout_s would
             # otherwise fail under load. A genuinely stalled upload still fails once
-            # it exceeds this size-proportional deadline.
-            file_size = os.path.getsize(cache_file)
+            # it exceeds this size-proportional deadline. file_size was stat'd
+            # off-reactor in `_guarded_open` (see above).
             effective_timeout = max(
                 self.store_timeout_s, file_size / _STORE_MIN_THROUGHPUT_BPS
             )
@@ -680,14 +753,17 @@ class FileServiceStorageProvider(StorageProvider):
                 # Clean by-reference miss (doc absent): drain (keep-alive).
                 await self._drain_and_release(meta_resp)
                 return None
-            if meta_resp.code >= 400:
-                await self._drain_and_release(meta_resp)
-                logger.error(
-                    "file-service by-reference HTTP %d for media_id=%s",
+            if meta_resp.code != 200:
+                # Strict: only 200 carries a parseable doc. A 2xx-non-200 (e.g. 204)
+                # or a 3xx redirect (treq does not follow) is NOT a doc — miss,
+                # don't parse a non-doc body. (Matches the strict == 201 store check
+                # and the Go strict == http.StatusOK.)
+                return await self._release_and_miss(
+                    meta_resp,
+                    "file-service by-reference unexpected HTTP %d for media_id=%s",
                     meta_resp.code,
                     media_id,
                 )
-                return None
 
             # The ONLY body we read: the by-reference 200 doc metadata (we need the
             # id). Bounded, size-capped, and self-aborting on any error (see
@@ -738,20 +814,24 @@ class FileServiceStorageProvider(StorageProvider):
                     media_id,
                 )
                 return None
-            if content_resp.code >= 400:
-                await self._drain_and_release(content_resp)
-                logger.error(
-                    "file-service content HTTP %d for doc_id=%s media_id=%s",
+            if content_resp.code != 200:
+                # Strict: only a 200 streams the media body. A 2xx-non-200 (e.g.
+                # 204) or a 3xx redirect (treq does not follow) must NOT be streamed
+                # as media — miss, drain/abort the body instead.
+                return await self._release_and_miss(
+                    content_resp,
+                    "file-service content unexpected HTTP %d for doc_id=%s media_id=%s",
                     content_resp.code,
                     doc_id,
                     media_id,
                 )
-                return None
 
             logger.debug(
                 "Serving media_id=%s from file-service doc_id=%s", media_id, doc_id
             )
-            return _FileServiceResponder(content_resp)
+            # Thread the reactor + TTFB deadline so a 200-then-silent content stream
+            # can't hang the media request (time-to-first-byte only; see _ConsumerSink).
+            return _FileServiceResponder(content_resp, self.reactor, self.timeout_s)
 
         except Exception as exc:  # noqa: BLE001 - transport / timeout / parse error
             # Degrade to a cache miss during any file-service outage.
