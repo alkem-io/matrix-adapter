@@ -1157,41 +1157,62 @@ func threadRelation(threadID id.EventID) *event.RelatesTo {
 // because the type is lowercased, case-insensitive inputs (e.g. "Image/JPEG")
 // still classify correctly in mediaMsgType.
 func resolveMediaMime(responseContentType, attMimeType string) string {
-	att, attOK := normalizeMediaType(attMimeType)
-	resp, respOK := normalizeMediaType(responseContentType)
-	if attOK && isSpecificMediaType(att) {
+	att := normalizeMediaType(attMimeType)
+	resp := normalizeMediaType(responseContentType)
+	if isSpecificMediaType(att) {
 		return att
 	}
-	if respOK && isSpecificMediaType(resp) {
+	if isSpecificMediaType(resp) {
 		return resp
 	}
-	if attOK {
+	if att != "" {
 		return att
 	}
-	if respOK {
+	if resp != "" {
 		return resp
 	}
 	return "application/octet-stream"
 }
 
-// normalizeMediaType parses contentType via the stdlib mime package and returns
-// the canonical lowercased "type/subtype[; params]" form. ok is false when
-// there is no valid media type — empty, params-only, or otherwise malformed
-// input — so such values collapse to application/octet-stream in
-// resolveMediaMime rather than leaking into upload metadata.
-func normalizeMediaType(contentType string) (string, bool) {
-	mediatype, params, err := mime.ParseMediaType(contentType)
-	if err != nil || mediatype == "" {
-		return "", false
+// normalizeMediaType returns a lowercased "type/subtype[; params]" for a
+// Content-Type. It canonicalizes valid input (preserving parameters such as
+// charset), recovers the bare "type/subtype" when a PARAMETER is malformed
+// (rather than discarding a usable type), and returns "" when there is no valid
+// "type/subtype" (empty, params-only, or a bare type with no subtype).
+func normalizeMediaType(contentType string) string {
+	if strings.TrimSpace(contentType) == "" {
+		return ""
 	}
-	return mime.FormatMediaType(mediatype, params), true
+	// Full parse canonicalizes case + parameters (keeps charset).
+	if mediatype, params, err := mime.ParseMediaType(contentType); err == nil && validMediaType(mediatype) {
+		return mime.FormatMediaType(mediatype, params)
+	}
+	// Malformed parameters: recover just the base type.
+	base := contentType
+	if i := strings.IndexByte(base, ';'); i >= 0 {
+		base = base[:i]
+	}
+	base = strings.ToLower(strings.TrimSpace(base))
+	if !validMediaType(base) {
+		return ""
+	}
+	return base
 }
 
-// isSpecificMediaType reports whether a NORMALIZED media type is more specific
-// than application/octet-stream.
+// validMediaType reports whether t is a "type/subtype" with both parts non-empty.
+func validMediaType(t string) bool {
+	slash := strings.IndexByte(t, '/')
+	return slash > 0 && slash < len(t)-1
+}
+
+// isSpecificMediaType reports whether a normalized media type is more specific
+// than application/octet-stream. normalized is "" or "type/subtype[; params]".
 func isSpecificMediaType(normalized string) bool {
-	mediatype, _, err := mime.ParseMediaType(normalized)
-	return err == nil && mediatype != "" && mediatype != "application/octet-stream"
+	base := normalized
+	if i := strings.IndexByte(normalized, ';'); i >= 0 {
+		base = normalized[:i]
+	}
+	return base != "" && base != "application/octet-stream"
 }
 
 // mediaMsgType maps a MIME type to the appropriate Matrix message msgtype.

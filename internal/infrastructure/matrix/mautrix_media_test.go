@@ -617,6 +617,62 @@ func TestSendMessage_MalformedTypesCollapseToOctetStream(t *testing.T) {
 	assert.Equal(t, "application/octet-stream", info["mimetype"])
 }
 
+// A malformed PARAMETER must not discard an otherwise usable base type: the
+// resolver recovers "image/png" so the media still renders inline (m.image)
+// rather than collapsing to m.file/octet-stream. Guards the parameter-recovery
+// path.
+func TestSendMessage_MalformedParamRecoversBaseType(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "", []byte("PNG")), nil
+	})
+
+	intent := &mockIntentAPI{
+		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/png")},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$png"},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "image", MimeType: "image/png; =bad"}})
+	require.NoError(t, err)
+
+	assert.Equal(t, "image/png", intent.lastUploadBytesType, "base type recovered from malformed param")
+	content, ok := intent.lastSendMsgEventContent.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "m.image", content["msgtype"], "recovered image/png classifies as m.image")
+	info, ok := content["info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "image/png", info["mimetype"])
+}
+
+// A subtype-less type ("image") is not a valid media type: mediaMsgType would
+// classify it m.file yet it would otherwise leak into upload Content-Type and
+// info.mimetype. It must be rejected and collapse to application/octet-stream.
+// Guards the subtype-less rejection path.
+func TestSendMessage_SubtypeLessTypeRejected(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "", []byte("x")), nil
+	})
+
+	intent := &mockIntentAPI{
+		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/bin")},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$bin"},
+	}
+	a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "blob", MimeType: "image"}})
+	require.NoError(t, err)
+
+	assert.Equal(t, "application/octet-stream", intent.lastUploadBytesType, "subtype-less type rejected")
+	content, ok := intent.lastSendMsgEventContent.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "m.file", content["msgtype"])
+	info, ok := content["info"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "application/octet-stream", info["mimetype"])
+}
+
 // Each attachment in a multi-attachment send gets its own event with a distinct
 // body (filename) and io.alkemio.document_id.
 func TestSendMessage_MultiAttachment_DistinctPerEvent(t *testing.T) {
