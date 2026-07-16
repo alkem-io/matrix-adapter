@@ -1051,6 +1051,59 @@ func TestGetRelations_Paginates(t *testing.T) {
 	}
 }
 
+// A later-page failure returns the pages accumulated so far (best-effort), not an
+// error: page 1 succeeds with a next_batch, page 2 returns 500 → GetRelations
+// yields page 1's relations with no error, so a transient blip can't collapse a
+// multi-page thread to nothing.
+func TestGetRelations_LaterPageError_ReturnsPartial(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("from") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"chunk": []map[string]interface{}{
+					{"type": "m.room.message", "event_id": "$m1:hs", "sender": "@a:hs", "origin_server_ts": 3000},
+				},
+				"next_batch": "PAGE2",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"errcode": "M_UNKNOWN"})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	events, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	)
+	if err != nil {
+		t.Fatalf("expected no error on later-page failure (partial results), got %v", err)
+	}
+	if len(events) != 1 || events[0].ID != "$m1:hs" {
+		t.Fatalf("expected page 1's relation returned, got %d events", len(events))
+	}
+}
+
+// A FIRST-page failure is a genuine error (nothing to show).
+func TestGetRelations_FirstPageError_Errors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"errcode": "M_UNKNOWN"})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	_, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	)
+	if err == nil {
+		t.Fatal("expected an error when the first page fails")
+	}
+}
+
 func TestGetRelations_Empty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

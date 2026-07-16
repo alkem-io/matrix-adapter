@@ -307,7 +307,11 @@ func (s *SynapseAdmin) GetTimestampToEvent(ctx context.Context, roomID id.RoomID
 
 // maxRelationsPages bounds GetRelations pagination so a pathological thread can
 // never loop unbounded. At the Synapse default page size (~50) this covers ~1000
-// relations, far beyond any real thread.
+// relations, far beyond any real thread. This is an HONEST cap: a thread with
+// more than maxRelationsPages*pageSize newer relations before an older reply will
+// NOT return that older reply — an accepted bound to keep admin round-trips
+// finite. SynapseAdmin has no logger to warn on truncation; the bound is
+// documented here rather than silently pretending completeness.
 const maxRelationsPages = 20
 
 // GetRelations retrieves relations (reactions, threads) for an event.
@@ -325,6 +329,14 @@ const maxRelationsPages = 20
 // newest-first relations could otherwise push older replies off the end — e.g.
 // many recent sticker replies burying an older message reply — silently dropping
 // real replies.
+//
+// Error handling favors partial completeness over failing the whole read:
+//   - the FIRST page failing → return (nil, err): a genuine failure with nothing
+//     to show.
+//   - a LATER page failing (including a context deadline mid-pagination) → return
+//     the pages accumulated so far with a nil error. Best-effort degradation: a
+//     transient blip on page N must not collapse a multi-page thread to nothing
+//     (GetThreadMessages treats an error as "no relations" → root only).
 func (s *SynapseAdmin) GetRelations(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID,
 	relType event.RelationType, eventType event.Type,
@@ -353,7 +365,12 @@ func (s *SynapseAdmin) GetRelations(
 			NextBatch string         `json:"next_batch"`
 		}
 		if _, err := s.client.MakeRequest(ctx, http.MethodGet, urlPath, nil, &resp); err != nil {
-			return nil, err
+			if page == 0 {
+				return nil, err
+			}
+			// Later-page failure (transient error or context deadline): return what
+			// we already fetched rather than discarding whole pages of replies.
+			return all, nil
 		}
 		all = append(all, resp.Chunk...)
 		if resp.NextBatch == "" {

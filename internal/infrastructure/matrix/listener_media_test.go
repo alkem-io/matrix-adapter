@@ -249,9 +249,11 @@ func TestExtractAttachment_Sticker_AbsentMimeStaysEmpty(t *testing.T) {
 }
 
 // A sticker's body is alt-text, never message Content: a url-less sticker (e.g.
-// E2EE content.file, or a non-standard url) surfaces empty Content and NO
-// attachment — a blank message — NOT a phantom alt-text text line.
-func TestExtractInboundMessage_UrllessSticker_NoPhantomText(t *testing.T) {
+// E2EE content.file, or a non-standard url) has no extractable media and no
+// surface-able text, so it is DROPPED (ok=false) — not published as a phantom
+// empty message. This matters for the live-sync path, which has no
+// isBlankMessage guard and drops only on ok=false.
+func TestExtractInboundMessage_UrllessSticker_Dropped(t *testing.T) {
 	evt := &event.Event{
 		Type: event.EventSticker,
 		Content: event.Content{
@@ -262,10 +264,9 @@ func TestExtractInboundMessage_UrllessSticker_NoPhantomText(t *testing.T) {
 	}
 
 	content, attachment, ok := extractInboundMessage(evt, false)
-	assert.True(t, ok, "a present body keeps the event (blank message, not dropped)")
+	assert.False(t, ok, "a url-less sticker has nothing to surface → dropped on every path")
 	assert.Empty(t, content, "sticker alt-text must never surface as Content")
 	assert.Nil(t, attachment, "no parseable url → no attachment")
-	assert.True(t, isBlankMessage(&domain.Message{Content: content}), "url-less sticker is a blank message")
 }
 
 // A normal sticker (url present) still surfaces its attachment with empty Content.

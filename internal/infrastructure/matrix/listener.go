@@ -984,9 +984,11 @@ func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
 //
 // A sticker's body is ALWAYS alt-text describing the image, never message text:
 // it feeds only the attachment DisplayName, so Content is forced empty. A normal
-// sticker (url present) → attachment + empty Content; a url-less sticker (e.g.
-// E2EE content.file) → empty Content and no attachment, i.e. a blank message
-// (filtered by isBlankMessage in scans), NOT a phantom alt-text line.
+// sticker (url present) → attachment + empty Content. A url-less sticker (e.g.
+// E2EE content.file, or a non-parseable url) has no extractable media and no
+// surface-able Content, so it is DROPPED (ok=false) on every path — live-sync
+// (handleMessageEvent has no isBlankMessage guard) and read/scan alike —
+// consistent with how a bodyless m.room.message returns ok=false.
 func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content string, attachment *domain.Attachment, ok bool) {
 	body, bodyPresent := inboundBody(evt)
 	attachment = extractAttachment(evt, trustDocumentID)
@@ -996,6 +998,11 @@ func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content stri
 	}
 
 	if evt.Type == event.EventSticker {
+		// A sticker is media; its body is alt-text, never Content. With no
+		// extractable attachment (url-less/E2EE), there is nothing to surface.
+		if attachment == nil {
+			return "", nil, false
+		}
 		return "", attachment, true
 	}
 
