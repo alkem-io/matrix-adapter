@@ -13,7 +13,11 @@ file-service is the sole durable store.
 
   store_file  -> POST /internal/file (multipart) into the reserved `matrix_media`
                  bucket, VERBATIM (skipImageProcessing=true), with
-                 externalReference = media_id (= file_info.file_id).
+                 externalReference = media_id (= file_info.file_id). A durable
+                 store is confirmed ONLY by HTTP 201 Created (the file-service
+                 create contract); anything else trips the write breaker and
+                 fails loudly. The uploaded file is STREAMED from the local cache
+                 straight into the multipart body (never fully buffered).
                  Routes ONLY local user uploads; thumbnails / url-cache / remote
                  media stay local-cache-only.
 
@@ -30,13 +34,14 @@ Deployment: copied into /data/modules (alongside alkemio_room_control.py) and
 discovered via PYTHONPATH=/data/modules. Configured under
 `media_storage_providers` in homeserver.yaml.
 
-SOURCE OF TRUTH: the RUNTIME-AUTHORITATIVE copy of this module is the inline
-`data:` block embedded in
-`third-party/communication/synapse/01-synapse-setup-confmap.yml` — that is the
-copy actually written into /data/modules at pod bootstrap. THIS standalone file
-is the reference / unit-test copy (imported by
-test_alkemio_fileservice_provider.py). The two MUST be kept in sync: any change
-here has to be mirrored into the confmap block (and vice versa).
+SOURCE OF TRUTH: THIS file
+(`matrix-adapter/synapse-modules/alkemio_fileservice_provider.py`) is the
+canonical copy of the module. It is propagated verbatim to the downstream
+deployment repos by `.github/workflows/sync-synapse-module.yml` — the inline
+`data:` block embedded in each `01-synapse-setup-confmap.yml` (dev-orchestration,
+infrastructure-operations) and the file copy in `server` are GENERATED from this
+file by that workflow. Never hand-edit the downstream confmap copies; change this
+file and let the sync workflow roll it forward.
 """
 
 import logging
@@ -72,56 +77,129 @@ DEFAULT_STORE_TIMEOUT_S = 30.0
 DEFAULT_CB_FAIL_THRESHOLD = 5
 DEFAULT_CB_RESET_TIMEOUT_S = 30.0
 
+# The file-service create contract: a durable store is confirmed by 201 Created.
+_STORE_SUCCESS_CODE = 201
+
 
 class _CircuitOpenError(Exception):
     """Raised when the circuit breaker is open and is short-circuiting calls."""
 
 
+# Circuit-breaker states.
+_CLOSED = "closed"
+_OPEN = "open"
+_HALF_OPEN = "half_open"
+
+
 class _CircuitBreaker:
     """
-    Minimal in-memory circuit breaker.
+    In-memory circuit breaker for ONE logical dependency direction (read or write).
 
-    CLOSED  -> calls pass through; consecutive failures are counted.
-    OPEN    -> calls are short-circuited until `reset_timeout` elapses.
-    HALF    -> one trial call is allowed; success closes, failure re-opens.
+    State machine — all mutations happen in synchronous, non-awaiting methods, so
+    interleaved coroutines on the single Twisted reactor thread never observe a
+    torn state and NO lock is required:
+
+        CLOSED     calls pass through; consecutive failures are counted. At
+                   `fail_threshold` consecutive failures -> OPEN.
+        OPEN       calls short-circuit (`_CircuitOpenError`) until `reset_timeout`
+                   elapses; the NEXT `before_call()` then admits exactly ONE probe
+                   and moves to HALF_OPEN.
+        HALF_OPEN  a single probe is in flight; every OTHER `before_call()`
+                   short-circuits (no thundering herd). Probe success -> CLOSED;
+                   probe failure -> OPEN (timer restarted); probe neutral (a clean
+                   404 miss — service demonstrably reachable) -> CLOSED.
+
+    A NEUTRAL outcome in CLOSED leaves the failure count UNTOUCHED: a cache miss
+    is neither a success (which would zero real accumulated failures and stop the
+    breaker ever tripping on a service that returns misses between hard errors)
+    nor a failure.
 
     Time source is injectable for deterministic tests.
     """
 
-    def __init__(self, fail_threshold, reset_timeout, clock=None):
+    def __init__(self, fail_threshold, reset_timeout, clock=None, name="file-service"):
         import time as _time
 
         self._fail_threshold = fail_threshold
         self._reset_timeout = reset_timeout
         self._clock = clock or _time.monotonic
+        self._name = name
+        self._state = _CLOSED
         self._failures = 0
         self._opened_at = None  # type: Optional[float]
+        self._trial_in_flight = False
+
+    @property
+    def state(self) -> str:
+        return self._state
 
     def before_call(self) -> None:
-        if self._opened_at is None:
+        if self._state == _CLOSED:
             return
+        if self._state == _HALF_OPEN:
+            # A probe is already being trialled — hold everyone else off until it
+            # resolves (success/failure/neutral). This is what makes HALF_OPEN
+            # admit exactly one call under concurrent callers.
+            raise _CircuitOpenError(
+                "%s circuit is half-open (trial call in flight)" % self._name
+            )
+        # OPEN
         if (self._clock() - self._opened_at) >= self._reset_timeout:
-            # Move to HALF-OPEN: allow a single trial call through.
-            self._opened_at = None
-            self._failures = self._fail_threshold - 1
-            logger.info("file-service circuit half-open: allowing a trial call")
+            self._state = _HALF_OPEN
+            self._trial_in_flight = True
+            logger.info(
+                "%s circuit half-open: admitting a single trial call", self._name
+            )
             return
-        raise _CircuitOpenError("file-service circuit is open")
+        raise _CircuitOpenError("%s circuit is open" % self._name)
 
     def on_success(self) -> None:
-        if self._failures or self._opened_at is not None:
-            logger.info("file-service circuit closed after success")
-        self._failures = 0
-        self._opened_at = None
+        if self._state != _CLOSED or self._failures:
+            logger.info("%s circuit closed after success", self._name)
+        self._reset()
 
     def on_failure(self) -> None:
-        self._failures += 1
-        if self._failures >= self._fail_threshold and self._opened_at is None:
+        if self._state == _HALF_OPEN:
+            # Recovery probe failed: straight back to OPEN, restart the timer so
+            # the next probe only fires after another full reset window.
+            self._state = _OPEN
             self._opened_at = self._clock()
+            self._trial_in_flight = False
+            logger.warning("%s circuit re-OPEN: trial call failed", self._name)
+            return
+        if self._state == _OPEN:
+            # Calls are short-circuited while OPEN, so this is not expected; keep
+            # the timer as-is rather than continually pushing it out.
+            return
+        self._failures += 1
+        if self._failures >= self._fail_threshold:
+            self._state = _OPEN
+            self._opened_at = self._clock()
+            self._trial_in_flight = False
             logger.warning(
-                "file-service circuit OPEN after %d consecutive failures",
+                "%s circuit OPEN after %d consecutive failures",
+                self._name,
                 self._failures,
             )
+
+    def on_neutral(self) -> None:
+        """Record an outcome that is neither success nor failure (e.g. a 404 miss)."""
+        if self._state == _HALF_OPEN:
+            # The probe reached the service and got a valid HTTP response (the
+            # service IS up; the doc is simply absent). Count the probe as passed
+            # so recovery is not stalled waiting for a cache HIT, and free the
+            # trial slot so other callers are admitted again.
+            logger.info(
+                "%s circuit closed: trial call returned a clean miss", self._name
+            )
+            self._reset()
+        # In CLOSED we deliberately leave the failure count untouched.
+
+    def _reset(self) -> None:
+        self._state = _CLOSED
+        self._failures = 0
+        self._opened_at = None
+        self._trial_in_flight = False
 
 
 class _ConsumerSink(Protocol):
@@ -158,8 +236,8 @@ class _ConsumerSink(Protocol):
         self._written += len(data)
 
     def connectionLost(self, reason=None) -> None:
-        # ResponseDone arrives here as a clean close; treat any close as "done"
-        # because the consumer has already received everything streamed so far.
+        # ResponseDone arrives here as a clean close; treat any clean close as
+        # "done" because the consumer has already received everything streamed.
         from twisted.web.client import ResponseDone
         from twisted.internet.error import ConnectionDone
 
@@ -178,22 +256,98 @@ class _ConsumerSink(Protocol):
             self._finished.errback(reason)
 
 
+class _DrainAndAbort(Protocol):
+    """
+    Body protocol used to RELEASE an unconsumed response body: it aborts the
+    transport as soon as the body is delivered, so the (unbuffered) connection is
+    torn down / returned to the pool instead of leaking a half-open socket.
+    """
+
+    def __init__(self, done: "Optional[Deferred]" = None):
+        self._done = done
+
+    def makeConnection(self, transport) -> None:
+        Protocol.makeConnection(self, transport)
+        # Abort the underlying connection: the response-body transport is an
+        # IProducer, and stopProducing() tears the connection down.
+        try:
+            transport.stopProducing()
+        except Exception:  # noqa: BLE001 - best-effort release
+            pass
+
+    def dataReceived(self, data: bytes) -> None:  # pragma: no cover - aborted
+        pass
+
+    def connectionLost(self, reason=None) -> None:
+        if self._done is not None and not self._done.called:
+            self._done.callback(None)
+
+
 class _FileServiceResponder(Responder):
     """
     Streams a file-service content response into the media consumer without
     buffering the whole blob in memory.
+
+    Lifecycle guarantees (finding 2 / finding 6):
+    - The read circuit breaker is resolved ONLY once the stream truly resolves:
+      success on a fully-streamed body, failure on a mid-stream connection error.
+    - If Synapse enters the `with` block but never calls `write_to_consumer`
+      (client disconnect / exception before streaming), `__exit__` ABORTS the
+      unbuffered connection so the treq pool is not exhausted, and frees the
+      breaker trial as a neutral outcome (not the service's fault).
     """
 
-    def __init__(self, response):
+    def __init__(self, response, on_success=None, on_failure=None, on_neutral=None):
         self._response = response
+        self._on_success = on_success
+        self._on_failure = on_failure
+        self._on_neutral = on_neutral
+        self._resolved = False
+        self._streamed = False
+        self._aborted = False
+
+    def _resolve(self, callback) -> None:
+        # The breaker outcome for one fetch is recorded exactly once.
+        if self._resolved:
+            return
+        self._resolved = True
+        if callback is not None:
+            callback()
 
     def write_to_consumer(self, consumer: IConsumer) -> "Deferred[int]":
+        self._streamed = True
         finished = defer.Deferred()  # type: Deferred[int]
+
+        def _ok(written):
+            self._resolve(self._on_success)
+            return written
+
+        def _err(failure):
+            self._resolve(self._on_failure)
+            return failure
+
+        finished.addCallbacks(_ok, _err)
         self._response.deliverBody(_ConsumerSink(consumer, finished))
         return make_deferred_yieldable(finished)
 
+    def _abort(self) -> None:
+        if self._aborted:
+            return
+        self._aborted = True
+        try:
+            self._response.deliverBody(_DrainAndAbort())
+        except Exception as exc:  # noqa: BLE001 - best-effort release
+            logger.debug("responder: best-effort connection abort failed: %s", exc)
+
+    def __enter__(self):
+        return self
+
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Nothing to release: the body protocol owns the connection lifecycle.
+        if not self._streamed:
+            # Body was never consumed (client disconnect / exception). Release the
+            # unbuffered connection and free the breaker trial as neutral.
+            self._abort()
+            self._resolve(self._on_neutral)
         return None
 
 
@@ -236,15 +390,17 @@ class FileServiceStorageProvider(StorageProvider):
         return {
             "file_service_url": file_service_url.rstrip("/"),
             "matrix_media_bucket_id": bucket_id,
-            "timeout_s": float(config.get("timeout_s", DEFAULT_TIMEOUT_S)),
-            "store_timeout_s": float(
-                config.get("store_timeout_s", DEFAULT_STORE_TIMEOUT_S)
+            "timeout_s": _positive_number(
+                config, "timeout_s", DEFAULT_TIMEOUT_S, float
             ),
-            "cb_fail_threshold": int(
-                config.get("cb_fail_threshold", DEFAULT_CB_FAIL_THRESHOLD)
+            "store_timeout_s": _positive_number(
+                config, "store_timeout_s", DEFAULT_STORE_TIMEOUT_S, float
             ),
-            "cb_reset_timeout_s": float(
-                config.get("cb_reset_timeout_s", DEFAULT_CB_RESET_TIMEOUT_S)
+            "cb_fail_threshold": _positive_number(
+                config, "cb_fail_threshold", DEFAULT_CB_FAIL_THRESHOLD, int
+            ),
+            "cb_reset_timeout_s": _positive_number(
+                config, "cb_reset_timeout_s", DEFAULT_CB_RESET_TIMEOUT_S, float
             ),
         }
 
@@ -257,8 +413,18 @@ class FileServiceStorageProvider(StorageProvider):
         self.matrix_media_bucket_id = config["matrix_media_bucket_id"]
         self.timeout_s = config["timeout_s"]
         self.store_timeout_s = config["store_timeout_s"]
-        self._breaker = _CircuitBreaker(
-            config["cb_fail_threshold"], config["cb_reset_timeout_s"]
+        # Separate breakers per direction: a store (write) outage MUST NOT open
+        # the breaker that guards fetch (read). Element media reads keep working
+        # while the write endpoint is down, and vice versa.
+        self._read_breaker = _CircuitBreaker(
+            config["cb_fail_threshold"],
+            config["cb_reset_timeout_s"],
+            name="file-service read",
+        )
+        self._write_breaker = _CircuitBreaker(
+            config["cb_fail_threshold"],
+            config["cb_reset_timeout_s"],
+            name="file-service write",
         )
         logger.info(
             "FileServiceStorageProvider initialized: url=%s bucket=%s cache=%s",
@@ -294,12 +460,13 @@ class FileServiceStorageProvider(StorageProvider):
         media_id = file_info.file_id
 
         try:
-            self._breaker.before_call()
+            self._write_breaker.before_call()
         except _CircuitOpenError:
             # store_synchronous=true: surface so the upload fails loudly rather
             # than silently dropping the only durable copy.
             logger.error(
-                "file-service circuit open; refusing to store media_id=%s", media_id
+                "file-service write circuit open; refusing to store media_id=%s",
+                media_id,
             )
             raise
 
@@ -307,17 +474,19 @@ class FileServiceStorageProvider(StorageProvider):
         # media_store_path + `path` (the relative path Synapse hands us, e.g.
         # `local_content/aa/bb/<rest>`). Synapse's FileInfo has NO `upload_path`
         # attribute — derive the absolute path the same way the on-disk store does
-        # (matching synapse-s3-storage-provider). Reading it is blocking I/O —
-        # keep it off the reactor.
+        # (matching synapse-s3-storage-provider). Opening it is blocking I/O — do
+        # it off the reactor; treq then STREAMS the handle into the multipart body
+        # via its MultiPartProducer (chunked, cooperative), so the file is never
+        # fully copied into memory.
         cache_file = os.path.join(self.cache_path, path)
-        body = await defer_to_thread(self.reactor, _read_bytes, cache_file)
+        stream = await defer_to_thread(self.reactor, _open_stream, cache_file)
 
         url = "%s/internal/file" % self.file_service_url
         # treq serialises the multipart body as form-fields (`data`) THEN files,
         # preserving dict insertion order — so storageBucketId / externalReference
         # / skipImageProcessing precede the file part, which file-service requires
         # (it reads the metadata fields before consuming the streamed file).
-        files = {"file": (media_id, body)}
+        files = {"file": (media_id, stream)}
         data = {
             "storageBucketId": self.matrix_media_bucket_id,
             "externalReference": media_id,
@@ -325,32 +494,46 @@ class FileServiceStorageProvider(StorageProvider):
         }
 
         try:
-            resp = await make_deferred_yieldable(
-                treq.post(
-                    url,
-                    files=files,
-                    data=data,
-                    timeout=self.store_timeout_s,
-                    reactor=self.reactor,
+            try:
+                resp = await make_deferred_yieldable(
+                    treq.post(
+                        url,
+                        files=files,
+                        data=data,
+                        timeout=self.store_timeout_s,
+                        reactor=self.reactor,
+                    )
                 )
-            )
-        except Exception as exc:  # noqa: BLE001 - convert any transport error
-            self._breaker.on_failure()
-            logger.error("file-service store failed for media_id=%s: %s", media_id, exc)
-            raise
+            except Exception as exc:  # noqa: BLE001 - convert any transport error
+                self._write_breaker.on_failure()
+                logger.error(
+                    "file-service store failed for media_id=%s: %s", media_id, exc
+                )
+                raise
 
-        if resp.code >= 400:
-            self._breaker.on_failure()
-            await make_deferred_yieldable(resp.content())  # drain
-            raise RuntimeError(
-                "file-service store returned HTTP %d for media_id=%s"
-                % (resp.code, media_id)
-            )
+            if resp.code != _STORE_SUCCESS_CODE:
+                # Only 201 Created confirms a durable store. A 2xx-non-201, a 3xx
+                # redirect, or a 4xx/5xx is NOT a confirmed store — trip the write
+                # breaker and fail loudly (store_synchronous surfaces it).
+                self._write_breaker.on_failure()
+                await make_deferred_yieldable(resp.content())  # drain
+                raise RuntimeError(
+                    "file-service store returned HTTP %d (expected %d) for media_id=%s"
+                    % (resp.code, _STORE_SUCCESS_CODE, media_id)
+                )
 
-        self._breaker.on_success()
-        await make_deferred_yieldable(resp.content())  # drain so the conn is reusable
-        logger.debug("Stored media_id=%s in file-service bucket=%s", media_id,
-                     self.matrix_media_bucket_id)
+            self._write_breaker.on_success()
+            await make_deferred_yieldable(resp.content())  # drain so conn is reusable
+            logger.debug(
+                "Stored media_id=%s in file-service bucket=%s",
+                media_id,
+                self.matrix_media_bucket_id,
+            )
+        finally:
+            try:
+                stream.close()
+            except Exception:  # noqa: BLE001 - best-effort
+                pass
 
     async def fetch(self, path: str, file_info: "FileInfo") -> Optional[Responder]:
         """
@@ -363,10 +546,11 @@ class FileServiceStorageProvider(StorageProvider):
         media_id = file_info.file_id
 
         try:
-            self._breaker.before_call()
+            self._read_breaker.before_call()
         except _CircuitOpenError:
             logger.warning(
-                "file-service circuit open; fetch miss for media_id=%s", media_id
+                "file-service read circuit open; fetch miss for media_id=%s",
+                media_id,
             )
             return None
 
@@ -380,11 +564,13 @@ class FileServiceStorageProvider(StorageProvider):
                 treq.get(lookup_url, timeout=self.timeout_s, reactor=self.reactor)
             )
             if meta_resp.code == 404:
-                self._breaker.on_success()  # a clean miss is not a fault
+                # A clean by-reference miss (doc absent) is neither success nor
+                # fault: leave the failure count untouched.
+                self._read_breaker.on_neutral()
                 await make_deferred_yieldable(meta_resp.content())
                 return None
             if meta_resp.code >= 400:
-                self._breaker.on_failure()
+                self._read_breaker.on_failure()
                 await make_deferred_yieldable(meta_resp.content())
                 logger.error(
                     "file-service by-reference HTTP %d for media_id=%s",
@@ -394,11 +580,23 @@ class FileServiceStorageProvider(StorageProvider):
                 return None
 
             meta = await make_deferred_yieldable(treq.json_content(meta_resp))
+            if not isinstance(meta, dict):
+                # A null / non-object JSON body is a protocol error, not a miss:
+                # count it as a failure rather than swallowing an AttributeError.
+                self._read_breaker.on_failure()
+                logger.error(
+                    "file-service by-reference returned a non-object body for "
+                    "media_id=%s: %r",
+                    media_id,
+                    type(meta).__name__,
+                )
+                return None
             doc_id = meta.get("id")
             if not doc_id:
-                self._breaker.on_failure()
+                self._read_breaker.on_failure()
                 logger.error(
-                    "file-service by-reference returned no id for media_id=%s", media_id
+                    "file-service by-reference returned no id for media_id=%s",
+                    media_id,
                 )
                 return None
 
@@ -414,8 +612,20 @@ class FileServiceStorageProvider(StorageProvider):
                     reactor=self.reactor,
                 )
             )
+            if content_resp.code == 404:
+                # The doc was deleted between the by-reference lookup and the
+                # content GET: a race, not a fault. Treat as a neutral miss.
+                self._read_breaker.on_neutral()
+                await make_deferred_yieldable(content_resp.content())
+                logger.info(
+                    "file-service content 404 (doc removed mid-fetch) for "
+                    "doc_id=%s media_id=%s",
+                    doc_id,
+                    media_id,
+                )
+                return None
             if content_resp.code >= 400:
-                self._breaker.on_failure()
+                self._read_breaker.on_failure()
                 await make_deferred_yieldable(content_resp.content())
                 logger.error(
                     "file-service content HTTP %d for doc_id=%s media_id=%s",
@@ -425,21 +635,56 @@ class FileServiceStorageProvider(StorageProvider):
                 )
                 return None
 
-            self._breaker.on_success()
+            # Do NOT record success yet: the read has only succeeded once the body
+            # streams to completion. The responder records success on a clean
+            # stream, failure on a mid-stream error, neutral if never consumed.
             logger.debug(
                 "Serving media_id=%s from file-service doc_id=%s", media_id, doc_id
             )
-            return _FileServiceResponder(content_resp)
+            return _FileServiceResponder(
+                content_resp,
+                on_success=self._read_breaker.on_success,
+                on_failure=self._read_breaker.on_failure,
+                on_neutral=self._read_breaker.on_neutral,
+            )
 
         except Exception as exc:  # noqa: BLE001
-            self._breaker.on_failure()
+            self._read_breaker.on_failure()
             logger.error(
                 "file-service fetch error for media_id=%s: %s", media_id, exc
             )
             return None
 
 
-def _read_bytes(file_path: str) -> bytes:
-    """Blocking file read, run in a threadpool via defer_to_thread."""
-    with open(file_path, "rb") as fh:
-        return fh.read()
+def _positive_number(config: dict, key: str, default, cast):
+    """
+    Coerce a numeric config value, falling back to `default` when the key is
+    absent OR present-but-null (YAML `key:` with no value yields None, which
+    would otherwise blow up `float(None)`/`int(None)`). Rejects non-positive
+    values: a 0 fail-threshold would open the breaker immediately and a 0 timeout
+    is nonsensical.
+    """
+    raw = config.get(key)
+    if raw is None:
+        raw = default
+    try:
+        value = cast(raw)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "FileServiceStorageProvider: '%s' must be a number, got %r" % (key, raw)
+        )
+    if value <= 0:
+        raise ValueError(
+            "FileServiceStorageProvider: '%s' must be > 0, got %r" % (key, value)
+        )
+    return value
+
+
+def _open_stream(file_path: str):
+    """Open the local cache file for streaming into the multipart body.
+
+    Called via defer_to_thread so the open() syscall never runs on the reactor;
+    treq's MultiPartProducer then reads the handle in cooperative chunks, so the
+    file is streamed rather than buffered whole in memory.
+    """
+    return open(file_path, "rb")
