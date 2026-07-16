@@ -12,6 +12,7 @@ import (
 func TestLoad_Defaults(t *testing.T) {
 	// Point CONFIG_PATH to a non-existent file so no YAML is loaded.
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 
 	// Clear env vars that loadEnvVars would pick up.
 	t.Setenv("ENVIRONMENT", "")
@@ -50,6 +51,7 @@ func TestLoad_Defaults(t *testing.T) {
 
 func TestLoad_MatrixEnvOverrides(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 
 	t.Setenv("SYNAPSE_SERVER_URL", "https://matrix.test")
 	t.Setenv("SYNAPSE_HOMESERVER_NAME", "test.server")
@@ -79,6 +81,7 @@ func TestLoad_MatrixEnvOverrides(t *testing.T) {
 
 func TestLoad_FileServiceEnvOverrides(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 	t.Setenv("RABBITMQ_URL", "")
 	t.Setenv("RABBITMQ_HOST", "")
 
@@ -106,6 +109,7 @@ func TestLoad_FileServiceEnvOverrides(t *testing.T) {
 
 func TestLoad_RegistrationSecretPrecedence(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 	t.Setenv("RABBITMQ_URL", "")
 	t.Setenv("RABBITMQ_HOST", "")
 
@@ -140,6 +144,7 @@ func TestLoad_RegistrationSecretPrecedence(t *testing.T) {
 
 func TestLoad_RabbitMQ_FullURL(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 	t.Setenv("SYNAPSE_SERVER_SHARED_SECRET", "")
 	t.Setenv("SYNAPSE_REGISTRATION_SECRET", "")
 
@@ -157,6 +162,7 @@ func TestLoad_RabbitMQ_FullURL(t *testing.T) {
 
 func TestLoad_RabbitMQ_IndividualComponents(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 	t.Setenv("SYNAPSE_SERVER_SHARED_SECRET", "")
 	t.Setenv("SYNAPSE_REGISTRATION_SECRET", "")
 	t.Setenv("RABBITMQ_URL", "")
@@ -198,6 +204,7 @@ func TestLoad_RabbitMQ_IndividualComponents(t *testing.T) {
 func TestLoad_YAMLConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.yaml")
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 
 	yamlContent := `
 app:
@@ -251,6 +258,7 @@ rabbitmq:
 func TestLoad_EnvOverridesYAML(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.yaml")
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 
 	yamlContent := `
 app:

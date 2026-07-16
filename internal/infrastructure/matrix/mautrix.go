@@ -756,6 +756,12 @@ func (m *MautrixAdapter) SendMessage(
 // multi-image send behaves (each image is its own event/message). primaryEventID
 // is the text event's id (empty for an attachment-only message, in which case
 // the first attachment becomes the primary); it is returned resolved.
+//
+// Attachments are streamed and sent SEQUENTIALLY, on purpose: it preserves their
+// visible order in the room (events are ordered by send), and each send is its
+// own queue handler so one user's multi-attachment send never blocks another
+// room. Parallelizing the uploads would still require an ordered send afterward
+// for marginal gain on a bounded (<=10) attachment list.
 func (m *MautrixAdapter) fanOutAttachments(
 	ctx context.Context, intent intentAPI, roomID id.RoomID,
 	attachments []domain.Attachment, threadID, primaryEventID id.EventID,
@@ -997,12 +1003,16 @@ func (m *MautrixAdapter) sendAttachment(
 		return "", attachmentTooLargeError(att.DocumentID, maxBytes)
 	}
 	reader := &countingCapReader{r: resp.Body, max: maxBytes}
+	// Upload via the SENDER ghost intent (not the appservice bot), so the media
+	// blob is owned by the acting user's account — attributing quota/retention
+	// correctly and avoiding a single-account purge stripping every bridged blob.
+	//
 	// Always upload with an unknown (streamed/chunked) length rather than
 	// trusting file-service's declared Content-Length: if the real body is
 	// shorter than the declared length, a declared upload would EOF early and
 	// fail. countingCapReader still enforces the per-attachment max, and the
 	// declared > cap case is already rejected above.
-	up, err := m.as.BotIntent().UploadMedia(ctx, mautrix.ReqUploadMedia{
+	up, err := intent.UploadMedia(ctx, mautrix.ReqUploadMedia{
 		Content:       reader,
 		ContentLength: -1,
 		ContentType:   contentType,
@@ -1142,6 +1152,8 @@ func threadRelation(threadID id.EventID) *event.RelatesTo {
 // as non-specific. The result drives the upload Content-Type, the Matrix
 // msgtype, and info.mimetype uniformly so they never disagree.
 func resolveMediaMime(responseContentType, attMimeType string) string {
+	attMimeType = baseMediaType(attMimeType)
+	responseContentType = baseMediaType(responseContentType)
 	if isSpecificMime(attMimeType) {
 		return attMimeType
 	}
@@ -1155,6 +1167,16 @@ func resolveMediaMime(responseContentType, attMimeType string) string {
 		return responseContentType
 	}
 	return "application/octet-stream"
+}
+
+// baseMediaType strips MIME parameters (e.g. "; charset=utf-8"), trims space, and
+// lowercases, so the specificity check and msgtype mapping see a bare
+// "type/subtype" (otherwise "application/octet-stream; x" would read as specific).
+func baseMediaType(contentType string) string {
+	if i := strings.IndexByte(contentType, ';'); i >= 0 {
+		contentType = contentType[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(contentType))
 }
 
 func isSpecificMime(mime string) bool {
@@ -1238,22 +1260,45 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 		return nil, fmt.Errorf("failed to get event: %w", err)
 	}
 
-	// A message event whose "body" is present but not a string is malformed and
-	// is not a usable message (develop errored here). An ABSENT body is fine — a
-	// bodyless/redacted message event still yields an empty-content Message below.
-	if evt.Type == event.EventMessage {
-		if raw, present := evt.Content.Raw["body"]; present {
-			if _, isString := raw.(string); !isString {
-				return nil, fmt.Errorf("event is not a message")
-			}
-		}
-	}
-
-	msg := m.parseMessageEvent(evt, roomID)
-	if msg == nil {
+	if malformedMessageBody(evt) {
 		return nil, fmt.Errorf("event is not a message")
 	}
-	return msg, nil
+
+	if msg := m.parseMessageEvent(evt, roomID); msg != nil {
+		return msg, nil
+	}
+
+	// Non-message event type (e.g. a state/custom event carrying a body): preserve
+	// develop's leniency and resolve a content-bearing event to its body, so a
+	// caller fetching such an id keeps working. Media events resolve above via
+	// parseMessageEvent; bodyless non-message events (reactions, redactions) error.
+	if body, present := inboundBody(evt); present {
+		return &domain.Message{
+			ID:             evt.ID.String(),
+			RoomID:         roomID.String(),
+			Content:        body,
+			SenderMatrixID: evt.Sender.String(),
+			Timestamp:      time.UnixMilli(evt.Timestamp),
+			ThreadID:       extractThreadID(evt),
+		}, nil
+	}
+	return nil, fmt.Errorf("event is not a message")
+}
+
+// malformedMessageBody reports whether a message-type event carries a "body" that
+// is present but not a string — a corrupt event that is not a usable message
+// (develop errored here). An ABSENT body is NOT malformed: a bodyless/redacted
+// message event still resolves to an empty-content Message.
+func malformedMessageBody(evt *event.Event) bool {
+	if evt.Type != event.EventMessage || evt.Content.Raw == nil {
+		return false
+	}
+	raw, present := evt.Content.Raw["body"]
+	if !present {
+		return false
+	}
+	_, isString := raw.(string)
+	return !isString
 }
 
 // parseEventContent attempts to parse event content, trying Parsed first then ParseRaw.

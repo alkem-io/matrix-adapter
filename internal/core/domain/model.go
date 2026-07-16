@@ -95,9 +95,13 @@ type Attachment struct {
 	MediaID     string
 	DisplayName string
 	MimeType    string
-	Size        int64
-	Width       *int
-	Height      *int
+	// Size is the caller-declared byte size. It is informational only and is
+	// deliberately NOT used to build an outbound event's info.size — that uses
+	// the actual streamed byte count (see sendAttachment), so a mis-declared size
+	// can never produce an event that lies about its blob length.
+	Size   int64
+	Width  *int
+	Height *int
 }
 
 // Reaction represents a reaction event.

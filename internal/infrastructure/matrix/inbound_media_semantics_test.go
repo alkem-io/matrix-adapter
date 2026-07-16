@@ -78,7 +78,10 @@ func TestParseMessageEvent_LegacyBody_UsedOnlyAsDisplayName(t *testing.T) {
 
 // A body equal to the resolved filename is not a genuine caption, even when a
 // top-level filename field is present, so it is not duplicated as Content.
-func TestParseMessageEvent_FilenameEqualsBody_NotDuplicated(t *testing.T) {
+// MSC2530: when an explicit top-level `filename` field is present, `body` is a
+// caption — even if it coincidentally equals the filename — and must be
+// preserved, not dropped as a redundant filename.
+func TestParseMessageEvent_CaptionEqualsFilename_Preserved(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	evt := &event.Event{
@@ -99,8 +102,34 @@ func TestParseMessageEvent_FilenameEqualsBody_NotDuplicated(t *testing.T) {
 
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
-	assert.Empty(t, msg.Content)
+	assert.Equal(t, "report.pdf", msg.Content, "a filename field means body is a caption, preserved even if equal")
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
+}
+
+// Legacy media (no `filename` field): `body` IS the filename, so a body equal to
+// the display name is a redundant filename and is dropped (no duplicate text).
+func TestParseMessageEvent_LegacyBodyIsFilename_NotDuplicated(t *testing.T) {
+	a := newTestAdapter("test.local")
+
+	evt := &event.Event{
+		ID:        id.EventID("$legacy"),
+		Sender:    expectedUserID(testActorID),
+		Type:      event.EventMessage,
+		Timestamp: 1700000000000,
+		Content: event.Content{
+			Raw: map[string]any{
+				"msgtype": "m.image",
+				"body":    "photo.jpg",
+				"url":     "mxc://test.local/legacymedia",
+				"info":    map[string]any{"mimetype": "image/jpeg"},
+			},
+		},
+	}
+
+	msg := a.parseMessageEvent(evt, "!room:test.local")
+	require.NotNil(t, msg)
+	assert.Empty(t, msg.Content, "legacy body equal to the filename is a redundant name, not a caption")
+	assert.Equal(t, "photo.jpg", msg.Attachments[0].DisplayName)
 }
 
 // The live-sync path (handleMessageEvent) applies the same caption semantics as

@@ -165,6 +165,31 @@ func TestSendMessage_WithImageAttachment(t *testing.T) {
 	assert.Equal(t, 1080, info["h"])
 }
 
+// Media must be uploaded by the SENDER ghost, not the appservice bot, so blob
+// ownership/quota/retention attribute to the acting user (a bot-account purge
+// must not strip every bridged blob).
+func TestSendMessage_AttachmentUploadedBySenderNotBot(t *testing.T) {
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
+	})
+	botIntent := &mockIntentAPI{}
+	sender := &mockIntentAPI{
+		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/s")},
+		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$m"},
+	}
+	as := newMockAS(botIntent, map[id.UserID]intentAPI{expectedUserID(testActorID): sender})
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+	a.cfg = &config.Config{}
+	a.cfg.FileService.URL = fileServiceURL
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "s.png", MimeType: "image/png"}})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, sender.uploadBytesCalled, "upload must go through the sender ghost intent")
+	assert.Equal(t, 0, botIntent.uploadBytesCalled, "the appservice bot must NOT upload the media")
+}
+
 // Text + attachment → 1 m.text event + 1 media event; the returned event ID is
 // the text event.
 func TestSendMessage_TextPlusAttachment(t *testing.T) {

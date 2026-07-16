@@ -959,9 +959,11 @@ func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
 // IS forwarded (ok=true, empty Content): only a genuinely absent/non-string
 // body with no attachment is dropped (F3/F4).
 //
-// For media, body is surfaced only when it differs from the resolved attachment
-// display name. This preserves genuine captions while avoiding a duplicate text
-// line for legacy media where body is the filename.
+// For media: when the event carries an explicit MSC2530 `filename` field, `body`
+// is a caption by definition and is always surfaced (even if it coincidentally
+// equals the filename). Only for legacy media (no `filename` field, where `body`
+// IS the filename) is a body equal to the display name dropped as a redundant
+// filename rather than a caption.
 func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content string, attachment *domain.Attachment, ok bool) {
 	body, bodyPresent := inboundBody(evt)
 	attachment = extractAttachment(evt, trustDocumentID)
@@ -970,10 +972,21 @@ func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content stri
 		return "", nil, false
 	}
 
-	if attachment != nil && body == attachment.DisplayName {
+	if attachment != nil && !rawHasFilename(evt) && body == attachment.DisplayName {
 		body = ""
 	}
 	return body, attachment, true
+}
+
+// rawHasFilename reports whether the event carries an explicit, non-empty
+// top-level MSC2530 `filename` field. When present, `body` is a caption (a
+// distinct field from the filename) and must always be surfaced.
+func rawHasFilename(evt *event.Event) bool {
+	if evt.Content.Raw == nil {
+		return false
+	}
+	filename, ok := evt.Content.Raw["filename"].(string)
+	return ok && filename != ""
 }
 
 // inboundBody returns the message body and whether a body is present. A body is
