@@ -131,12 +131,17 @@ class FakeConsumer:
 class FakeFile:
     """Stand-in for a streamed file handle (asserts it is streamed, not buffered)."""
 
+    _FAKE_FD = 4242  # sentinel fd for os.fstat (stubbed in the autouse fixture)
+
     def __init__(self, data=b"RAWBYTES"):
         self._data = data
         self.closed = False
 
     def read(self, n=-1):
         return self._data
+
+    def fileno(self):
+        return self._FAKE_FD
 
     def close(self):
         self.closed = True
@@ -203,10 +208,12 @@ def _patch_async_helpers(monkeypatch):
     monkeypatch.setattr(
         mod, "defer_to_thread", lambda reactor, fn, *a: defer.execute(fn, *a)
     )
-    # store_file stats the local upload to scale the timeout by size; the fake
-    # cache path doesn't exist on disk, so default getsize to a small size
+    # store_file fstats the OPEN upload fd to scale the timeout by size; the fake
+    # handle's fd isn't a real inode, so default os.fstat to a small st_size
     # (max() keeps the store_timeout_s floor). Size-scaling tests override this.
-    monkeypatch.setattr(mod.os.path, "getsize", lambda p: 1024)
+    monkeypatch.setattr(
+        mod.os, "fstat", lambda fd: types.SimpleNamespace(st_size=1024)
+    )
 
 
 # --- parse_config ----------------------------------------------------------
@@ -377,7 +384,9 @@ def test_store_scales_timeout_by_file_size(monkeypatch):
     monkeypatch.setattr(mod, "_open_stream", lambda p: FakeFile(b"x"))
     # 100 MB at 1 MB/s implies a 100s deadline — well above the 30s floor.
     big = 100 * 1_000_000
-    monkeypatch.setattr(mod.os.path, "getsize", lambda p: big)
+    monkeypatch.setattr(
+        mod.os, "fstat", lambda fd: types.SimpleNamespace(st_size=big)
+    )
 
     _run(prov.store_file("local_content/x", FakeFileInfo("m")))
 
@@ -398,7 +407,9 @@ def test_store_small_file_uses_timeout_floor(monkeypatch):
 
     monkeypatch.setattr(mod.treq, "post", fake_post)
     monkeypatch.setattr(mod, "_open_stream", lambda p: FakeFile(b"x"))
-    monkeypatch.setattr(mod.os.path, "getsize", lambda p: 10)  # tiny
+    monkeypatch.setattr(
+        mod.os, "fstat", lambda fd: types.SimpleNamespace(st_size=10)
+    )  # tiny
 
     _run(prov.store_file("local_content/x", FakeFileInfo("m")))
 
@@ -520,23 +531,23 @@ def test_store_late_open_closes_late_handle(monkeypatch):
     assert fake_file.closed is True  # late handle self-closed, not leaked
 
 
-def test_store_guarded_open_getsize_raises_closes_handle(monkeypatch):
-    # The size stat runs in the guarded open (off-reactor). If getsize RAISES (the
-    # file was unlinked between open and stat), the handle must be CLOSED rather
-    # than leaked — the open succeeded, so only the finally can free the FD.
+def test_store_guarded_open_fstat_raises_closes_handle(monkeypatch):
+    # The size stat runs in the guarded open (off-reactor). If os.fstat RAISES
+    # (e.g. the fd went bad), the handle must be CLOSED rather than leaked — the
+    # open succeeded, so only the finally can free the FD.
     prov = _make_provider()
     fake_file = FakeFile(b"x")
 
-    def boom_getsize(_path):
-        raise OSError("file unlinked between open and stat")
+    def boom_fstat(_fd):
+        raise OSError("fstat failed")
 
     monkeypatch.setattr(mod, "_open_stream", lambda p: fake_file)
-    monkeypatch.setattr(mod.os.path, "getsize", boom_getsize)
+    monkeypatch.setattr(mod.os, "fstat", boom_fstat)
     monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(FakeResponse(201)))
 
     with pytest.raises(OSError):
         _run(prov.store_file("local_content/x", FakeFileInfo("m")))
-    assert fake_file.closed is True  # closed on the getsize-raise path, not leaked
+    assert fake_file.closed is True  # closed on the fstat-raise path, not leaked
 
 
 def test_store_open_not_routed_through_with_timeout(monkeypatch):

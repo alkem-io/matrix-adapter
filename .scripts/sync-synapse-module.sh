@@ -44,6 +44,12 @@
 
 set -euo pipefail
 
+# Script-level scratch dir with a single EXIT trap: every sync_embed temp lives
+# inside it, so a failure in head/sed/tail/cmp under `set -e` (which exits the
+# shell and would skip a per-call RETURN trap) never leaks a temp file.
+_WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$_WORKDIR"' EXIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CANONICAL_ROOM="$REPO_ROOT/synapse-modules/alkemio_room_control.py"
@@ -111,7 +117,7 @@ sync_embed() {
   block_end="$(awk -v start="$key_line" 'NR > start && $0 != "" && !/^   / { print NR; exit }' "$dest" || true)"
 
   local tmp
-  tmp="$(mktemp)"
+  tmp="$(mktemp -p "$_WORKDIR")"
   head -n "$key_line" "$dest" > "$tmp"
   # Indent by 4 spaces; on otherwise-blank lines, leave them truly blank
   # (matches the existing infra-ops style and produces deterministic output).

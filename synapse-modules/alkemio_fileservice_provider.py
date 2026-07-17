@@ -636,10 +636,13 @@ class FileServiceStorageProvider(StorageProvider):
                     raise _OpenAfterTimeout(cache_file)
                 # Stat for the size-proportional timeout HERE — off the reactor, in
                 # the threadpool — so a wedged mount cannot stall the whole Synapse
-                # worker (a reactor-side os.path.getsize would reintroduce the exact
-                # hazard the threaded open avoids).
-                size = os.path.getsize(cache_file)
-                if timed_out:  # the deadline may have fired DURING getsize (wedged mount)
+                # worker (a reactor-side stat would reintroduce the exact hazard the
+                # threaded open avoids). Stat the OPEN fd (pinned inode), NOT the
+                # path: a path re-stat can race a rotate/unlink between open() and
+                # the stat and fail a store for which we already hold a valid handle
+                # (the only durable copy). fstat also drops a redundant syscall.
+                size = os.fstat(fh.fileno()).st_size
+                if timed_out:  # the deadline may have fired DURING the stat (wedged mount)
                     raise _OpenAfterTimeout(cache_file)
                 ok = True
                 return fh, size
