@@ -78,13 +78,13 @@ jobs:
 
     steps:
       - name: Checkout matrix-adapter (canonical)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: source
           persist-credentials: false
 
       - name: Checkout ${{ matrix.target.repo }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ matrix.target.repo }}
           token: ${{ secrets.ALKEMIO_INFRASTRUCTURE_BOT_PUSH_TOKEN }}
