@@ -12,6 +12,7 @@ import (
 func TestLoad_Defaults(t *testing.T) {
 	// Point CONFIG_PATH to a non-existent file so no YAML is loaded.
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 
 	// Clear env vars that loadEnvVars would pick up.
 	t.Setenv("ENVIRONMENT", "")
@@ -29,6 +30,8 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("RABBITMQ_PORT", "")
 	t.Setenv("RABBITMQ_USER", "")
 	t.Setenv("RABBITMQ_PASSWORD", "")
+	t.Setenv("FILE_SERVICE_URL", "")
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -43,10 +46,12 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Empty(t, cfg.Matrix.HomeserverToken)
 	assert.Empty(t, cfg.Matrix.RegistrationSecret)
 	assert.Empty(t, cfg.RabbitMQ.URL)
+	assert.Empty(t, cfg.FileService.URL, "file-service is optional for text-only deployments")
 }
 
 func TestLoad_MatrixEnvOverrides(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 
 	t.Setenv("SYNAPSE_SERVER_URL", "https://matrix.test")
 	t.Setenv("SYNAPSE_HOMESERVER_NAME", "test.server")
@@ -74,8 +79,37 @@ func TestLoad_MatrixEnvOverrides(t *testing.T) {
 	assert.Equal(t, "TestBot", cfg.Matrix.BotDisplayName)
 }
 
+func TestLoad_FileServiceEnvOverrides(t *testing.T) {
+	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
+	t.Setenv("RABBITMQ_URL", "")
+	t.Setenv("RABBITMQ_HOST", "")
+
+	t.Run("URL and max attachment bytes", func(t *testing.T) {
+		t.Setenv("FILE_SERVICE_URL", "http://file-service:4000")
+		t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "1048576")
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, "http://file-service:4000", cfg.FileService.URL)
+		assert.Equal(t, int64(1048576), cfg.FileService.MaxAttachmentBytes)
+	})
+
+	t.Run("invalid max attachment bytes fails config loading", func(t *testing.T) {
+		t.Setenv("FILE_SERVICE_URL", "http://file-service:4000")
+		t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "not-a-number")
+
+		cfg, err := Load()
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "invalid FILE_SERVICE_MAX_ATTACHMENT_BYTES")
+		assert.Contains(t, err.Error(), "not-a-number")
+	})
+}
+
 func TestLoad_RegistrationSecretPrecedence(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 	t.Setenv("RABBITMQ_URL", "")
 	t.Setenv("RABBITMQ_HOST", "")
 
@@ -110,6 +144,7 @@ func TestLoad_RegistrationSecretPrecedence(t *testing.T) {
 
 func TestLoad_RabbitMQ_FullURL(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 	t.Setenv("SYNAPSE_SERVER_SHARED_SECRET", "")
 	t.Setenv("SYNAPSE_REGISTRATION_SECRET", "")
 
@@ -127,6 +162,7 @@ func TestLoad_RabbitMQ_FullURL(t *testing.T) {
 
 func TestLoad_RabbitMQ_IndividualComponents(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 	t.Setenv("SYNAPSE_SERVER_SHARED_SECRET", "")
 	t.Setenv("SYNAPSE_REGISTRATION_SECRET", "")
 	t.Setenv("RABBITMQ_URL", "")
@@ -168,6 +204,7 @@ func TestLoad_RabbitMQ_IndividualComponents(t *testing.T) {
 func TestLoad_YAMLConfigFile(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.yaml")
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 
 	yamlContent := `
 app:
@@ -221,6 +258,7 @@ rabbitmq:
 func TestLoad_EnvOverridesYAML(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.yaml")
+	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
 
 	yamlContent := `
 app:

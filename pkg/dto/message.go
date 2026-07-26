@@ -6,21 +6,51 @@ package dto
 
 // MessageDto represents a message in a room.
 type MessageDto struct {
-	ID            MessageID      `json:"id"`
-	Content       string         `json:"content"`
-	SenderActorID AlkemioActorID `json:"sender_actor_id"`
-	Timestamp     int64          `json:"timestamp"` // Unix milliseconds
-	Reactions     []ReactionDto  `json:"reactions"`
-	ThreadID      *MessageID     `json:"thread_id,omitempty"`
+	ID            MessageID            `json:"id"`
+	Content       string               `json:"content"`
+	SenderActorID AlkemioActorID       `json:"sender_actor_id"`
+	Timestamp     int64                `json:"timestamp"` // Unix milliseconds
+	Reactions     []ReactionDto        `json:"reactions"`
+	ThreadID      *MessageID           `json:"thread_id,omitempty"`
+	Attachments   []ReceivedAttachment `json:"attachments,omitempty"`
+}
+
+// AttachmentRef is a reference to a file-service document to be sent as a
+// Matrix media event. The adapter fetches the document bytes, uploads them to
+// the homeserver, and embeds the DocumentID as io.alkemio.document_id on the
+// outbound event.
+type AttachmentRef struct {
+	DocumentID  string `json:"document_id"`  // Alkemio file-service document id (conversation bucket)
+	DisplayName string `json:"display_name"` // Filename / caption shown in clients
+	MimeType    string `json:"mime_type"`
+	Size        int64  `json:"size"`
+	Width       *int   `json:"width,omitempty"`
+	Height      *int   `json:"height,omitempty"`
+}
+
+// ReceivedAttachment is a raw media reference surfaced on an inbound message.
+// DocumentID is set when the event carries io.alkemio.document_id (an echo of
+// our own outbound media); MediaID is set for Element-origin media (the Synapse
+// media id, used by the server as the re-home key). The adapter never resolves
+// either — the server re-homes and resolves URLs.
+type ReceivedAttachment struct {
+	DocumentID  *string `json:"document_id,omitempty"`
+	MediaID     *string `json:"media_id,omitempty"`
+	DisplayName string  `json:"display_name"`
+	MimeType    string  `json:"mime_type"`
+	Size        int64   `json:"size"`
+	Width       *int    `json:"width,omitempty"`
+	Height      *int    `json:"height,omitempty"`
 }
 
 // SendMessageRequest sends a text message to a room.
 // Topic: communication.message.send
 type SendMessageRequest struct {
-	AlkemioRoomID   AlkemioRoomID  `json:"alkemio_room_id"`
-	SenderActorID   AlkemioActorID `json:"sender_actor_id"`
-	Content         string         `json:"content"`                     // Markdown supported
-	ParentMessageID *MessageID     `json:"parent_message_id,omitempty"` // For threads
+	AlkemioRoomID   AlkemioRoomID   `json:"alkemio_room_id"`
+	SenderActorID   AlkemioActorID  `json:"sender_actor_id"`
+	Content         string          `json:"content"`                     // Markdown supported (may be empty if only attachments)
+	ParentMessageID *MessageID      `json:"parent_message_id,omitempty"` // For threads
+	Attachments     []AttachmentRef `json:"attachments,omitempty"`       // Media doc refs (<=10)
 }
 
 // SendMessageResponse returns the message ID and timestamp.

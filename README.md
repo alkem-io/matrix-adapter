@@ -43,6 +43,7 @@ The service is configured via environment variables or a `config.yaml` file. The
 | `MATRIX_BOT_ACTOR_ID` | Bot Actor ID (UUID), also used as Matrix localpart | `00000000-0000-0000-0000-000000000000` |
 | `MATRIX_BOT_DISPLAY_NAME` | Display name for the bot user in Matrix | `Alkemio` |
 | `SYNAPSE_SERVER_SHARED_SECRET` | Synapse `registration_shared_secret` for auto-promoting bot to server admin | - |
+| `FILE_SERVICE_URL` | Optional internal file-service base URL; required only when sending outbound media attachments (`GET {url}/internal/file/{id}/content`) | - |
 | `RABBITMQ_URL` | Full AMQP Connection URL | - |
 | `RABBITMQ_HOST` | RabbitMQ Host (if URL not set) | - |
 | `RABBITMQ_PORT` | RabbitMQ Port (if URL not set) | `5672` |
@@ -212,6 +213,29 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 | Room Member Updated | `communication.room.member.updated` | Emitted when a user's membership status changes (join, invite, etc.) |
 | Room Updated | `communication.room.updated` | Emitted when a room's name, avatar, or topic changes |
 | Space Updated | `communication.space.updated` | Emitted when a space's name, avatar, or topic changes |
+
+### Media Attachments
+
+`communication.message.send` accepts an optional `attachments` array
+(`AttachmentRef`: `document_id`, `display_name`, `mime_type`, `size`,
+`width?`, `height?`). For each ref the adapter fetches the document bytes from
+file-service (`GET {FILE_SERVICE_URL}/internal/file/{document_id}/content`),
+uploads them to the homeserver, and sends one Matrix media event
+(`m.image`/`m.video`/`m.audio`/`m.file`, chosen by MIME) carrying the resulting
+`url` (mxc), `info` (mime/size/dimensions), and a custom
+`io.alkemio.document_id` field. Text plus N attachments becomes one `m.text`
+event (when text is present) plus N media events. `content` may be empty when
+the message is attachment-only.
+
+Deleting a message redacts its primary event; the attachment media events are
+not cascade-redacted (a stateless adapter cannot reliably rediscover them) and
+are reclaimed as unreferenced media by Synapse media retention.
+
+Inbound media events are translated onto `communication.message.received`:
+each carries a `ReceivedAttachment` (`media_id` parsed from the mxc URL,
+`mime_type`/`size`/dimensions from `info`, and `document_id` when the event
+echoes our own `io.alkemio.document_id`). The adapter is **stateless** — it only
+surfaces these raw refs; the server re-homes media and resolves URLs.
 
 ## DM Room Creation Flow
 

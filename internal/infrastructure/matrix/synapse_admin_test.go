@@ -767,15 +767,21 @@ func TestGetRoomMessages_Error(t *testing.T) {
 // --------------------------------------------------------------------------
 
 func TestGetEventContext_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	sa, err := NewSynapseAdmin("http://homeserver.test", "test-token")
+	if err != nil {
+		t.Fatalf("NewSynapseAdmin: %v", err)
+	}
+	sa.client.Client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
 		if !strings.Contains(r.URL.Path, "/context/") {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		if got := r.URL.Query().Get("limit"); got != "0" {
+			t.Errorf("expected context limit=0, got %q", got)
+		}
+		body, marshalErr := json.Marshal(map[string]interface{}{
 			"event": map[string]interface{}{
 				"type":             "m.room.message",
 				"event_id":         "$evt1:hs",
@@ -789,10 +795,16 @@ func TestGetEventContext_Success(t *testing.T) {
 			"events_after":  []interface{}{},
 			"state":         []interface{}{},
 		})
-	}))
-	defer srv.Close()
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(string(body))),
+		}, nil
+	})}
 
-	sa := newTestSynapseAdmin(t, srv)
 	resp, err := sa.GetEventContext(context.Background(), "!room1:hs", "$evt1:hs")
 	if err != nil {
 		t.Fatalf("GetEventContext: %v", err)
@@ -982,6 +994,113 @@ func TestGetRelations_Success(t *testing.T) {
 	}
 	if events[0].ID != "$reaction1:hs" {
 		t.Errorf("expected event_id=$reaction1:hs, got %s", events[0].ID)
+	}
+}
+
+// GetRelations follows next_batch and accumulates every page. Simulates a thread
+// whose first page is all sticker replies (newest-first) and whose second page
+// carries an older message reply: without pagination the message reply would be
+// dropped. Also asserts the empty event-type filter omits the type path segment.
+func TestGetRelations_Paginates(t *testing.T) {
+	var gotFroms []string
+	var gotPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotFroms = append(gotFroms, r.URL.Query().Get("from"))
+		gotPaths = append(gotPaths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("from") == "" {
+			// Page 1: sticker replies + next_batch pointing at page 2.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"chunk": []map[string]interface{}{
+					{"type": "m.sticker", "event_id": "$s1:hs", "sender": "@a:hs", "origin_server_ts": 3000},
+					{"type": "m.sticker", "event_id": "$s2:hs", "sender": "@a:hs", "origin_server_ts": 2900},
+				},
+				"next_batch": "PAGE2",
+			})
+			return
+		}
+		// Page 2: an older message reply, no further next_batch.
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"chunk": []map[string]interface{}{
+				{"type": "m.room.message", "event_id": "$m1:hs", "sender": "@b:hs", "origin_server_ts": 1000},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	events, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{}, // empty type → all relation event types
+	)
+	if err != nil {
+		t.Fatalf("GetRelations: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected 3 accumulated relations across 2 pages, got %d", len(events))
+	}
+	if events[0].ID != "$s1:hs" || events[2].ID != "$m1:hs" {
+		t.Errorf("expected [stickers..., message], got %s .. %s", events[0].ID, events[2].ID)
+	}
+	if len(gotFroms) != 2 || gotFroms[0] != "" || gotFroms[1] != "PAGE2" {
+		t.Errorf("expected 2 requests with from=[\"\", \"PAGE2\"], got %v", gotFroms)
+	}
+	// Empty event-type must NOT add a trailing type segment after the relType.
+	if strings.HasSuffix(gotPaths[0], "/m.thread/") || strings.Contains(gotPaths[0], "/m.thread/m.") {
+		t.Errorf("expected no event-type path segment for empty type, got %s", gotPaths[0])
+	}
+}
+
+// A later-page failure returns BOTH the pages accumulated so far AND the error:
+// page 1 succeeds with a next_batch, page 2 returns 500 → GetRelations yields page
+// 1's relations together with a non-nil error, leaving the best-effort-vs-fail
+// choice to each caller.
+func TestGetRelations_LaterPageError_ReturnsPartial(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("from") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"chunk": []map[string]interface{}{
+					{"type": "m.room.message", "event_id": "$m1:hs", "sender": "@a:hs", "origin_server_ts": 3000},
+				},
+				"next_batch": "PAGE2",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"errcode": "M_UNKNOWN"})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	events, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	)
+	if err == nil {
+		t.Fatal("expected a non-nil error alongside the partial results on later-page failure")
+	}
+	if len(events) != 1 || events[0].ID != "$m1:hs" {
+		t.Fatalf("expected page 1's relation returned alongside the error, got %d events", len(events))
+	}
+}
+
+// A FIRST-page failure is a genuine error (nothing to show).
+func TestGetRelations_FirstPageError_Errors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"errcode": "M_UNKNOWN"})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	_, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	)
+	if err == nil {
+		t.Fatal("expected an error when the first page fails")
 	}
 }
 

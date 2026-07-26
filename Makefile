@@ -15,14 +15,17 @@ GOFMT=$(GO) fmt
 .PHONY: all
 all: deps fmt lint test build
 
-# Generate OpenAPI spec from Go source.
-# Requires the `apispec` binary on PATH. CI installs the org-pinned version
-# (see go-ci.yml in antst/alkemio-github-workflows); locally:
-#   go install github.com/antst/go-apispec/cmd/apispec@v0.4.16
+# Generate OpenAPI spec from Go source. apispec is run via `go run <pkg>@version`
+# (like generate-events/tygo) so NO pre-installed binary on PATH is required — it
+# works on any runner (e.g. the publish-lib workflow's ubuntu-latest, which does
+# not go through the shared go-ci workflow that installs the org-pinned apispec).
+# Keep the version in sync with the org-pinned apispec (the shared
+# alkem-io/github-workflows go-ci.yml@v1 default — currently v0.4.25).
+APISPEC_VERSION ?= v0.4.25
 .PHONY: openapi
 openapi:
 	@echo "Generating OpenAPI spec..."
-	apispec --dir . --output openapi.yaml --config apispec.yaml
+	go run github.com/antst/go-apispec/cmd/apispec@$(APISPEC_VERSION) --dir . --output openapi.yaml --config apispec.yaml
 
 # Build the application
 .PHONY: build

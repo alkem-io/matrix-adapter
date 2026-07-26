@@ -741,6 +741,146 @@ func TestHandleSendMessage_EmptyContent(t *testing.T) {
 	assertErrorCode(t, result, dto.ErrCodeInvalidParam)
 }
 
+func TestHandleSendMessage_WithAttachments(t *testing.T) {
+	mock := &testMockMatrixPort{
+		resolveAliasResult: "!room1:test",
+		sendMessageResult:  "$evt1:test",
+	}
+	h := testRoomHandler(mock)
+
+	w, hgt := 800, 600
+	documentID := uuid.NewString()
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Content:       "", // attachment-only: empty content must be accepted
+		Attachments: []dto.AttachmentRef{{
+			DocumentID:  documentID,
+			DisplayName: "pic.png",
+			MimeType:    "image/png",
+			Size:        123,
+			Width:       &w,
+			Height:      &hgt,
+		}},
+	})
+
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertSuccess(t, result)
+
+	if len(mock.capturedSendMessageAttachments) != 1 {
+		t.Fatalf("expected 1 attachment forwarded, got %d", len(mock.capturedSendMessageAttachments))
+	}
+	att := mock.capturedSendMessageAttachments[0]
+	if att.DocumentID != documentID || att.DisplayName != "pic.png" || att.MimeType != "image/png" || att.Size != 123 {
+		t.Errorf("attachment not forwarded correctly: %+v", att)
+	}
+	if att.Width == nil || *att.Width != 800 || att.Height == nil || *att.Height != 600 {
+		t.Errorf("attachment dims not forwarded: w=%v h=%v", att.Width, att.Height)
+	}
+}
+
+// A malformed document_id is rejected before the handler invokes the send
+// service, so a text event cannot be posted before media validation fails.
+func TestHandleSendMessage_NonUUIDAttachmentDocumentIDRejectedBeforeSend(t *testing.T) {
+	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$evt1:test"}
+	h := testRoomHandler(mock)
+
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Content:       "must not be posted",
+		Attachments: []dto.AttachmentRef{
+			{DocumentID: "not-a-uuid", DisplayName: "x", MimeType: "image/png"},
+		},
+	})
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertErrorCode(t, result, dto.ErrCodeInvalidParam)
+	if mock.capturedSendMessageRoomID != "" {
+		t.Error("SendMessage must not be called when any document_id is malformed")
+	}
+}
+
+// Defense-in-depth: more than the allowed number of attachments is rejected
+// before any Matrix event is emitted.
+func TestHandleSendMessage_TooManyAttachments(t *testing.T) {
+	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$evt1:test"}
+	h := testRoomHandler(mock)
+
+	atts := make([]dto.AttachmentRef, maxAttachmentsPerMessage+1)
+	for i := range atts {
+		atts[i] = dto.AttachmentRef{DocumentID: "doc", DisplayName: "x", MimeType: "image/png"}
+	}
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Attachments:   atts,
+	})
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertErrorCode(t, result, dto.ErrCodeInvalidParam)
+	if mock.capturedSendMessageRoomID != "" {
+		t.Error("SendMessage should not have been called when attachment count is rejected")
+	}
+}
+
+// An attachment with an empty document_id is rejected early with a clear error.
+func TestHandleSendMessage_EmptyAttachmentDocumentID(t *testing.T) {
+	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$evt1:test"}
+	h := testRoomHandler(mock)
+
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Attachments: []dto.AttachmentRef{
+			{DocumentID: "", DisplayName: "x", MimeType: "image/png"},
+		},
+	})
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertErrorCode(t, result, dto.ErrCodeInvalidParam)
+	if mock.capturedSendMessageRoomID != "" {
+		t.Error("SendMessage should not have been called when a document_id is empty")
+	}
+}
+
+// An attachment with a valid document_id but an empty (or whitespace-only)
+// display_name is NOT rejected: a legitimately nameless attachment
+// (clipboard-pasted image, E2EE doc) must still be sent. The conversion applies
+// fallbackAttachmentName so the media event gets a sensible body/filename.
+func TestHandleSendMessage_EmptyAttachmentDisplayName(t *testing.T) {
+	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$evt1:test"}
+	h := testRoomHandler(mock)
+
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Attachments: []dto.AttachmentRef{
+			{DocumentID: uuid.NewString(), DisplayName: "   ", MimeType: "image/png"},
+		},
+	})
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertSuccess(t, result)
+	if len(mock.capturedSendMessageAttachments) != 1 {
+		t.Fatalf("expected 1 attachment forwarded, got %d", len(mock.capturedSendMessageAttachments))
+	}
+	if got := mock.capturedSendMessageAttachments[0].DisplayName; got != fallbackAttachmentName {
+		t.Errorf("expected fallback display_name %q, got %q", fallbackAttachmentName, got)
+	}
+}
+
 func TestHandleSendMessage_RoomNotFound(t *testing.T) {
 	mock := &testMockMatrixPort{
 		resolveAliasErr: domain.ErrRoomNotFound,
@@ -874,6 +1014,9 @@ func TestHandleDeleteMessage_Success(t *testing.T) {
 	}
 	if mock.capturedRedactEventRoomID != "!room1:test" {
 		t.Errorf("expected redact room ID '!room1:test', got %q", mock.capturedRedactEventRoomID)
+	}
+	if mock.redactEventCalled != 1 {
+		t.Errorf("message delete must redact the event, got plain=%d", mock.redactEventCalled)
 	}
 }
 
@@ -1042,6 +1185,9 @@ func TestHandleRemoveReaction_Success(t *testing.T) {
 	// Verify the handler correctly forwarded the reaction ID for redaction
 	if mock.capturedRedactEventID != "$reaction1:test" {
 		t.Errorf("expected redacted event ID '$reaction1:test', got %q", mock.capturedRedactEventID)
+	}
+	if mock.redactEventCalled != 1 {
+		t.Errorf("reaction removal must use plain redaction, got plain=%d", mock.redactEventCalled)
 	}
 }
 

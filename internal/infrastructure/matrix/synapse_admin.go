@@ -305,23 +305,82 @@ func (s *SynapseAdmin) GetTimestampToEvent(ctx context.Context, roomID id.RoomID
 	return resp.EventID, nil
 }
 
+// maxRelationsPages bounds GetRelations pagination so a pathological thread can
+// never loop unbounded. At the Synapse default page size (~50) this covers ~1000
+// relations, far beyond any real thread. This is an HONEST cap: a thread with
+// more than maxRelationsPages*pageSize newer relations before an older reply will
+// NOT return that older reply — an accepted bound to keep admin round-trips
+// finite. SynapseAdmin has no logger to warn on truncation; the bound is
+// documented here rather than silently pretending completeness.
+const maxRelationsPages = 20
+
 // GetRelations retrieves relations (reactions, threads) for an event.
 // Uses the Matrix Client API (not Synapse Admin API) since no admin relations endpoint exists.
 // The admin access token is a normal client token — standard room access rules apply.
+//
+// An empty eventType (event.Type{}) omits the type path segment, so the endpoint
+// returns ALL event types carrying the relation — required to include m.sticker
+// thread replies alongside m.room.message replies (the caller filters
+// client-side via isMessageLikeEvent). A non-empty eventType filters server-side
+// (e.g. m.reaction for annotation lookups).
+//
+// The fetch is PAGINATED: it follows the response next_batch token (bounded by
+// maxRelationsPages) and accumulates every page. A single unpaginated page of
+// newest-first relations could otherwise push older replies off the end — e.g.
+// many recent sticker replies burying an older message reply — silently dropping
+// real replies.
+//
+// On error it returns BOTH the pages accumulated so far AND the error, leaving the
+// best-effort-vs-fail decision to each caller (this is a SHARED helper — thread
+// reads want partial replies, reaction lookups must not treat an error as
+// "not found"):
+//   - the FIRST page failing → return (nil, err): nothing accumulated yet.
+//   - a LATER page failing (including a context deadline mid-pagination) → return
+//     (partial, err): the pages fetched so far plus the error, so a caller can
+//     use the partial set or propagate as it sees fit.
 func (s *SynapseAdmin) GetRelations(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID,
 	relType event.RelationType, eventType event.Type,
 ) ([]*event.Event, error) {
-	urlPath := s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType, eventType.Type)
+	var base string
+	if eventType.Type == "" {
+		base = s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType)
+	} else {
+		base = s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType, eventType.Type)
+	}
 
-	var resp struct {
-		Chunk []*event.Event `json:"chunk"`
+	var all []*event.Event
+	from := ""
+	for page := 0; page < maxRelationsPages; page++ {
+		urlPath := base
+		if from != "" {
+			sep := "?"
+			if strings.Contains(base, "?") {
+				sep = "&"
+			}
+			urlPath = base + sep + "from=" + url.QueryEscape(from)
+		}
+
+		var resp struct {
+			Chunk     []*event.Event `json:"chunk"`
+			NextBatch string         `json:"next_batch"`
+		}
+		if _, err := s.client.MakeRequest(ctx, http.MethodGet, urlPath, nil, &resp); err != nil {
+			if page == 0 {
+				return nil, err
+			}
+			// Later-page failure (transient error or context deadline): return what
+			// we already fetched ALONGSIDE the error, so the caller decides whether to
+			// use the partial set (thread reads) or propagate (reaction lookups).
+			return all, err
+		}
+		all = append(all, resp.Chunk...)
+		if resp.NextBatch == "" {
+			break
+		}
+		from = resp.NextBatch
 	}
-	_, err := s.client.MakeRequest(ctx, http.MethodGet, urlPath, nil, &resp)
-	if err != nil {
-		return nil, err
-	}
-	return resp.Chunk, nil
+	return all, nil
 }
 
 // JoinRoom forces a user to join a room (bypasses join rules for admin).

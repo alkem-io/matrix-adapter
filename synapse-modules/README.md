@@ -1,14 +1,23 @@
-# Alkemio Room Control Module for Synapse
+# Alkemio Synapse Modules
+
+This directory is the **canonical** home of Alkemio's Synapse Python modules:
+
+- [`alkemio_room_control.py`](./alkemio_room_control.py) — spam-checker module that restricts room creation to the Alkemio Matrix Adapter AppService bot ([details below](#alkemio-room-control-module)).
+- [`alkemio_fileservice_provider.py`](./alkemio_fileservice_provider.py) — Synapse media `StorageProvider` that bridges Synapse's media byte I/O to the Alkemio file-service ([details below](#alkemio-file-service-media-storage-provider)).
+
+> **Canonical source.** The `.py` files in this directory (plus [`../registration.yaml`](../registration.yaml)) are the single source of truth. Downstream copies are kept in sync automatically by [`.github/workflows/sync-synapse-module.yml`](../.github/workflows/sync-synapse-module.yml) (running [`.scripts/sync-synapse-module.sh`](../.scripts/sync-synapse-module.sh)) whenever any of them changes on `develop`:
+>
+> - `alkem-io/server` — file-mode copies under `.build/synapse/modules/` (`alkemio_room_control.py`, `alkemio_fileservice_provider.py`) + `.build/synapse/matrix-adapter.yaml`
+> - `alkem-io/dev-orchestration` — embedded in `01-synapse-setup-confmap.yml`
+> - `alkem-io/infrastructure-operations` — embedded in `01-synapse-setup-confmap.yml`
+>
+> The two `.py` modules are synced **verbatim** (no per-environment fields). `registration.yaml` is schema-synced — `url`, `as_token`, and `hs_token` stay environment-specific in each downstream. `alkemio_room_control.py` is required in every target; `alkemio_fileservice_provider.py` is synced only where its target block/file already exists (its `alkemio_fileservice_provider.py: |` ConfigMap key in the ops repos, or an existing file in server), so a downstream repo adopts the provider once it declares that block — a room-control-only change never fails against a target that has not adopted the provider yet.
+>
+> Do not edit those downstream copies directly. Edit the canonical file here (or `registration.yaml`), merge to `develop`, and review the rolling PR opened in each downstream repo by the Alkemio Infrastructure Bot.
+
+## Alkemio Room Control Module
 
 This is a Synapse spam checker module that restricts room creation to the Alkemio Matrix Adapter AppService bot.
-
-> **Canonical source.** This file (and [`../registration.yaml`](../registration.yaml)) is the single source of truth. Three downstream copies are kept in sync automatically by [`.github/workflows/sync-synapse-module.yml`](../.github/workflows/sync-synapse-module.yml) whenever either file changes on `develop`:
->
-> - `alkem-io/server` — `.build/synapse/modules/alkemio_room_control.py` + `.build/synapse/matrix-adapter.yaml`
-> - `alkem-io/dev-orchestration` — both embedded in `01-synapse-setup-confmap.yml`
-> - `alkem-io/infrastructure-operations` — both embedded in `01-synapse-setup-confmap.yml`
->
-> Do not edit those copies directly. Edit this file (or `registration.yaml`), merge to `develop`, and review the rolling PR opened in each downstream repo by the Alkemio Infrastructure Bot. For `registration.yaml`, only schema fields are synced — `url`, `as_token`, and `hs_token` stay environment-specific in each downstream.
 
 ## Overview
 
@@ -126,3 +135,54 @@ If the AppService is not found, you'll see:
 ```text
 AppService 'alkemio-matrix-adapter' not found! Check registration.yaml is loaded.
 ```
+
+## Alkemio File-Service Media Storage Provider
+
+[`alkemio_fileservice_provider.py`](./alkemio_fileservice_provider.py) is a Synapse media
+[`StorageProvider`](https://element-hq.github.io/synapse/latest/media_repository.html)
+(`FileServiceStorageProvider`) that makes the Alkemio file-service the sole durable
+store for Matrix media. Synapse's own local media store is kept as an ephemeral
+**cache** (an `emptyDir`); durability lives in the file-service.
+
+It is a thin, **stateless** byte bridge between Synapse's media byte I/O and the
+file-service — it holds no durable state of its own (the `media_id ↔ document`
+mapping lives on the file-service document's opaque `externalReference`):
+
+- **`store_file`** → `POST /internal/file` (multipart) into the reserved
+  `matrix_media` bucket, verbatim (`skipImageProcessing=true`), with
+  `externalReference = media_id`. Only local user uploads are routed;
+  thumbnails / url-cache / remote media stay local-cache-only.
+- **`fetch`** → `GET /internal/file/by-reference?ref=<media_id>` (global lookup,
+  no bucket id — the server may have re-homed the document into a conversation
+  bucket), then streams `GET /internal/file/{id}/content` back through a
+  `Responder`. A cache miss in file-service returns `None`.
+
+Reads are streamed with real backpressure and guarded by conservative network
+timeouts and a small circuit breaker, so the Element media read path fails fast
+and degrades rather than hanging.
+
+### Deployment
+
+The module is deployed into `/data/modules` (alongside `alkemio_room_control.py`)
+and discovered via `PYTHONPATH=/data/modules`. Enable it under
+`media_storage_providers` in `homeserver.yaml`:
+
+```yaml
+media_storage_providers:
+  - module: alkemio_fileservice_provider.FileServiceStorageProvider
+    store_local: true
+    store_remote: false
+    store_synchronous: true
+    config:
+      file_service_url: "http://file-service:4003"
+      matrix_media_bucket_id: "<reserved matrix_media bucket uuid>"
+      # optional tuning: timeout_s, store_timeout_s,
+      # cb_fail_threshold, cb_reset_timeout_s
+```
+
+It depends on `treq` / `twisted` (already present in Synapse) and the Synapse
+`media` APIs (`StorageProvider`, `Responder`).
+
+> The provider ships with a companion unit-test file,
+> [`test_alkemio_fileservice_provider.py`](./test_alkemio_fileservice_provider.py),
+> which imports this canonical module directly.

@@ -14,6 +14,122 @@ import (
 func adapter() *MautrixAdapter { return &MautrixAdapter{} }
 
 // ---------------------------------------------------------------------------
+// extractAttachment (T010 — inbound media translation)
+// ---------------------------------------------------------------------------
+
+func mediaEvent(raw map[string]any) *event.Event {
+	return &event.Event{Content: event.Content{Raw: raw}}
+}
+
+// Inbound m.image carrying io.alkemio.document_id (our own outbound echo) →
+// both DocumentID and MediaID are surfaced.
+func TestExtractAttachment_ImageWithDocumentID(t *testing.T) {
+	att := extractAttachment(mediaEvent(map[string]any{
+		"msgtype": "m.image",
+		"body":    "photo.jpg",
+		"url":     "mxc://test.local/media123",
+		"info": map[string]any{
+			"mimetype": "image/jpeg",
+			"size":     float64(12345), // JSON numbers decode to float64
+			"w":        float64(1920),
+			"h":        float64(1080),
+		},
+		"io.alkemio.document_id": "doc-abc",
+	}), true) // trusted (own-appservice) sender ⇒ document_id surfaced
+	if att == nil {
+		t.Fatal("expected non-nil attachment")
+		return
+	}
+	// This is our own outbound echo (it carries io.alkemio.document_id). Both refs
+	// are surfaced: the server routes echoes by DocumentID presence to the coalesce
+	// path, which stamps externalReference=media_id on the doc and drops the staging
+	// twin — so it needs the MediaID too.
+	if att.DocumentID != "doc-abc" {
+		t.Errorf("expected DocumentID 'doc-abc', got %q", att.DocumentID)
+	}
+	if att.MediaID != "media123" {
+		t.Errorf("expected MediaID 'media123' surfaced alongside DocumentID, got %q", att.MediaID)
+	}
+	if att.MimeType != "image/jpeg" {
+		t.Errorf("expected MimeType 'image/jpeg', got %q", att.MimeType)
+	}
+	if att.Size != 12345 {
+		t.Errorf("expected Size 12345, got %d", att.Size)
+	}
+	if att.DisplayName != "photo.jpg" {
+		t.Errorf("expected DisplayName 'photo.jpg', got %q", att.DisplayName)
+	}
+	if att.Width == nil || *att.Width != 1920 {
+		t.Errorf("expected Width 1920, got %v", att.Width)
+	}
+	if att.Height == nil || *att.Height != 1080 {
+		t.Errorf("expected Height 1080, got %v", att.Height)
+	}
+}
+
+// Inbound m.image from Element (no io.alkemio.document_id) → MediaID set,
+// DocumentID empty (server will re-home by media_id).
+func TestExtractAttachment_ImageWithoutDocumentID(t *testing.T) {
+	att := extractAttachment(mediaEvent(map[string]any{
+		"msgtype": "m.image",
+		"body":    "element.png",
+		"url":     "mxc://other.server/xyz789",
+		"info": map[string]any{
+			"mimetype": "image/png",
+			"size":     float64(42),
+		},
+	}), false) // untrusted sender: no document_id in event anyway
+	if att == nil {
+		t.Fatal("expected non-nil attachment")
+		return
+	}
+	if att.MediaID != "xyz789" {
+		t.Errorf("expected MediaID 'xyz789', got %q", att.MediaID)
+	}
+	if att.DocumentID != "" {
+		t.Errorf("expected empty DocumentID, got %q", att.DocumentID)
+	}
+	if att.Width != nil || att.Height != nil {
+		t.Errorf("expected nil dims, got w=%v h=%v", att.Width, att.Height)
+	}
+}
+
+// m.file inbound maps to an attachment too.
+func TestExtractAttachment_File(t *testing.T) {
+	att := extractAttachment(mediaEvent(map[string]any{
+		"msgtype": "m.file",
+		"body":    "doc.pdf",
+		"url":     "mxc://test.local/fileabc",
+		"info":    map[string]any{"mimetype": "application/pdf", "size": float64(1000)},
+	}), true)
+	if att == nil {
+		t.Fatal("expected non-nil attachment")
+		return
+	}
+	if att.MediaID != "fileabc" {
+		t.Errorf("expected MediaID 'fileabc', got %q", att.MediaID)
+	}
+}
+
+// A plain text message yields no attachment.
+func TestExtractAttachment_NonMedia(t *testing.T) {
+	att := extractAttachment(mediaEvent(map[string]any{
+		"msgtype": "m.text",
+		"body":    "hello",
+	}), true)
+	if att != nil {
+		t.Errorf("expected nil attachment for m.text, got %+v", att)
+	}
+}
+
+// An event with no raw content yields no attachment.
+func TestExtractAttachment_NilRaw(t *testing.T) {
+	if att := extractAttachment(&event.Event{}, true); att != nil {
+		t.Errorf("expected nil attachment for empty event, got %+v", att)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // parseStateChange
 // ---------------------------------------------------------------------------
 
@@ -345,6 +461,34 @@ func TestExtractThreadIDFromMessage_ThreadRelation(t *testing.T) {
 	got := adapter().extractThreadIDFromMessage(evt)
 	if got == nil {
 		t.Fatal("expected non-nil thread ID")
+	}
+	if *got != threadRoot {
+		t.Errorf("expected %q, got %q", threadRoot, *got)
+	}
+}
+
+func TestExtractThreadIDFromMessage_RawThreadRelation(t *testing.T) {
+	threadRoot := id.EventID("$thread_root_from_get_event")
+	evt := &event.Event{
+		Type: event.EventMessage,
+		Content: event.Content{
+			// GetEvent-style content: Parsed is nil and the relation exists only
+			// in Raw.
+			Raw: map[string]any{
+				"m.relates_to": map[string]any{
+					"rel_type": "m.thread",
+					"event_id": threadRoot.String(),
+				},
+			},
+		},
+	}
+	if evt.Content.Parsed != nil {
+		t.Fatal("expected GetEvent-style event to have nil Parsed content")
+	}
+
+	got := adapter().extractThreadIDFromMessage(evt)
+	if got == nil {
+		t.Fatal("expected non-nil thread ID from raw relation")
 	}
 	if *got != threadRoot {
 		t.Errorf("expected %q, got %q", threadRoot, *got)

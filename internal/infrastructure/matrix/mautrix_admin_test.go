@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,6 +38,7 @@ type mockAdminAPI struct {
 	getCustomStateErr          error
 	getRoomMessagesResult      *mautrix.RespMessages
 	getRoomMessagesErr         error
+	getRoomMessagesResults     []*mautrix.RespMessages
 	getEventResult             *event.Event
 	getEventErr                error
 	getRelationsResult         []*event.Event
@@ -44,7 +46,16 @@ type mockAdminAPI struct {
 	joinRoomErr                error
 
 	// Call tracking
-	joinRoomCalls []joinRoomCall
+	getRoomMessagesCalls  []getRoomMessagesCall
+	joinRoomCalls         []joinRoomCall
+	getRelationsEventType event.Type // records the eventType filter of the last GetRelations call
+}
+
+type getRoomMessagesCall struct {
+	RoomID id.RoomID
+	From   string
+	Dir    string
+	Limit  int
 }
 
 type joinRoomCall struct {
@@ -80,7 +91,19 @@ func (m *mockAdminAPI) GetCustomState(_ context.Context, _ id.RoomID, _ []string
 	return m.getCustomStateResult, m.getCustomStateErr
 }
 
-func (m *mockAdminAPI) GetRoomMessages(_ context.Context, _ id.RoomID, _, _ string, _ int) (*mautrix.RespMessages, error) {
+func (m *mockAdminAPI) GetRoomMessages(
+	_ context.Context, roomID id.RoomID, from, dir string, limit int,
+) (*mautrix.RespMessages, error) {
+	callIndex := len(m.getRoomMessagesCalls)
+	m.getRoomMessagesCalls = append(m.getRoomMessagesCalls, getRoomMessagesCall{
+		RoomID: roomID,
+		From:   from,
+		Dir:    dir,
+		Limit:  limit,
+	})
+	if callIndex < len(m.getRoomMessagesResults) {
+		return m.getRoomMessagesResults[callIndex], m.getRoomMessagesErr
+	}
 	return m.getRoomMessagesResult, m.getRoomMessagesErr
 }
 
@@ -88,7 +111,8 @@ func (m *mockAdminAPI) GetEvent(_ context.Context, _ id.RoomID, _ id.EventID) (*
 	return m.getEventResult, m.getEventErr
 }
 
-func (m *mockAdminAPI) GetRelations(_ context.Context, _ id.RoomID, _ id.EventID, _ event.RelationType, _ event.Type) ([]*event.Event, error) {
+func (m *mockAdminAPI) GetRelations(_ context.Context, _ id.RoomID, _ id.EventID, _ event.RelationType, eventType event.Type) ([]*event.Event, error) {
+	m.getRelationsEventType = eventType
 	return m.getRelationsResult, m.getRelationsErr
 }
 
@@ -681,6 +705,109 @@ func TestAdminAPI_GetThreadMessages_RootOnly(t *testing.T) {
 	}
 }
 
+// Best-effort: when GetRelations returns partial replies ALONGSIDE an error
+// (later-page failure), GetThreadMessages uses those replies (root + partial),
+// rather than collapsing to root-only. Simulated via the mock returning both a
+// result and an error.
+func TestAdminAPI_GetThreadMessages_PartialRepliesOnError(t *testing.T) {
+	threadRootID := id.EventID("$root_partial")
+	mock := &mockAdminAPI{
+		getEventResult: &event.Event{
+			Type:      event.EventMessage,
+			ID:        threadRootID,
+			Sender:    "@user1:test.local",
+			Timestamp: time.Now().UnixMilli(),
+			Content: event.Content{
+				Parsed: &event.MessageEventContent{MsgType: event.MsgText, Body: "Root message"},
+			},
+		},
+		getRelationsResult: []*event.Event{
+			{
+				Type:      event.EventMessage,
+				ID:        "$reply_partial",
+				Sender:    "@user2:test.local",
+				Timestamp: time.Now().UnixMilli(),
+				Content: event.Content{
+					Parsed: &event.MessageEventContent{
+						MsgType:   event.MsgText,
+						Body:      "Partial reply",
+						RelatesTo: &event.RelatesTo{Type: event.RelThread, EventID: threadRootID},
+					},
+				},
+			},
+		},
+		getRelationsErr: errors.New("later page failed"), // partial + err
+	}
+	a := newAdminTestAdapter(mock)
+	msgs, err := a.GetThreadMessages(context.Background(), "!room:test.local", threadRootID)
+	if err != nil {
+		t.Fatalf("unexpected error (thread read is best-effort): %v", err)
+	}
+	// Expect: the partial reply + the root (not root-only).
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (partial reply + root), got %d", len(msgs))
+	}
+	if msgs[0].Content != "Partial reply" {
+		t.Errorf("expected the partial reply surfaced, got %q", msgs[0].Content)
+	}
+	if msgs[1].Content != "Root message" {
+		t.Errorf("expected root appended last, got %q", msgs[1].Content)
+	}
+}
+
+// A threaded sticker reply surfaces in GetThreadMessages as media, and the
+// relations query passes an EMPTY event-type filter so Synapse returns all
+// m.thread relations (m.room.message AND m.sticker) rather than filtering
+// stickers out server-side.
+func TestAdminAPI_GetThreadMessages_StickerReply(t *testing.T) {
+	threadRootID := id.EventID("$root_sticker_thread")
+	mock := &mockAdminAPI{
+		getEventResult: &event.Event{
+			Type:      event.EventMessage,
+			ID:        threadRootID,
+			Sender:    "@user1:test.local",
+			Timestamp: time.Now().UnixMilli(),
+			Content: event.Content{
+				Parsed: &event.MessageEventContent{MsgType: event.MsgText, Body: "Root message"},
+			},
+		},
+		getRelationsResult: []*event.Event{
+			{
+				Type:      event.EventSticker,
+				ID:        "$sreply",
+				Sender:    "@element:test.local",
+				Timestamp: time.Now().UnixMilli(),
+				Content: event.Content{
+					Raw: map[string]any{
+						"body": "party parrot",
+						"url":  "mxc://test.local/stickerid",
+						"info": map[string]any{"mimetype": "image/png"},
+						"m.relates_to": map[string]any{
+							"rel_type": "m.thread",
+							"event_id": threadRootID.String(),
+						},
+					},
+				},
+			},
+		},
+	}
+	a := newAdminTestAdapter(mock)
+	msgs, err := a.GetThreadMessages(context.Background(), "!room:test.local", threadRootID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Expect: the sticker reply + the root (root appended last).
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (sticker reply + root), got %d", len(msgs))
+	}
+	if len(msgs[0].Attachments) != 1 || msgs[0].Attachments[0].MediaID != "stickerid" {
+		t.Errorf("expected sticker reply with MediaID 'stickerid', got %+v", msgs[0].Attachments)
+	}
+	if mock.getRelationsEventType.Type != "" {
+		t.Errorf("expected empty event-type filter (all thread relations), got %q", mock.getRelationsEventType.Type)
+	}
+}
+
 func TestAdminAPI_GetThreadMessages_RootFetchError(t *testing.T) {
 	mock := &mockAdminAPI{
 		getEventErr: errors.New("event not found"),
@@ -873,6 +1000,48 @@ func TestAdminAPI_GetLastMessage_Success(t *testing.T) {
 	}
 	if msg.Content != "Latest message" {
 		t.Errorf("expected 'Latest message', got %q", msg.Content)
+	}
+}
+
+// A timeline scan (GetLastMessage) surfaces an m.sticker as a media message with
+// its attachment, not dropped: parseMessageEvent accepts EventSticker and the
+// attachment makes isBlankMessage false so the scan keeps it.
+func TestAdminAPI_GetLastMessage_Sticker(t *testing.T) {
+	mock := &mockAdminAPI{
+		getRoomMessagesResult: &mautrix.RespMessages{
+			Chunk: []*event.Event{
+				{
+					Type:      event.EventSticker,
+					ID:        "$sticker",
+					Sender:    "@element:test.local",
+					Timestamp: time.Now().UnixMilli(),
+					Content: event.Content{
+						Raw: map[string]any{
+							"body": "party parrot",
+							"url":  "mxc://test.local/stickerid",
+							"info": map[string]any{"mimetype": "image/png"},
+						},
+					},
+				},
+			},
+		},
+	}
+	a := newAdminTestAdapter(mock)
+	msg, err := a.GetLastMessage(context.Background(), "!room:test.local")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg == nil {
+		t.Fatal("expected the sticker to surface as a media message, got nil")
+	}
+	if len(msg.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(msg.Attachments))
+	}
+	if msg.Attachments[0].MediaID != "stickerid" {
+		t.Errorf("expected MediaID 'stickerid', got %q", msg.Attachments[0].MediaID)
+	}
+	if msg.Content != "" {
+		t.Errorf("expected empty Content, got %q", msg.Content)
 	}
 }
 
@@ -1261,6 +1430,81 @@ func TestAdminAPI_FindReaction_WrongEmoji(t *testing.T) {
 	}
 }
 
+// newReactionTestAdapter wires an appservice mock so EnsureUser (called for the
+// sender before the relations error is surfaced) can resolve the ghost intent.
+func newReactionTestAdapter(mock *mockAdminAPI) *MautrixAdapter {
+	intent := &mockIntentAPI{}
+	as := newMockAS(intent, map[id.UserID]intentAPI{expectedUserID(testActorID): intent})
+	return newFullTestAdapter(as, mock)
+}
+
+// GetReactionEventID must PROPAGATE a GetRelations error when the reaction is NOT
+// found in the partial chunk: a transient later-page error returning a partial
+// set (without the target reaction) must surface as an error so the caller
+// doesn't wrongly conclude the reaction is gone and skip its redaction — the
+// reaction could be on a dropped later page.
+func TestGetReactionEventID_RelationsError_NotFound_Propagates(t *testing.T) {
+	mock := &mockAdminAPI{
+		// Partial results alongside an error (later-page failure shape), WITHOUT the
+		// target reaction (different sender).
+		getRelationsResult: []*event.Event{
+			{Type: event.EventReaction, ID: "$other", Sender: "@user1:test.local"},
+		},
+		getRelationsErr: errors.New("later page failed"),
+	}
+	a := newReactionTestAdapter(mock)
+
+	_, err := a.GetReactionEventID(
+		context.Background(), "!room:test.local", "$evt", "\U0001F44D",
+		testActor(testActorID, ""),
+	)
+	if err == nil {
+		t.Fatal("expected the GetRelations error to propagate, not a not-found result")
+	}
+	if !strings.Contains(err.Error(), "failed to get relations") {
+		t.Errorf("expected the propagated relations error, got %v", err)
+	}
+}
+
+// GetReactionEventID must return a reaction found in the partial (page-1) chunk
+// even when GetRelations reported a later-page error: the reaction is provably
+// present, so a truncated later page is irrelevant.
+func TestGetReactionEventID_FoundInPartialChunk_IgnoresLaterPageError(t *testing.T) {
+	senderUserID := expectedUserID(testActorID)
+	mock := &mockAdminAPI{
+		// Page 1 carries the matching reaction; a later page then failed.
+		getRelationsResult: []*event.Event{
+			{
+				Type:   event.EventReaction,
+				ID:     "$reaction_match",
+				Sender: senderUserID,
+				Content: event.Content{
+					Parsed: &event.ReactionEventContent{
+						RelatesTo: event.RelatesTo{
+							EventID: "$evt",
+							Key:     "\U0001F44D",
+							Type:    event.RelAnnotation,
+						},
+					},
+				},
+			},
+		},
+		getRelationsErr: errors.New("later page failed"),
+	}
+	a := newReactionTestAdapter(mock)
+
+	evID, err := a.GetReactionEventID(
+		context.Background(), "!room:test.local", "$evt", "\U0001F44D",
+		testActor(testActorID, ""),
+	)
+	if err != nil {
+		t.Fatalf("expected the reaction found on page 1 to be returned despite the later-page error, got %v", err)
+	}
+	if evID != "$reaction_match" {
+		t.Errorf("expected '$reaction_match', got %q", evID)
+	}
+}
+
 // ============================================================================
 // getIntentForRoom admin-join fallback (exercises admin.JoinRoom)
 // ============================================================================
@@ -1359,7 +1603,9 @@ func TestAdminAPI_BuildLastMessage_WithReactions(t *testing.T) {
 		},
 	}
 	a := newAdminTestAdapter(nil)
-	msg, err := a.buildLastMessageWithReactions(events, "!room:test.local")
+	roomID := id.RoomID("!room:test.local")
+	parsed := a.parseMessageEvent(events[1], roomID)
+	msg, err := a.buildLastMessageWithReactions(events, parsed, roomID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1387,7 +1633,7 @@ func TestAdminAPI_BuildLastMessage_NoMessages(t *testing.T) {
 		},
 	}
 	a := newAdminTestAdapter(nil)
-	msg, err := a.buildLastMessageWithReactions(events, "!room:test.local")
+	msg, err := a.buildLastMessageWithReactions(events, nil, "!room:test.local")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1428,7 +1674,9 @@ func TestAdminAPI_BuildLastMessage_ReactionForDifferentMessage(t *testing.T) {
 		},
 	}
 	a := newAdminTestAdapter(nil)
-	msg, err := a.buildLastMessageWithReactions(events, "!room:test.local")
+	roomID := id.RoomID("!room:test.local")
+	parsed := a.parseMessageEvent(events[1], roomID)
+	msg, err := a.buildLastMessageWithReactions(events, parsed, roomID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -28,6 +29,34 @@ type Config struct {
 	RabbitMQ struct {
 		URL string `yaml:"url"`
 	} `yaml:"rabbitmq"`
+
+	FileService struct {
+		// URL is the internal base URL of the Alkemio file-service
+		// (cluster-only). Used to fetch document bytes for outbound media
+		// attachments, e.g. GET {URL}/internal/file/{id}/content.
+		URL string `yaml:"url"`
+		// MaxAttachmentBytes caps how many bytes are read from file-service for a
+		// single outbound attachment. <= 0 means use the built-in default (50 MiB).
+		MaxAttachmentBytes int64 `yaml:"max_attachment_bytes"`
+	} `yaml:"file_service"`
+}
+
+// File-service attachment size defaults (applied when the corresponding config
+// value is <= 0).
+const (
+	// DefaultMaxAttachmentBytes caps how many bytes are read from file-service for
+	// a single outbound attachment (50 MiB).
+	DefaultMaxAttachmentBytes int64 = 50 * 1024 * 1024
+)
+
+// MaxAttachmentBytes returns the configured per-attachment byte cap, falling back
+// to DefaultMaxAttachmentBytes when unset or non-positive. Nil-safe so callers
+// need not guard a nil *Config.
+func (c *Config) MaxAttachmentBytes() int64 {
+	if c != nil && c.FileService.MaxAttachmentBytes > 0 {
+		return c.FileService.MaxAttachmentBytes
+	}
+	return DefaultMaxAttachmentBytes
 }
 
 // Load reads the configuration from config.yaml and overrides it with environment variables.
@@ -62,12 +91,14 @@ func Load() (*Config, error) {
 		}
 	}
 
-	loadEnvVars(cfg)
+	if err := loadEnvVars(cfg); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
 
-func loadEnvVars(cfg *Config) {
+func loadEnvVars(cfg *Config) error {
 	// Override with Env Vars (Consistent with TS Service)
 	if v := os.Getenv("ENVIRONMENT"); v != "" {
 		cfg.App.Environment = v
@@ -78,6 +109,21 @@ func loadEnvVars(cfg *Config) {
 
 	loadMatrixEnv(cfg)
 	loadRabbitMQEnv(cfg)
+	return loadFileServiceEnv(cfg)
+}
+
+func loadFileServiceEnv(cfg *Config) error {
+	if v := os.Getenv("FILE_SERVICE_URL"); v != "" {
+		cfg.FileService.URL = v
+	}
+	if v := os.Getenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid FILE_SERVICE_MAX_ATTACHMENT_BYTES %q: %w", v, err)
+		}
+		cfg.FileService.MaxAttachmentBytes = n
+	}
+	return nil
 }
 
 func loadMatrixEnv(cfg *Config) {

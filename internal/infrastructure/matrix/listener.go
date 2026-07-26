@@ -3,7 +3,9 @@ package matrix
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -70,7 +72,10 @@ func (m *MautrixAdapter) processEvent(evt *event.Event) {
 	}
 
 	switch evt.Type {
-	case event.EventMessage:
+	case event.EventMessage, event.EventSticker:
+		// m.sticker is its own event type but mautrix treats it as equivalent to
+		// m.room.message (MessageEventContent with body/url/info). Route it through
+		// the same handler so an inbound sticker flows as image-like media.
 		m.handleMessageEvent(evt)
 	case event.EventReaction:
 		m.handleReactionEvent(evt)
@@ -94,8 +99,9 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse content
-	content, ok := evt.Content.Raw["body"].(string)
+	// Parse content + attachment via the shared inbound-media helper, which
+	// applies MSC2530 caption semantics and the present-but-empty-body rule.
+	content, attachment, ok := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender))
 	if !ok {
 		m.logger.Warn("Failed to parse message body", "event_id", evt.ID)
 		return
@@ -109,25 +115,14 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 	}
 
 	// Extract thread ID from m.relates_to if present
-	var threadID string
-	if relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{}); ok {
-		// Check for thread relation (MSC3440)
-		if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
-			if eventID, ok := relatesTo["event_id"].(string); ok {
-				threadID = eventID
-			}
-		}
-		// Also check m.in_reply_to for legacy thread support
-		if threadID == "" {
-			if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
-				if eventID, ok := inReplyTo["event_id"].(string); ok {
-					threadID = eventID
-				}
-			}
-		}
+	threadID := extractThreadID(evt)
+
+	var attachments []domain.Attachment
+	if attachment != nil {
+		attachments = []domain.Attachment{*attachment}
 	}
 
-	go func(e *event.Event, c string, s uuid.UUID, tid string) {
+	go func(e *event.Event, c string, s uuid.UUID, tid string, atts []domain.Attachment) {
 		// Resolve Alkemio room ID from Matrix room ID (HTTP call - must be async)
 		alkemioRoomID := m.resolveOrReconcile(context.Background(), e.RoomID)
 		if alkemioRoomID == uuid.Nil {
@@ -137,17 +132,70 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 
 		if err := m.eventHandlers.OnMessage(
 			domain.Message{
-				ID:        e.ID.String(),
-				RoomID:    alkemioRoomID.String(),
-				SenderID:  s,
-				Content:   c,
-				Timestamp: time.UnixMilli(e.Timestamp),
-				ThreadID:  tid,
+				ID:          e.ID.String(),
+				RoomID:      alkemioRoomID.String(),
+				SenderID:    s,
+				Content:     c,
+				Timestamp:   time.UnixMilli(e.Timestamp),
+				ThreadID:    tid,
+				Attachments: atts,
 			},
 		); err != nil {
 			m.logger.Error("Error handling message", "error", err)
 		}
-	}(evt, content, senderUUID, threadID)
+	}(evt, content, senderUUID, threadID, attachments)
+}
+
+// extractThreadID reads the thread/reply parent event id from a message event,
+// used by BOTH the live-sync path (handleMessageEvent) and the read path
+// (parseMessageEvent) so the two can't diverge. It prefers the RAW m.relates_to,
+// which is present on live-sync events AND on Synapse-fetched read-path events —
+// the latter arrive with Content.Parsed == nil (the shared inbound helper reads
+// Content.Raw and never triggers ParseRaw), so reading Parsed alone would
+// silently drop thread linkage on real reads (F1). It falls back to the parsed
+// content's RelatesTo for parsed-only events (e.g. unit-constructed events with
+// no raw map). The explicit m.thread relation (MSC3440) wins over the legacy
+// m.in_reply_to fallback. Returns "" when the event carries no thread/reply.
+func extractThreadID(evt *event.Event) string {
+	if tid := threadIDFromRaw(evt); tid != "" {
+		return tid
+	}
+	return threadIDFromParsed(evt)
+}
+
+// threadIDFromRaw reads the thread/reply parent id from the raw m.relates_to.
+func threadIDFromRaw(evt *event.Event) string {
+	relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
+		if eventID, ok := relatesTo["event_id"].(string); ok {
+			return eventID
+		}
+	}
+	if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
+		if eventID, ok := inReplyTo["event_id"].(string); ok {
+			return eventID
+		}
+	}
+	return ""
+}
+
+// threadIDFromParsed reads the thread/reply parent id from parsed content — the
+// fallback for events that arrive parsed-only (no raw map).
+func threadIDFromParsed(evt *event.Event) string {
+	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
+	if !ok || content.RelatesTo == nil {
+		return ""
+	}
+	if content.RelatesTo.Type == event.RelThread && content.RelatesTo.EventID != "" {
+		return content.RelatesTo.EventID.String()
+	}
+	if content.RelatesTo.InReplyTo != nil {
+		return content.RelatesTo.InReplyTo.EventID.String()
+	}
+	return ""
 }
 
 // isMessageEdit checks if an event is a message edit (m.replace relation).
@@ -191,27 +239,13 @@ func (m *MautrixAdapter) handleMessageEditEvent(evt *event.Event) {
 		newContent, _ = evt.Content.Raw["body"].(string)
 	}
 
-	// Extract thread ID if present
-	// Check for explicit m.thread relation first (preferred), then fall back to m.in_reply_to
-	var threadID *id.EventID
-	if relatesTo != nil {
-		// Check for explicit thread relation first (MSC3440)
-		if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
-			if threadEventID, ok := relatesTo["event_id"].(string); ok {
-				tid := id.EventID(threadEventID)
-				threadID = &tid
-			}
-		}
-		// Fallback to m.in_reply_to if no explicit thread relation
-		if threadID == nil {
-			if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
-				if threadEventID, ok := inReplyTo["event_id"].(string); ok {
-					tid := id.EventID(threadEventID)
-					threadID = &tid
-				}
-			}
-		}
-	}
+	// Extract thread ID via the shared *id.EventID helper (single source of truth
+	// for the m.thread → event_id / m.in_reply_to → event_id parse; returns nil when
+	// there is no thread/reply). Note this is distinct from originalEventID above
+	// (the m.replace target — the edited message id): for an m.replace event rel_type
+	// is "m.replace", so the m.thread branch never matches and this falls through to
+	// the m.in_reply_to fallback.
+	threadID := m.extractThreadIDFromMessage(evt)
 
 	go func(e *event.Event, sender uuid.UUID, origID, content string, tid *id.EventID) {
 		ctx := context.Background()
@@ -341,7 +375,9 @@ func (m *MautrixAdapter) processRedactedEvent(e *event.Event, s uuid.UUID, redac
 	switch originalEvt.Type {
 	case event.EventReaction:
 		m.handleReactionRedaction(e, s, redactedID, alkemioRoomID, originalEvt)
-	case event.EventMessage:
+	case event.EventMessage, event.EventSticker:
+		// A sticker is a message; redacting one preserves its thread linkage the
+		// same way a redacted m.room.message does (the default branch would drop it).
 		threadID := m.extractThreadIDFromMessage(originalEvt)
 		m.emitMessageRedaction(e, s, redactedID, alkemioRoomID, reason, threadID)
 	default:
@@ -371,26 +407,17 @@ func (m *MautrixAdapter) handleReactionRedaction(e *event.Event, s uuid.UUID, re
 	}
 }
 
-// extractThreadIDFromMessage extracts the thread ID from a message event if present.
-// Checks for explicit m.thread relation first (MSC3440), then falls back to m.in_reply_to.
+// extractThreadIDFromMessage extracts the thread ID from a message event if present,
+// as an *id.EventID (nil when the event carries no thread/reply). It uses the
+// same raw-preferring extractor as live sync and reads, because GetEvent responses
+// can carry m.relates_to only in Content.Raw.
 func (m *MautrixAdapter) extractThreadIDFromMessage(originalEvt *event.Event) *id.EventID {
-	content, ok := originalEvt.Content.Parsed.(*event.MessageEventContent)
-	if !ok {
+	tid := extractThreadID(originalEvt)
+	if tid == "" {
 		return nil
 	}
-	if content.RelatesTo == nil {
-		return nil
-	}
-	// Check for explicit thread relation first (MSC3440)
-	if content.RelatesTo.Type == event.RelThread && content.RelatesTo.EventID != "" {
-		eventID := content.RelatesTo.EventID
-		return &eventID
-	}
-	// Fallback to m.in_reply_to
-	if content.RelatesTo.InReplyTo != nil {
-		return &content.RelatesTo.InReplyTo.EventID
-	}
-	return nil
+	eventID := id.EventID(tid)
+	return &eventID
 }
 
 // emitMessageRedaction emits a message redacted event.
@@ -799,6 +826,243 @@ func (m *MautrixAdapter) isSpaceRoom(ctx context.Context, roomID id.RoomID) (boo
 	}
 	roomType, _ := content["type"].(string)
 	return roomType == "m.space", nil
+}
+
+// Media m.room.message msgtypes carrying an attachment (mxc:// URL + file info).
+// Shared by the inbound path (mediaMsgTypes) and the outbound MIME→msgtype
+// mapping (mediaMsgType in mautrix.go) so the two never drift.
+const (
+	msgTypeImage = "m.image"
+	msgTypeVideo = "m.video"
+	msgTypeAudio = "m.audio"
+	msgTypeFile  = "m.file"
+)
+
+// mediaMsgTypes is the set of m.room.message msgtypes that carry a media
+// attachment (an mxc:// URL + file info).
+var mediaMsgTypes = map[string]struct{}{
+	msgTypeImage: {},
+	msgTypeFile:  {},
+	msgTypeVideo: {},
+	msgTypeAudio: {},
+}
+
+// extractAttachment surfaces a raw media reference from a message event, or nil
+// if the event is not a media message (or carries neither an mxc URL nor a
+// document id). It reads the event's raw content:
+//   - url(mxc) → MediaID (the Synapse media id; the server's re-home key)
+//   - info → mimetype/size/w/h
+//   - io.alkemio.document_id → DocumentID (only when trustDocumentID is set)
+//
+// trustDocumentID must be true only when the event sender is within the
+// adapter's own appservice namespace (see isOwnAppserviceUser). The
+// io.alkemio.document_id breadcrumb is attacker-influenceable — any in-room
+// client could stamp it on an event — so it is authoritative only on echoes of
+// our own outbound media, which are sent by our appservice ghosts. For any
+// other sender the DocumentID is dropped and only MediaID is surfaced, routing
+// the event down the Element-origin (re-home) path.
+//
+// An m.sticker (event.EventSticker) is handled as image media: it carries the
+// same url+info shape as an m.image but has NO msgtype field, so the
+// mediaMsgTypes gate is bypassed for stickers. A sticker with no info.mimetype
+// leaves att.MimeType empty — the adapter does not guess (a sticker may be
+// webp/gif/Lottie, not PNG); the true content-type is resolved downstream at
+// re-home, where file-service stores the actual blob content-type.
+//
+// The adapter never resolves these refs — it only surfaces them.
+func extractAttachment(evt *event.Event, trustDocumentID bool) *domain.Attachment {
+	raw := evt.Content.Raw
+	if raw == nil {
+		return nil
+	}
+	isSticker := evt.Type == event.EventSticker
+	if !isSticker {
+		msgtype, _ := raw["msgtype"].(string)
+		if _, ok := mediaMsgTypes[msgtype]; !ok {
+			return nil
+		}
+	}
+
+	att := &domain.Attachment{DisplayName: attachmentDisplayName(raw)}
+
+	// url (mxc://<server>/<media_id>) → MediaID
+	if urlStr, ok := raw["url"].(string); ok && urlStr != "" {
+		if uri, err := id.ParseContentURI(urlStr); err == nil {
+			att.MediaID = uri.FileID
+		}
+	}
+
+	applyMediaInfo(att, raw)
+
+	// io.alkemio.document_id → DocumentID, but only from a trusted (own
+	// appservice) sender. Our own outbound media already lives in file-service as
+	// document D, and the server routes echoes (DocumentID present) to the
+	// *coalesce* path — stamp externalReference=media_id onto D and drop the
+	// provider's staging twin — which needs BOTH refs, so MediaID stays populated
+	// alongside DocumentID. The server distinguishes echo (DocumentID present →
+	// coalesce) from Element-origin (DocumentID absent → re-home) by DocumentID,
+	// never by MediaID, so surfacing both is unambiguous.
+	if trustDocumentID {
+		if docID, ok := raw["io.alkemio.document_id"].(string); ok && docID != "" {
+			att.DocumentID = docID
+		}
+	}
+
+	// A media msgtype with neither a parseable mxc URL nor a surfaced document id
+	// carries no reference the server can act on — drop it rather than emit a
+	// dead attachment record.
+	if att.MediaID == "" && att.DocumentID == "" {
+		return nil
+	}
+
+	return att
+}
+
+// attachmentDisplayName resolves a media event's display name. MSC2530: modern
+// media events carry the filename in a dedicated top-level `filename` field and
+// use `body` for a human caption. Prefer `filename`; fall back to `body` for
+// legacy media where the body IS the filename.
+func attachmentDisplayName(raw map[string]interface{}) string {
+	if filename, ok := raw["filename"].(string); ok && filename != "" {
+		return filename
+	}
+	if body, ok := raw["body"].(string); ok {
+		return body
+	}
+	return ""
+}
+
+// applyMediaInfo copies the media event's info block (mime/size/dimensions) onto
+// the attachment. A missing or malformed info block leaves the fields zeroed.
+func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
+	info, ok := raw["info"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	if mime, ok := info["mimetype"].(string); ok {
+		att.MimeType = mime
+	}
+	if size, ok := rawInt64(info["size"]); ok {
+		att.Size = size
+	}
+	att.Width = rawIntPtr(info["w"])
+	att.Height = rawIntPtr(info["h"])
+}
+
+// extractInboundMessage computes the inbound message Content and optional media
+// attachment for an m.room.message event, applying MSC2530 caption semantics. It
+// is the single source of truth shared by the live-sync path
+// (handleMessageEvent) and the read path (parseMessageEvent), so the two can't
+// diverge (F10). trustDocumentID gates the io.alkemio.document_id breadcrumb
+// (see extractAttachment / isOwnAppserviceUser).
+//
+// ok is false only when the event carries neither a present body nor an
+// attachment — the caller then drops the event. A present-but-empty body ("")
+// IS forwarded (ok=true, empty Content): only a genuinely absent/non-string
+// body with no attachment is dropped (F3/F4).
+//
+// For media, body is surfaced only when it differs from the resolved attachment
+// display name. Per the Matrix media-captions spec (MSC2530), a caption exists
+// only when body != filename; when body == filename there is NO caption (body is
+// just the filename), so a body equal to the display name is dropped to avoid
+// rendering the filename as a duplicate text line. This also covers legacy media
+// where body IS the filename.
+//
+// A sticker's body is ALWAYS alt-text describing the image, never message text:
+// it feeds only the attachment DisplayName, so Content is forced empty. A normal
+// sticker (url present) → attachment + empty Content. A url-less sticker (e.g.
+// E2EE content.file, or a non-parseable url) has no extractable media and no
+// surface-able Content, so it returns ok=false. That ok=false is what drops it on
+// the LIVE-SYNC path (handleMessageEvent, which has no isBlankMessage guard). On
+// the read/scan paths parseMessageEvent discards ok, so the url-less sticker
+// becomes a blank (empty-content, no-attachment) Message instead — which
+// isBlankMessage then excludes from timeline/scan results.
+func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content string, attachment *domain.Attachment, ok bool) {
+	body, bodyPresent := inboundBody(evt)
+	attachment = extractAttachment(evt, trustDocumentID)
+
+	if !bodyPresent && attachment == nil {
+		return "", nil, false
+	}
+
+	if evt.Type == event.EventSticker {
+		// A sticker is media; its body is alt-text, never Content. With no
+		// extractable attachment (url-less/E2EE), there is nothing to surface.
+		if attachment == nil {
+			return "", nil, false
+		}
+		return "", attachment, true
+	}
+
+	if attachment != nil && body == attachment.DisplayName {
+		body = ""
+	}
+	return body, attachment, true
+}
+
+// inboundBody returns the message body and whether a body is present. A body is
+// present when the raw event carries a "body" string (even the empty string — a
+// present-but-empty body is forwarded), or when the parsed content yields a
+// non-empty body (covers events that arrive parsed but without a raw map, e.g.
+// in unit tests). This mirrors develop's `, ok` semantics.
+func inboundBody(evt *event.Event) (string, bool) {
+	if evt.Content.Raw != nil {
+		if b, ok := evt.Content.Raw["body"].(string); ok {
+			return b, true
+		}
+	}
+	if c, ok := parseEventContent[event.MessageEventContent](evt); ok && c.Body != "" {
+		return c.Body, true
+	}
+	return "", false
+}
+
+// isOwnAppserviceUser reports whether userID is a user the adapter's own
+// appservice controls on our homeserver: a UUID-localpart ghost (or the bot,
+// which is itself a UUID localpart) on the configured homeserver domain. This
+// is the trust gate for the io.alkemio.document_id breadcrumb — only echoes
+// from our ghosts may surface an authoritative DocumentID.
+func (m *MautrixAdapter) isOwnAppserviceUser(userID id.UserID) bool {
+	if userID.Homeserver() != m.idMapper.HomeserverDomain() {
+		return false
+	}
+	return m.idMapper.AlkemioActorID(userID) != uuid.Nil
+}
+
+// rawInt64 coerces a JSON-decoded numeric value (float64 from encoding/json, or
+// an int produced by in-process construction) to an int64. It only carries
+// sizes/dimensions, which are non-negative: a NaN/Inf, negative, or int64-range-
+// overflowing float (e.g. a hostile info.size of 1e30) is rejected as (0, false)
+// rather than surfacing an implementation-defined garbage/negative int64. The
+// upper bound is `>=` because float64(math.MaxInt64) rounds UP to 2^63, so exactly
+// 2^63 would otherwise pass and int64(2^63) wraps to MinInt64.
+func rawInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n >= float64(math.MaxInt64) {
+			return 0, false
+		}
+		return int64(n), true
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case json.Number:
+		// Int64 already errors on out-of-range values; keep returning false there.
+		i, err := n.Int64()
+		return i, err == nil
+	default:
+		return 0, false
+	}
+}
+
+// rawIntPtr returns a pointer to the int value of v, or nil if v is not numeric.
+func rawIntPtr(v any) *int {
+	if i, ok := rawInt64(v); ok {
+		x := int(i)
+		return &x
+	}
+	return nil
 }
 
 // getRoomNameAndTopic fetches the room name and topic from state events.

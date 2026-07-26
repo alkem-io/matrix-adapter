@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -723,9 +725,12 @@ func (m *MautrixAdapter) markRoomAsReadForUsers(
 	)
 }
 
-// SendMessage sends a message to a room.
+// SendMessage sends a message to a room. A non-empty text body is sent as a
+// single m.text event; each attachment is sent as its own media event
+// (m.image/m.file/...). Returns the primary event ID (the text event if there
+// is text, otherwise the first media event).
 func (m *MautrixAdapter) SendMessage(
-	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string,
+	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment,
 ) (id.EventID, error) {
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
@@ -733,11 +738,60 @@ func (m *MautrixAdapter) SendMessage(
 	}
 	intent := m.as.Intent(userID)
 
-	resp, err := intent.SendText(ctx, roomID, content)
-	if err != nil {
-		return "", fmt.Errorf("failed to send message: %w", err)
+	var primaryEventID id.EventID
+	if content != "" {
+		resp, err := intent.SendText(ctx, roomID, content)
+		if err != nil {
+			return "", fmt.Errorf("failed to send message: %w", err)
+		}
+		primaryEventID = resp.EventID
 	}
-	return resp.EventID, nil
+
+	return m.fanOutAttachments(ctx, intent, roomID, attachments, "", primaryEventID)
+}
+
+// fanOutAttachments sends each attachment as its own independent media event.
+// There is no atomicity across the fan-out — Matrix/Element have none either:
+// each attachment is its own event/message, exactly like an Element multi-image
+// send. primaryEventID is the text event's id (empty for an attachment-only
+// message, in which case the first attachment becomes the primary); it is
+// returned resolved.
+//
+// Partial-success behaviour: if an attachment fails AFTER something has already
+// been delivered to the room (the text event, or an earlier attachment —
+// primaryEventID != ""), we log a warning and return the delivered primary with
+// a nil error. Collapsing that to a total failure would make the sender's
+// already-visible text vanish and a server retry duplicate it. Only when nothing
+// has been delivered yet (primaryEventID == "" — a text-less message whose FIRST
+// attachment fails) do we return the error. Either way we stop on first failure
+// (later attachments are not attempted), matching an Element send where a later
+// image fails but the message stays.
+//
+// The whole fan-out (all N<=10 attachments) is fetched, uploaded, and sent
+// SEQUENTIALLY within this single send's HandleSendMessage queue-handler
+// invocation, on purpose: sequential order preserves the attachments' visible
+// order in the room (events are ordered by send). Parallelizing the uploads
+// would still require an ordered send afterward for marginal gain on a bounded
+// (<=10) attachment list.
+func (m *MautrixAdapter) fanOutAttachments(
+	ctx context.Context, intent intentAPI, roomID id.RoomID,
+	attachments []domain.Attachment, threadID, primaryEventID id.EventID,
+) (id.EventID, error) {
+	for i := range attachments {
+		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID)
+		if err != nil {
+			if primaryEventID == "" {
+				return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
+			}
+			m.logger.Warn("Attachment fan-out partial failure; primary already delivered",
+				"attachment", i+1, "total", len(attachments), "error", err)
+			return primaryEventID, nil
+		}
+		if primaryEventID == "" {
+			primaryEventID = eventID
+		}
+	}
+	return primaryEventID, nil
 }
 
 // ============================================================================
@@ -878,9 +932,13 @@ func (m *MautrixAdapter) setOrRedactState(
 // Message & Reaction Operations
 // ============================================================================
 
-// SendReply sends a reply to a message.
+// SendReply sends a reply to a message. A non-empty text body is sent as a
+// single threaded m.text event; each attachment is sent as its own threaded
+// media event. Returns the primary event ID (the text event if there is text,
+// otherwise the first media event).
 func (m *MautrixAdapter) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
+	attachments []domain.Attachment,
 ) (id.EventID, error) {
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
@@ -888,27 +946,368 @@ func (m *MautrixAdapter) SendReply(
 	}
 	intent := m.as.Intent(userID)
 
-	msgContent := event.MessageEventContent{
-		MsgType: event.MsgText,
-		Body:    content,
-		RelatesTo: &event.RelatesTo{
-			Type:    event.RelThread,
-			EventID: threadID,
-			InReplyTo: &event.InReplyTo{
-				EventID: threadID,
-			},
-			IsFallingBack: true,
-		},
+	var primaryEventID id.EventID
+	if content != "" {
+		msgContent := event.MessageEventContent{
+			MsgType:   event.MsgText,
+			Body:      content,
+			RelatesTo: threadRelation(threadID),
+		}
+
+		resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, &msgContent)
+		if err != nil {
+			return "", fmt.Errorf("failed to send reply: %w", err)
+		}
+		primaryEventID = resp.EventID
 	}
 
-	resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, &msgContent)
-	if err != nil {
-		return "", fmt.Errorf("failed to send reply: %w", err)
-	}
-	return resp.EventID, nil
+	return m.fanOutAttachments(ctx, intent, roomID, attachments, threadID, primaryEventID)
 }
 
-// RedactEvent redacts an event.
+// ============================================================================
+// Media (byte bridge) — stateless: fetch from file-service, push to Synapse
+// ============================================================================
+
+var errAttachmentTooLarge = errors.New("attachment exceeds max size")
+
+// countingCapReader streams from r, tracking bytes read and failing once more
+// than max bytes have been read so an oversized document fails the upload
+// instead of being buffered. n is the exact number of bytes streamed.
+//
+// A known-length oversize document is rejected up front (before streaming). An
+// unknown-length (chunked) document that only reveals it is oversize mid-stream
+// will have streamed up to max bytes to Synapse before this trips; those bytes
+// are unreferenced by any event and are reclaimed by Synapse media retention —
+// an accepted bounded cost of streaming, not worth a pre-buffering pass.
+type countingCapReader struct {
+	r      io.Reader
+	max, n int64
+}
+
+func (c *countingCapReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	if c.n > c.max {
+		return n, errAttachmentTooLarge
+	}
+	return n, err
+}
+
+// sendAttachment fetches a document's bytes from file-service, uploads them to
+// the homeserver, and sends a media event carrying the mxc URL, file info, and
+// the io.alkemio.document_id breadcrumb. When threadID is non-empty the event
+// is threaded under it.
+func (m *MautrixAdapter) sendAttachment(
+	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment,
+	threadID id.EventID,
+) (id.EventID, error) {
+	// The streamed fetch+upload (openDocumentFetch → UploadMedia, including the
+	// resp.Body reads UploadMedia drives) is bounded by a size-proportional
+	// wall-clock deadline: the AMQP/watermill message context carries NO deadline,
+	// and processMessage runs messages SEQUENTIALLY in one goroutine, so a mid-body
+	// stall from file-service would otherwise wedge the entire room-ops consumer.
+	// On deadline the fetch request context cancels, unblocking any parked body
+	// read, and the deferred resp.Body.Close() cleans up.
+	maxBytes := m.cfg.MaxAttachmentBytes()
+	mediaCtx, cancel := context.WithTimeout(ctx, mediaStreamTimeout(maxBytes))
+	defer cancel()
+
+	resp, err := m.openDocumentFetch(mediaCtx, att.DocumentID)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Use the most specific media type available. The server-declared att.MimeType
+	// is authoritative when specific; fall back to the file-service response
+	// Content-Type when att is generic/empty (some object stores serve
+	// application/octet-stream regardless of the real type). The FULL resolved type
+	// (with any params such as "; charset=utf-8") drives the upload Content-Type so
+	// charset survives for text; the BARE type (params stripped) drives the event
+	// msgtype and info.mimetype, which are conventionally unparameterized.
+	contentType := resolveMediaMime(resp.Header.Get("Content-Type"), att.MimeType)
+
+	if resp.ContentLength > 0 && resp.ContentLength > maxBytes {
+		return "", attachmentTooLargeError(att.DocumentID, maxBytes)
+	}
+	reader := &countingCapReader{r: resp.Body, max: maxBytes}
+	// Upload via the SENDER ghost intent (not the appservice bot), so the media
+	// blob is owned by the acting user's account — attributing quota/retention
+	// correctly and avoiding a single-account purge stripping every bridged blob.
+	//
+	// Always upload with an unknown (streamed/chunked) length rather than
+	// trusting file-service's declared Content-Length: if the real body is
+	// shorter than the declared length, a declared upload would EOF early and
+	// fail. countingCapReader still enforces the per-attachment max, and the
+	// declared > cap case is already rejected above.
+	//
+	// mediaCtx (size-proportional deadline) bounds the upload's body reads too.
+	up, err := intent.UploadMedia(mediaCtx, mautrix.ReqUploadMedia{
+		Content:       reader,
+		ContentLength: -1,
+		ContentType:   contentType,
+	})
+	if err != nil {
+		if errors.Is(err, errAttachmentTooLarge) || reader.n > maxBytes {
+			return "", attachmentTooLargeError(att.DocumentID, maxBytes)
+		}
+		return "", fmt.Errorf("failed to upload media: %w", err)
+	}
+	// info.size is the bytes actually streamed, never the caller-declared att.Size.
+	// The bare type (params stripped) is used for info.mimetype and msgtype.
+	content := buildMediaContent(att, up.ContentURI, baseType(contentType), reader.n, threadID)
+	sent, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content)
+	if err != nil {
+		return "", fmt.Errorf("failed to send media event: %w", err)
+	}
+	return sent.EventID, nil
+}
+
+func attachmentTooLargeError(documentID string, maxBytes int64) error {
+	return fmt.Errorf("document %s exceeds max attachment size of %d bytes", documentID, maxBytes)
+}
+
+// fileServiceFetchTimeout bounds connection establishment and the wait for
+// file-service response headers. The streamed response body is additionally
+// bounded by mediaStreamTimeout (a size-proportional wall-clock deadline applied
+// via the fetch context in sendAttachment), so a mid-body stall cannot hang the
+// send indefinitely.
+const fileServiceFetchTimeout = 60 * time.Second
+
+// Streamed media (fetch from file-service → upload to Synapse) is bounded by a
+// size-proportional deadline: a stalled body must not wedge the single
+// sequential watermill consumer. fileServiceFetchTimeout is the floor (covers
+// connect + header wait); large bodies get proportional extra time at an assumed
+// minimum throughput.
+const fileServiceMinThroughputBytesPerSec = 1 << 20 // 1 MiB/s
+
+func mediaStreamTimeout(maxBytes int64) time.Duration {
+	secs := maxBytes / fileServiceMinThroughputBytesPerSec
+	// Clamp the size-proportional part to a sane ceiling: an absurd config (e.g. a
+	// petabyte FILE_SERVICE_MAX_ATTACHMENT_BYTES) would otherwise overflow int64
+	// nanoseconds in the Duration multiply, wrap negative, and make every send fail
+	// on a negative context deadline.
+	const maxStreamSeconds = 3600 // 1h ceiling
+	if secs > maxStreamSeconds {
+		secs = maxStreamSeconds
+	}
+	return fileServiceFetchTimeout + time.Duration(secs)*time.Second
+}
+
+func newFileServiceHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
+	return &http.Client{Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: fileServiceFetchTimeout, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+		ExpectContinueTimeout: time.Second,
+	}}
+}
+
+// fileServiceHTTPClient bounds connection phases and header wait without a
+// Client.Timeout, which would also cap reading a large body while it is streamed
+// onward to Synapse.
+var fileServiceHTTPClient = newFileServiceHTTPClient(fileServiceFetchTimeout)
+
+// openDocumentFetch performs the GET against the file-service internal content
+// endpoint (GET {FILE_SERVICE_URL}/internal/file/{id}/content) and returns the
+// response with its headers available and the body unread so sendAttachment can
+// stream it directly to the homeserver.
+// A non-200 response is turned into an error here (and its body closed) so no
+// budget is reserved for a failed fetch. The caller MUST close resp.Body on the
+// success path. Connection setup and response-header wait are transport-bounded;
+// reading the success body is bounded by the request context.
+func (m *MautrixAdapter) openDocumentFetch(ctx context.Context, documentID string) (*http.Response, error) {
+	if m.cfg == nil || m.cfg.FileService.URL == "" {
+		return nil, fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
+	}
+	baseURL := m.cfg.FileService.URL
+	// Defense-in-depth on the internal fetch path: document ids are UUIDs, so
+	// validate the shape and path-escape before interpolating into the URL.
+	if _, err := uuid.Parse(documentID); err != nil {
+		return nil, fmt.Errorf("invalid document id %q: %w", documentID, err)
+	}
+	endpoint := fmt.Sprintf("%s/internal/file/%s/content",
+		strings.TrimRight(baseURL, "/"), url.PathEscape(documentID))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build file-service request: %w", err)
+	}
+
+	resp, err := fileServiceHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch document %s from file-service: %w", documentID, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("file-service returned status %d fetching document %s", resp.StatusCode, documentID)
+	}
+	return resp, nil
+}
+
+// buildMediaContent constructs the raw event content for a media message:
+// msgtype + body + url(mxc) + info, plus the io.alkemio.document_id breadcrumb
+// used for lookup-free read-translation of our own outbound media. A map is
+// used (rather than event.MessageEventContent) so custom fields can be set as
+// top-level event properties.
+// bareMimeType is the resolved media type with any parameters stripped
+// (see baseType) — Matrix info.mimetype and msgtype are conventionally bare.
+func buildMediaContent(
+	att domain.Attachment, mxc id.ContentURI, bareMimeType string, size int64,
+	threadID id.EventID,
+) map[string]any {
+	info := map[string]any{
+		"mimetype": bareMimeType,
+		"size":     size,
+	}
+	if att.Width != nil {
+		info["w"] = *att.Width
+	}
+	if att.Height != nil {
+		info["h"] = *att.Height
+	}
+
+	// HandleSendMessage rejects empty document ids, and openDocumentFetch validates
+	// the UUID before the media content is built, so this breadcrumb is never blank.
+	content := map[string]any{
+		"msgtype":                mediaMsgType(bareMimeType),
+		"body":                   att.DisplayName,
+		"url":                    mxc.String(),
+		"info":                   info,
+		"io.alkemio.document_id": att.DocumentID,
+	}
+
+	if threadID != "" {
+		content["m.relates_to"] = threadRelation(threadID)
+	}
+
+	return content
+}
+
+// threadRelation is the single typed construction used by text and media
+// replies, keeping their MSC3440 relation shape identical.
+func threadRelation(threadID id.EventID) *event.RelatesTo {
+	return &event.RelatesTo{
+		Type:    event.RelThread,
+		EventID: threadID,
+		InReplyTo: &event.InReplyTo{
+			EventID: threadID,
+		},
+		IsFallingBack: true,
+	}
+}
+
+// resolveMediaMime picks the most specific media type and returns it in
+// canonical form: a lowercased "type/subtype" with any meaningful parameters
+// (e.g. "; charset=utf-8") preserved. The server-declared att.MimeType is
+// authoritative for the base TYPE when specific; otherwise the file-service
+// response Content-Type is used. Empty, params-only, malformed, and
+// application/octet-stream values are treated as non-specific. The result drives
+// the upload Content-Type, the Matrix msgtype, and info.mimetype uniformly so
+// they never disagree — and because the type is lowercased, case-insensitive
+// inputs (e.g. "Image/JPEG") still classify correctly in mediaMsgType.
+//
+// One refinement when att is specific: if file-service reports the SAME base type
+// but WITH parameters att lacks (server declares "text/plain", file-service
+// serves "text/plain; charset=utf-8"), prefer the response so the charset
+// survives to the upload Content-Type. If the base types DIFFER, att still wins
+// (a genuine server override).
+func resolveMediaMime(responseContentType, attMimeType string) string {
+	att := normalizeMediaType(attMimeType)
+	resp := normalizeMediaType(responseContentType)
+	if isSpecificMediaType(att) {
+		// att carries no params (att == baseType(att)) but resp is the same base
+		// type with params → keep resp's fuller form so charset isn't dropped.
+		if isSpecificMediaType(resp) && baseType(resp) == baseType(att) && att == baseType(att) && resp != att {
+			return resp
+		}
+		return att
+	}
+	if isSpecificMediaType(resp) {
+		return resp
+	}
+	if att != "" {
+		return att
+	}
+	if resp != "" {
+		return resp
+	}
+	return "application/octet-stream"
+}
+
+// normalizeMediaType returns a lowercased, canonical "type/subtype[; params]"
+// for a Content-Type, or "" when there is no valid media type. Valid input is
+// canonicalized (preserving parameters such as charset). When only a PARAMETER
+// is malformed, the bare "type/subtype" is recovered and RE-PARSED with
+// mime.ParseMediaType so a malformed BASE type (bad token chars, whitespace,
+// extra segments, control characters) still collapses to "" rather than leaking
+// into the upload Content-Type header or the event's info.mimetype.
+func normalizeMediaType(contentType string) string {
+	if mediatype, params, err := mime.ParseMediaType(contentType); err == nil && validMediaType(mediatype) {
+		return mime.FormatMediaType(mediatype, params)
+	}
+	// Parse failed — possibly only a parameter was malformed. Recover the base
+	// (before the first ';') and re-validate it via ParseMediaType.
+	base := contentType
+	if i := strings.IndexByte(base, ';'); i >= 0 {
+		base = base[:i]
+	}
+	if mediatype, _, err := mime.ParseMediaType(base); err == nil && validMediaType(mediatype) {
+		return mediatype
+	}
+	return ""
+}
+
+// validMediaType reports whether t is "type/subtype" with a non-empty subtype
+// (mime.ParseMediaType accepts a bare type like "image" with no subtype).
+func validMediaType(t string) bool {
+	slash := strings.IndexByte(t, '/')
+	return slash > 0 && slash < len(t)-1
+}
+
+// baseType strips any parameters (e.g. "; charset=utf-8") from a media type,
+// returning the bare "type/subtype". Matrix FileInfo.mimetype and the event
+// msgtype are conventionally a bare type — a parameterized value can defeat a
+// client's exact-match preview/thumbnail logic — whereas the upload Content-Type
+// must keep params (charset) intact.
+func baseType(s string) string {
+	if i := strings.IndexByte(s, ';'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return strings.TrimSpace(s)
+}
+
+// isSpecificMediaType reports whether a normalized media type is more specific
+// than application/octet-stream. normalized is "" or "type/subtype[; params]".
+func isSpecificMediaType(normalized string) bool {
+	base := baseType(normalized)
+	return base != "" && base != "application/octet-stream"
+}
+
+// mediaMsgType maps a MIME type to the appropriate Matrix message msgtype.
+func mediaMsgType(mime string) string {
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		return msgTypeImage
+	case strings.HasPrefix(mime, "video/"):
+		return msgTypeVideo
+	case strings.HasPrefix(mime, "audio/"):
+		return msgTypeAudio
+	default:
+		return msgTypeFile
+	}
+}
+
+// RedactEvent redacts (deletes) an event from a room.
+//
+// A media message fans out to a primary event plus one event per attachment;
+// deleting the message redacts only the primary. The attachment events are not
+// cascade-redacted here (a stateless adapter cannot reliably rediscover them) —
+// they are unreferenced media reclaimed by Synapse media retention.
 func (m *MautrixAdapter) RedactEvent(
 	ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string,
 ) error {
@@ -918,9 +1317,7 @@ func (m *MautrixAdapter) RedactEvent(
 	}
 	intent := m.as.Intent(userID)
 
-	req := mautrix.ReqRedact{
-		Reason: reason,
-	}
+	req := mautrix.ReqRedact{Reason: reason}
 
 	_, err = intent.RedactEvent(ctx, roomID, eventID, req)
 	if err != nil {
@@ -955,6 +1352,11 @@ func (m *MautrixAdapter) SendReaction(
 }
 
 // GetMessage retrieves a specific message event.
+//
+// It routes through parseMessageEvent — the same path as GetRoomMessages /
+// GetLastMessage / GetThreadMessages — so a media event returns its attachment
+// (mxc→MediaID, io.alkemio.document_id→DocumentID) consistently, rather than
+// just its body text.
 func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, eventID id.EventID) (
 	*domain.Message, error,
 ) {
@@ -963,59 +1365,50 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 		return nil, fmt.Errorf("failed to get event: %w", err)
 	}
 
-	// Try to parse using generic helper
-	if content, ok := parseEventContent[event.MessageEventContent](evt); ok {
-		msg := &domain.Message{
-			ID:             evt.ID.String(),
-			RoomID:         roomID.String(),
-			Content:        content.Body,
-			SenderMatrixID: evt.Sender.String(),
-			Timestamp:      time.UnixMilli(evt.Timestamp),
-		}
-		// Extract thread ID from RelatesTo (same logic as fallback path)
-		if content.RelatesTo != nil && content.RelatesTo.InReplyTo != nil {
-			msg.ThreadID = content.RelatesTo.InReplyTo.EventID.String()
-		}
-		return msg, nil
-	}
-
-	// Fallback: try raw JSON body
-	return m.parseMessageFromRaw(evt, roomID)
-}
-
-// parseMessageFromRaw extracts a message from raw event content as a fallback.
-func (m *MautrixAdapter) parseMessageFromRaw(evt *event.Event, roomID id.RoomID) (*domain.Message, error) {
-	rawBody, ok := evt.Content.Raw["body"].(string)
-	if !ok {
+	// parseMessageEvent is the SINGLE authority on "is there usable content or an
+	// attachment": it runs extractInboundMessage, which surfaces an attachment via
+	// BOTH the mxc url and the trusted io.alkemio.document_id breadcrumb and applies
+	// the msgtype rules. m.room.message and m.sticker are accepted (a sticker
+	// surfaces as image media with its attachment); a non-message event (reaction,
+	// redaction, ...) yields nil and errors. The server tracks message ids
+	// distinctly, so message.get is not called with such ids.
+	msg := m.parseMessageEvent(evt, roomID)
+	if msg == nil {
 		return nil, fmt.Errorf("event is not a message")
 	}
 
-	msg := &domain.Message{
-		ID:             evt.ID.String(),
-		RoomID:         roomID.String(),
-		Content:        rawBody,
-		SenderMatrixID: evt.Sender.String(),
-		Timestamp:      time.UnixMilli(evt.Timestamp),
+	// parseMessageEvent surfaced no usable content or attachment. That is valid for
+	// a bodyless/redacted event (an empty-content Message), but a present-but-non-
+	// string body with nothing usable is a malformed event, not a blank message.
+	// Deferring to parseMessageEvent here avoids replicating extractAttachment's
+	// media-detection (url + document_id + msgtype) in the malformed check.
+	// isBlankMessage is the same "nothing renderable" test the scanning read paths
+	// use, so all read paths share one blank-message definition.
+	if isBlankMessage(msg) && malformedMessageBody(evt) {
+		return nil, fmt.Errorf("event is not a message")
 	}
-
-	// Try to extract thread info from raw content
-	msg.ThreadID = m.extractThreadIDFromRaw(evt)
-
 	return msg, nil
 }
 
-// extractThreadIDFromRaw extracts thread ID from raw event content.
-func (m *MautrixAdapter) extractThreadIDFromRaw(evt *event.Event) string {
-	relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{})
-	if !ok {
-		return ""
+// malformedMessageBody reports whether a message-like event (m.room.message or
+// m.sticker) carries a "body" that is present but not a string. An ABSENT body is
+// NOT malformed: a bodyless/redacted message event still resolves to an
+// empty-content Message.
+//
+// This is a PURE body check — it does NOT inspect url/mxc/msgtype/document_id.
+// Whether the event nonetheless carries usable media is decided by parseMessageEvent
+// (the single source of truth); GetMessage only consults this once parseMessageEvent
+// has surfaced no content and no attachment.
+func malformedMessageBody(evt *event.Event) bool {
+	if !isMessageLikeEvent(evt) || evt.Content.Raw == nil {
+		return false
 	}
-	inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{})
-	if !ok {
-		return ""
+	raw, present := evt.Content.Raw["body"]
+	if !present {
+		return false
 	}
-	threadID, _ := inReplyTo["event_id"].(string)
-	return threadID
+	_, isString := raw.(string)
+	return !isString
 }
 
 // parseEventContent attempts to parse event content, trying Parsed first then ParseRaw.
@@ -1039,17 +1432,28 @@ func parseEventContent[T any](evt *event.Event) (*T, bool) {
 func (m *MautrixAdapter) GetReactionEventID(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID, emoji string, senderID domain.Actor,
 ) (id.EventID, error) {
-	chunk, err := m.admin.GetRelations(ctx, roomID, eventID, event.RelAnnotation, event.EventReaction)
-	if err != nil {
-		return "", fmt.Errorf("failed to get relations: %w", err)
-	}
+	// The shared GetRelations paginator has no early-stop by design: it is a single
+	// shared paginator (also used by thread reads), GetReactionEventID has no in-repo
+	// production caller, and the maxRelationsPages bound caps the worst case — adding
+	// an early-stop predicate would couple the admin layer to reaction-match semantics
+	// for marginal, caller-less benefit.
+	chunk, relErr := m.admin.GetRelations(ctx, roomID, eventID, event.RelAnnotation, event.EventReaction)
 
 	senderUserID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
 		return "", err
 	}
 
-	return m.findReactionByEmojiAndSender(chunk, senderUserID, emoji)
+	// Search the (possibly partial) chunk first: a reaction present on page 1 must be
+	// returned even if a later page hit a transient error. Only when it is NOT found do
+	// we consider relErr — the reaction might be on a dropped later page.
+	if evID, findErr := m.findReactionByEmojiAndSender(chunk, senderUserID, emoji); findErr == nil {
+		return evID, nil
+	}
+	if relErr != nil {
+		return "", fmt.Errorf("failed to get relations: %w", relErr)
+	}
+	return "", fmt.Errorf("reaction not found")
 }
 
 // findReactionByEmojiAndSender searches for a specific reaction in a list of events.
@@ -1291,16 +1695,20 @@ func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) 
 	messages := make([]domain.Message, 0, len(resp.Chunk))
 
 	for _, evt := range resp.Chunk {
-		if evt.Type != event.EventMessage {
+		if !isMessageLikeEvent(evt) {
 			continue
 		}
 
 		msg := m.parseMessageEvent(evt, roomID)
-		if msg != nil {
-			msg.Reactions = []domain.Reaction{} // Initialize empty slice
-			messages = append(messages, *msg)
-			messageIndices[msg.ID] = len(messages) - 1
+		// Skip blank preview messages (present-but-empty body, no attachment):
+		// this is a history scan, so it must not surface them (A1). GetMessage
+		// by id still returns them.
+		if msg == nil || isBlankMessage(msg) {
+			continue
 		}
+		msg.Reactions = []domain.Reaction{} // Initialize empty slice
+		messages = append(messages, *msg)
+		messageIndices[msg.ID] = len(messages) - 1
 	}
 
 	// Second pass: collect reactions and attach to their parent messages
@@ -1400,15 +1808,22 @@ func (m *MautrixAdapter) GetLastMessage(ctx context.Context, roomID id.RoomID) (
 
 		allEvents = append(allEvents, resp.Chunk...)
 
-		// Check if we found a message in this batch
+		// Check if we found a non-blank message in this batch. A blank preview
+		// message (present-but-empty body, no attachment) must NOT be surfaced as
+		// the room's last message (A1) — keep scanning older events for a real one.
 		for i, evt := range resp.Chunk {
-			if evt.Type == event.EventMessage {
-				// Record stats: total events scanned = previous batches + position in current batch
-				eventsScanned := len(allEvents) - len(resp.Chunk) + i + 1
-				lastMsgStats.record(eventsScanned, true, m.logger)
-				// Found a message - collect reactions from all fetched events and return
-				return m.buildLastMessageWithReactions(allEvents, roomID)
+			if !isMessageLikeEvent(evt) {
+				continue
 			}
+			msg := m.parseMessageEvent(evt, roomID)
+			if msg == nil || isBlankMessage(msg) {
+				continue
+			}
+			// Record stats: total events scanned = previous batches + position in current batch
+			eventsScanned := len(allEvents) - len(resp.Chunk) + i + 1
+			lastMsgStats.record(eventsScanned, true, m.logger)
+			// Found a real message - collect reactions from all fetched events and return
+			return m.buildLastMessageWithReactions(allEvents, msg, roomID)
 		}
 
 		// No message found yet - continue with next batch if there are more events
@@ -1422,23 +1837,15 @@ func (m *MautrixAdapter) GetLastMessage(ctx context.Context, roomID id.RoomID) (
 	return nil, nil // No messages in room
 }
 
-// buildLastMessageWithReactions finds the last message and attaches its reactions.
-func (m *MautrixAdapter) buildLastMessageWithReactions(events []*event.Event, roomID id.RoomID) (*domain.Message, error) {
-	// Find the first m.room.message event
-	var msg *domain.Message
-	for _, evt := range events {
-		if evt.Type == event.EventMessage {
-			msg = m.parseMessageEvent(evt, roomID)
-			if msg != nil {
-				msg.Reactions = []domain.Reaction{}
-				break
-			}
-		}
-	}
-
+// buildLastMessageWithReactions attaches reactions to the message already parsed
+// by GetLastMessage while scanning the timeline.
+func (m *MautrixAdapter) buildLastMessageWithReactions(
+	events []*event.Event, msg *domain.Message, roomID id.RoomID,
+) (*domain.Message, error) {
 	if msg == nil {
 		return nil, nil
 	}
+	msg.Reactions = []domain.Reaction{}
 
 	// Collect reactions for this message
 	for _, evt := range events {
@@ -1542,48 +1949,64 @@ func (m *MautrixAdapter) parseReactionEvent(evt *event.Event, roomID id.RoomID) 
 	}
 }
 
+// isMessageLikeEvent reports whether an event carries message content
+// parseMessageEvent can surface: an m.room.message or an m.sticker (which mautrix
+// models as MessageEventContent). Timeline/thread scans use this as their
+// pre-filter so they never drift from parseMessageEvent's accepted set.
+func isMessageLikeEvent(evt *event.Event) bool {
+	return evt.Type == event.EventMessage || evt.Type == event.EventSticker
+}
+
 // parseMessageEvent extracts a domain.Message from a Matrix event.
+//
+// m.sticker (event.EventSticker) is accepted alongside m.room.message: mautrix
+// models a sticker as MessageEventContent (body/url/info), so it surfaces as a
+// media message with its attachment through the same extractInboundMessage path.
+// This also closes the GetMessage-on-a-sticker regression (previously errored).
 func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *domain.Message {
-	body := m.extractMessageBody(evt)
-	if body == "" {
+	if !isMessageLikeEvent(evt) {
 		return nil
 	}
+
+	// Shared inbound-media helper (F10): applies MSC2530 caption semantics and
+	// the present-but-empty-body rule. Read paths keep bodyless message events as
+	// blank Messages so GetMessage can return them through this same population
+	// path; timeline scans exclude them with isBlankMessage below.
+	content, attachment, _ := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender))
 
 	msg := &domain.Message{
 		ID:             evt.ID.String(),
 		RoomID:         roomID.String(),
-		Content:        body,
+		Content:        content,
 		SenderMatrixID: evt.Sender.String(),
 		Timestamp:      time.UnixMilli(evt.Timestamp),
 	}
-
-	// Check for thread relation (MSC3440) first, then fallback to m.in_reply_to
-	if content, ok := evt.Content.Parsed.(*event.MessageEventContent); ok && content.RelatesTo != nil {
-		// Check for explicit m.thread relation first
-		if content.RelatesTo.Type == "m.thread" && content.RelatesTo.EventID != "" {
-			msg.ThreadID = content.RelatesTo.EventID.String()
-		} else if content.RelatesTo.InReplyTo != nil {
-			// Fallback to m.in_reply_to for older clients
-			msg.ThreadID = content.RelatesTo.InReplyTo.EventID.String()
-		}
+	if attachment != nil {
+		msg.Attachments = []domain.Attachment{*attachment}
 	}
+
+	// Thread linkage (MSC3440): read from the same helper the live-sync path uses,
+	// which prefers the RAW m.relates_to. Reading Content.Parsed alone (as this
+	// path used to) silently dropped the thread/parent linkage on Synapse-fetched
+	// read-path events, whose Parsed is nil — so threaded replies rendered as
+	// top-level in GetMessage/GetRoomMessages/GetThreadMessages (F1).
+	msg.ThreadID = extractThreadID(evt)
 
 	return msg
 }
 
-// extractMessageBody gets the message body from an event, trying multiple approaches.
-func (m *MautrixAdapter) extractMessageBody(evt *event.Event) string {
-	// Try the generic parser first
-	if content, ok := parseEventContent[event.MessageEventContent](evt); ok {
-		return content.Body
-	}
-
-	// Try raw JSON as last resort
-	if rawBody, ok := evt.Content.Raw["body"].(string); ok {
-		return rawBody
-	}
-
-	return ""
+// isBlankMessage reports whether a parsed message carries nothing renderable:
+// empty Content AND no attachment. The SCANNING read paths (GetRoomMessages,
+// GetLastMessage, and GetThreadMessages replies) skip such messages so a
+// present-but-empty-body event never surfaces as a room's latest/preview message
+// — restoring develop's behavior, where parseMessageEvent returned nil for an
+// empty body and these scans never saw it (A1).
+//
+// By-id fetches (GetMessage, and the explicitly-requested thread root) still
+// return blank messages, and live-sync (handleMessageEvent) still forwards them:
+// a present-but-empty body is a real event (F3/F4), just not a preview-worthy one.
+func isBlankMessage(msg *domain.Message) bool {
+	return msg.Content == "" && len(msg.Attachments) == 0
 }
 
 // GetReaction retrieves details of a specific reaction.
@@ -1624,38 +2047,59 @@ func (m *MautrixAdapter) GetThreadMessages(
 		return nil, fmt.Errorf("failed to get thread root message: %w", err)
 	}
 
-	// Parse the root message
+	// Parse the root message. A blank (present-but-empty body, no attachment)
+	// root — e.g. a redacted thread root — is dropped so the thread view does not
+	// show a spurious empty first message (matches develop and the reply scan
+	// below).
 	var rootMsg *domain.Message
-	if parsed := m.parseMessageEvent(rootEvt, roomID); parsed != nil {
+	if parsed := m.parseMessageEvent(rootEvt, roomID); parsed != nil && !isBlankMessage(parsed) {
 		parsed.Reactions = []domain.Reaction{}
 		rootMsg = parsed
 	}
 
-	// Get thread replies using admin relations API
-	chunk, err := m.admin.GetRelations(ctx, roomID, threadRootID, event.RelThread, event.EventMessage)
-
-	messages := make([]domain.Message, 0)
+	// Get thread replies using admin relations API. Pass an empty event type so
+	// Synapse returns ALL m.thread relations (m.room.message AND m.sticker); the
+	// reply scan below filters to message-like events via isMessageLikeEvent.
+	// Filtering server-side by m.room.message would drop threaded sticker replies.
+	chunk, err := m.admin.GetRelations(ctx, roomID, threadRootID, event.RelThread, event.Type{})
 	if err != nil {
-		// If no relations found, return just the root message
-		m.logger.Debug("No thread relations found, returning only root", "thread_root_id", threadRootID)
-		if rootMsg != nil {
-			messages = append(messages, *rootMsg)
+		// Best-effort: GetRelations returns (partial, err). Distinguish a later-page
+		// failure (some replies recovered — use them, don't collapse to root-only)
+		// from a first-page failure (nothing recovered — root only), so incident
+		// triage isn't misled by a false "partial" claim on a total failure.
+		switch {
+		case len(chunk) > 0:
+			m.logger.Warn("Thread relations truncated by error; returning partial replies",
+				"thread_root_id", threadRootID, "partial_replies", len(chunk), "error", err)
+		case rootMsg != nil:
+			m.logger.Warn("Failed to fetch thread relations; returning root message only",
+				"thread_root_id", threadRootID, "error", err)
+		default:
+			// No replies recovered AND the root is blank/redacted (rootMsg nil) — the
+			// function returns an empty slice, so don't claim a root will be returned.
+			m.logger.Warn("Failed to fetch thread relations; returning no messages",
+				"thread_root_id", threadRootID, "error", err)
 		}
-		return messages, nil
 	}
 
-	// Parse thread reply messages (relations API returns newest-first)
+	messages := make([]domain.Message, 0)
+
+	// Parse thread reply messages (relations API returns newest-first). This is a
+	// history scan, so blank preview messages (present-but-empty body, no
+	// attachment) are skipped (A1); the explicitly-requested thread root above is
+	// kept regardless, matching GetMessage-by-id semantics.
 	for _, evt := range chunk {
-		if evt.Type != event.EventMessage {
+		if !isMessageLikeEvent(evt) {
 			continue
 		}
 
 		msg := m.parseMessageEvent(evt, roomID)
-		if msg != nil {
-			msg.Reactions = []domain.Reaction{}
-			msg.ThreadID = threadRootID.String()
-			messages = append(messages, *msg)
+		if msg == nil || isBlankMessage(msg) {
+			continue
 		}
+		msg.Reactions = []domain.Reaction{}
+		msg.ThreadID = threadRootID.String()
+		messages = append(messages, *msg)
 	}
 
 	// Append root message last so the server's .reverse() puts it first
@@ -1663,6 +2107,12 @@ func (m *MautrixAdapter) GetThreadMessages(
 		messages = append(messages, *rootMsg)
 	}
 
+	// Deliberate best-effort return: thread reads USE the recovered partial chunk and
+	// succeed even when GetRelations reported a later-page error (already logged for
+	// operators in the switch above). Hard-failing a mostly-complete thread on a
+	// transient later-page error is worse UX than returning the recovered replies, and
+	// surfacing a truncated-vs-complete flag would require a cross-repo DTO change out
+	// of this slice's scope.
 	return messages, nil
 }
 
@@ -2496,7 +2946,8 @@ func (m *MautrixAdapter) getFullyReadMarker(
 	return &result.EventID
 }
 
-// countUnreadMessages counts m.room.message events backward from the latest event,
+// countUnreadMessages counts message-like events (m.room.message and m.sticker)
+// backward from the latest event,
 // stopping when the receipt event ID is found or 200 events have been scanned.
 // If receiptEventID is nil, counts ALL non-self messages (for rooms with no receipt).
 // Returns (count, true) if receipt found or all events scanned.
@@ -2541,8 +2992,9 @@ func (m *MautrixAdapter) countUnreadMessages(
 				)
 				return count, true
 			}
-			// Count message events not from the user
-			if evt.Type == event.EventMessage && evt.Sender != userID {
+			// Count message events not from the user. A sticker is a message, so it
+			// counts toward unread the same as an m.room.message (isMessageLikeEvent).
+			if isMessageLikeEvent(evt) && evt.Sender != userID {
 				count++
 			}
 		}

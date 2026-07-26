@@ -40,11 +40,12 @@ func (s *EventService) HandleMessage(msg domain.Message) error {
 		RoomName: msg.RoomName,
 		ActorID:  msg.SenderID.String(),
 		Message: dto.Message{
-			ID:        msg.ID,
-			Message:   msg.Content,
-			ThreadID:  threadID,
-			Sender:    msg.SenderID.String(),
-			Timestamp: msg.Timestamp.UnixMilli(),
+			ID:          msg.ID,
+			Message:     msg.Content,
+			ThreadID:    threadID,
+			Sender:      msg.SenderID.String(),
+			Timestamp:   msg.Timestamp.UnixMilli(),
+			Attachments: AttachmentsToReceivedDTO(msg.Attachments),
 		},
 	}
 

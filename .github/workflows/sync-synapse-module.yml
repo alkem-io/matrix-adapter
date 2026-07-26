@@ -1,10 +1,12 @@
 name: Sync Synapse Config to Downstream Repos
 
-# Propagates two canonical Synapse-related files from this repo to the three
+# Propagates three canonical Synapse-related files from this repo to the three
 # downstream repos whenever they change on develop:
 #
-#   synapse-modules/alkemio_room_control.py   (the Synapse room-control module)
-#   registration.yaml                          (the AppService registration shape)
+#   synapse-modules/alkemio_room_control.py        (the Synapse room-control module)
+#   synapse-modules/alkemio_fileservice_provider.py (the media StorageProvider bridging
+#                                                    Synapse media I/O to file-service)
+#   registration.yaml                              (the AppService registration shape)
 #
 # Targets:
 #
@@ -12,8 +14,10 @@ name: Sync Synapse Config to Downstream Repos
 #   - alkem-io/dev-orchestration          (embedded in 01-synapse-setup-confmap.yml)
 #   - alkem-io/infrastructure-operations  (embedded in 01-synapse-setup-confmap.yml)
 #
-# The room-control module is synced verbatim (it has no per-environment
-# fields). registration.yaml is schema-synced: namespaces / sender_localpart /
+# Both .py modules are synced verbatim (they have no per-environment fields).
+# alkemio_room_control.py is required in every target; alkemio_fileservice_provider.py
+# is synced only where its target block/file already exists (see
+# .scripts/sync-synapse-module.sh). registration.yaml is schema-synced: namespaces / sender_localpart /
 # receive_ephemeral / msc2409 / id are taken from canonical, but each target's
 # existing url / as_token / hs_token values are preserved (those are
 # environment-specific — dev secrets in server, ${MATRIX_*} placeholders in
@@ -41,6 +45,7 @@ on:
     branches: [develop]
     paths:
       - 'synapse-modules/alkemio_room_control.py'
+      - 'synapse-modules/alkemio_fileservice_provider.py'
       - 'registration.yaml'
       - '.scripts/sync-synapse-module.sh'
       - '.scripts/sync-synapse-registration.py'
@@ -167,6 +172,7 @@ jobs:
 
           Files synced from matrix-adapter:
             synapse-modules/alkemio_room_control.py
+            synapse-modules/alkemio_fileservice_provider.py (where its block/file already exists)
             registration.yaml (schema fields only; url / as_token / hs_token preserved)"
 
           git push --force-with-lease \
@@ -190,9 +196,10 @@ jobs:
             const body = [
               `Auto-synced from [matrix-adapter@${shortSha}](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${sourceSha}).`,
               '',
-              'Two canonical Synapse-related files live in matrix-adapter and are propagated here automatically:',
+              'Canonical Synapse-related files live in matrix-adapter and are propagated here automatically:',
               '',
               '- [`synapse-modules/alkemio_room_control.py`](https://github.com/alkem-io/matrix-adapter/blob/develop/synapse-modules/alkemio_room_control.py) — synced verbatim.',
+              '- [`synapse-modules/alkemio_fileservice_provider.py`](https://github.com/alkem-io/matrix-adapter/blob/develop/synapse-modules/alkemio_fileservice_provider.py) — synced verbatim (only where the `alkemio_fileservice_provider.py` block/file already exists in this repo).',
               '- [`registration.yaml`](https://github.com/alkem-io/matrix-adapter/blob/develop/registration.yaml) — schema fields only; `url` / `as_token` / `hs_token` are preserved from this repo.',
               '',
               `Review and merge to roll the change forward to this repo's deployment. The branch (\`${branch}\`) is rolling — subsequent canonical changes will force-update this PR rather than open new ones.`,
