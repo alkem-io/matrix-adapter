@@ -1031,20 +1031,29 @@ func (m *MautrixAdapter) sendAttachment(
 		return "", attachmentTooLargeError(att.DocumentID, maxBytes)
 	}
 	reader := &countingCapReader{r: resp.Body, max: maxBytes}
+	// Synapse's media upload REQUIRES a Content-Length; a chunked / unknown-length
+	// (ContentLength: -1) upload is rejected with
+	// "M_UNKNOWN (HTTP 400): Request must specify a Content-Length". Give it the
+	// length WITHOUT buffering the blob: file-service serves /content with a
+	// Content-Length (resp.ContentLength), so we STREAM resp.Body straight to the
+	// homeserver (constant memory — never the whole blob in RAM). att.Size — the
+	// caller-declared size, from file-service meta for the same immutable,
+	// content-addressed blob — is the fallback if the response omitted the header.
+	// The oversize case is rejected above from resp.ContentLength; countingCapReader
+	// enforces the per-attachment max mid-stream; mediaCtx bounds the body reads.
+	uploadLen := resp.ContentLength
+	if uploadLen <= 0 {
+		uploadLen = att.Size
+	}
+	if uploadLen <= 0 {
+		return "", fmt.Errorf("no content length for document %s (file-service response and att.Size both absent); refusing to buffer", att.DocumentID)
+	}
 	// Upload via the SENDER ghost intent (not the appservice bot), so the media
 	// blob is owned by the acting user's account — attributing quota/retention
 	// correctly and avoiding a single-account purge stripping every bridged blob.
-	//
-	// Always upload with an unknown (streamed/chunked) length rather than
-	// trusting file-service's declared Content-Length: if the real body is
-	// shorter than the declared length, a declared upload would EOF early and
-	// fail. countingCapReader still enforces the per-attachment max, and the
-	// declared > cap case is already rejected above.
-	//
-	// mediaCtx (size-proportional deadline) bounds the upload's body reads too.
 	up, err := intent.UploadMedia(mediaCtx, mautrix.ReqUploadMedia{
 		Content:       reader,
-		ContentLength: -1,
+		ContentLength: uploadLen,
 		ContentType:   contentType,
 	})
 	if err != nil {

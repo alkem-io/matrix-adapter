@@ -403,10 +403,13 @@ func TestSendAttachment_BodyStall_DeadlineCancels(t *testing.T) {
 		header := make(http.Header)
 		header.Set("Content-Type", "image/png")
 		return &http.Response{
-			StatusCode:    http.StatusOK,
-			Header:        header,
-			Body:          &ctxBlockingReader{ctx: req.Context()},
-			ContentLength: -1,
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       &ctxBlockingReader{ctx: req.Context()},
+			// Declares a length (as the streaming serve does) so the upload
+			// streams and the stall is hit during the body read, not short-
+			// circuited by the missing-length guard.
+			ContentLength: 100,
 		}, nil
 	})
 	intent := &mockIntentAPI{
@@ -1060,14 +1063,17 @@ func TestCountUnreadMessages_SkipsOwnSticker(t *testing.T) {
 	assert.Equal(t, 0, count, "a self-authored sticker is not unread")
 }
 
-// Streaming upload: a body within the cap streams straight through to Synapse
-// (no whole-file buffering) and the media event's info.size is the streamed byte
+// Streamed upload: a body within the cap streams straight to Synapse (constant
+// memory — never the whole blob in RAM) with the file-service-served
+// Content-Length, and the media event's info.size is the actual streamed byte
 // count; a body larger than the cap fails with the oversize error and sends no
-// media event, so an oversized document never gets buffered whole in memory.
+// media event, so an oversized document is never uploaded.
 func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
-	t.Run("in-cap body streams through with streamed size", func(t *testing.T) {
+	t.Run("in-cap body streams with the served Content-Length", func(t *testing.T) {
 		body := []byte("STREAMED-BODY") // 13 bytes
 		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+			// fileServiceResponse sets Content-Length = len(body), as the
+			// streaming file-service serve does.
 			return fileServiceResponse(http.StatusOK, "image/png", body), nil
 		})
 
@@ -1078,24 +1084,28 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 		a := newMediaTestAdapter(t, fileServiceURL, intent)
 		a.cfg.FileService.MaxAttachmentBytes = 1024 // well above the body
 
+		// att.Size is deliberately WRONG (999) to prove the upload length comes
+		// from the file-service response Content-Length, not the caller.
 		_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
 			[]domain.Attachment{{DocumentID: docID1, DisplayName: "s.png", MimeType: "image/png", Size: 999}})
 		require.NoError(t, err)
 		require.Equal(t, 1, intent.uploadBytesCalled)
-		assert.Equal(t, body, intent.lastUploadBytesData, "the whole body streamed through to the upload")
+		assert.Equal(t, body, intent.lastUploadBytesData, "the whole body is streamed to the upload")
+		assert.Equal(t, int64(len(body)), intent.lastUploadContentLength,
+			"streamed with the file-service-served Content-Length (not buffered, not att.Size)")
 		require.Equal(t, 1, intent.sendMessageEventCalled)
 		content, ok := intent.lastSendMsgEventContent.(map[string]any)
 		require.True(t, ok)
 		info, ok := content["info"].(map[string]any)
 		require.True(t, ok)
-		assert.Equal(t, int64(len(body)), info["size"], "info.size is the streamed byte count")
+		assert.Equal(t, int64(len(body)), info["size"], "info.size is the actual streamed byte count")
 	})
 
-	t.Run("misreported (too-large) Content-Length still uploads (streamed length)", func(t *testing.T) {
-		body := []byte("SHORT") // 5 bytes actually served
+	t.Run("response omits Content-Length: falls back to att.Size, still streams", func(t *testing.T) {
+		body := []byte("HELLO") // 5 bytes; att.Size matches (content-addressed blob)
 		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
 			resp := fileServiceResponse(http.StatusOK, "image/png", body)
-			resp.ContentLength = 999 // declares far more than it serves (in-cap)
+			resp.ContentLength = -1 // no Content-Length header on the response
 			return resp, nil
 		})
 
@@ -1107,19 +1117,19 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 		a.cfg.FileService.MaxAttachmentBytes = 1024
 
 		_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
-			[]domain.Attachment{{DocumentID: docID1, DisplayName: "s.png", MimeType: "image/png"}})
-		require.NoError(t, err, "a short body under a larger declared length must still upload")
+			[]domain.Attachment{{DocumentID: docID1, DisplayName: "s.png", MimeType: "image/png", Size: int64(len(body))}})
+		require.NoError(t, err, "must upload via the att.Size fallback when the response omits Content-Length")
 		require.Equal(t, 1, intent.uploadBytesCalled)
-		assert.Equal(t, int64(-1), intent.lastUploadContentLength,
-			"upload streams with unknown length, never the declared Content-Length")
+		assert.Equal(t, int64(len(body)), intent.lastUploadContentLength,
+			"falls back to att.Size — never buffers to derive the length")
 		assert.Equal(t, body, intent.lastUploadBytesData)
 	})
 
 	t.Run("oversize body fails and sends no event", func(t *testing.T) {
 		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
-			resp := fileServiceResponse(http.StatusOK, "application/octet-stream", make([]byte, 100))
-			resp.ContentLength = -1 // exercise the streaming cap backstop
-			return resp, nil
+			// Content-Length = 100 (as the streaming serve sets it) exceeds the
+			// 10-byte cap, so the oversize is rejected up front before any upload.
+			return fileServiceResponse(http.StatusOK, "application/octet-stream", make([]byte, 100)), nil
 		})
 
 		intent := &mockIntentAPI{
