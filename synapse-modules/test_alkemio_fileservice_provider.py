@@ -354,6 +354,19 @@ def test_store_posts_verbatim_multipart_streamed(monkeypatch):
         captured["data"]["storageBucketId"]
         == "00000000-0000-0000-0000-0000000000ff"
     )
+    # displayName is REQUIRED by file-service (NOT NULL column) — omitting it
+    # 400s every inbound store. Below the Matrix event layer the only identifier
+    # available is the opaque media_id, so that is what is sent.
+    assert captured["data"]["displayName"] == "MEDIAID"
+    # Every metadata part must precede the file part: file-service's Create
+    # handler reads the fields before consuming the streamed file, and treq
+    # serialises `data` (in dict insertion order) ahead of `files`.
+    assert list(captured["data"]) == [
+        "storageBucketId",
+        "externalReference",
+        "displayName",
+        "skipImageProcessing",
+    ]
     # Per-request timeout + unbuffered (so the reply can be drained/released).
     assert captured["timeout"] == prov.store_timeout_s
     assert captured["unbuffered"] is True

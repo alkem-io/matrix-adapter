@@ -670,19 +670,22 @@ class FileServiceStorageProvider(StorageProvider):
         try:
             # treq serialises the multipart body as form-fields (`data`) THEN
             # files, preserving dict insertion order — so storageBucketId /
-            # externalReference / skipImageProcessing precede the file part, which
-            # file-service requires (it reads the metadata fields before consuming
-            # the streamed file).
+            # externalReference / displayName / skipImageProcessing (every
+            # metadata part) precede the file part, which file-service requires
+            # (it reads the metadata fields before consuming the streamed file).
             files = {"file": (media_id, stream)}
             data = {
                 "storageBucketId": self.matrix_media_bucket_id,
                 "externalReference": media_id,
                 # file-service requires a non-empty displayName (NOT NULL column).
                 # The storage provider runs below the Matrix event layer, so the
-                # only identifier available is the opaque media_id; the human
-                # filename (event `body`) is applied by the server on inbound
-                # re-home. No authorizationId is sent — the staging doc is created
-                # with NULL auth and the server mints one on re-home.
+                # only identifier available is the opaque media_id — the human
+                # filename lives in the event `body`, which is not visible here.
+                # On inbound re-home the server renames the document to that
+                # filename on the MOVE path only; a COPY / re-share keeps this
+                # media-id name (file-service's CopyDocumentInput carries no
+                # displayName yet). No authorizationId is sent — the staging doc
+                # is created with NULL auth and the server mints one on re-home.
                 "displayName": media_id,
                 "skipImageProcessing": "true",  # VERBATIM — read-back is exact
             }
