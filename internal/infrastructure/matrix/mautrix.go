@@ -972,13 +972,15 @@ var errAttachmentTooLarge = errors.New("attachment exceeds max size")
 
 // countingCapReader streams from r, tracking bytes read and failing once more
 // than max bytes have been read so an oversized document fails the upload
-// instead of being buffered. n is the exact number of bytes streamed.
+// instead of being buffered. count() is the exact number of bytes streamed.
 //
-// A known-length oversize document is rejected up front (before streaming). An
-// unknown-length (chunked) document that only reveals it is oversize mid-stream
-// will have streamed up to max bytes to Synapse before this trips; those bytes
-// are unreferenced by any event and are reclaimed by Synapse media retention —
-// an accepted bounded cost of streaming, not worth a pre-buffering pass.
+// An oversize document is rejected up front from the authoritative
+// Content-Length (before streaming). This is the mid-stream BACKSTOP for a
+// file-service response whose declared length is smaller than the bytes it
+// actually serves: those extra bytes are caught here rather than streamed on
+// unbounded. Whatever reached Synapse before the trip is unreferenced by any
+// event and is reclaimed by Synapse media retention — an accepted bounded cost
+// of streaming, not worth a pre-buffering pass.
 type countingCapReader struct {
 	r      io.Reader
 	max, n int64
@@ -1027,27 +1029,34 @@ func (m *MautrixAdapter) sendAttachment(
 	// msgtype and info.mimetype, which are conventionally unparameterized.
 	contentType := resolveMediaMime(resp.Header.Get("Content-Type"), att.MimeType)
 
-	if resp.ContentLength > 0 && resp.ContentLength > maxBytes {
-		return "", attachmentTooLargeError(att.DocumentID, maxBytes)
-	}
-	reader := &countingCapReader{r: resp.Body, max: maxBytes}
 	// Synapse's media upload REQUIRES a Content-Length; a chunked / unknown-length
 	// (ContentLength: -1) upload is rejected with
 	// "M_UNKNOWN (HTTP 400): Request must specify a Content-Length". Give it the
 	// length WITHOUT buffering the blob: file-service serves /content with a
-	// Content-Length (resp.ContentLength), so we STREAM resp.Body straight to the
-	// homeserver (constant memory — never the whole blob in RAM). att.Size — the
-	// caller-declared size, from file-service meta for the same immutable,
-	// content-addressed blob — is the fallback if the response omitted the header.
-	// The oversize case is rejected above from resp.ContentLength; countingCapReader
-	// enforces the per-attachment max mid-stream; mediaCtx bounds the body reads.
+	// Content-Length on every content path, so resp.ContentLength is the SINGLE
+	// authoritative wire length and resp.Body STREAMS straight to the homeserver
+	// (constant memory — never the whole blob in RAM).
+	//
+	// att.Size is deliberately NOT a fallback. It is caller-declared and never
+	// validated (see domain.Attachment.Size), so declaring it as the wire length
+	// either aborts the upload mid-request ("http: ContentLength=N with Body
+	// length M") or, when it under-declares, leaves a SILENTLY TRUNCATED blob
+	// stored at Synapse. It also bypasses nothing else here: the cap below is
+	// applied to this one resolved length, so there is exactly one code path.
+	//
+	// -1 means the header was absent (0 is a genuine, and perfectly uploadable,
+	// zero-byte document). Absent is not a normal condition — fail loudly naming
+	// the real cause rather than guessing or buffering.
+	if resp.ContentLength < 0 {
+		return "", fmt.Errorf("file-service response for document %s carried no Content-Length; refusing to buffer the blob to derive one", att.DocumentID)
+	}
 	uploadLen := resp.ContentLength
-	if uploadLen <= 0 {
-		uploadLen = att.Size
+	if uploadLen > maxBytes {
+		return "", attachmentTooLargeError(att.DocumentID, maxBytes)
 	}
-	if uploadLen <= 0 {
-		return "", fmt.Errorf("no content length for document %s (file-service response and att.Size both absent); refusing to buffer", att.DocumentID)
-	}
+	// countingCapReader is the mid-stream backstop should the body outrun its
+	// declared length; mediaCtx bounds the body reads.
+	reader := &countingCapReader{r: resp.Body, max: maxBytes}
 	// Upload via the SENDER ghost intent (not the appservice bot), so the media
 	// blob is owned by the acting user's account — attributing quota/retention
 	// correctly and avoiding a single-account purge stripping every bridged blob.
@@ -1113,6 +1122,13 @@ func newFileServiceHTTPClient(responseHeaderTimeout time.Duration) *http.Client 
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: responseHeaderTimeout,
 		ExpectContinueTimeout: time.Second,
+		// Media blobs are already-compressed bytes, so transfer compression buys
+		// nothing — but it COSTS the upload length. With the default transport,
+		// Go advertises Accept-Encoding: gzip and, on a gzipped reply,
+		// transparently decompresses the body and sets resp.ContentLength = -1.
+		// That length is the only safe Content-Length for the Synapse upload
+		// (sendAttachment refuses to buffer to derive one), so keep it intact.
+		DisableCompression: true,
 	}}
 }
 

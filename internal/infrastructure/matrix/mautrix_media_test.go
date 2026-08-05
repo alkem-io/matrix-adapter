@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -1063,11 +1064,12 @@ func TestCountUnreadMessages_SkipsOwnSticker(t *testing.T) {
 	assert.Equal(t, 0, count, "a self-authored sticker is not unread")
 }
 
-// Streamed upload: a body within the cap streams straight to Synapse (constant
-// memory — never the whole blob in RAM) with the file-service-served
-// Content-Length, and the media event's info.size is the actual streamed byte
-// count; a body larger than the cap fails with the oversize error and sends no
-// media event, so an oversized document is never uploaded.
+// The file-service response's Content-Length is the SINGLE authoritative upload
+// length, and the blob always STREAMS (constant memory — never the whole blob in
+// RAM). These subtests pin that contract end to end: the served length is used
+// (never att.Size), a zero-byte document is a known length rather than a missing
+// one, an absent header fails loudly instead of buffering or guessing, and a body
+// that outruns its declared length trips the mid-stream cap backstop.
 func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 	t.Run("in-cap body streams with the served Content-Length", func(t *testing.T) {
 		body := []byte("STREAMED-BODY") // 13 bytes
@@ -1090,6 +1092,13 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 			[]domain.Attachment{{DocumentID: docID1, DisplayName: "s.png", MimeType: "image/png", Size: 999}})
 		require.NoError(t, err)
 		require.Equal(t, 1, intent.uploadBytesCalled)
+		// HARD REQUIREMENT: the bytes go up as a STREAM. ReqUploadMedia.Content
+		// (an io.Reader) must be set and ContentBytes (a fully-buffered blob)
+		// must not — re-introducing io.ReadAll + ContentBytes has to fail here.
+		assert.True(t, intent.lastUploadContentWasReader,
+			"blob must stream via ReqUploadMedia.Content (constant memory)")
+		assert.False(t, intent.lastUploadUsedContentBytes,
+			"blob must NEVER be buffered whole into ReqUploadMedia.ContentBytes")
 		assert.Equal(t, body, intent.lastUploadBytesData, "the whole body is streamed to the upload")
 		assert.Equal(t, int64(len(body)), intent.lastUploadContentLength,
 			"streamed with the file-service-served Content-Length (not buffered, not att.Size)")
@@ -1101,11 +1110,43 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 		assert.Equal(t, int64(len(body)), info["size"], "info.size is the actual streamed byte count")
 	})
 
-	t.Run("response omits Content-Length: falls back to att.Size, still streams", func(t *testing.T) {
-		body := []byte("HELLO") // 5 bytes; att.Size matches (content-addressed blob)
+	// A genuinely empty document is a KNOWN length (Content-Length: 0), not a
+	// missing one. Conflating the two would drop every 0-byte attachment.
+	t.Run("zero-byte document uploads with a known length of 0", func(t *testing.T) {
+		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+			return fileServiceResponse(http.StatusOK, "application/octet-stream", []byte{}), nil
+		})
+
+		intent := &mockIntentAPI{
+			uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/empty")},
+			sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$empty"},
+		}
+		a := newMediaTestAdapter(t, fileServiceURL, intent)
+
+		_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+			[]domain.Attachment{{DocumentID: docID1, DisplayName: "empty.bin", MimeType: "application/octet-stream"}})
+		require.NoError(t, err, "a 0-byte document has a known length and must upload")
+		require.Equal(t, 1, intent.uploadBytesCalled)
+		assert.Equal(t, int64(0), intent.lastUploadContentLength)
+		assert.True(t, intent.lastUploadContentWasReader, "still streamed, never buffered")
+		assert.False(t, intent.lastUploadUsedContentBytes)
+		require.Equal(t, 1, intent.sendMessageEventCalled)
+		content, ok := intent.lastSendMsgEventContent.(map[string]any)
+		require.True(t, ok)
+		info, ok := content["info"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, int64(0), info["size"])
+	})
+
+	// file-service always sets Content-Length on its content paths, so an absent
+	// one is abnormal. There is no safe substitute: att.Size is caller-declared
+	// and unvalidated, and deriving a length means buffering the whole blob. Fail
+	// loudly, naming the real cause.
+	t.Run("response omits Content-Length: fails loudly, never buffers or guesses", func(t *testing.T) {
+		body := []byte("HELLO") // att.Size below is deliberately CORRECT...
 		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
 			resp := fileServiceResponse(http.StatusOK, "image/png", body)
-			resp.ContentLength = -1 // no Content-Length header on the response
+			resp.ContentLength = -1 // ...and still must not be used as the wire length
 			return resp, nil
 		})
 
@@ -1118,30 +1159,88 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 
 		_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
 			[]domain.Attachment{{DocumentID: docID1, DisplayName: "s.png", MimeType: "image/png", Size: int64(len(body))}})
-		require.NoError(t, err, "must upload via the att.Size fallback when the response omits Content-Length")
-		require.Equal(t, 1, intent.uploadBytesCalled)
-		assert.Equal(t, int64(len(body)), intent.lastUploadContentLength,
-			"falls back to att.Size — never buffers to derive the length")
-		assert.Equal(t, body, intent.lastUploadBytesData)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "carried no Content-Length",
+			"the error must name the real cause (file-service sent no length)")
+		assert.Equal(t, 0, intent.uploadBytesCalled, "no upload is attempted without an authoritative length")
+		assert.Equal(t, 0, intent.sendMessageEventCalled)
 	})
 
-	t.Run("oversize body fails and sends no event", func(t *testing.T) {
+	// The mid-stream BACKSTOP: the declared length is inside the cap, so the
+	// up-front check passes and the upload starts — but the body actually serves
+	// more than the cap, so countingCapReader must trip DURING the stream and the
+	// failure must classify as too-large (not a generic upload failure).
+	t.Run("body outruns its declared length: cap trips mid-stream", func(t *testing.T) {
+		const capBytes = 10
+		body := make([]byte, 200) // 20x the cap
 		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
-			// Content-Length = 100 (as the streaming serve sets it) exceeds the
-			// 10-byte cap, so the oversize is rejected up front before any upload.
-			return fileServiceResponse(http.StatusOK, "application/octet-stream", make([]byte, 100)), nil
+			header := make(http.Header)
+			header.Set("Content-Type", "application/octet-stream")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     header,
+				// One byte per Read, so how FAR the stream got is observable:
+				// countingCapReader must abort it just past the cap. Without that
+				// backstop the whole 200-byte body is drained — in production,
+				// streamed on to Synapse — despite the cap.
+				Body:          io.NopCloser(iotest.OneByteReader(bytes.NewReader(body))),
+				ContentLength: 8, // in-cap declaration; the body lies and serves 200
+			}, nil
 		})
 
 		intent := &mockIntentAPI{
+			uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/s")},
 			sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$never"},
 		}
 		a := newMediaTestAdapter(t, fileServiceURL, intent)
-		a.cfg.FileService.MaxAttachmentBytes = 10 // below the 100-byte body
+		a.cfg.FileService.MaxAttachmentBytes = capBytes // above the declaration, below the body
 
 		_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
-			[]domain.Attachment{{DocumentID: docID1, DisplayName: "big.bin", MimeType: "application/octet-stream"}})
+			[]domain.Attachment{{DocumentID: docID1, DisplayName: "liar.bin", MimeType: "application/octet-stream"}})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "exceeds max attachment size")
+		assert.Contains(t, err.Error(), "exceeds max attachment size",
+			"the mid-stream cap trip must classify as too-large")
+		assert.Equal(t, 1, intent.uploadBytesCalled,
+			"the upload DID start (in-cap declaration) — this is the mid-stream backstop, not the pre-check")
+		assert.LessOrEqual(t, len(intent.lastUploadBytesData), capBytes+1,
+			"streaming must stop AT the cap, not drain the whole oversized body")
 		assert.Equal(t, 0, intent.sendMessageEventCalled, "no media event when the cap is exceeded")
+	})
+
+	// The declared length is authoritative, so a body SHORTER than it is a broken
+	// file-service response. It must fail observably (net/http rejects the
+	// mismatch) rather than hanging the sequential consumer, and send no event.
+	t.Run("body shorter than its declared length fails cleanly", func(t *testing.T) {
+		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+			resp := fileServiceResponse(http.StatusOK, "image/png", []byte("SHORT"))
+			resp.ContentLength = 50 // declares 50, serves 5
+			return resp, nil
+		})
+
+		intent := &mockIntentAPI{
+			uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/s")},
+			sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$never"},
+		}
+		a := newMediaTestAdapter(t, fileServiceURL, intent)
+		a.cfg.FileService.MaxAttachmentBytes = 1024
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+				[]domain.Attachment{{DocumentID: docID1, DisplayName: "s.png", MimeType: "image/png"}})
+			done <- err
+		}()
+
+		var err error
+		select {
+		case err = <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a short-serving body hung the send instead of failing")
+		}
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to upload media")
+		assert.Contains(t, err.Error(), "ContentLength=50 with Body length 5",
+			"the declared/served mismatch must surface, not be silently truncated")
+		assert.Equal(t, 0, intent.sendMessageEventCalled, "no media event for a truncated blob")
 	})
 }

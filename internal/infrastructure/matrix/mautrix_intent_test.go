@@ -3,6 +3,7 @@ package matrix
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -139,6 +140,13 @@ type mockIntentAPI struct {
 	lastUploadBytesData     []byte
 	lastUploadBytesType     string
 	lastUploadContentLength int64
+	// Which ReqUploadMedia branch the caller used. The project's hard
+	// requirement is that blob bytes STREAM (Content, an io.Reader) with
+	// constant memory and are never buffered whole (ContentBytes), so tests
+	// must be able to assert the branch — folding both into
+	// lastUploadBytesData alone would let a re-introduced io.ReadAll pass.
+	lastUploadContentWasReader bool
+	lastUploadUsedContentBytes bool
 }
 
 var _ intentAPI = (*mockIntentAPI)(nil)
@@ -275,16 +283,29 @@ func (m *mockIntentAPI) DeleteAlias(_ context.Context, _ id.RoomAlias) (*mautrix
 
 // UploadMedia drains req.Content into the mock's captured data. A read error
 // from the streaming reader (e.g. the oversize cap tripping) is surfaced so
-// sendAttachment can classify it.
+// sendAttachment can classify it. The branch actually taken is recorded so
+// tests can assert the bytes STREAMED rather than being buffered.
 func (m *mockIntentAPI) UploadMedia(_ context.Context, req mautrix.ReqUploadMedia) (*mautrix.RespMediaUpload, error) {
 	m.uploadBytesCalled++
 	m.lastUploadBytesType = req.ContentType
 	m.lastUploadContentLength = req.ContentLength
+	m.lastUploadContentWasReader = req.Content != nil
+	m.lastUploadUsedContentBytes = req.ContentBytes != nil
 	if req.Content != nil {
 		data, err := io.ReadAll(req.Content)
 		m.lastUploadBytesData = data
 		if err != nil {
 			return nil, err
+		}
+		// Mirror net/http's transfer-length contract, which is how a declared
+		// length that disagrees with the body actually surfaces in production:
+		// the transport fails the request with
+		// "http: ContentLength=%d with Body length %d" (and, when the body is
+		// SHORT, only after the homeserver has already stored the truncated
+		// prefix). Reproducing it here keeps "declared length must be the true
+		// length" an enforced contract instead of an untested comment.
+		if req.ContentLength >= 0 && int64(len(data)) != req.ContentLength {
+			return nil, fmt.Errorf("http: ContentLength=%d with Body length %d", req.ContentLength, len(data))
 		}
 	} else {
 		m.lastUploadBytesData = req.ContentBytes

@@ -95,10 +95,12 @@ type Attachment struct {
 	MediaID     string
 	DisplayName string
 	MimeType    string
-	// Size is the caller-declared byte size. It is informational only and is
-	// deliberately NOT used to build an outbound event's info.size — that uses
-	// the actual streamed byte count (see sendAttachment), so a mis-declared size
-	// can never produce an event that lies about its blob length.
+	// Size is the caller-declared byte size. It is informational only: it is
+	// deliberately NOT used to build an outbound event's info.size (that uses the
+	// actual streamed byte count) and NOT used as the upload Content-Length (that
+	// uses the file-service response's own Content-Length) — see sendAttachment.
+	// Nothing validates it, so a mis-declared size can neither produce an event
+	// that lies about its blob length nor truncate/abort a blob at the homeserver.
 	Size   int64
 	Width  *int
 	Height *int
