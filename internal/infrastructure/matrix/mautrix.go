@@ -981,19 +981,31 @@ var errAttachmentTooLarge = errors.New("attachment exceeds max size")
 // unbounded. Whatever reached Synapse before the trip is unreferenced by any
 // event and is reclaimed by Synapse media retention — an accepted bounded cost
 // of streaming, not worth a pre-buffering pass.
+//
+// The counter is atomic because net/http reads the request body on its
+// writeLoop goroutine: when the peer rejects the upload on headers alone (an
+// ingress client_max_body_size, or Synapse's max_upload_size, both of which
+// read Content-Length first) roundTrip returns to sendAttachment while
+// writeLoop is STILL calling Read here. sendAttachment then reads count() for
+// the error classification and for info.size — a plain int64 would be a data
+// race and would make the same 413 classify non-deterministically.
 type countingCapReader struct {
-	r      io.Reader
-	max, n int64
+	r   io.Reader
+	max int64
+	n   atomic.Int64
 }
 
 func (c *countingCapReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
-	c.n += int64(n)
-	if c.n > c.max {
+	if c.n.Add(int64(n)) > c.max {
 		return n, errAttachmentTooLarge
 	}
 	return n, err
 }
+
+// count returns the bytes streamed so far. Safe to call while the transport's
+// writeLoop is still reading (see the type comment).
+func (c *countingCapReader) count() int64 { return c.n.Load() }
 
 // sendAttachment fetches a document's bytes from file-service, uploads them to
 // the homeserver, and sends a media event carrying the mxc URL, file info, and
@@ -1066,14 +1078,14 @@ func (m *MautrixAdapter) sendAttachment(
 		ContentType:   contentType,
 	})
 	if err != nil {
-		if errors.Is(err, errAttachmentTooLarge) || reader.n > maxBytes {
+		if errors.Is(err, errAttachmentTooLarge) || reader.count() > maxBytes {
 			return "", attachmentTooLargeError(att.DocumentID, maxBytes)
 		}
 		return "", fmt.Errorf("failed to upload media: %w", err)
 	}
 	// info.size is the bytes actually streamed, never the caller-declared att.Size.
 	// The bare type (params stripped) is used for info.mimetype and msgtype.
-	content := buildMediaContent(att, up.ContentURI, baseType(contentType), reader.n, threadID)
+	content := buildMediaContent(att, up.ContentURI, baseType(contentType), reader.count(), threadID)
 	sent, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content)
 	if err != nil {
 		return "", fmt.Errorf("failed to send media event: %w", err)

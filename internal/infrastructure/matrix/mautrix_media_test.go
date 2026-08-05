@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net"
 	"net/http"
+	"sync"
 	"testing"
 	"testing/iotest"
 	"time"
@@ -123,6 +125,13 @@ func fileServiceResponse(status int, contentType string, body []byte) *http.Resp
 // newMediaTestAdapter builds an adapter wired to a stub file-service and a mock
 // intent that records media uploads + sent events.
 func newMediaTestAdapter(t *testing.T, fileServiceURL string, intent *mockIntentAPI) *MautrixAdapter {
+	t.Helper()
+	return newMediaTestAdapterWithIntent(t, fileServiceURL, intent)
+}
+
+// newMediaTestAdapterWithIntent is newMediaTestAdapter for intents that wrap or
+// replace mockIntentAPI's behaviour (see earlyRejectIntent).
+func newMediaTestAdapterWithIntent(t *testing.T, fileServiceURL string, intent intentAPI) *MautrixAdapter {
 	t.Helper()
 	as := newMockAS(intent, map[id.UserID]intentAPI{
 		expectedUserID(testActorID): intent,
@@ -1243,4 +1252,100 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 			"the declared/served mismatch must surface, not be silently truncated")
 		assert.Equal(t, 0, intent.sendMessageEventCalled, "no media event for a truncated blob")
 	})
+}
+
+// unboundedBody yields one byte per Read until stop is closed, keeping the
+// upload's body read in flight while the caller inspects the byte counter.
+type unboundedBody struct{ stop <-chan struct{} }
+
+func (b *unboundedBody) Read(p []byte) (int, error) {
+	select {
+	case <-b.stop:
+		return 0, io.EOF
+	default:
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	p[0] = 'x'
+	return 1, nil
+}
+
+func (b *unboundedBody) Close() error { return nil }
+
+// signalFirstRead closes signal once the wrapped reader has been read at least
+// once, so a test can wait until the body read is genuinely in flight.
+type signalFirstRead struct {
+	r      io.Reader
+	once   sync.Once
+	signal chan struct{}
+}
+
+func (s *signalFirstRead) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	s.once.Do(func() { close(s.signal) })
+	return n, err
+}
+
+// earlyRejectIntent models a peer that rejects the upload from the DECLARED
+// Content-Length alone, without draining the body — an ingress
+// client_max_body_size, or Synapse's max_upload_size, both of which read the
+// header first. net/http's roundTrip then returns to sendAttachment while
+// writeLoop is STILL calling Read on the streaming body, so the byte counter is
+// written on one goroutine and read on another with nothing synchronising them.
+type earlyRejectIntent struct {
+	*mockIntentAPI
+	readerDone chan struct{}
+}
+
+func (e *earlyRejectIntent) UploadMedia(_ context.Context, req mautrix.ReqUploadMedia) (*mautrix.RespMediaUpload, error) {
+	// Keep reading the body concurrently, as writeLoop would, and return early.
+	streaming := make(chan struct{})
+	go func() {
+		defer close(e.readerDone)
+		_, _ = io.Copy(io.Discard, &signalFirstRead{r: req.Content, signal: streaming})
+	}()
+	// Return only once that read is genuinely in flight (and it keeps running
+	// afterwards), so the caller's counter access is concurrent with the
+	// reader's BY CONSTRUCTION rather than by scheduling luck — otherwise the
+	// race detector misses the unsynchronised counter most runs.
+	<-streaming
+	return nil, errors.New("M_TOO_LARGE (HTTP 413): Upload request body is too large")
+}
+
+// Run under -race: sendAttachment's post-upload counter reads (the too-large
+// classification and info.size) happen while the transport may still be
+// streaming the body, so countingCapReader's counter must be race-free. A plain
+// int64 field trips the race detector here and, worse, makes the SAME 413
+// classify non-deterministically as "too large" or "failed to upload".
+func TestSendAttachment_CounterSafeWhenUploadReturnsMidStream(t *testing.T) {
+	stop := make(chan struct{})
+	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+		header := make(http.Header)
+		header.Set("Content-Type", "application/octet-stream")
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        header,
+			Body:          &unboundedBody{stop: stop},
+			ContentLength: 1 << 20, // declared in-cap, so the upload starts
+		}, nil
+	})
+
+	intent := &earlyRejectIntent{mockIntentAPI: &mockIntentAPI{}, readerDone: make(chan struct{})}
+	a := newMediaTestAdapterWithIntent(t, fileServiceURL, intent)
+	// Cap well above anything the body can reach before the test stops it, so the
+	// reader keeps running (and keeps writing the counter) past UploadMedia's
+	// return instead of self-terminating on the cap.
+	a.cfg.FileService.MaxAttachmentBytes = 1 << 30
+
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
+		[]domain.Attachment{{DocumentID: docID1, DisplayName: "x.bin", MimeType: "application/octet-stream"}})
+
+	close(stop)
+	<-intent.readerDone // no goroutine outlives the test
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to upload media",
+		"a 413 with the counter below the cap classifies as an upload failure, deterministically")
+	assert.Equal(t, 0, intent.sendMessageEventCalled)
 }
