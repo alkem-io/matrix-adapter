@@ -4,6 +4,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -587,19 +588,41 @@ func assertSuccess(t *testing.T, result interface{}) {
 }
 
 // assertErrorCode checks that the result is an error response with the given code.
-func assertErrorCode(t *testing.T, result interface{}, expectedCode dto.ErrorCode) {
+// assertErrorMessageContains asserts on the error MESSAGE, not just its code.
+// Several distinct validation failures share dto.ErrCodeInvalidParam, so a test
+// naming a specific invariant must pin the message or it cannot fail when the
+// request is rejected for an unrelated reason.
+func assertErrorMessageContains(t *testing.T, result interface{}, want string) {
+	t.Helper()
+	base := asBaseResponse(t, result)
+	if base.Error == nil {
+		t.Fatalf("expected error to be non-nil")
+	}
+	if !strings.Contains(base.Error.Message, want) {
+		t.Errorf("expected error message to contain %q, got %q", want, base.Error.Message)
+	}
+}
+
+// asBaseResponse coerces a handler result to dto.BaseResponse.
+func asBaseResponse(t *testing.T, result interface{}) dto.BaseResponse {
 	t.Helper()
 	base, ok := result.(dto.BaseResponse)
-	if !ok {
-		// Try JSON round-trip
-		data, err := json.Marshal(result)
-		if err != nil {
-			t.Fatalf("failed to marshal result: %v", err)
-		}
-		if err := json.Unmarshal(data, &base); err != nil {
-			t.Fatalf("failed to unmarshal base response: %v", err)
-		}
+	if ok {
+		return base
 	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("failed to marshal result: %v", err)
+	}
+	if err := json.Unmarshal(data, &base); err != nil {
+		t.Fatalf("failed to unmarshal base response: %v", err)
+	}
+	return base
+}
+
+func assertErrorCode(t *testing.T, result interface{}, expectedCode dto.ErrorCode) {
+	t.Helper()
+	base := asBaseResponse(t, result)
 	if base.Success {
 		t.Fatalf("expected success=false, got true")
 	}

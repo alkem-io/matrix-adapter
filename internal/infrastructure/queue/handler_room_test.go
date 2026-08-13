@@ -3,6 +3,7 @@ package queue
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -808,13 +809,19 @@ func TestHandleSendMessage_NonUUIDAttachmentDocumentIDRejectedBeforeSend(t *test
 
 // Defense-in-depth: more than the allowed number of attachments is rejected
 // before any Matrix event is emitted.
+//
+// Every ref carries a VALID UUID document id, so the count limit is the only
+// thing that can reject this request — with placeholder ids the per-attachment
+// UUID check would reject it too and the test would pass with the count limit
+// removed entirely. The assertion goes past the generic error code to the
+// message for the same reason: both rejections return ErrCodeInvalidParam.
 func TestHandleSendMessage_TooManyAttachments(t *testing.T) {
 	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$evt1:test"}
 	h := testRoomHandler(mock)
 
 	atts := make([]dto.AttachmentRef, maxAttachmentsPerMessage+1)
 	for i := range atts {
-		atts[i] = dto.AttachmentRef{DocumentID: "doc", DisplayName: "x", MimeType: "image/png"}
+		atts[i] = dto.AttachmentRef{DocumentID: uuid.New().String(), DisplayName: "x", MimeType: "image/png"}
 	}
 	payload := mustMarshal(t, dto.SendMessageRequest{
 		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
@@ -826,8 +833,45 @@ func TestHandleSendMessage_TooManyAttachments(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertErrorCode(t, result, dto.ErrCodeInvalidParam)
+	assertErrorMessageContains(t, result, fmt.Sprintf(
+		"too many attachments: %d (max %d)", maxAttachmentsPerMessage+1, maxAttachmentsPerMessage))
 	if mock.capturedSendMessageRoomID != "" {
 		t.Error("SendMessage should not have been called when attachment count is rejected")
+	}
+}
+
+// Exactly the limit is accepted — the boundary the count check must not move.
+func TestHandleSendMessage_AtAttachmentLimitIsAccepted(t *testing.T) {
+	// The bound's VALUE is cross-package load-bearing, not a local tuning knob:
+	// the media fan-out's whole-message time budget (matrix.messageFanOutTimeout)
+	// is sized against it, and the send-path docs quote "N<=10". Raising it is a
+	// deliberate contract change that must be made in both places, so pin it here
+	// rather than letting the relative assertions below silently track it.
+	if maxAttachmentsPerMessage != 10 {
+		t.Fatalf("maxAttachmentsPerMessage changed to %d; re-check matrix.messageFanOutTimeout's"+
+			" slot sizing and the fan-out docs before updating this test", maxAttachmentsPerMessage)
+	}
+
+	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$evt1:test"}
+	h := testRoomHandler(mock)
+
+	atts := make([]dto.AttachmentRef, maxAttachmentsPerMessage)
+	for i := range atts {
+		atts[i] = dto.AttachmentRef{DocumentID: uuid.New().String(), DisplayName: "x", MimeType: "image/png"}
+	}
+	payload := mustMarshal(t, dto.SendMessageRequest{
+		AlkemioRoomID: dto.AlkemioRoomID(uuid.New()),
+		SenderActorID: dto.AlkemioActorID(uuid.New()),
+		Attachments:   atts,
+	})
+	result, err := h.HandleSendMessage(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertSuccess(t, result)
+	if len(mock.capturedSendMessageAttachments) != maxAttachmentsPerMessage {
+		t.Errorf("expected %d attachments forwarded, got %d",
+			maxAttachmentsPerMessage, len(mock.capturedSendMessageAttachments))
 	}
 }
 
