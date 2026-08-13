@@ -136,10 +136,17 @@ type mockIntentAPI struct {
 	buildClientURLResult      string
 
 	// Media
-	uploadBytesCalled       int
-	lastUploadBytesData     []byte
-	lastUploadBytesType     string
+	uploadBytesCalled   int
+	lastUploadBytesData []byte
+	lastUploadBytesType string
+	// lastUploadContentLength is the raw ReqUploadMedia.ContentLength field.
+	// It is NOT what goes on the wire — see lastUploadWireContentLength.
 	lastUploadContentLength int64
+	// lastUploadWireContentLength is the net/http request ContentLength mautrix
+	// would actually derive from this ReqUploadMedia (-1 = chunked, i.e. NO
+	// Content-Length header). Asserting the raw field instead lets a request that
+	// Synapse rejects ("Request must specify a Content-Length") pass vacuously.
+	lastUploadWireContentLength int64
 	// Which ReqUploadMedia branch the caller used. The project's hard
 	// requirement is that blob bytes STREAM (Content, an io.Reader) with
 	// constant memory and are never buffered whole (ContentBytes), so tests
@@ -147,6 +154,36 @@ type mockIntentAPI struct {
 	// lastUploadBytesData alone would let a re-introduced io.ReadAll pass.
 	lastUploadContentWasReader bool
 	lastUploadUsedContentBytes bool
+}
+
+// mautrixWireContentLength reproduces mautrix v0.28.0's mapping from
+// ReqUploadMedia to the net/http request's ContentLength — the ONLY thing that
+// decides whether the upload carries a "Content-Length" header or goes out
+// chunked (which Synapse rejects outright).
+//
+// Client.UploadMedia builds FullRequest{RequestBytes: ContentBytes,
+// RequestBody: Content, RequestLength: ContentLength} and
+// FullRequest.compileRequest then:
+//   - checks RequestBytes FIRST and, when non-nil, sets reqLen = len(RequestBytes)
+//     (so an EMPTY non-nil slice yields a real 0);
+//   - otherwise, on the RequestBody branch, starts at reqLen = -1 and overrides it
+//     only when RequestLength > 0 — RequestLength == 0 just logs a warning, so the
+//     request goes out with NO Content-Length.
+//
+// TestUploadRequestWireLength_MautrixContract pins this model against the real
+// mautrix + net/http stack, so it cannot silently drift from the library.
+func mautrixWireContentLength(req mautrix.ReqUploadMedia) int64 {
+	switch {
+	case req.ContentBytes != nil:
+		return int64(len(req.ContentBytes))
+	case req.Content != nil:
+		if req.ContentLength > 0 {
+			return req.ContentLength
+		}
+		return -1
+	default:
+		return 0
+	}
 }
 
 var _ intentAPI = (*mockIntentAPI)(nil)
@@ -285,13 +322,27 @@ func (m *mockIntentAPI) DeleteAlias(_ context.Context, _ id.RoomAlias) (*mautrix
 // from the streaming reader (e.g. the oversize cap tripping) is surfaced so
 // sendAttachment can classify it. The branch actually taken is recorded so
 // tests can assert the bytes STREAMED rather than being buffered.
+//
+// It reproduces the two ways a bad upload actually fails in production, both
+// keyed off the WIRE length mautrix derives (mautrixWireContentLength), never
+// the raw ReqUploadMedia.ContentLength field:
+//   - a declared length that disagrees with the body → net/http's
+//     "http: ContentLength=%d with Body length %d";
+//   - no Content-Length at all (chunked) → Synapse's M_UNKNOWN 400.
+//
+// Asserting the raw field instead would let a request Synapse rejects outright
+// pass here vacuously.
 func (m *mockIntentAPI) UploadMedia(_ context.Context, req mautrix.ReqUploadMedia) (*mautrix.RespMediaUpload, error) {
 	m.uploadBytesCalled++
 	m.lastUploadBytesType = req.ContentType
 	m.lastUploadContentLength = req.ContentLength
+	wireLen := mautrixWireContentLength(req)
+	m.lastUploadWireContentLength = wireLen
 	m.lastUploadContentWasReader = req.Content != nil
 	m.lastUploadUsedContentBytes = req.ContentBytes != nil
-	if req.Content != nil {
+	// compileRequest prefers RequestBytes, so a non-nil ContentBytes is what goes
+	// on the wire even if Content is also set.
+	if req.ContentBytes == nil && req.Content != nil {
 		data, err := io.ReadAll(req.Content)
 		m.lastUploadBytesData = data
 		if err != nil {
@@ -304,11 +355,17 @@ func (m *mockIntentAPI) UploadMedia(_ context.Context, req mautrix.ReqUploadMedi
 		// SHORT, only after the homeserver has already stored the truncated
 		// prefix). Reproducing it here keeps "declared length must be the true
 		// length" an enforced contract instead of an untested comment.
-		if req.ContentLength >= 0 && int64(len(data)) != req.ContentLength {
-			return nil, fmt.Errorf("http: ContentLength=%d with Body length %d", req.ContentLength, len(data))
+		if wireLen >= 0 && int64(len(data)) != wireLen {
+			return nil, fmt.Errorf("http: ContentLength=%d with Body length %d", wireLen, len(data))
 		}
 	} else {
 		m.lastUploadBytesData = req.ContentBytes
+	}
+	// A negative wire length means mautrix sends the upload CHUNKED with no
+	// Content-Length header, which Synapse refuses. Reproduce the real rejection
+	// rather than accepting an upload production would never have completed.
+	if wireLen < 0 {
+		return nil, fmt.Errorf("M_UNKNOWN (HTTP 400): Request must specify a Content-Length")
 	}
 	if m.uploadBytesErr != nil {
 		return nil, m.uploadBytesErr

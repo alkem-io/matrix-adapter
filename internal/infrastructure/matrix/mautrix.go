@@ -1057,8 +1057,9 @@ func (m *MautrixAdapter) sendAttachment(
 	// applied to this one resolved length, so there is exactly one code path.
 	//
 	// -1 means the header was absent (0 is a genuine, and perfectly uploadable,
-	// zero-byte document). Absent is not a normal condition — fail loudly naming
-	// the real cause rather than guessing or buffering.
+	// zero-byte document — uploadRequest handles the mautrix branch that actually
+	// emits "Content-Length: 0" for it). Absent is not a normal condition — fail
+	// loudly naming the real cause rather than guessing or buffering.
 	if resp.ContentLength < 0 {
 		return "", fmt.Errorf("file-service response for document %s carried no Content-Length; refusing to buffer the blob to derive one", att.DocumentID)
 	}
@@ -1072,11 +1073,7 @@ func (m *MautrixAdapter) sendAttachment(
 	// Upload via the SENDER ghost intent (not the appservice bot), so the media
 	// blob is owned by the acting user's account — attributing quota/retention
 	// correctly and avoiding a single-account purge stripping every bridged blob.
-	up, err := intent.UploadMedia(mediaCtx, mautrix.ReqUploadMedia{
-		Content:       reader,
-		ContentLength: uploadLen,
-		ContentType:   contentType,
-	})
+	up, err := intent.UploadMedia(mediaCtx, uploadRequest(reader, uploadLen, contentType))
 	if err != nil {
 		if errors.Is(err, errAttachmentTooLarge) || reader.count() > maxBytes {
 			return "", attachmentTooLargeError(att.DocumentID, maxBytes)
@@ -1091,6 +1088,39 @@ func (m *MautrixAdapter) sendAttachment(
 		return "", fmt.Errorf("failed to send media event: %w", err)
 	}
 	return sent.EventID, nil
+}
+
+// uploadRequest builds the ReqUploadMedia for a body of exactly uploadLen bytes.
+//
+// Synapse REQUIRES a Content-Length on /_matrix/media/v3/upload, and mautrix's
+// ReqUploadMedia has TWO branches with different length semantics. This is where
+// that difference is handled — see TestUploadRequestWireLength_MautrixContract,
+// which pins the mapping below against the real mautrix + net/http stack:
+//
+//   - uploadLen > 0 → Content (io.Reader) + ContentLength. mautrix's
+//     FullRequest.compileRequest takes the RequestBody branch and, because
+//     RequestLength > 0, sets req.ContentLength = uploadLen. The blob STREAMS to
+//     the homeserver with a Content-Length and constant memory.
+//
+//   - uploadLen == 0 → an EMPTY, non-nil ContentBytes and NO reader. On the
+//     RequestBody branch compileRequest initialises reqLen = -1 and only
+//     overrides it when RequestLength > 0 (RequestLength == 0 merely logs a
+//     warning), so a reader with ContentLength 0 goes out CHUNKED with no
+//     Content-Length — the exact request Synapse rejects with
+//     "M_UNKNOWN (HTTP 400): Request must specify a Content-Length". The
+//     RequestBytes branch is checked FIRST and sets reqLen = len(RequestBytes),
+//     so an empty non-nil slice is the one path that genuinely emits
+//     "Content-Length: 0".
+//
+// NOTE FOR FUTURE READERS: the ContentBytes branch here is NOT a violation of
+// the "never buffer the blob" rule — it carries ZERO bytes, which is not a blob.
+// Do NOT "fix" it back to a reader: that silently breaks every 0-byte
+// attachment. The non-zero path above must stay a reader.
+func uploadRequest(body io.Reader, uploadLen int64, contentType string) mautrix.ReqUploadMedia {
+	if uploadLen == 0 {
+		return mautrix.ReqUploadMedia{ContentBytes: []byte{}, ContentType: contentType}
+	}
+	return mautrix.ReqUploadMedia{Content: body, ContentLength: uploadLen, ContentType: contentType}
 }
 
 func attachmentTooLargeError(documentID string, maxBytes int64) error {

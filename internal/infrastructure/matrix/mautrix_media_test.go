@@ -1109,7 +1109,7 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 		assert.False(t, intent.lastUploadUsedContentBytes,
 			"blob must NEVER be buffered whole into ReqUploadMedia.ContentBytes")
 		assert.Equal(t, body, intent.lastUploadBytesData, "the whole body is streamed to the upload")
-		assert.Equal(t, int64(len(body)), intent.lastUploadContentLength,
+		assert.Equal(t, int64(len(body)), intent.lastUploadWireContentLength,
 			"streamed with the file-service-served Content-Length (not buffered, not att.Size)")
 		require.Equal(t, 1, intent.sendMessageEventCalled)
 		content, ok := intent.lastSendMsgEventContent.(map[string]any)
@@ -1121,7 +1121,13 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 
 	// A genuinely empty document is a KNOWN length (Content-Length: 0), not a
 	// missing one. Conflating the two would drop every 0-byte attachment.
-	t.Run("zero-byte document uploads with a known length of 0", func(t *testing.T) {
+	//
+	// The assertion that matters is the WIRE length: mautrix's RequestBody branch
+	// only honours a length > 0, so a reader with ContentLength 0 goes out CHUNKED
+	// with no Content-Length — precisely what Synapse rejects. The mock reproduces
+	// that mapping (mautrixWireContentLength) and the rejection, so this cannot
+	// pass unless a real "Content-Length: 0" is actually emitted.
+	t.Run("zero-byte document uploads with a real Content-Length of 0", func(t *testing.T) {
 		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
 			return fileServiceResponse(http.StatusOK, "application/octet-stream", []byte{}), nil
 		})
@@ -1136,9 +1142,15 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 			[]domain.Attachment{{DocumentID: docID1, DisplayName: "empty.bin", MimeType: "application/octet-stream"}})
 		require.NoError(t, err, "a 0-byte document has a known length and must upload")
 		require.Equal(t, 1, intent.uploadBytesCalled)
-		assert.Equal(t, int64(0), intent.lastUploadContentLength)
-		assert.True(t, intent.lastUploadContentWasReader, "still streamed, never buffered")
-		assert.False(t, intent.lastUploadUsedContentBytes)
+		assert.Equal(t, int64(0), intent.lastUploadWireContentLength,
+			"a real Content-Length: 0 must reach Synapse — NOT a chunked (-1) request")
+		// Zero bytes is not a blob, so the ContentBytes branch here is NOT a
+		// buffering violation — it is the only mautrix branch that emits
+		// Content-Length: 0 (see uploadRequest). The no-buffering guarantee for
+		// real payloads is enforced by the streaming subtest above.
+		assert.True(t, intent.lastUploadUsedContentBytes,
+			"the empty, non-nil ContentBytes branch is what yields a length of 0")
+		assert.Empty(t, intent.lastUploadBytesData, "and it carries zero bytes")
 		require.Equal(t, 1, intent.sendMessageEventCalled)
 		content, ok := intent.lastSendMsgEventContent.(map[string]any)
 		require.True(t, ok)
