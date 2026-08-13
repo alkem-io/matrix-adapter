@@ -3,9 +3,11 @@ package matrix
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"maunium.net/go/mautrix"
@@ -306,13 +308,28 @@ func (s *SynapseAdmin) GetTimestampToEvent(ctx context.Context, roomID id.RoomID
 }
 
 // maxRelationsPages bounds GetRelations pagination so a pathological thread can
-// never loop unbounded. At the Synapse default page size (~50) this covers ~1000
-// relations, far beyond any real thread. This is an HONEST cap: a thread with
-// more than maxRelationsPages*pageSize newer relations before an older reply will
+// never loop unbounded. This is an HONEST cap: a thread with more than
+// maxRelationsPages*relationsPageLimit newer relations before an older reply will
 // NOT return that older reply — an accepted bound to keep admin round-trips
-// finite. SynapseAdmin has no logger to warn on truncation; the bound is
-// documented here rather than silently pretending completeness.
+// finite.
 const maxRelationsPages = 20
+
+// relationsPageLimit is the `limit` GetRelations asks for on every page.
+//
+// It MUST be explicit. The Matrix `/relations` endpoint's default page size is
+// the SERVER's choice, and Synapse's is 5 — so an unspecified limit would make
+// the real bound ~100 relations across 20 pages, not the thousands the page cap
+// suggests, and would silently drop older thread replies on any busy thread. 100
+// is the largest value servers are expected to honour (they may clamp lower,
+// which only costs extra round-trips within the same page cap).
+const relationsPageLimit = 100
+
+// ErrRelationsTruncated reports that GetRelations stopped at maxRelationsPages
+// while the homeserver still had more pages. It is returned ALONGSIDE the pages
+// already fetched, using the same (partial, err) contract as a transport
+// failure, so truncation is never silent: thread reads log it and serve the
+// partial set, reaction lookups propagate it instead of reporting "not found".
+var ErrRelationsTruncated = errors.New("relations pagination hit the page cap; results are truncated")
 
 // GetRelations retrieves relations (reactions, threads) for an event.
 // Uses the Matrix Client API (not Synapse Admin API) since no admin relations endpoint exists.
@@ -324,11 +341,11 @@ const maxRelationsPages = 20
 // client-side via isMessageLikeEvent). A non-empty eventType filters server-side
 // (e.g. m.reaction for annotation lookups).
 //
-// The fetch is PAGINATED: it follows the response next_batch token (bounded by
-// maxRelationsPages) and accumulates every page. A single unpaginated page of
-// newest-first relations could otherwise push older replies off the end — e.g.
-// many recent sticker replies burying an older message reply — silently dropping
-// real replies.
+// The fetch is PAGINATED: it asks for relationsPageLimit per page, follows the
+// response next_batch token (bounded by maxRelationsPages) and accumulates every
+// page. A single unpaginated page of newest-first relations could otherwise push
+// older replies off the end — e.g. many recent sticker replies burying an older
+// message reply — silently dropping real replies.
 //
 // On error it returns BOTH the pages accumulated so far AND the error, leaving the
 // best-effort-vs-fail decision to each caller (this is a SHARED helper — thread
@@ -338,6 +355,11 @@ const maxRelationsPages = 20
 //   - a LATER page failing (including a context deadline mid-pagination) → return
 //     (partial, err): the pages fetched so far plus the error, so a caller can
 //     use the partial set or propagate as it sees fit.
+//   - the page cap being reached with more pages still available → return
+//     (partial, ErrRelationsTruncated), so truncation travels the SAME visible
+//     path as a transport failure instead of being silently indistinguishable
+//     from a complete result. SynapseAdmin has no logger of its own; its callers
+//     already log the (partial, err) case.
 func (s *SynapseAdmin) GetRelations(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID,
 	relType event.RelationType, eventType event.Type,
@@ -348,17 +370,20 @@ func (s *SynapseAdmin) GetRelations(
 	} else {
 		base = s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType, eventType.Type)
 	}
+	// The limit is a query parameter on EVERY page (the from= token below is
+	// appended to this), never left to the server's default.
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+	base += sep + "limit=" + strconv.Itoa(relationsPageLimit)
 
 	var all []*event.Event
 	from := ""
 	for page := 0; page < maxRelationsPages; page++ {
 		urlPath := base
 		if from != "" {
-			sep := "?"
-			if strings.Contains(base, "?") {
-				sep = "&"
-			}
-			urlPath = base + sep + "from=" + url.QueryEscape(from)
+			urlPath = base + "&from=" + url.QueryEscape(from)
 		}
 
 		var resp struct {
@@ -376,11 +401,13 @@ func (s *SynapseAdmin) GetRelations(
 		}
 		all = append(all, resp.Chunk...)
 		if resp.NextBatch == "" {
-			break
+			return all, nil
 		}
 		from = resp.NextBatch
 	}
-	return all, nil
+	// Loop exhausted with next_batch still set: more relations exist than the page
+	// cap allows. Surface it rather than returning a truncated set as complete.
+	return all, ErrRelationsTruncated
 }
 
 // JoinRoom forces a user to join a room (bypasses join rules for admin).

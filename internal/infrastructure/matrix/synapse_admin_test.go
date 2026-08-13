@@ -4,9 +4,11 @@ package matrix
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1082,6 +1084,107 @@ func TestGetRelations_LaterPageError_ReturnsPartial(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].ID != "$m1:hs" {
 		t.Fatalf("expected page 1's relation returned alongside the error, got %d events", len(events))
+	}
+}
+
+// Every page must carry an EXPLICIT limit. Left to the server's default, the
+// bound would be Synapse's /relations default of 5 per page — so the 20-page cap
+// would cover ~100 relations, not the thousands it implies, silently dropping
+// older thread replies on any busy thread.
+func TestGetRelations_SendsExplicitLimitOnEveryPage(t *testing.T) {
+	var gotLimits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotLimits = append(gotLimits, r.URL.Query().Get("limit"))
+		w.Header().Set("Content-Type", "application/json")
+		body := map[string]interface{}{"chunk": []interface{}{}}
+		if r.URL.Query().Get("from") == "" {
+			body["next_batch"] = "PAGE2"
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	if _, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	); err != nil {
+		t.Fatalf("GetRelations: %v", err)
+	}
+	if len(gotLimits) != 2 {
+		t.Fatalf("expected 2 pages, got %d", len(gotLimits))
+	}
+	want := strconv.Itoa(relationsPageLimit)
+	for i, got := range gotLimits {
+		if got != want {
+			t.Errorf("page %d: expected limit=%s, got %q (an unset limit falls back to the SERVER default)", i+1, want, got)
+		}
+	}
+}
+
+// Truncation must not be silent. When the homeserver still offers a next_batch
+// after maxRelationsPages, GetRelations returns the accumulated pages ALONGSIDE
+// ErrRelationsTruncated — the same (partial, err) contract as a transport
+// failure — so a caller can log it or propagate it instead of treating a
+// truncated set as complete.
+func TestGetRelations_PageCapReturnsTruncationError(t *testing.T) {
+	pages := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pages++
+		w.Header().Set("Content-Type", "application/json")
+		// Always offer another page: the homeserver has more than the cap allows.
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"chunk": []map[string]interface{}{
+				{"type": "m.room.message", "event_id": "$m:hs", "sender": "@a:hs", "origin_server_ts": 1000},
+			},
+			"next_batch": "MORE",
+		})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	events, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	)
+	if !errors.Is(err, ErrRelationsTruncated) {
+		t.Fatalf("expected ErrRelationsTruncated when the page cap is hit with more pages available, got %v", err)
+	}
+	if pages != maxRelationsPages {
+		t.Errorf("expected exactly %d pages fetched, got %d", maxRelationsPages, pages)
+	}
+	if len(events) != maxRelationsPages {
+		t.Errorf("expected the truncated set returned alongside the error, got %d events", len(events))
+	}
+}
+
+// A complete pagination (the last page carries no next_batch) must NOT report
+// truncation.
+func TestGetRelations_CompletePaginationIsNotTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body := map[string]interface{}{
+			"chunk": []map[string]interface{}{
+				{"type": "m.room.message", "event_id": "$m:hs", "sender": "@a:hs", "origin_server_ts": 1000},
+			},
+		}
+		if r.URL.Query().Get("from") == "" {
+			body["next_batch"] = "PAGE2"
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	events, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	)
+	if err != nil {
+		t.Fatalf("a fully-paginated fetch must not report an error, got %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 relations across 2 pages, got %d", len(events))
 	}
 }
 
