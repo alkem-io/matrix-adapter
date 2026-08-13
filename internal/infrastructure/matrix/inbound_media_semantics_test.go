@@ -81,11 +81,10 @@ func TestParseMessageEvent_LegacyBody_SurfacedAsBothContentAndDisplayName(t *tes
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
 
-// A body equal to the resolved filename is not a genuine caption, even when a
-// top-level filename field is present, so it is not duplicated as Content.
 // MSC2530: a caption exists only when body differs from the filename. A genuine
 // caption (body != filename) is surfaced as Content, with the filename as the
-// attachment display name.
+// attachment display name — so the two strings differ and a renderer showing
+// both is correct.
 func TestParseMessageEvent_GenuineCaption_Preserved(t *testing.T) {
 	a := newTestAdapter("test.local")
 
