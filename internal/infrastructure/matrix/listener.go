@@ -101,7 +101,7 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 
 	// Parse content + attachment via the shared inbound-media helper, which
 	// applies MSC2530 caption semantics and the present-but-empty-body rule.
-	content, attachment, ok := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender))
+	content, attachment, ok := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender), m.idMapper)
 	if !ok {
 		m.logger.Warn("Failed to parse message body", "event_id", evt.ID)
 		return
@@ -850,9 +850,17 @@ var mediaMsgTypes = map[string]struct{}{
 // extractAttachment surfaces a raw media reference from a message event, or nil
 // if the event is not a media message (or carries neither an mxc URL nor a
 // document id). It reads the event's raw content:
-//   - url(mxc) → MediaID (the Synapse media id; the server's re-home key)
+//   - url(mxc, OUR homeserver only) → MediaID (the Synapse media id; the
+//     server's re-home key)
 //   - info → mimetype/size/w/h
 //   - io.alkemio.document_id → DocumentID (only when trustDocumentID is set)
+//
+// The mxc URL must be hosted on OUR homeserver (idMapper.LocalMediaID). MediaID
+// is a BARE media id, and the Alkemio server resolves it by externalReference
+// against media its own Synapse stored — so a foreign homeserver's media id
+// would either miss (attachment silently lost) or collide with an unrelated
+// local media id and resolve to the WRONG document. A foreign (or unparseable)
+// url therefore surfaces no MediaID at all, exactly like a non-mxc url.
 //
 // trustDocumentID must be true only when the event sender is within the
 // adapter's own appservice namespace (see isOwnAppserviceUser). The
@@ -870,7 +878,7 @@ var mediaMsgTypes = map[string]struct{}{
 // re-home, where file-service stores the actual blob content-type.
 //
 // The adapter never resolves these refs — it only surfaces them.
-func extractAttachment(evt *event.Event, trustDocumentID bool) *domain.Attachment {
+func extractAttachment(evt *event.Event, trustDocumentID bool, idMapper *domain.IDMapper) *domain.Attachment {
 	raw := evt.Content.Raw
 	if raw == nil {
 		return nil
@@ -885,11 +893,10 @@ func extractAttachment(evt *event.Event, trustDocumentID bool) *domain.Attachmen
 
 	att := &domain.Attachment{DisplayName: attachmentDisplayName(raw)}
 
-	// url (mxc://<server>/<media_id>) → MediaID
-	if urlStr, ok := raw["url"].(string); ok && urlStr != "" {
-		if uri, err := id.ParseContentURI(urlStr); err == nil {
-			att.MediaID = uri.FileID
-		}
+	// url (mxc://<our homeserver>/<media_id>) → MediaID. A foreign-homeserver or
+	// unparseable url yields "" (see LocalMediaID) and surfaces no MediaID.
+	if urlStr, ok := raw["url"].(string); ok {
+		att.MediaID = idMapper.LocalMediaID(urlStr)
 	}
 
 	applyMediaInfo(att, raw)
@@ -977,9 +984,11 @@ func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
 // the read/scan paths parseMessageEvent discards ok, so the url-less sticker
 // becomes a blank (empty-content, no-attachment) Message instead — which
 // isBlankMessage then excludes from timeline/scan results.
-func extractInboundMessage(evt *event.Event, trustDocumentID bool) (content string, attachment *domain.Attachment, ok bool) {
+func extractInboundMessage(
+	evt *event.Event, trustDocumentID bool, idMapper *domain.IDMapper,
+) (content string, attachment *domain.Attachment, ok bool) {
 	body, bodyPresent := inboundBody(evt)
-	attachment = extractAttachment(evt, trustDocumentID)
+	attachment = extractAttachment(evt, trustDocumentID, idMapper)
 
 	if !bodyPresent && attachment == nil {
 		return "", nil, false

@@ -157,7 +157,7 @@ func TestExtractAttachment_VideoAudio(t *testing.T) {
 		"body":    "clip.mp4",
 		"url":     "mxc://test.local/vid1",
 		"info":    map[string]any{"mimetype": "video/mp4", "size": float64(100)},
-	}), true)
+	}), true, testIDMapper)
 	require.NotNil(t, video)
 	assert.Equal(t, "vid1", video.MediaID)
 	assert.Equal(t, "video/mp4", video.MimeType)
@@ -167,7 +167,7 @@ func TestExtractAttachment_VideoAudio(t *testing.T) {
 		"body":    "voice.ogg",
 		"url":     "mxc://test.local/aud1",
 		"info":    map[string]any{"mimetype": "audio/ogg"},
-	}), true)
+	}), true, testIDMapper)
 	require.NotNil(t, audio)
 	assert.Equal(t, "aud1", audio.MediaID)
 	assert.Equal(t, "audio/ogg", audio.MimeType)
@@ -223,7 +223,7 @@ func TestExtractAttachment_Sticker(t *testing.T) {
 	})
 	evt.Type = event.EventSticker
 
-	att := extractAttachment(evt, true)
+	att := extractAttachment(evt, true, testIDMapper)
 	require.NotNil(t, att)
 	assert.Equal(t, "stickerid", att.MediaID, "sticker mxc id is the re-home key")
 	assert.Equal(t, "party parrot", att.DisplayName)
@@ -242,7 +242,7 @@ func TestExtractAttachment_Sticker_AbsentMimeStaysEmpty(t *testing.T) {
 	})
 	evt.Type = event.EventSticker
 
-	att := extractAttachment(evt, true)
+	att := extractAttachment(evt, true, testIDMapper)
 	require.NotNil(t, att)
 	assert.Equal(t, "nomime", att.MediaID)
 	assert.Empty(t, att.MimeType, "sticker with absent mimetype must not be guessed")
@@ -263,7 +263,7 @@ func TestExtractInboundMessage_UrllessSticker_Dropped(t *testing.T) {
 		},
 	}
 
-	content, attachment, ok := extractInboundMessage(evt, false)
+	content, attachment, ok := extractInboundMessage(evt, false, testIDMapper)
 	assert.False(t, ok, "a url-less sticker has nothing to surface → dropped on every path")
 	assert.Empty(t, content, "sticker alt-text must never surface as Content")
 	assert.Nil(t, attachment, "no parseable url → no attachment")
@@ -282,7 +282,7 @@ func TestExtractInboundMessage_Sticker_AttachmentEmptyContent(t *testing.T) {
 		},
 	}
 
-	content, attachment, ok := extractInboundMessage(evt, false)
+	content, attachment, ok := extractInboundMessage(evt, false, testIDMapper)
 	assert.True(t, ok)
 	assert.Empty(t, content)
 	require.NotNil(t, attachment)
@@ -297,7 +297,7 @@ func TestExtractAttachment_NoRefs_ReturnsNil(t *testing.T) {
 		"msgtype": "m.image",
 		"body":    "broken.png",
 		// no url, no io.alkemio.document_id
-	}), true)
+	}), true, testIDMapper)
 	assert.Nil(t, att)
 }
 

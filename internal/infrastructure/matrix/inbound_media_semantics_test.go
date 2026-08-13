@@ -259,7 +259,7 @@ func TestExtractInboundMessage_AbsentBodyNoAttachment_Dropped(t *testing.T) {
 			Raw: map[string]any{"msgtype": "m.text"}, // no body key
 		},
 	}
-	_, _, ok := extractInboundMessage(evt, false)
+	_, _, ok := extractInboundMessage(evt, false, testIDMapper)
 	assert.False(t, ok, "absent body with no attachment must be dropped")
 }
 

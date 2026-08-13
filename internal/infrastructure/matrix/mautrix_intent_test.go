@@ -514,12 +514,14 @@ func testActor(id uuid.UUID, displayName string) domain.Actor {
 	}
 }
 
-// intentTestIDMapper is a shared IDMapper for constructing Matrix IDs in intent tests.
-var intentTestIDMapper = domain.NewIDMapper("test.local")
+// testIDMapper is the package-wide test IDMapper. Its domain matches every
+// fixture mxc:// url and Matrix user id in these tests ("test.local"), so those
+// references count as LOCAL to our homeserver.
+var testIDMapper = domain.NewIDMapper("test.local")
 
 // expectedUserID returns the Matrix user ID for a test actor UUID.
 func expectedUserID(actorID uuid.UUID) id.UserID {
-	return intentTestIDMapper.UserID(actorID)
+	return testIDMapper.UserID(actorID)
 }
 
 // newMockAS creates a mockAppserviceAPI where both botIntent and any user intent

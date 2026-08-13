@@ -35,7 +35,7 @@ func TestExtractAttachment_ImageWithDocumentID(t *testing.T) {
 			"h":        float64(1080),
 		},
 		"io.alkemio.document_id": "doc-abc",
-	}), true) // trusted (own-appservice) sender ⇒ document_id surfaced
+	}), true, testIDMapper) // trusted (own-appservice) sender ⇒ document_id surfaced
 	if att == nil {
 		t.Fatal("expected non-nil attachment")
 		return
@@ -67,18 +67,18 @@ func TestExtractAttachment_ImageWithDocumentID(t *testing.T) {
 	}
 }
 
-// Inbound m.image from Element (no io.alkemio.document_id) → MediaID set,
-// DocumentID empty (server will re-home by media_id).
+// Inbound m.image from Element on OUR homeserver (no io.alkemio.document_id) →
+// MediaID set, DocumentID empty (server will re-home by media_id).
 func TestExtractAttachment_ImageWithoutDocumentID(t *testing.T) {
 	att := extractAttachment(mediaEvent(map[string]any{
 		"msgtype": "m.image",
 		"body":    "element.png",
-		"url":     "mxc://other.server/xyz789",
+		"url":     "mxc://test.local/xyz789",
 		"info": map[string]any{
 			"mimetype": "image/png",
 			"size":     float64(42),
 		},
-	}), false) // untrusted sender: no document_id in event anyway
+	}), false, testIDMapper) // untrusted sender: no document_id in event anyway
 	if att == nil {
 		t.Fatal("expected non-nil attachment")
 		return
@@ -94,6 +94,48 @@ func TestExtractAttachment_ImageWithoutDocumentID(t *testing.T) {
 	}
 }
 
+// Media hosted on a FOREIGN homeserver must NOT be surfaced as a bare media_id.
+// MediaID is the server's re-home key and is resolved by externalReference
+// against media OUR Synapse stored, so a foreign media id would either miss
+// (attachment silently lost) or COLLIDE with an unrelated local media id and
+// resolve to the wrong document. With no document id either, the event carries
+// no reference the server can act on, so no attachment is surfaced at all —
+// exactly like a non-mxc url.
+func TestExtractAttachment_ForeignHomeserverMediaNotSurfaced(t *testing.T) {
+	att := extractAttachment(mediaEvent(map[string]any{
+		"msgtype": "m.image",
+		"body":    "federated.png",
+		"url":     "mxc://other.server/xyz789",
+		"info":    map[string]any{"mimetype": "image/png", "size": float64(42)},
+	}), false, testIDMapper)
+	if att != nil {
+		t.Errorf("foreign-homeserver media must not surface a re-homable ref, got %+v", att)
+	}
+}
+
+// A foreign-homeserver url on an ECHO of our own outbound media (trusted sender,
+// io.alkemio.document_id present) still surfaces the DocumentID — that ref is
+// ours and resolvable — but never the foreign media id, which would send the
+// coalesce path at the wrong (or a colliding) document.
+func TestExtractAttachment_ForeignHomeserverKeepsDocumentIDDropsMediaID(t *testing.T) {
+	att := extractAttachment(mediaEvent(map[string]any{
+		"msgtype":                "m.image",
+		"body":                   "federated.png",
+		"url":                    "mxc://other.server/xyz789",
+		"io.alkemio.document_id": "doc-abc",
+	}), true, testIDMapper)
+	if att == nil {
+		t.Fatal("expected the document id to still be surfaced")
+		return
+	}
+	if att.MediaID != "" {
+		t.Errorf("foreign media id must not be surfaced, got %q", att.MediaID)
+	}
+	if att.DocumentID != "doc-abc" {
+		t.Errorf("expected DocumentID 'doc-abc', got %q", att.DocumentID)
+	}
+}
+
 // m.file inbound maps to an attachment too.
 func TestExtractAttachment_File(t *testing.T) {
 	att := extractAttachment(mediaEvent(map[string]any{
@@ -101,7 +143,7 @@ func TestExtractAttachment_File(t *testing.T) {
 		"body":    "doc.pdf",
 		"url":     "mxc://test.local/fileabc",
 		"info":    map[string]any{"mimetype": "application/pdf", "size": float64(1000)},
-	}), true)
+	}), true, testIDMapper)
 	if att == nil {
 		t.Fatal("expected non-nil attachment")
 		return
@@ -116,7 +158,7 @@ func TestExtractAttachment_NonMedia(t *testing.T) {
 	att := extractAttachment(mediaEvent(map[string]any{
 		"msgtype": "m.text",
 		"body":    "hello",
-	}), true)
+	}), true, testIDMapper)
 	if att != nil {
 		t.Errorf("expected nil attachment for m.text, got %+v", att)
 	}
@@ -124,7 +166,7 @@ func TestExtractAttachment_NonMedia(t *testing.T) {
 
 // An event with no raw content yields no attachment.
 func TestExtractAttachment_NilRaw(t *testing.T) {
-	if att := extractAttachment(&event.Event{}, true); att != nil {
+	if att := extractAttachment(&event.Event{}, true, testIDMapper); att != nil {
 		t.Errorf("expected nil attachment for empty event, got %+v", att)
 	}
 }

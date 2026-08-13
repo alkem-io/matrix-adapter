@@ -2039,7 +2039,7 @@ func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *
 	// the present-but-empty-body rule. Read paths keep bodyless message events as
 	// blank Messages so GetMessage can return them through this same population
 	// path; timeline scans exclude them with isBlankMessage below.
-	content, attachment, _ := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender))
+	content, attachment, _ := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender), m.idMapper)
 
 	msg := &domain.Message{
 		ID:             evt.ID.String(),
