@@ -25,22 +25,33 @@
 # Module requirements:
 #   alkemio_room_control.py       REQUIRED in every target — it predates this
 #                                 script and must be present.
-#   alkemio_fileservice_provider  BEST-EFFORT — in embed mode it is skipped (not
-#                                 an error) when its `alkemio_fileservice_provider.py: |`
-#                                 marker is absent, so syncing an unrelated
-#                                 room-control change never fails against a
-#                                 target that has not yet adopted the provider
-#                                 block. In file mode the provider file is
+#   alkemio_fileservice_provider  REQUIRED in every target. In embed mode a
+#                                 missing `alkemio_fileservice_provider.py: |`
+#                                 marker is a HARD FAILURE, not a quiet skip: the
+#                                 provider is the media byte bridge, so a target
+#                                 that silently stops receiving it drifts from
+#                                 canonical while the sync job stays green. In
+#                                 file mode the provider file is
 #                                 created/overwritten alongside room-control.
+#
+#                                 A target that has genuinely not adopted the
+#                                 provider block yet must opt out EXPLICITLY:
+#                                 set ALLOW_MISSING_FILESERVICE_PROVIDER=1. That
+#                                 downgrades the failure to a loud warning
+#                                 (::warning:: on GitHub Actions) so the choice
+#                                 is visible and deliberate, never accidental.
 #
 # Usage:
 #   sync-synapse-module.sh <target-repo-root>
+#
+# Environment:
+#   ALLOW_MISSING_FILESERVICE_PROVIDER=1  Explicit opt-out (see above).
 #
 # Exit codes:
 #   0  — change(s) applied OR no change needed (idempotent)
 #   2  — canonical source missing / bad usage
 #   3  — target layout not recognised
-#   4  — embed-mode marker not found for a REQUIRED module (room-control)
+#   4  — embed-mode marker not found for a required module
 
 set -euo pipefail
 
@@ -89,20 +100,22 @@ sync_file() {
 
 # embed mode: replace the YAML literal block under `  <key>: |` with the
 # canonical content, indented 4 spaces, bounded by the next data key (or EOF).
-#   $4 required=1 → abort (exit 4) if the marker is missing
-#      required=0 → skip quietly if the marker is missing
+# A missing marker ALWAYS aborts (exit 4) — a silent skip lets a downstream stop
+# receiving a canonical module while the sync job reports success. The only way
+# past it is the explicit, logged opt-out in sync_embed_optional below.
 sync_embed() {
-  local dest="$1" canonical="$2" key="$3" required="$4"
+  local dest="$1" canonical="$2" key="$3"
 
   local key_line
   key_line="$(grep -n "^  ${key}: |\$" "$dest" | head -1 | cut -d: -f1 || true)"
   if [[ -z "${key_line:-}" ]]; then
-    if [[ "$required" == 1 ]]; then
-      echo "ERROR: marker '  ${key}: |' not found in $dest" >&2
-      exit 4
-    fi
-    echo "skip: marker '  ${key}: |' not present in $dest (optional module)"
-    return 0
+    echo "::error::marker '  ${key}: |' not found in $dest" >&2
+    echo "ERROR: marker '  ${key}: |' not found in $dest" >&2
+    echo "  The canonical module cannot be synced into this target. Add the" >&2
+    echo "  '  ${key}: |' key to the ConfigMap's data: block, or (only if the" >&2
+    echo "  target deliberately does not run this module) re-run with" >&2
+    echo "  ALLOW_MISSING_FILESERVICE_PROVIDER=1." >&2
+    exit 4
   fi
 
   # The literal block scalar body is any blank line OR any line indented deeper than
@@ -158,7 +171,19 @@ else
 fi
 
 # embed mode (dev-orchestration / infrastructure-operations).
-# room-control is required; the fileservice provider is synced only where its
-# block already exists (skip-if-absent keeps room-control-only syncs green).
-sync_embed "$DEST" "$CANONICAL_ROOM" "alkemio_room_control.py" 1
-sync_embed "$DEST" "$CANONICAL_FILESERVICE" "alkemio_fileservice_provider.py" 0
+# Both modules are required. A missing marker fails the sync loudly so drift
+# cannot go unnoticed; the provider has an explicit, logged opt-out for a target
+# that genuinely does not run it yet.
+sync_embed "$DEST" "$CANONICAL_ROOM" "alkemio_room_control.py"
+
+if [[ "${ALLOW_MISSING_FILESERVICE_PROVIDER:-0}" == 1 ]] &&
+  ! grep -q "^  alkemio_fileservice_provider.py: |\$" "$DEST"; then
+  # Explicit opt-out ONLY. Loud on purpose: this target is knowingly running
+  # without the canonical media storage provider.
+  echo "::warning::alkemio_fileservice_provider.py block absent in $DEST and" \
+    "ALLOW_MISSING_FILESERVICE_PROVIDER=1 — skipping the media storage provider sync." >&2
+  echo "WARNING: skipping alkemio_fileservice_provider.py (explicit opt-out); $DEST" \
+    "will NOT receive canonical media-provider changes." >&2
+else
+  sync_embed "$DEST" "$CANONICAL_FILESERVICE" "alkemio_fileservice_provider.py"
+fi

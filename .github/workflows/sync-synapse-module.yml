@@ -14,9 +14,11 @@ name: Sync Synapse Config to Downstream Repos
 #   - alkem-io/dev-orchestration          (embedded in 01-synapse-setup-confmap.yml)
 #   - alkem-io/infrastructure-operations  (embedded in 01-synapse-setup-confmap.yml)
 #
-# Both .py modules are synced verbatim (they have no per-environment fields).
-# alkemio_room_control.py is required in every target; alkemio_fileservice_provider.py
-# is synced only where its target block/file already exists (see
+# Both .py modules are synced verbatim (they have no per-environment fields) and
+# both are REQUIRED in every target: a missing embed marker fails this job (exit
+# 4) rather than skipping quietly, so a downstream cannot silently stop receiving
+# a canonical module. A target that deliberately does not run the media provider
+# must opt out with ALLOW_MISSING_FILESERVICE_PROVIDER=1 (see
 # .scripts/sync-synapse-module.sh). registration.yaml is schema-synced: namespaces / sender_localpart /
 # receive_ephemeral / msc2409 / id are taken from canonical, but each target's
 # existing url / as_token / hs_token values are preserved (those are
@@ -172,7 +174,7 @@ jobs:
 
           Files synced from matrix-adapter:
             synapse-modules/alkemio_room_control.py
-            synapse-modules/alkemio_fileservice_provider.py (where its block/file already exists)
+            synapse-modules/alkemio_fileservice_provider.py
             registration.yaml (schema fields only; url / as_token / hs_token preserved)"
 
           git push --force-with-lease \
@@ -199,7 +201,7 @@ jobs:
               'Canonical Synapse-related files live in matrix-adapter and are propagated here automatically:',
               '',
               '- [`synapse-modules/alkemio_room_control.py`](https://github.com/alkem-io/matrix-adapter/blob/develop/synapse-modules/alkemio_room_control.py) — synced verbatim.',
-              '- [`synapse-modules/alkemio_fileservice_provider.py`](https://github.com/alkem-io/matrix-adapter/blob/develop/synapse-modules/alkemio_fileservice_provider.py) — synced verbatim (only where the `alkemio_fileservice_provider.py` block/file already exists in this repo).',
+              '- [`synapse-modules/alkemio_fileservice_provider.py`](https://github.com/alkem-io/matrix-adapter/blob/develop/synapse-modules/alkemio_fileservice_provider.py) — synced verbatim.',
               '- [`registration.yaml`](https://github.com/alkem-io/matrix-adapter/blob/develop/registration.yaml) — schema fields only; `url` / `as_token` / `hs_token` are preserved from this repo.',
               '',
               `Review and merge to roll the change forward to this repo's deployment. The branch (\`${branch}\`) is rolling — subsequent canonical changes will force-update this PR rather than open new ones.`,

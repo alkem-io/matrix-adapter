@@ -11,7 +11,7 @@ This directory is the **canonical** home of Alkemio's Synapse Python modules:
 > - `alkem-io/dev-orchestration` — embedded in `01-synapse-setup-confmap.yml`
 > - `alkem-io/infrastructure-operations` — embedded in `01-synapse-setup-confmap.yml`
 >
-> The two `.py` modules are synced **verbatim** (no per-environment fields). `registration.yaml` is schema-synced — `url`, `as_token`, and `hs_token` stay environment-specific in each downstream. `alkemio_room_control.py` is required in every target; `alkemio_fileservice_provider.py` is synced only where its target block/file already exists (its `alkemio_fileservice_provider.py: |` ConfigMap key in the ops repos, or an existing file in server), so a downstream repo adopts the provider once it declares that block — a room-control-only change never fails against a target that has not adopted the provider yet.
+> The two `.py` modules are synced **verbatim** (no per-environment fields). `registration.yaml` is schema-synced — `url`, `as_token`, and `hs_token` stay environment-specific in each downstream. **Both** modules are required in every target: in the ops repos a missing `alkemio_room_control.py: |` or `alkemio_fileservice_provider.py: |` ConfigMap key **fails the sync loudly** (exit 4) rather than skipping quietly, so a target cannot silently stop receiving canonical changes while the job stays green. A target that deliberately does not run the media provider must opt out explicitly with `ALLOW_MISSING_FILESERVICE_PROVIDER=1`, which downgrades the failure to a logged warning.
 >
 > Do not edit those downstream copies directly. Edit the canonical file here (or `registration.yaml`), merge to `develop`, and review the rolling PR opened in each downstream repo by the Alkemio Infrastructure Bot.
 
