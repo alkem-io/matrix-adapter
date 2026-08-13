@@ -157,9 +157,21 @@ mapping lives on the file-service document's opaque `externalReference`):
   bucket), then streams `GET /internal/file/{id}/content` back through a
   `Responder`. A cache miss in file-service returns `None`.
 
-Reads are streamed with real backpressure and guarded by conservative network
-timeouts and a small circuit breaker, so the Element media read path fails fast
-and degrades rather than hanging.
+Reads are streamed with real backpressure (the response-body transport is
+registered as a producer with the media consumer) and bounded by **per-request
+timeouts only**: `timeout_s` covers connect + response headers, the metadata body
+read, and the keep-alive drain, while the streamed content body is bounded by a
+**time-to-first-byte** deadline — after the first byte, legitimate slow-client
+backpressure governs and no further deadline is imposed. Any miss or failure
+(404, non-200, transport error, timeout, malformed body) returns `None`, which
+Synapse treats as a cache miss, so the Element media read path degrades rather
+than hanging.
+
+There is deliberately **no circuit breaker** and no cross-request state: this
+follows the standard Synapse storage-provider model (per-request timeouts +
+return-`None`-on-miss, like the mainline `s3_storage_provider`), and a stateful
+breaker cannot meaningfully model a `fetch` whose duration is a minutes-long body
+stream.
 
 ### Deployment
 
@@ -176,13 +188,34 @@ media_storage_providers:
     config:
       file_service_url: "http://file-service:4003"
       matrix_media_bucket_id: "<reserved matrix_media bucket uuid>"
-      # optional tuning: timeout_s, store_timeout_s,
-      # cb_fail_threshold, cb_reset_timeout_s
+      # optional tuning (seconds, must be finite and > 0):
+      #   timeout_s        default 10 — connect + headers, metadata body read,
+      #                    drain, and the content stream's time-to-first-byte
+      #   store_timeout_s  default 30 — FLOOR for the multipart upload; scaled up
+      #                    by file size at an assumed 1 MB/s
+      # No other keys are read; unknown keys are ignored.
 ```
 
 It depends on `treq` / `twisted` (already present in Synapse) and the Synapse
 `media` APIs (`StorageProvider`, `Responder`).
 
-> The provider ships with a companion unit-test file,
-> [`test_alkemio_fileservice_provider.py`](./test_alkemio_fileservice_provider.py),
-> which imports this canonical module directly.
+### Tests
+
+The provider ships with a companion unit-test suite,
+[`test_alkemio_fileservice_provider.py`](./test_alkemio_fileservice_provider.py),
+which imports this canonical module directly. It runs in CI (the
+`python-modules` job in [`ci-test.yml`](../.github/workflows/ci-test.yml)) and
+locally:
+
+```bash
+pip install -r synapse-modules/requirements-dev.txt
+make test-python
+```
+
+It is hermetic — no live file-service, no reactor, no network, and **no Synapse
+install**: [`conftest.py`](./conftest.py) registers minimal `sys.modules`
+stand-ins for the four Synapse symbols the provider imports at load time, but
+only when Synapse is genuinely absent (inside the `matrixdotorg/synapse` image
+the real package is used). `twisted` and `treq` are the real libraries, so the
+protocols, producers and multipart serialisation are exercised against actual
+library behaviour.
