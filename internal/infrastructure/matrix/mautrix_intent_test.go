@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -123,6 +124,11 @@ type mockIntentAPI struct {
 	lastSendMsgEventType       event.Type
 	lastSendMsgEventContent    any
 	lastSendMsgEventExtra      []mautrix.ReqSendEvent
+	// lastSendMsgEventDeadline is the deadline carried by the context handed to
+	// SendMessageEvent, zero when it carries none. The AMQP/watermill message
+	// context has NO deadline, so on the media path a non-zero value here can
+	// only come from fanOutAttachments' whole-message budget.
+	lastSendMsgEventDeadline time.Time
 	// sendMsgEventTxns accumulates the transaction ID seen on each
 	// SendMessageEvent call (empty string when none was supplied), in call order.
 	sendMsgEventTxns []string
@@ -199,9 +205,10 @@ func (m *mockIntentAPI) EnsureJoined(_ context.Context, roomID id.RoomID, _ ...a
 	return m.ensureJoinedErr
 }
 
-func (m *mockIntentAPI) SendMessageEvent(_ context.Context, roomID id.RoomID, eventType event.Type, contentJSON any, extra ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {
+func (m *mockIntentAPI) SendMessageEvent(ctx context.Context, roomID id.RoomID, eventType event.Type, contentJSON any, extra ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {
 	callIndex := m.sendMessageEventCalled
 	m.sendMessageEventCalled++
+	m.lastSendMsgEventDeadline, _ = ctx.Deadline()
 	m.lastSendMsgEventRoomID = roomID
 	m.lastSendMsgEventType = eventType
 	m.lastSendMsgEventContent = contentJSON

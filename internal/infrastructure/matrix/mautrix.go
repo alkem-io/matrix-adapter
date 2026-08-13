@@ -747,7 +747,7 @@ func (m *MautrixAdapter) SendMessage(
 		primaryEventID = resp.EventID
 	}
 
-	return m.fanOutAttachments(ctx, intent, roomID, attachments, "", primaryEventID)
+	return m.fanOutAttachments(ctx, intent, userID, roomID, attachments, "", primaryEventID)
 }
 
 // fanOutAttachments sends each attachment as its own independent media event.
@@ -773,18 +773,43 @@ func (m *MautrixAdapter) SendMessage(
 // order in the room (events are ordered by send). Parallelizing the uploads
 // would still require an ordered send afterward for marginal gain on a bounded
 // (<=10) attachment list.
+//
+// Because it IS sequential — and processMessage runs the room-ops consumer's
+// messages one at a time in a single goroutine — the fan-out gets ONE overall
+// deadline (messageFanOutTimeout) shared by every attachment. Per-attachment
+// deadlines alone would let a stalling file-service hold the consumer for
+// N x the per-attachment ceiling and stall ALL room messaging behind it. On
+// budget exhaustion the current attachment fails like any other failure and the
+// partial-success rule above applies: degrade to partial delivery rather than
+// block the consumer.
 func (m *MautrixAdapter) fanOutAttachments(
-	ctx context.Context, intent intentAPI, roomID id.RoomID,
+	ctx context.Context, intent intentAPI, senderUserID id.UserID, roomID id.RoomID,
 	attachments []domain.Attachment, threadID, primaryEventID id.EventID,
 ) (id.EventID, error) {
+	if len(attachments) == 0 {
+		return primaryEventID, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, messageFanOutTimeout(m.cfg.MaxAttachmentBytes()))
+	defer cancel()
+
 	for i := range attachments {
 		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID)
 		if err != nil {
 			if primaryEventID == "" {
 				return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
 			}
+			// This send is still reported as a SUCCESS (the primary was delivered),
+			// so this warning is the only trace a dropped attachment leaves. It must
+			// carry everything needed to find the message and the lost document.
 			m.logger.Warn("Attachment fan-out partial failure; primary already delivered",
-				"attachment", i+1, "total", len(attachments), "error", err)
+				"room_id", roomID,
+				"sender_user_id", senderUserID,
+				"primary_event_id", primaryEventID,
+				"thread_id", threadID,
+				"document_id", attachments[i].DocumentID,
+				"attachment", i+1,
+				"total", len(attachments),
+				"error", err)
 			return primaryEventID, nil
 		}
 		if primaryEventID == "" {
@@ -792,6 +817,24 @@ func (m *MautrixAdapter) fanOutAttachments(
 		}
 	}
 	return primaryEventID, nil
+}
+
+// messageFanOutBudgetSlots is how many per-attachment ceilings the WHOLE
+// message's fan-out may consume, however many attachments it carries.
+//
+// mediaStreamTimeout already sizes one attachment's ceiling for a max-size blob
+// moving at the assumed floor throughput (fileServiceMinThroughputBytesPerSec),
+// which is orders of magnitude slower than the real in-cluster link — so a
+// healthy multi-attachment send never approaches even one slot. The slots exist
+// only to bound how long a STALLING backend can occupy the sequential room-ops
+// consumer: at the default 50 MiB cap this caps a send at ~3.7 minutes instead
+// of the ~18 minutes an unbudgeted 10-attachment fan-out would allow.
+const messageFanOutBudgetSlots = 2
+
+// messageFanOutTimeout is the single wall-clock budget shared by every
+// attachment in one message's fan-out.
+func messageFanOutTimeout(maxBytes int64) time.Duration {
+	return messageFanOutBudgetSlots * mediaStreamTimeout(maxBytes)
 }
 
 // ============================================================================
@@ -961,7 +1004,7 @@ func (m *MautrixAdapter) SendReply(
 		primaryEventID = resp.EventID
 	}
 
-	return m.fanOutAttachments(ctx, intent, roomID, attachments, threadID, primaryEventID)
+	return m.fanOutAttachments(ctx, intent, userID, roomID, attachments, threadID, primaryEventID)
 }
 
 // ============================================================================
