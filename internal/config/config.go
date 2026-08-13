@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 
@@ -122,6 +123,38 @@ func loadFileServiceEnv(cfg *Config) error {
 			return fmt.Errorf("invalid FILE_SERVICE_MAX_ATTACHMENT_BYTES %q: %w", v, err)
 		}
 		cfg.FileService.MaxAttachmentBytes = n
+	}
+	return validateFileServiceURL(cfg.FileService.URL)
+}
+
+// validateFileServiceURL fails FAST on a malformed file-service base URL.
+//
+// Without this, a typo ("file-service:4003", "htp://…", a stray trailing
+// newline) boots green and only surfaces on the first outbound attachment — the
+// worst place for it, because a media failure there is swallowed into a
+// partial-fan-out "success" (see fanOutAttachments), so the operator sees a
+// working service quietly dropping every attachment.
+//
+// An EMPTY value stays valid: outbound media is optional (see the
+// FILE_SERVICE_URL row in README.md), and sendAttachment already fails that case
+// with an explicit "file-service URL not configured (set FILE_SERVICE_URL)".
+// What must not boot is a value that LOOKS configured but cannot be used.
+func validateFileServiceURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid FILE_SERVICE_URL %q: %w", raw, err)
+	}
+	// The adapter builds "{URL}/internal/file/{id}/content" and hands it to
+	// http.NewRequest, which needs an absolute URL: a scheme AND a host.
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf(
+			"invalid FILE_SERVICE_URL %q: must be an absolute http(s) URL (e.g. http://file-service:4003)", raw)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("invalid FILE_SERVICE_URL %q: missing host", raw)
 	}
 	return nil
 }

@@ -293,3 +293,53 @@ rabbitmq:
 	assert.Equal(t, "https://env.matrix.local", cfg.Matrix.HomeserverURL, "env var should override YAML")
 	assert.Equal(t, "amqp://env-rabbit:5672/", cfg.RabbitMQ.URL, "env var should override YAML")
 }
+
+// A malformed FILE_SERVICE_URL must fail at STARTUP. Deferring it to the first
+// outbound attachment is the worst place for it: a media failure there is
+// swallowed into a partial-fan-out "success", so a typo'd URL would present as a
+// healthy service that silently drops every attachment.
+func TestLoad_RejectsMalformedFileServiceURL(t *testing.T) {
+	cases := map[string]string{
+		"no scheme":          "file-service:4003",
+		"bare host":          "file-service",
+		"unsupported scheme": "ftp://file-service:4003",
+		"typo'd scheme":      "htp:/file-service:4003",
+		"scheme but no host": "http://",
+		"control character":  "http://file-service:4003\n",
+		"leading whitespace": " http://file-service:4003",
+		"non-absolute path":  "/internal/file",
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+			t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "")
+			t.Setenv("FILE_SERVICE_URL", raw)
+
+			_, err := Load()
+			require.Error(t, err, "a malformed FILE_SERVICE_URL must not boot green")
+			assert.Contains(t, err.Error(), "FILE_SERVICE_URL",
+				"the error must name the offending setting")
+		})
+	}
+}
+
+// A well-formed URL loads, and an EMPTY one stays valid: outbound media is
+// optional and sendAttachment already reports the unconfigured case explicitly.
+func TestLoad_AcceptsValidOrAbsentFileServiceURL(t *testing.T) {
+	for name, raw := range map[string]string{
+		"http":      "http://file-service:4003",
+		"https":     "https://file-service.example.com",
+		"with path": "http://file-service:4003/base",
+		"absent":    "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+			t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "")
+			t.Setenv("FILE_SERVICE_URL", raw)
+
+			cfg, err := Load()
+			require.NoError(t, err)
+			assert.Equal(t, raw, cfg.FileService.URL)
+		})
+	}
+}
