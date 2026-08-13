@@ -2078,11 +2078,11 @@ func (m *MautrixAdapter) parseMessageEvent(evt *event.Event, roomID id.RoomID) *
 		return nil
 	}
 
-	// Shared inbound-media helper (F10): applies MSC2530 caption semantics and
-	// the present-but-empty-body rule. Read paths keep bodyless message events as
-	// blank Messages so GetMessage can return them through this same population
-	// path; timeline scans exclude them with isBlankMessage below.
-	content, attachment, _ := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender), m.idMapper)
+	// Shared inbound-media helper (F10): applies the present-but-empty-body rule.
+	// Read paths keep bodyless message events as blank Messages so GetMessage can
+	// return them through this same population path; timeline scans exclude them
+	// with isBlankMessage below.
+	content, attachment, _ := extractInboundMessage(evt, m.idMapper)
 
 	msg := &domain.Message{
 		ID:             evt.ID.String(),

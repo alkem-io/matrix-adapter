@@ -100,8 +100,8 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 	}
 
 	// Parse content + attachment via the shared inbound-media helper, which
-	// applies MSC2530 caption semantics and the present-but-empty-body rule.
-	content, attachment, ok := extractInboundMessage(evt, m.isOwnAppserviceUser(evt.Sender), m.idMapper)
+	// applies the present-but-empty-body rule.
+	content, attachment, ok := extractInboundMessage(evt, m.idMapper)
 	if !ok {
 		m.logger.Warn("Failed to parse message body", "event_id", evt.ID)
 		return
@@ -151,7 +151,9 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 // (parseMessageEvent) so the two can't diverge. It prefers the RAW m.relates_to,
 // which is present on live-sync events AND on Synapse-fetched read-path events —
 // the latter arrive with Content.Parsed == nil (the shared inbound helper reads
-// Content.Raw and never triggers ParseRaw), so reading Parsed alone would
+// Content.Raw and, on its fallback, ALREADY-parsed content; it never triggers
+// ParseRaw, so it cannot populate Parsed as a side effect on the shared event —
+// see inboundBody), so reading Parsed alone would
 // silently drop thread linkage on real reads (F1). It falls back to the parsed
 // content's RelatesTo for parsed-only events (e.g. unit-constructed events with
 // no raw map). The explicit m.thread relation (MSC3440) wins over the legacy
@@ -169,8 +171,12 @@ func threadIDFromRaw(evt *event.Event) string {
 	if !ok {
 		return ""
 	}
+	// An m.thread relation with a MISSING or EMPTY event_id names no parent, so it
+	// must fall through to the m.in_reply_to branch below rather than short-circuit
+	// with "". Returning the empty event_id here would skip that fallback — which
+	// the previous inline extractor reached — and silently lose thread linkage.
 	if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
-		if eventID, ok := relatesTo["event_id"].(string); ok {
+		if eventID, ok := relatesTo["event_id"].(string); ok && eventID != "" {
 			return eventID
 		}
 	}
@@ -853,22 +859,41 @@ var mediaMsgTypes = map[string]struct{}{
 //   - url(mxc, OUR homeserver only) → MediaID (the Synapse media id; the
 //     server's re-home key)
 //   - info → mimetype/size/w/h
-//   - io.alkemio.document_id → DocumentID (only when trustDocumentID is set)
+//   - io.alkemio.document_id → DocumentID (an UNAUTHENTICATED hint, see below)
 //
-// The mxc URL must be hosted on OUR homeserver (idMapper.LocalMediaID). MediaID
-// is a BARE media id, and the Alkemio server resolves it by externalReference
-// against media its own Synapse stored — so a foreign homeserver's media id
-// would either miss (attachment silently lost) or collide with an unrelated
-// local media id and resolve to the WRONG document. A foreign (or unparseable)
-// url therefore surfaces no MediaID at all, exactly like a non-mxc url.
+// The mxc URL must be hosted on OUR homeserver (idMapper.LocalMediaID). This is
+// NOT federation support — this deployment's homeserver is not federated and a
+// foreign mxc cannot legitimately arrive. It is input validation: event content
+// is user-controlled, so a local member can put a foreign-looking mxc in an
+// event, and MediaID is a BARE media id that the Alkemio server resolves by
+// externalReference against media its OWN Synapse stored. Surfacing a foreign
+// media id would either miss (attachment silently lost) or COLLIDE with an
+// unrelated local media id and resolve to the WRONG document. A foreign (or
+// unparseable) url therefore surfaces no MediaID at all, exactly like a non-mxc
+// url.
 //
-// trustDocumentID must be true only when the event sender is within the
-// adapter's own appservice namespace (see isOwnAppserviceUser). The
-// io.alkemio.document_id breadcrumb is attacker-influenceable — any in-room
-// client could stamp it on an event — so it is authoritative only on echoes of
-// our own outbound media, which are sent by our appservice ghosts. For any
-// other sender the DocumentID is dropped and only MediaID is surfaced, routing
-// the event down the Element-origin (re-home) path.
+// io.alkemio.document_id is an UNAUTHENTICATED HINT, and the adapter says so
+// rather than pretending otherwise. It marks an echo of our own outbound media
+// (the server routes DocumentID-present events down the coalesce path instead of
+// re-homing), but nothing here can authenticate it:
+//
+//   - Any member of the room can stamp the field on an event they send.
+//   - The adapter CANNOT tell its own sends from a human's. It impersonates
+//     actor X *as* X — IDMapper.UserID(actorID) is @<actor-uuid>:<homeserver>,
+//     the very same MXID that actor gets when they log into Element via OIDC
+//     (which is why the appservice UUID namespace is registered NON-exclusive,
+//     see the registration in mautrix.go). There is no separate ghost identity
+//     to match against, and Synapse gives an appservice no "you sent this"
+//     marker on the /transactions push. So a sender-shape test would be true for
+//     every message from every user — which is exactly what the previous
+//     isOwnAppserviceUser gate was, and why it was removed rather than tightened.
+//
+// The AUTHORITY is the Alkemio server, which is where the ownership facts live:
+// its outbound/echo branch requires the named document to be in the message's
+// room bucket AND createdBy == the message sender
+// (message.attachment.service.ts, coalesceOutboundEcho / the read-path resolve).
+// A forged breadcrumb dies there. The adapter's job is to surface what the event
+// says, labelled honestly — not to advertise a guarantee it cannot keep.
 //
 // An m.sticker (event.EventSticker) is handled as image media: it carries the
 // same url+info shape as an m.image but has NO msgtype field, so the
@@ -878,7 +903,7 @@ var mediaMsgTypes = map[string]struct{}{
 // re-home, where file-service stores the actual blob content-type.
 //
 // The adapter never resolves these refs — it only surfaces them.
-func extractAttachment(evt *event.Event, trustDocumentID bool, idMapper *domain.IDMapper) *domain.Attachment {
+func extractAttachment(evt *event.Event, idMapper *domain.IDMapper) *domain.Attachment {
 	raw := evt.Content.Raw
 	if raw == nil {
 		return nil
@@ -901,18 +926,17 @@ func extractAttachment(evt *event.Event, trustDocumentID bool, idMapper *domain.
 
 	applyMediaInfo(att, raw)
 
-	// io.alkemio.document_id → DocumentID, but only from a trusted (own
-	// appservice) sender. Our own outbound media already lives in file-service as
-	// document D, and the server routes echoes (DocumentID present) to the
-	// *coalesce* path — stamp externalReference=media_id onto D and drop the
-	// provider's staging twin — which needs BOTH refs, so MediaID stays populated
-	// alongside DocumentID. The server distinguishes echo (DocumentID present →
-	// coalesce) from Element-origin (DocumentID absent → re-home) by DocumentID,
-	// never by MediaID, so surfacing both is unambiguous.
-	if trustDocumentID {
-		if docID, ok := raw["io.alkemio.document_id"].(string); ok && docID != "" {
-			att.DocumentID = docID
-		}
+	// io.alkemio.document_id → DocumentID, surfaced verbatim for EVERY sender (it
+	// is a hint, not a credential — see the doc comment). Our own outbound media
+	// already lives in file-service as document D, and the server routes echoes
+	// (DocumentID present) to the *coalesce* path — stamp externalReference=media_id
+	// onto D and drop the provider's staging twin — which needs BOTH refs, so
+	// MediaID stays populated alongside DocumentID. The server distinguishes echo
+	// (DocumentID present → coalesce) from Element-origin (DocumentID absent →
+	// re-home) by DocumentID, never by MediaID, so surfacing both is unambiguous;
+	// it then authorizes the DocumentID against bucket + createdBy before acting.
+	if docID, ok := raw["io.alkemio.document_id"].(string); ok && docID != "" {
+		att.DocumentID = docID
 	}
 
 	// A media msgtype with neither a parseable mxc URL nor a surfaced document id
@@ -949,31 +973,40 @@ func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
 	if mime, ok := info["mimetype"].(string); ok {
 		att.MimeType = mime
 	}
-	if size, ok := rawInt64(info["size"]); ok {
+	// info.size is asserted by the SENDING CLIENT, so it is attacker-controlled.
+	// It travels to the Alkemio server's IMessageAttachment.size, a GraphQL Int —
+	// 32-bit — so an out-of-range value would break the server's whole response
+	// rather than just this attachment. Clamp it to "unknown" (0) at the boundary,
+	// exactly like the dimensions below.
+	if size, ok := rawInt64(info["size"]); ok && size <= math.MaxInt32 {
 		att.Size = size
 	}
-	att.Width = rawIntPtr(info["w"])
-	att.Height = rawIntPtr(info["h"])
+	att.Width = rawPixelPtr(info["w"])
+	att.Height = rawPixelPtr(info["h"])
 }
 
 // extractInboundMessage computes the inbound message Content and optional media
-// attachment for an m.room.message event, applying MSC2530 caption semantics. It
-// is the single source of truth shared by the live-sync path
-// (handleMessageEvent) and the read path (parseMessageEvent), so the two can't
-// diverge (F10). trustDocumentID gates the io.alkemio.document_id breadcrumb
-// (see extractAttachment / isOwnAppserviceUser).
+// attachment for an m.room.message event. It is the single source of truth
+// shared by the live-sync path (handleMessageEvent) and the read path
+// (parseMessageEvent), so the two can't diverge (F10).
 //
 // ok is false only when the event carries neither a present body nor an
 // attachment — the caller then drops the event. A present-but-empty body ("")
 // IS forwarded (ok=true, empty Content): only a genuinely absent/non-string
 // body with no attachment is dropped (F3/F4).
 //
-// For media, body is surfaced only when it differs from the resolved attachment
-// display name. Per the Matrix media-captions spec (MSC2530), a caption exists
-// only when body != filename; when body == filename there is NO caption (body is
-// just the filename), so a body equal to the display name is dropped to avoid
-// rendering the filename as a duplicate text line. This also covers legacy media
-// where body IS the filename.
+// A media event's body is ALWAYS surfaced as Content, exactly as it was before
+// attachments existed. An earlier revision dropped it when it equalled the
+// resolved display name (the MSC2530 "body == filename means no caption" rule),
+// which BLANKED the message for any consumer reading Content without the new
+// attachments array — on the previous behaviour that consumer saw the
+// filename/caption. Both facts now travel in the same payload: Content carries
+// the body verbatim, and attachments[i].DisplayName carries the resolved
+// filename, so a consumer that reads attachments can apply MSC2530 itself
+// (Content == DisplayName ⇒ no caption ⇒ render the attachment only). That is a
+// rendering decision, and it belongs to the renderer, not to this adapter —
+// destroying one of the two strings here is the only choice that cannot be
+// undone downstream.
 //
 // A sticker's body is ALWAYS alt-text describing the image, never message text:
 // it feeds only the attachment DisplayName, so Content is forced empty. A normal
@@ -985,10 +1018,10 @@ func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
 // becomes a blank (empty-content, no-attachment) Message instead — which
 // isBlankMessage then excludes from timeline/scan results.
 func extractInboundMessage(
-	evt *event.Event, trustDocumentID bool, idMapper *domain.IDMapper,
+	evt *event.Event, idMapper *domain.IDMapper,
 ) (content string, attachment *domain.Attachment, ok bool) {
 	body, bodyPresent := inboundBody(evt)
-	attachment = extractAttachment(evt, trustDocumentID, idMapper)
+	attachment = extractAttachment(evt, idMapper)
 
 	if !bodyPresent && attachment == nil {
 		return "", nil, false
@@ -1003,39 +1036,30 @@ func extractInboundMessage(
 		return "", attachment, true
 	}
 
-	if attachment != nil && body == attachment.DisplayName {
-		body = ""
-	}
 	return body, attachment, true
 }
 
 // inboundBody returns the message body and whether a body is present. A body is
 // present when the raw event carries a "body" string (even the empty string — a
-// present-but-empty body is forwarded), or when the parsed content yields a
+// present-but-empty body is forwarded), or when ALREADY-parsed content yields a
 // non-empty body (covers events that arrive parsed but without a raw map, e.g.
 // in unit tests). This mirrors develop's `, ok` semantics.
+//
+// The parsed fallback reads evt.Content.Parsed DIRECTLY and deliberately does
+// NOT go through parseEventContent, whose ParseRaw fallback would populate
+// Content.Parsed as a side effect. The event is shared with the caller (and with
+// extractThreadID, whose contract says this helper never triggers ParseRaw), so
+// this read stays observation-only.
 func inboundBody(evt *event.Event) (string, bool) {
 	if evt.Content.Raw != nil {
 		if b, ok := evt.Content.Raw["body"].(string); ok {
 			return b, true
 		}
 	}
-	if c, ok := parseEventContent[event.MessageEventContent](evt); ok && c.Body != "" {
+	if c, ok := evt.Content.Parsed.(*event.MessageEventContent); ok && c.Body != "" {
 		return c.Body, true
 	}
 	return "", false
-}
-
-// isOwnAppserviceUser reports whether userID is a user the adapter's own
-// appservice controls on our homeserver: a UUID-localpart ghost (or the bot,
-// which is itself a UUID localpart) on the configured homeserver domain. This
-// is the trust gate for the io.alkemio.document_id breadcrumb — only echoes
-// from our ghosts may surface an authoritative DocumentID.
-func (m *MautrixAdapter) isOwnAppserviceUser(userID id.UserID) bool {
-	if userID.Homeserver() != m.idMapper.HomeserverDomain() {
-		return false
-	}
-	return m.idMapper.AlkemioActorID(userID) != uuid.Nil
 }
 
 // rawInt64 coerces a JSON-decoded numeric value (float64 from encoding/json, or
@@ -1065,13 +1089,31 @@ func rawInt64(v any) (int64, bool) {
 	}
 }
 
-// rawIntPtr returns a pointer to the int value of v, or nil if v is not numeric.
-func rawIntPtr(v any) *int {
-	if i, ok := rawInt64(v); ok {
-		x := int(i)
-		return &x
+// rawPixelPtr returns a pointer to v as a pixel dimension (info.w / info.h), or
+// nil when v is not a usable dimension.
+//
+// info.w/info.h are asserted by the SENDING CLIENT — any member of the room can
+// put anything there — and they flow verbatim through dto.ReceivedAttachment
+// into the Alkemio server's IMessageAttachment.width/height, which are GraphQL
+// `Int`: THIRTY-TWO bit. rawInt64's int64 bound is therefore not enough; a value
+// above MaxInt32 breaks the server's response for the whole query. Two rules:
+//
+//   - > math.MaxInt32 → nil. Out of the wire type's range.
+//   - <= 0 → nil. No image is zero or negative pixels wide; a non-positive
+//     dimension is what an unmeasured source reports, and the server already
+//     treats non-positive dims as ABSENT — so say "absent" here rather than
+//     shipping a 0 it will discard anyway. (rawInt64 already rejects negatives,
+//     NaN/Inf and int64 overflow; this narrows to the pixel domain.)
+//
+// int is 64-bit on every platform this builds for, so the conversion below is
+// exact once the MaxInt32 bound has been applied.
+func rawPixelPtr(v any) *int {
+	i, ok := rawInt64(v)
+	if !ok || i <= 0 || i > math.MaxInt32 {
+		return nil
 	}
-	return nil
+	x := int(i)
+	return &x
 }
 
 // getRoomNameAndTopic fetches the room name and topic from state events.

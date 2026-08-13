@@ -29,10 +29,18 @@ type AttachmentRef struct {
 }
 
 // ReceivedAttachment is a raw media reference surfaced on an inbound message.
-// DocumentID is set when the event carries io.alkemio.document_id (an echo of
-// our own outbound media); MediaID is set for Element-origin media (the Synapse
-// media id, used by the server as the re-home key). The adapter never resolves
-// either — the server re-homes and resolves URLs.
+// MediaID is the Synapse media id, used by the server as the re-home key.
+//
+// DocumentID is set when the event carries io.alkemio.document_id, which marks
+// an echo of our own outbound media. It is an UNAUTHENTICATED HINT: the field is
+// part of user-writable event content, and the adapter cannot tell its own sends
+// from a human's (it impersonates actor X as X — the same MXID the human gets
+// from OIDC), so it surfaces the field verbatim for every sender. The consumer
+// MUST authorize it before acting on it — the Alkemio server does, requiring the
+// named document to sit in the message's room bucket with createdBy == the
+// message sender.
+//
+// The adapter never resolves either ref — the server re-homes and resolves URLs.
 type ReceivedAttachment struct {
 	DocumentID  *string `json:"document_id,omitempty"`
 	MediaID     *string `json:"media_id,omitempty"`

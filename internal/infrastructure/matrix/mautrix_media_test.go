@@ -959,7 +959,7 @@ func TestGetMessage_MediaEvent_ReturnsAttachment(t *testing.T) {
 	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$m1")
 	require.NoError(t, err)
 	require.NotNil(t, msg)
-	assert.Empty(t, msg.Content, "legacy media filename must not be duplicated as Content")
+	assert.Equal(t, "photo.jpg", msg.Content, "the media body reaches Content verbatim")
 	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "media123", msg.Attachments[0].MediaID)
 	assert.Equal(t, docID1, msg.Attachments[0].DocumentID)

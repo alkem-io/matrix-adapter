@@ -86,8 +86,12 @@ type Message struct {
 //   - Outbound (web→Matrix): DocumentID is the file-service document whose bytes
 //     are uploaded to Synapse; MediaID is unset.
 //   - Inbound (Matrix→web): MediaID is the Synapse media id parsed from the
-//     event's mxc:// URL; DocumentID is set only when the event carries an
-//     io.alkemio.document_id field (an echo of our own outbound media).
+//     event's mxc:// URL; DocumentID is set when the event carries an
+//     io.alkemio.document_id field, which marks an echo of our own outbound
+//     media. Inbound, that field is an UNAUTHENTICATED hint taken verbatim from
+//     user-writable event content — the consumer must authorize it (the Alkemio
+//     server gates on bucket membership + createdBy == sender). See
+//     extractAttachment for why the adapter cannot authenticate it itself.
 //
 // The adapter is stateless: it never resolves these refs to URLs or buckets.
 type Attachment struct {

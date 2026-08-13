@@ -2,6 +2,7 @@ package matrix
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 
 	"maunium.net/go/mautrix/event"
@@ -35,7 +36,7 @@ func TestExtractAttachment_ImageWithDocumentID(t *testing.T) {
 			"h":        float64(1080),
 		},
 		"io.alkemio.document_id": "doc-abc",
-	}), true, testIDMapper) // trusted (own-appservice) sender ⇒ document_id surfaced
+	}), testIDMapper)
 	if att == nil {
 		t.Fatal("expected non-nil attachment")
 		return
@@ -78,7 +79,7 @@ func TestExtractAttachment_ImageWithoutDocumentID(t *testing.T) {
 			"mimetype": "image/png",
 			"size":     float64(42),
 		},
-	}), false, testIDMapper) // untrusted sender: no document_id in event anyway
+	}), testIDMapper)
 	if att == nil {
 		t.Fatal("expected non-nil attachment")
 		return
@@ -107,7 +108,7 @@ func TestExtractAttachment_ForeignHomeserverMediaNotSurfaced(t *testing.T) {
 		"body":    "federated.png",
 		"url":     "mxc://other.server/xyz789",
 		"info":    map[string]any{"mimetype": "image/png", "size": float64(42)},
-	}), false, testIDMapper)
+	}), testIDMapper)
 	if att != nil {
 		t.Errorf("foreign-homeserver media must not surface a re-homable ref, got %+v", att)
 	}
@@ -123,7 +124,7 @@ func TestExtractAttachment_ForeignHomeserverKeepsDocumentIDDropsMediaID(t *testi
 		"body":                   "federated.png",
 		"url":                    "mxc://other.server/xyz789",
 		"io.alkemio.document_id": "doc-abc",
-	}), true, testIDMapper)
+	}), testIDMapper)
 	if att == nil {
 		t.Fatal("expected the document id to still be surfaced")
 		return
@@ -143,7 +144,7 @@ func TestExtractAttachment_File(t *testing.T) {
 		"body":    "doc.pdf",
 		"url":     "mxc://test.local/fileabc",
 		"info":    map[string]any{"mimetype": "application/pdf", "size": float64(1000)},
-	}), true, testIDMapper)
+	}), testIDMapper)
 	if att == nil {
 		t.Fatal("expected non-nil attachment")
 		return
@@ -158,7 +159,7 @@ func TestExtractAttachment_NonMedia(t *testing.T) {
 	att := extractAttachment(mediaEvent(map[string]any{
 		"msgtype": "m.text",
 		"body":    "hello",
-	}), true, testIDMapper)
+	}), testIDMapper)
 	if att != nil {
 		t.Errorf("expected nil attachment for m.text, got %+v", att)
 	}
@@ -166,7 +167,7 @@ func TestExtractAttachment_NonMedia(t *testing.T) {
 
 // An event with no raw content yields no attachment.
 func TestExtractAttachment_NilRaw(t *testing.T) {
-	if att := extractAttachment(&event.Event{}, true, testIDMapper); att != nil {
+	if att := extractAttachment(&event.Event{}, testIDMapper); att != nil {
 		t.Errorf("expected nil attachment for empty event, got %+v", att)
 	}
 }
@@ -679,5 +680,198 @@ func TestParseStateChange_TopicFromVeryRaw(t *testing.T) {
 	}
 	if sc.Topic == nil || *sc.Topic != "Raw Topic" {
 		t.Errorf("expected 'Raw Topic', got %v", sc.Topic)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Round-3 review regressions
+// ---------------------------------------------------------------------------
+
+// A media event's body must ALWAYS reach Content. An earlier revision blanked it
+// whenever it equalled the resolved display name (the MSC2530 "body == filename
+// ⇒ no caption" rule), which silently emptied the message for every consumer
+// reading Content without the attachments array — on the pre-attachments
+// behaviour that consumer saw the filename. Both strings now travel together, so
+// the renderer (not the adapter) decides whether to show one or both.
+func TestExtractInboundMessage_MediaBodyIsNeverBlanked(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  map[string]any
+		want string
+	}{
+		{
+			name: "legacy media: body IS the filename, no filename field",
+			raw: map[string]any{
+				"msgtype": "m.file",
+				"body":    "report.pdf",
+				"url":     "mxc://test.local/legacy",
+				"info":    map[string]any{"mimetype": "application/pdf"},
+			},
+			want: "report.pdf",
+		},
+		{
+			name: "MSC2530 captionless: explicit filename equal to body",
+			raw: map[string]any{
+				"msgtype":  "m.image",
+				"body":     "photo.jpg",
+				"filename": "photo.jpg",
+				"url":      "mxc://test.local/eq",
+				"info":     map[string]any{"mimetype": "image/jpeg"},
+			},
+			want: "photo.jpg",
+		},
+		{
+			name: "MSC2530 caption: body differs from filename",
+			raw: map[string]any{
+				"msgtype":  "m.image",
+				"body":     "look at this sunset",
+				"filename": "sunset.jpg",
+				"url":      "mxc://test.local/cap",
+				"info":     map[string]any{"mimetype": "image/jpeg"},
+			},
+			want: "look at this sunset",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			content, att, ok := extractInboundMessage(mediaEvent(tc.raw), testIDMapper)
+			if !ok {
+				t.Fatal("expected the media event to be surfaced")
+			}
+			if content != tc.want {
+				t.Errorf("Content = %q, want %q (the body must not be dropped)", content, tc.want)
+			}
+			if att == nil {
+				t.Fatal("expected an attachment")
+			}
+			// The MSC2530 signal survives: the resolved filename is on the
+			// attachment, so `Content == DisplayName` still means "no caption".
+			if att.DisplayName == "" {
+				t.Error("DisplayName must carry the resolved filename")
+			}
+		})
+	}
+}
+
+// info.w / info.h are asserted by the sending client and land in the Alkemio
+// server's GraphQL `Int` (32-bit) width/height. Anything outside the positive
+// 32-bit pixel domain must be surfaced as ABSENT rather than shipped onward.
+func TestRawPixelPtr_ClampedToPositive32BitRange(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want *int
+	}{
+		{"in range", float64(1920), ptrInt(1920)},
+		{"max int32 is accepted", float64(math.MaxInt32), ptrInt(math.MaxInt32)},
+		{"one past max int32 is rejected", float64(math.MaxInt32) + 1, nil},
+		{"far past max int32 is rejected", float64(1 << 40), nil},
+		{"zero is absent (server treats non-positive as absent)", float64(0), nil},
+		{"negative is absent", float64(-1), nil},
+		{"non-numeric is absent", "1920", nil},
+		{"json.Number past max int32 is rejected", json.Number("2147483648"), nil},
+		{"json.Number in range is accepted", json.Number("1080"), ptrInt(1080)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := rawPixelPtr(tc.in)
+			switch {
+			case tc.want == nil && got != nil:
+				t.Errorf("rawPixelPtr(%v) = %d, want nil", tc.in, *got)
+			case tc.want != nil && got == nil:
+				t.Errorf("rawPixelPtr(%v) = nil, want %d", tc.in, *tc.want)
+			case tc.want != nil && *got != *tc.want:
+				t.Errorf("rawPixelPtr(%v) = %d, want %d", tc.in, *got, *tc.want)
+			}
+		})
+	}
+}
+
+func ptrInt(v int) *int { return &v }
+
+// End to end on the inbound path: a hostile info block naming out-of-32-bit-range
+// dimensions and size must not reach the wire DTO, or the server's GraphQL
+// response breaks for the whole query — not just for this attachment.
+func TestExtractAttachment_OutOf32BitRangeInfoIsDropped(t *testing.T) {
+	att := extractAttachment(mediaEvent(map[string]any{
+		"msgtype": "m.image",
+		"body":    "huge.png",
+		"url":     "mxc://test.local/huge",
+		"info": map[string]any{
+			"mimetype": "image/png",
+			"size":     float64(int64(1) << 40),
+			"w":        float64(math.MaxInt32) + 1,
+			"h":        float64(math.MaxInt32) + 1,
+		},
+	}), testIDMapper)
+	if att == nil {
+		t.Fatal("expected an attachment (the media ref itself is still valid)")
+	}
+	if att.Width != nil {
+		t.Errorf("Width = %d, want nil (out of GraphQL Int range)", *att.Width)
+	}
+	if att.Height != nil {
+		t.Errorf("Height = %d, want nil (out of GraphQL Int range)", *att.Height)
+	}
+	if att.Size != 0 {
+		t.Errorf("Size = %d, want 0/unknown (out of GraphQL Int range)", att.Size)
+	}
+}
+
+// An m.thread relation whose event_id is the EMPTY string names no parent, so
+// extraction must fall through to the m.in_reply_to fallback instead of
+// short-circuiting with "" and losing the thread linkage.
+func TestExtractThreadID_EmptyThreadEventIDFallsBackToInReplyTo(t *testing.T) {
+	evt := &event.Event{
+		Type: event.EventMessage,
+		Content: event.Content{Raw: map[string]any{
+			"msgtype": "m.text",
+			"body":    "reply",
+			"m.relates_to": map[string]any{
+				"rel_type":      "m.thread",
+				"event_id":      "",
+				"m.in_reply_to": map[string]any{"event_id": "$parent"},
+			},
+		}},
+	}
+	if got := extractThreadID(evt); got != "$parent" {
+		t.Errorf("extractThreadID = %q, want %q", got, "$parent")
+	}
+}
+
+// A missing event_id on the m.thread relation behaves the same way.
+func TestExtractThreadID_MissingThreadEventIDFallsBackToInReplyTo(t *testing.T) {
+	evt := &event.Event{
+		Type: event.EventMessage,
+		Content: event.Content{Raw: map[string]any{
+			"msgtype": "m.text",
+			"body":    "reply",
+			"m.relates_to": map[string]any{
+				"rel_type":      "m.thread",
+				"m.in_reply_to": map[string]any{"event_id": "$parent"},
+			},
+		}},
+	}
+	if got := extractThreadID(evt); got != "$parent" {
+		t.Errorf("extractThreadID = %q, want %q", got, "$parent")
+	}
+}
+
+// extractThreadID's contract says the shared inbound helper never triggers
+// ParseRaw. The event is shared with the caller, and ParseRaw permanently
+// populates Content.Parsed — so extractInboundMessage must stay observation-only
+// on an event that carries only VeryRaw.
+func TestExtractInboundMessage_DoesNotParseRawOnSharedEvent(t *testing.T) {
+	evt := &event.Event{
+		Type:    event.EventMessage,
+		Content: event.Content{VeryRaw: json.RawMessage(`{"msgtype":"m.text","body":"hi"}`)},
+	}
+
+	_, _, _ = extractInboundMessage(evt, testIDMapper)
+
+	if evt.Content.Parsed != nil {
+		t.Errorf("extractInboundMessage populated Content.Parsed (%T) — it must not "+
+			"ParseRaw a shared event; extractThreadID's contract depends on it", evt.Content.Parsed)
 	}
 }

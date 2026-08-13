@@ -53,56 +53,12 @@ func TestRawInt64_RangeAndSignGuards(t *testing.T) {
 	}
 }
 
-// isOwnAppserviceUser trusts only UUID-localpart users on our own homeserver.
-func TestIsOwnAppserviceUser(t *testing.T) {
-	a := newTestAdapter("test.local")
-
-	ghost := expectedUserID(testActorID) // @<uuid>:test.local
-	assert.True(t, a.isOwnAppserviceUser(ghost), "own-domain UUID ghost is trusted")
-
-	assert.False(t, a.isOwnAppserviceUser("@element:test.local"),
-		"non-UUID localpart on our domain is not an appservice ghost")
-	assert.False(t, a.isOwnAppserviceUser(id.UserID("@"+testActorID.String()+":evil.server")),
-		"UUID localpart on a foreign homeserver is not ours")
-}
-
-// M3 — a forged io.alkemio.document_id from a sender outside our appservice
-// namespace is NOT surfaced as an authoritative DocumentID; only the MediaID is
-// surfaced (Element-origin / re-home path).
-func TestParseMessageEvent_ForgedDocumentID_FromNonGhost_Dropped(t *testing.T) {
-	a := newTestAdapter("test.local")
-
-	evt := &event.Event{
-		ID:        id.EventID("$forged"),
-		Sender:    id.UserID("@attacker:test.local"), // not a UUID ghost
-		Type:      event.EventMessage,
-		Timestamp: 1700000000000,
-		Content: event.Content{
-			Raw: map[string]any{
-				"msgtype":                "m.image",
-				"body":                   "evil.png",
-				"url":                    "mxc://test.local/realmedia",
-				"info":                   map[string]any{"mimetype": "image/png"},
-				"io.alkemio.document_id": "victim-doc-id",
-			},
-		},
-	}
-
-	msg := a.parseMessageEvent(evt, "!room:test.local")
-	require.NotNil(t, msg)
-	require.Len(t, msg.Attachments, 1)
-	assert.Empty(t, msg.Attachments[0].DocumentID, "forged document_id must be dropped")
-	assert.Equal(t, "realmedia", msg.Attachments[0].MediaID, "MediaID still surfaced (re-home path)")
-}
-
-// The same event from one of our own ghosts is a genuine echo, so the
-// DocumentID is trusted and surfaced alongside the MediaID (coalesce path).
-func TestParseMessageEvent_DocumentID_FromGhost_Surfaced(t *testing.T) {
-	a := newTestAdapter("test.local")
-
-	evt := &event.Event{
-		ID:        id.EventID("$echo"),
-		Sender:    expectedUserID(testActorID), // own-appservice ghost
+// documentIDBreadcrumbEvent builds an inbound m.image carrying an
+// io.alkemio.document_id breadcrumb, sent by `sender`.
+func documentIDBreadcrumbEvent(sender id.UserID, docID string) *event.Event {
+	return &event.Event{
+		ID:        id.EventID("$evt"),
+		Sender:    sender,
 		Type:      event.EventMessage,
 		Timestamp: 1700000000000,
 		Content: event.Content{
@@ -111,21 +67,74 @@ func TestParseMessageEvent_DocumentID_FromGhost_Surfaced(t *testing.T) {
 				"body":                   "photo.png",
 				"url":                    "mxc://test.local/mediaX",
 				"info":                   map[string]any{"mimetype": "image/png"},
-				"io.alkemio.document_id": "doc-real",
+				"io.alkemio.document_id": docID,
 			},
 		},
 	}
+}
 
-	msg := a.parseMessageEvent(evt, "!room:test.local")
+// The io.alkemio.document_id breadcrumb is an UNAUTHENTICATED hint and the
+// adapter must not pretend otherwise: it grants NO sender-based trust, so the
+// surfaced attachment is byte-for-byte the same whoever sent the event.
+//
+// This replaces a gate that tested "UUID localpart on our homeserver". That test
+// could never distinguish anything, because the adapter impersonates actor X AS
+// X: IDMapper.UserID(actorID) is exactly the MXID that actor gets when they log
+// into Element via OIDC (hence the deliberately NON-exclusive UUID namespace in
+// the appservice registration). The pair below pins that: `attacker` is a real
+// Alkemio user's production MXID — indistinguishable, by construction, from the
+// MXID the adapter itself sends as.
+//
+// Authorization is the Alkemio server's job (bucket membership + createdBy ==
+// message sender). This test exists to stop anyone re-introducing a
+// sender-shaped "trust gate" here and believing it does something.
+func TestParseMessageEvent_DocumentIDBreadcrumb_IsUnauthenticatedHint(t *testing.T) {
+	a := newTestAdapter("test.local")
+
+	// The MXID the adapter itself sends as when bridging actor testActorID.
+	adapterSends := expectedUserID(testActorID)
+	// A DIFFERENT Alkemio user, logged into Element via OIDC, forging a breadcrumb
+	// that names someone else's document. Same MXID SHAPE — this is what a real
+	// attacker looks like, not the "@attacker:test.local" a UUID gate would catch.
+	attacker := expectedUserID(uuid.MustParse("11111111-2222-3333-4444-555555555555"))
+	require.NotEqual(t, adapterSends, attacker)
+
+	echo := a.parseMessageEvent(documentIDBreadcrumbEvent(adapterSends, "doc-real"), "!room:test.local")
+	require.NotNil(t, echo)
+	require.Len(t, echo.Attachments, 1)
+	assert.Equal(t, "doc-real", echo.Attachments[0].DocumentID)
+	assert.Equal(t, "mediaX", echo.Attachments[0].MediaID)
+
+	forged := a.parseMessageEvent(documentIDBreadcrumbEvent(attacker, "victim-doc-id"), "!room:test.local")
+	require.NotNil(t, forged)
+	require.Len(t, forged.Attachments, 1)
+
+	// The whole point: the adapter applied no sender-based privilege. It surfaced
+	// the forged breadcrumb exactly as it surfaced the echo — so nothing
+	// downstream may infer authority from the adapter having surfaced it.
+	assert.Equal(t, "victim-doc-id", forged.Attachments[0].DocumentID,
+		"the breadcrumb is passed through verbatim; the adapter does not (and cannot) vet it")
+	assert.Equal(t, "mediaX", forged.Attachments[0].MediaID)
+	assert.Equal(t, echo.Attachments[0].MimeType, forged.Attachments[0].MimeType)
+	assert.Equal(t, echo.Attachments[0].DisplayName, forged.Attachments[0].DisplayName)
+}
+
+// A sender OUTSIDE the UUID shape gets the same treatment — there is no sender
+// classification left anywhere on this path.
+func TestParseMessageEvent_DocumentIDBreadcrumb_NonUUIDSenderTreatedIdentically(t *testing.T) {
+	a := newTestAdapter("test.local")
+
+	msg := a.parseMessageEvent(
+		documentIDBreadcrumbEvent(id.UserID("@element:test.local"), "doc-x"), "!room:test.local")
 	require.NotNil(t, msg)
 	require.Len(t, msg.Attachments, 1)
-	assert.Equal(t, "doc-real", msg.Attachments[0].DocumentID)
+	assert.Equal(t, "doc-x", msg.Attachments[0].DocumentID)
 	assert.Equal(t, "mediaX", msg.Attachments[0].MediaID)
 }
 
 // A legacy media event without MSC2530 filename metadata uses body as the
-// attachment display name without duplicating it as message Content.
-func TestParseMessageEvent_MediaEvent_NoFilenameDoesNotDuplicateBody(t *testing.T) {
+// attachment display name AND keeps it as message Content.
+func TestParseMessageEvent_MediaEvent_NoFilenameKeepsBodyAsContent(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	evt := &event.Event{
@@ -145,7 +154,7 @@ func TestParseMessageEvent_MediaEvent_NoFilenameDoesNotDuplicateBody(t *testing.
 
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
-	assert.Empty(t, msg.Content)
+	assert.Equal(t, "report.pdf", msg.Content, "the body reaches Content verbatim")
 	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
@@ -157,7 +166,7 @@ func TestExtractAttachment_VideoAudio(t *testing.T) {
 		"body":    "clip.mp4",
 		"url":     "mxc://test.local/vid1",
 		"info":    map[string]any{"mimetype": "video/mp4", "size": float64(100)},
-	}), true, testIDMapper)
+	}), testIDMapper)
 	require.NotNil(t, video)
 	assert.Equal(t, "vid1", video.MediaID)
 	assert.Equal(t, "video/mp4", video.MimeType)
@@ -167,7 +176,7 @@ func TestExtractAttachment_VideoAudio(t *testing.T) {
 		"body":    "voice.ogg",
 		"url":     "mxc://test.local/aud1",
 		"info":    map[string]any{"mimetype": "audio/ogg"},
-	}), true, testIDMapper)
+	}), testIDMapper)
 	require.NotNil(t, audio)
 	assert.Equal(t, "aud1", audio.MediaID)
 	assert.Equal(t, "audio/ogg", audio.MimeType)
@@ -223,7 +232,7 @@ func TestExtractAttachment_Sticker(t *testing.T) {
 	})
 	evt.Type = event.EventSticker
 
-	att := extractAttachment(evt, true, testIDMapper)
+	att := extractAttachment(evt, testIDMapper)
 	require.NotNil(t, att)
 	assert.Equal(t, "stickerid", att.MediaID, "sticker mxc id is the re-home key")
 	assert.Equal(t, "party parrot", att.DisplayName)
@@ -242,7 +251,7 @@ func TestExtractAttachment_Sticker_AbsentMimeStaysEmpty(t *testing.T) {
 	})
 	evt.Type = event.EventSticker
 
-	att := extractAttachment(evt, true, testIDMapper)
+	att := extractAttachment(evt, testIDMapper)
 	require.NotNil(t, att)
 	assert.Equal(t, "nomime", att.MediaID)
 	assert.Empty(t, att.MimeType, "sticker with absent mimetype must not be guessed")
@@ -263,7 +272,7 @@ func TestExtractInboundMessage_UrllessSticker_Dropped(t *testing.T) {
 		},
 	}
 
-	content, attachment, ok := extractInboundMessage(evt, false, testIDMapper)
+	content, attachment, ok := extractInboundMessage(evt, testIDMapper)
 	assert.False(t, ok, "a url-less sticker has nothing to surface → dropped on every path")
 	assert.Empty(t, content, "sticker alt-text must never surface as Content")
 	assert.Nil(t, attachment, "no parseable url → no attachment")
@@ -282,7 +291,7 @@ func TestExtractInboundMessage_Sticker_AttachmentEmptyContent(t *testing.T) {
 		},
 	}
 
-	content, attachment, ok := extractInboundMessage(evt, false, testIDMapper)
+	content, attachment, ok := extractInboundMessage(evt, testIDMapper)
 	assert.True(t, ok)
 	assert.Empty(t, content)
 	require.NotNil(t, attachment)
@@ -297,7 +306,7 @@ func TestExtractAttachment_NoRefs_ReturnsNil(t *testing.T) {
 		"msgtype": "m.image",
 		"body":    "broken.png",
 		// no url, no io.alkemio.document_id
-	}), true, testIDMapper)
+	}), testIDMapper)
 	assert.Nil(t, att)
 }
 
@@ -337,7 +346,9 @@ func TestHandleMessageEvent_MediaEvent_Delivered(t *testing.T) {
 
 	select {
 	case m := <-got:
-		assert.Empty(t, m.Content, "legacy media filename is not duplicated as text")
+		assert.Equal(t, "pic.png", m.Content,
+			"live-sync must deliver the media body as text, exactly as it did before "+
+				"attachments existed")
 		assert.Equal(t, roomUUID.String(), m.RoomID)
 		require.Len(t, m.Attachments, 1)
 		assert.Equal(t, "mid", m.Attachments[0].MediaID)

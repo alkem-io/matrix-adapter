@@ -49,9 +49,12 @@ func TestParseMessageEvent_MSC2530Caption_Preserved(t *testing.T) {
 	assert.Equal(t, "capmedia", msg.Attachments[0].MediaID)
 }
 
-// Legacy media has no separate filename field, so its body is the filename and
-// must not also surface as a redundant text line.
-func TestParseMessageEvent_LegacyBody_UsedOnlyAsDisplayName(t *testing.T) {
+// Legacy media has no separate filename field, so its body IS the filename. Both
+// facts are surfaced — Content keeps the body verbatim (pre-attachments
+// behaviour, so a consumer reading only Content is never blanked) and
+// DisplayName carries the resolved filename, leaving the MSC2530 "Content ==
+// DisplayName ⇒ no caption" decision to the renderer.
+func TestParseMessageEvent_LegacyBody_SurfacedAsBothContentAndDisplayName(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	evt := &event.Event{
@@ -71,7 +74,9 @@ func TestParseMessageEvent_LegacyBody_UsedOnlyAsDisplayName(t *testing.T) {
 
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
-	assert.Empty(t, msg.Content, "legacy media filename must not be duplicated as Content")
+	assert.Equal(t, "report.pdf", msg.Content,
+		"the media event's body must reach Content — blanking it hides the message "+
+			"from every consumer that does not read the attachments array")
 	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
@@ -106,11 +111,12 @@ func TestParseMessageEvent_GenuineCaption_Preserved(t *testing.T) {
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
 
-// MSC2530: when body == filename there is NO caption (body is just the filename),
-// even with an explicit filename field present, so it is dropped — otherwise a
-// spec-compliant captionless upload would render its filename as a duplicate text
-// line.
-func TestParseMessageEvent_FilenameEqualsBody_NoCaption(t *testing.T) {
+// MSC2530: when body == filename there is NO caption (body is just the
+// filename), even with an explicit filename field present. The adapter surfaces
+// BOTH strings rather than deciding the render: Content == DisplayName is
+// exactly the signal a renderer needs to suppress the duplicate line, and it is
+// the only form that also survives a consumer which ignores attachments.
+func TestParseMessageEvent_FilenameEqualsBody_BothSurfaced(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	evt := &event.Event{
@@ -131,13 +137,15 @@ func TestParseMessageEvent_FilenameEqualsBody_NoCaption(t *testing.T) {
 
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
-	assert.Empty(t, msg.Content, "body equal to the filename is not a caption")
+	assert.Equal(t, "report.pdf", msg.Content,
+		"body must be surfaced verbatim; 'body == filename ⇒ no caption' is the "+
+			"renderer's inference to make, not a fact the adapter may destroy")
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
 
-// Legacy media (no `filename` field): `body` IS the filename, so a body equal to
-// the display name is a redundant filename and is dropped (no duplicate text).
-func TestParseMessageEvent_LegacyBodyIsFilename_NotDuplicated(t *testing.T) {
+// Legacy media (no `filename` field): `body` IS the filename. Same rule as above
+// — surfaced as both Content and DisplayName.
+func TestParseMessageEvent_LegacyBodyIsFilename_BothSurfaced(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	evt := &event.Event{
@@ -157,7 +165,7 @@ func TestParseMessageEvent_LegacyBodyIsFilename_NotDuplicated(t *testing.T) {
 
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
-	assert.Empty(t, msg.Content, "legacy body equal to the filename is a redundant name, not a caption")
+	assert.Equal(t, "photo.jpg", msg.Content, "legacy body must reach Content")
 	assert.Equal(t, "photo.jpg", msg.Attachments[0].DisplayName)
 }
 
@@ -259,7 +267,7 @@ func TestExtractInboundMessage_AbsentBodyNoAttachment_Dropped(t *testing.T) {
 			Raw: map[string]any{"msgtype": "m.text"}, // no body key
 		},
 	}
-	_, _, ok := extractInboundMessage(evt, false, testIDMapper)
+	_, _, ok := extractInboundMessage(evt, testIDMapper)
 	assert.False(t, ok, "absent body with no attachment must be dropped")
 }
 
