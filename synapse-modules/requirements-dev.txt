@@ -1,0 +1,11 @@
+# Test-only dependencies for the Synapse module unit tests
+# (synapse-modules/test_alkemio_fileservice_provider.py).
+#
+# Synapse itself is deliberately NOT listed: it is heavy, not reliably
+# pip-installable in a plain CI job, and conftest.py registers minimal
+# stand-ins for the four symbols the provider imports at load time when it is
+# absent. twisted and treq ARE real — the provider's protocols, producers and
+# multipart serialisation are exercised against the actual libraries.
+pytest>=8,<10
+twisted>=24
+treq>=23

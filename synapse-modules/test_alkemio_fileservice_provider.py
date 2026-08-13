@@ -4,29 +4,43 @@
 """
 Unit tests for FileServiceStorageProvider (013-matrix-media-file-service).
 
-Run inside the Synapse virtualenv (needs twisted + treq + synapse importable):
+Run from the repo root:
 
-    pip install pytest twisted treq service-identity
-    pytest test_alkemio_fileservice_provider.py
+    make test-python
+
+or directly (needs pytest + twisted + treq; Synapse itself is NOT required):
+
+    pip install -r synapse-modules/requirements-dev.txt
+    pytest synapse-modules
 
 The treq HTTP layer and Synapse's threadpool/deferred helpers are monkeypatched,
-so no live file-service or reactor is required. These run in the
-matrixdotorg/synapse image where twisted/treq/synapse are importable. On a bare
-host without Synapse, drop a local (untracked) `conftest.py` beside this file that
-injects lightweight `sys.modules` shims for the handful of Synapse symbols the
-module imports at collection time — the production import path stays untouched.
+so no live file-service or reactor is required. `conftest.py` beside this file
+registers minimal `sys.modules` stand-ins for the four Synapse symbols the module
+imports at load time, but ONLY when Synapse is genuinely absent — inside the
+matrixdotorg/synapse image the real package is used and nothing is shimmed. The
+production import path is untouched either way.
+
+The suite is run by the `python-modules` job in .github/workflows/ci-test.yml.
 """
 
+import io
 import json
+import logging
+import re
 import types
 
 import pytest
 
 from twisted.internet import defer
 from twisted.internet.defer import TimeoutError as _TimeoutError
-from twisted.internet.task import Clock
+from twisted.internet.task import Clock, Cooperator as TaskCooperator
 from twisted.python.failure import Failure
-from twisted.web.client import ResponseDone
+from twisted.internet.error import ConnectionDone
+from twisted.web.client import FileBodyProducer, ResponseDone
+from twisted.web.http import PotentialDataLoss
+
+from treq.client import _convert_files, _convert_params
+from treq.multipart import MultiPartProducer
 
 import alkemio_fileservice_provider as mod
 from alkemio_fileservice_provider import (
@@ -199,6 +213,100 @@ def _make_provider(**config_overrides):
     return FileServiceStorageProvider(hs, cfg)
 
 
+# --- real-treq multipart serialisation -------------------------------------
+
+
+class _ImmediateCall:
+    """Minimal IDelayedCall stand-in for the synchronous Cooperator below."""
+
+    def __init__(self):
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def _sync_cooperator():
+    """A Cooperator whose ticks are queued and pumped synchronously.
+
+    treq's producers schedule their chunked reads on twisted's global Cooperator,
+    which needs a RUNNING reactor. Both `MultiPartProducer` and
+    `FileBodyProducer` take `cooperator` as a public constructor parameter, so
+    substituting a pumpable one lets the REAL serialiser run to completion in a
+    plain synchronous test. Only the SCHEDULING is replaced — every byte of the
+    body is produced by treq's own code.
+
+    Returns (cooperator, pump); pump() drains queued ticks until none remain.
+    """
+    queue = []
+
+    def scheduler(tick):
+        queue.append(tick)
+        return _ImmediateCall()
+
+    def pump(limit=10000):
+        for _ in range(limit):
+            if not queue:
+                return
+            queue.pop(0)()
+        raise AssertionError("multipart production did not terminate")
+
+    return TaskCooperator(scheduler=scheduler), pump
+
+
+class _BodyCollector:
+    """IConsumer stand-in that accumulates the produced request body."""
+
+    def __init__(self):
+        self.value = b""
+
+    def write(self, data):
+        self.value += data
+
+    def registerProducer(self, producer, streaming):
+        pass
+
+    def unregisterProducer(self):
+        pass
+
+
+def _serialise_treq_multipart(data, files, file_bytes):
+    """Serialise `data`/`files` exactly as treq would, returning the body bytes.
+
+    Uses treq's own `_convert_params` / `_convert_files` / `MultiPartProducer`,
+    so field ordering, headers and boundaries are the library's, not the test's.
+    The only substitution is the cooperator (see `_sync_cooperator`) and a real
+    seekable handle for the file part, because the module's stand-in handle is
+    not readable by twisted's FileBodyProducer.
+    """
+    coop, pump = _sync_cooperator()
+    name, _stream = files["file"]
+    real_files = {
+        "file": (
+            name,
+            "application/octet-stream",
+            FileBodyProducer(io.BytesIO(file_bytes), cooperator=coop),
+        )
+    }
+    fields = list(_convert_params(data)) + list(_convert_files(real_files))
+    producer = MultiPartProducer(fields, boundary=b"BOUNDARY", cooperator=coop)
+
+    collector = _BodyCollector()
+    done = producer.startProducing(collector)
+    pump()
+    assert done.called, "the synchronous cooperator must drive production to completion"
+    return collector.value
+
+
+def _multipart_part_names(body):
+    """The part names, in the order they appear in a serialised multipart body."""
+    return re.findall(rb'Content-Disposition: form-data; name="([^"]+)"', body)
+
+
+def _multipart_part_names_str(body):
+    return [n.decode() for n in _multipart_part_names(body)]
+
+
 @pytest.fixture(autouse=True)
 def _patch_async_helpers(monkeypatch):
     # make_deferred_yieldable passes the awaitable through. defer_to_thread runs
@@ -358,15 +466,11 @@ def test_store_posts_verbatim_multipart_streamed(monkeypatch):
     # 400s every inbound store. Below the Matrix event layer the only identifier
     # available is the opaque media_id, so that is what is sent.
     assert captured["data"]["displayName"] == "MEDIAID"
-    # Every metadata part must precede the file part: file-service's Create
-    # handler reads the fields before consuming the streamed file, and treq
-    # serialises `data` (in dict insertion order) ahead of `files`.
-    assert list(captured["data"]) == [
-        "storageBucketId",
-        "externalReference",
-        "displayName",
-        "skipImageProcessing",
-    ]
+    # The metadata-before-file ordering invariant is asserted against the REAL
+    # serialised body in
+    # test_store_multipart_body_puts_every_metadata_part_before_the_file; the
+    # dict's own key order is NOT the mechanism (treq sorts) and is deliberately
+    # not asserted here.
     # Per-request timeout + unbuffered (so the reply can be drained/released).
     assert captured["timeout"] == prov.store_timeout_s
     assert captured["unbuffered"] is True
@@ -378,6 +482,95 @@ def test_store_posts_verbatim_multipart_streamed(monkeypatch):
     # Handle closed; and the 201 reply body was DRAINED (keep-alive) not aborted.
     assert fake_file.closed is True
     assert store_resp.transport.stopped is False
+
+
+def test_store_multipart_body_puts_every_metadata_part_before_the_file(monkeypatch):
+    """The ordering invariant file-service depends on, asserted on the WIRE bytes.
+
+    file-service's Create handler reads the form fields BEFORE consuming the
+    streamed file, so every metadata part must appear ahead of the file part in
+    the serialised multipart body.
+
+    An earlier version of this test only asserted the insertion order of the dict
+    the module had just built, on the stated premise that treq preserves it. That
+    premise is FALSE: treq's `_convert_params` does `list(sorted(params.items()))`,
+    so the metadata parts come out ALPHABETICALLY. The invariant survives for a
+    different reason — `MultiPartProducer.__init__` runs the whole field list
+    through `_sorted_by_type`, which keys str/bytes values (0, name) and file
+    producers (1, name), putting every string field before every file field
+    however they were supplied. So it is a real guarantee, but of treq's
+    serialiser, not of dict order — which is exactly why it must be asserted on
+    the produced bytes.
+    """
+    prov = _make_provider()
+    captured = {}
+    store_resp = _drainable(201)
+
+    def fake_post(url, files=None, data=None, **kw):
+        captured["files"] = files
+        captured["data"] = data
+        return _aval(store_resp)
+
+    monkeypatch.setattr(mod.treq, "post", fake_post)
+    monkeypatch.setattr(mod, "_open_stream", lambda p: FakeFile(b"RAWBYTES"))
+
+    _run(prov.store_file("local_content/aa/bb/MEDIAID", FakeFileInfo("MEDIAID")))
+
+    body = _serialise_treq_multipart(captured["data"], captured["files"], b"RAWBYTES")
+
+    # Every part the module sent must be present, and the file part LAST.
+    part_names = _multipart_part_names_str(body)
+    assert set(part_names) == {
+        "storageBucketId",
+        "externalReference",
+        "displayName",
+        "skipImageProcessing",
+        "file",
+    }
+    assert part_names[-1] == "file", (
+        "the file part must be serialised after every metadata part; got %r" % (part_names,)
+    )
+    assert part_names.index("file") == len(part_names) - 1
+
+    # And the file's payload really is in the body, after the metadata values.
+    assert b"RAWBYTES" in body
+    for value in (b"00000000-0000-0000-0000-0000000000ff", b"MEDIAID", b"true"):
+        assert body.index(value) < body.index(b"RAWBYTES")
+
+
+def test_store_does_not_close_handle_before_the_body_send_completes(monkeypatch):
+    """The cache-file handle must outlive the multipart body send.
+
+    treq's response Deferred is NOT a "headers received" signal: twisted's
+    HTTP11ClientProtocol.request chains the parser's response Deferred into the
+    Deferred it returns only inside `cbRequestWritten`, i.e. after
+    `Request.writeTo` completes — and for a body producer that means after the
+    whole file has been read and written. So closing in `finally` after awaiting
+    the post cannot truncate the upload.
+
+    This pins the ORDERING that makes it safe: while the post Deferred is still
+    pending the handle stays open, and it is closed only once that Deferred
+    fires. If `store_file` ever closed the handle before/independently of the
+    awaited send, this fails.
+    """
+    prov = _make_provider()
+    fake_file = FakeFile(b"RAWBYTES")
+    pending = defer.Deferred()
+
+    monkeypatch.setattr(mod.treq, "post", lambda *a, **k: pending)
+    monkeypatch.setattr(mod, "_open_stream", lambda p: fake_file)
+
+    d = defer.ensureDeferred(
+        prov.store_file("local_content/aa/bb/MEDIAID", FakeFileInfo("MEDIAID"))
+    )
+    assert not d.called, "the store must still be awaiting the body send"
+    assert fake_file.closed is False, (
+        "the handle must stay open while the multipart body is still being sent"
+    )
+
+    pending.callback(_drainable(201))  # body send finished + response headers
+    _result_of(d)
+    assert fake_file.closed is True, "and be closed once the send completed"
 
 
 def test_store_scales_timeout_by_file_size(monkeypatch):
@@ -920,14 +1113,72 @@ def test_consumer_sink_streams_with_backpressure_and_completes():
     assert finished.called
 
 
-def test_consumer_sink_degrades_when_consumer_rejects_producer():
+def test_consumer_sink_degrades_when_consumer_rejects_producer(caplog):
     consumer = FakeConsumer(reject_producer=True)
     finished = defer.Deferred()
     sink = _ConsumerSink(consumer, finished)
-    sink.makeConnection(FakeTransport())  # must not raise
+    with caplog.at_level(logging.WARNING, logger=mod.logger.name):
+        sink.makeConnection(FakeTransport())  # must not raise
     sink.dataReceived(b"XY")
     sink.connectionLost(None)
     assert bytes(consumer.data) == b"XY"
+    # The degrade must be DIAGNOSABLE: without the producer this streams with no
+    # backpressure, so a slow client buffers the whole media file in memory.
+    # Swallowing the rejection silently leaves an operator no way to see it.
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "the backpressure degrade must be logged, not swallowed"
+    assert "backpressure" in warnings[0].getMessage()
+
+
+# `_ConsumerSink.connectionLost` deliberately DIVERGES from `_body_end_is_clean`
+# (used by the small metadata/drain readers, which accept PotentialDataLoss). A
+# streamed media body has no such luxury: PotentialDataLoss means the download
+# was truncated with no clean terminator, and telling the consumer the media
+# completed would serve a silently corrupt file. These pin both sides of that
+# divergence, which the comment names as intentional but nothing enforced.
+@pytest.mark.parametrize("clean_reason", [None, ResponseDone(), ConnectionDone()])
+def test_consumer_sink_treats_clean_close_as_success(clean_reason):
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+    outcome = {}
+    finished.addCallbacks(
+        lambda n: outcome.__setitem__("written", n),
+        lambda f: outcome.__setitem__("err", f),
+    )
+
+    sink = _ConsumerSink(consumer, finished)
+    sink.makeConnection(FakeTransport())
+    sink.dataReceived(b"ABC")
+    sink.connectionLost(None if clean_reason is None else Failure(clean_reason))
+
+    assert "err" not in outcome, "a clean close must complete the media stream"
+    assert outcome["written"] == 3
+    assert consumer.unregistered is True
+
+
+def test_consumer_sink_treats_potential_data_loss_as_failure():
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+    outcome = {}
+    finished.addCallbacks(
+        lambda n: outcome.__setitem__("written", n),
+        lambda f: outcome.__setitem__("err", f),
+    )
+
+    sink = _ConsumerSink(consumer, finished)
+    sink.makeConnection(FakeTransport())
+    sink.dataReceived(b"ABC")
+    # No clean terminator: the body may be TRUNCATED.
+    sink.connectionLost(Failure(PotentialDataLoss()))
+
+    assert "written" not in outcome, (
+        "a truncated media body must NOT be reported as a completed stream"
+    )
+    assert outcome["err"].check(PotentialDataLoss)
+    assert consumer.unregistered is True
+    # And the shared small-body helper still ACCEPTS it — the divergence is real,
+    # not an accident of one shared predicate.
+    assert mod._body_end_is_clean(Failure(PotentialDataLoss()))
 
 
 def test_consumer_sink_reports_mid_stream_failure():

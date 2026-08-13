@@ -122,7 +122,9 @@ help:
 	@echo "  all            - Run deps, fmt, lint, test, and build"
 	@echo "  build          - Build the application binary"
 	@echo "  run            - Run the application locally"
-	@echo "  test           - Run unit tests"
+	@echo "  test           - Run Go unit tests"
+	@echo "  test-python    - Run the Synapse Python module tests"
+	@echo "  test-all       - Run Go + Synapse Python module tests"
 	@echo "  test-coverage  - Run tests with coverage report"
 	@echo "  lint           - Run linters (go vet, golangci-lint)"
 	@echo "  lint-md        - Lint Markdown files (uses markdownlint-cli)"
@@ -133,3 +135,16 @@ help:
 	@echo "  deps           - Download and tidy dependencies"
 	@echo "  openapi        - Generate OpenAPI spec from Go source"
 	@echo "  docker-build   - Build Docker image"
+
+# Run the Synapse Python module tests (synapse-modules/). Hermetic: no live
+# file-service, no reactor, and no Synapse install required (see
+# synapse-modules/conftest.py). Deps: synapse-modules/requirements-dev.txt.
+PYTHON ?= python3
+.PHONY: test-python
+test-python:
+	@echo "Running Synapse module tests..."
+	$(PYTHON) -m pytest synapse-modules -q
+
+# Everything: Go tests + Synapse module tests.
+.PHONY: test-all
+test-all: test test-python
