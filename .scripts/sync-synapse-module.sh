@@ -126,8 +126,23 @@ sync_embed() {
   # BETWEEN this block's content and the next key are preserved (the `^  [A-Za-z_]...:`
   # next-key scan skips them, which would otherwise silently swallow them each sync).
   # Empty means the block runs to EOF (it is the last key in the ConfigMap).
+  #
+  # Blank lines are ambiguous: one INSIDE the Python source is block content, but the
+  # separator blank line(s) immediately BEFORE the next key belong to the file, not to
+  # the block. Treating every blank as content (the naive `$0 != "" && !/^   /`) ends
+  # the block AT the next key and so eats that separator on every sync — the exact
+  # swallowing the comment above promises not to do. So: remember where the current
+  # run of blank lines started, and when a non-blank, non-indented line finally ends
+  # the block, resume from the START of that trailing run instead. A blank run that
+  # is followed by more indented content is not trailing, so the marker is cleared.
   local block_end
-  block_end="$(awk -v start="$key_line" 'NR > start && $0 != "" && !/^   / { print NR; exit }' "$dest" || true)"
+  block_end="$(awk -v start="$key_line" '
+    NR <= start        { next }
+    $0 == ""           { if (!blank_run) blank_run = NR; next }
+    /^   /             { blank_run = 0; next }
+                       { print (blank_run ? blank_run : NR); found = 1; exit }
+    END                { if (!found && blank_run) print blank_run }
+  ' "$dest" || true)"
 
   local tmp
   tmp="$(mktemp -p "$_WORKDIR")"

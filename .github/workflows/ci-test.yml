@@ -43,3 +43,8 @@ jobs:
 
       - name: Run Synapse module tests
         run: make test-python
+
+      # The downstream sync script is shell, so neither the Go job nor pytest
+      # gates it — yet it edits deployment ConfigMaps in three other repos.
+      - name: Run sync-script fixture tests
+        run: make test-scripts

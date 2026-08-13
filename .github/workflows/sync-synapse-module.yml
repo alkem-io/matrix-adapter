@@ -19,7 +19,10 @@ name: Sync Synapse Config to Downstream Repos
 # 4) rather than skipping quietly, so a downstream cannot silently stop receiving
 # a canonical module. A target that deliberately does not run the media provider
 # must opt out with ALLOW_MISSING_FILESERVICE_PROVIDER=1 (see
-# .scripts/sync-synapse-module.sh). registration.yaml is schema-synced: namespaces / sender_localpart /
+# .scripts/sync-synapse-module.sh), which this workflow exposes as the
+# `allow_missing_fileservice_provider` workflow_dispatch input — the opt-out is
+# only ever available on a MANUAL run, never on the automatic push
+# run. registration.yaml is schema-synced: namespaces / sender_localpart /
 # receive_ephemeral / msc2409 / id are taken from canonical, but each target's
 # existing url / as_token / hs_token values are preserved (those are
 # environment-specific — dev secrets in server, ${MATRIX_*} placeholders in
@@ -52,7 +55,17 @@ on:
       - '.scripts/sync-synapse-module.sh'
       - '.scripts/sync-synapse-registration.py'
       - '.github/workflows/sync-synapse-module.yml'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      allow_missing_fileservice_provider:
+        description: >-
+          Skip (with a loud warning) any target whose ConfigMap has no
+          `alkemio_fileservice_provider.py: |` block, instead of failing the job.
+          This is the documented escape hatch for a target that has not adopted
+          the media provider yet — it applies to EVERY target in this run, so
+          use it to unblock a sync, not as a steady state.
+        type: boolean
+        default: false
 
 concurrency:
   group: sync-synapse-config-${{ github.ref }}
@@ -99,7 +112,14 @@ jobs:
           ref: ${{ matrix.target.base }}
           fetch-depth: 0
 
-      - name: Apply room-control module sync
+      - name: Apply Synapse module sync
+        # ALLOW_MISSING_FILESERVICE_PROVIDER is documented as THE opt-out for a
+        # target that has not adopted the provider block. It is wired to the
+        # workflow_dispatch input above so that claim is actually reachable —
+        # on a push run the input is unset, so the default (fail loudly) holds.
+        env:
+          ALLOW_MISSING_FILESERVICE_PROVIDER: >-
+            ${{ inputs.allow_missing_fileservice_provider && '1' || '0' }}
         run: ./source/.scripts/sync-synapse-module.sh ./target
 
       - name: Apply registration.yaml sync

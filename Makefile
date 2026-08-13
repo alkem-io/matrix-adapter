@@ -124,7 +124,8 @@ help:
 	@echo "  run            - Run the application locally"
 	@echo "  test           - Run Go unit tests"
 	@echo "  test-python    - Run the Synapse Python module tests"
-	@echo "  test-all       - Run Go + Synapse Python module tests"
+	@echo "  test-scripts   - Run the downstream sync-script fixture tests"
+	@echo "  test-all       - Run Go + Synapse Python module + sync-script tests"
 	@echo "  test-coverage  - Run tests with coverage report"
 	@echo "  lint           - Run linters (go vet, golangci-lint)"
 	@echo "  lint-md        - Lint Markdown files (uses markdownlint-cli)"
@@ -145,6 +146,14 @@ test-python:
 	@echo "Running Synapse module tests..."
 	$(PYTHON) -m pytest synapse-modules -q
 
-# Everything: Go tests + Synapse module tests.
+# Fixture tests for the downstream sync shell script. It rewrites a YAML literal
+# block inside a ConfigMap in place, which is exactly the kind of text surgery
+# that corrodes a file one sync at a time if nothing pins its structure.
+.PHONY: test-scripts
+test-scripts:
+	@echo "Running sync-script fixture tests..."
+	./.scripts/sync-synapse-module.test.sh
+
+# Everything: Go tests + Synapse module tests + sync-script fixtures.
 .PHONY: test-all
-test-all: test test-python
+test-all: test test-python test-scripts
