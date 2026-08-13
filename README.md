@@ -44,6 +44,7 @@ The service is configured via environment variables or a `config.yaml` file. The
 | `MATRIX_BOT_DISPLAY_NAME` | Display name for the bot user in Matrix | `Alkemio` |
 | `SYNAPSE_SERVER_SHARED_SECRET` | Synapse `registration_shared_secret` for auto-promoting bot to server admin | - |
 | `FILE_SERVICE_URL` | Optional internal file-service base URL; required only when sending outbound media attachments (`GET {url}/internal/file/{id}/content`). When set it is validated at startup and must be an absolute `http(s)` URL with a host — a malformed value fails the boot rather than silently dropping every attachment | - |
+| `FILE_SERVICE_MAX_ATTACHMENT_BYTES` | Per-attachment byte cap for outbound media. Must parse as an integer — a malformed value fails the boot. A non-positive value falls back to the default. See the note under [Media Attachments](#media-attachments) before raising it much past ~120 MiB | `52428800` (50 MiB) |
 | `RABBITMQ_URL` | Full AMQP Connection URL | - |
 | `RABBITMQ_HOST` | RabbitMQ Host (if URL not set) | - |
 | `RABBITMQ_PORT` | RabbitMQ Port (if URL not set) | `5672` |
@@ -231,11 +232,49 @@ Deleting a message redacts its primary event; the attachment media events are
 not cascade-redacted (a stateless adapter cannot reliably rediscover them) and
 are reclaimed as unreferenced media by Synapse media retention.
 
+**Timeouts around `FILE_SERVICE_MAX_ATTACHMENT_BYTES`.** Two ceilings sit above
+the byte cap, and neither moves with it:
+
+- The adapter gives one attachment a size-proportional wall-clock budget
+  (`mediaStreamTimeout`: 60 s plus 1 s per assumed MiB), but the upload runs on
+  the appservice's shared `http.Client`, which mautrix-go creates with a
+  **180 s whole-request timeout** covering the streamed body. At the 50 MiB
+  default the computed budget is ~110 s, comfortably under it. Past roughly
+  120 MiB the computed budget stops being the real limit, and past roughly
+  180 MiB no attachment can complete however the knob is tuned. Raising the cap
+  that far therefore means revisiting the upload client, not just this value.
+- The send is a synchronous AMQP RPC and the Alkemio server stops waiting after
+  `COMMUNICATIONS_MATRIX_CONNECTION_TIMEOUT` (30 s by default). The adapter
+  keeps working past that — nothing is lost or duplicated server-side (there is
+  no retry, and no message row is written on send) — but the user sees an error
+  for a send that may well land. Any cap large enough to make sends routinely
+  exceed 30 s needs that server timeout raised to match.
+
 Inbound media events are translated onto `communication.message.received`:
 each carries a `ReceivedAttachment` (`media_id` parsed from the mxc URL,
 `mime_type`/`size`/dimensions from `info`, and `document_id` when the event
-echoes our own `io.alkemio.document_id`). The adapter is **stateless** — it only
+carries `io.alkemio.document_id`). The adapter is **stateless** — it only
 surfaces these raw refs; the server re-homes media and resolves URLs.
+
+The event's `body` is surfaced as the message `content` verbatim, and the
+resolved filename as the attachment's `display_name`. Both are sent because
+either may be what a consumer needs: per MSC2530 a caption exists only when
+`body != filename`, so `content == display_name` is the renderer's signal that
+there is no caption and only the attachment should be drawn.
+
+`document_id` on an INBOUND event is an **unauthenticated hint**. It marks an
+echo of our own outbound media, but it lives in user-writable event content and
+the adapter cannot tell its own sends from a human's: the adapter impersonates
+actor X *as* X, so its Matrix sender is the very same `@<actor-uuid>:<homeserver>`
+that actor gets when logging into Element via OIDC (hence the deliberately
+non-exclusive UUID namespace in the AppService registration). Consumers must
+authorize it — the Alkemio server requires the named document to sit in the
+message's room bucket with `createdBy` equal to the message sender.
+
+`media_id` is surfaced only for an mxc URL on **our own** homeserver. This
+deployment is not federated, so a foreign mxc cannot legitimately arrive; the
+check rejects forged or malformed event content, which would otherwise miss or
+collide with an unrelated local media id and resolve to the wrong document.
 
 ## DM Room Creation Flow
 

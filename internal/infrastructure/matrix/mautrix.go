@@ -833,6 +833,23 @@ const messageFanOutBudgetSlots = 2
 
 // messageFanOutTimeout is the single wall-clock budget shared by every
 // attachment in one message's fan-out.
+//
+// It deliberately EXCEEDS the caller's patience, and that is not an oversight.
+// SendMessage is served over a synchronous AMQP RPC whose caller (the Alkemio
+// server's communication.adapter) waits COMMUNICATIONS_MATRIX_CONNECTION_TIMEOUT
+// — 30 s by default — while one legitimate 50 MiB attachment is allowed ~110 s at
+// the assumed floor throughput. Shrinking this to 30 s would abandon large
+// attachments that are simply slow, which is the worse failure.
+//
+// What happens when the caller gives up first (verified against the server, not
+// assumed): the AMQP request is not cancelled, so the adapter completes the send;
+// the server neither retries nor writes a message row on send, so there is no
+// duplicate Matrix event and no orphan record; staged attachment documents stay
+// temporary and are either swept or pinned by the later echo. The cost is a
+// user-visible error for a send that may have landed, and a manual re-send that
+// can then duplicate. That is a deployment-tuning matter (raise the server
+// timeout, or keep the byte cap small enough that sends stay under it — see the
+// README), not something the adapter can fix by shortening its own budget.
 func messageFanOutTimeout(maxBytes int64) time.Duration {
 	return messageFanOutBudgetSlots * mediaStreamTimeout(maxBytes)
 }
@@ -1184,6 +1201,19 @@ const fileServiceFetchTimeout = 60 * time.Second
 // minimum throughput.
 const fileServiceMinThroughputBytesPerSec = 1 << 20 // 1 MiB/s
 
+// CEILING THIS BUDGET CANNOT CROSS: the upload leg runs on the appservice's
+// SHARED http.Client, which mautrix-go builds with Timeout: 180 * time.Second
+// (appservice.SetHomeserverURL, v0.28.0) — a WHOLE-request timeout that includes
+// the streamed body, and http.Client.Timeout always wins over a longer context
+// deadline. Every intent, ghost and bot shares that one client, and ReqUploadMedia
+// has no per-request client override (unlike ReqSync), so there is no way to
+// exempt just the upload without swapping the shared client out.
+//
+// At the 50 MiB default this never binds: the budget is ~110 s. It starts to bind
+// past roughly 120 MiB of FILE_SERVICE_MAX_ATTACHMENT_BYTES, and past roughly
+// 180 MiB no attachment can complete at the assumed floor throughput whatever
+// this function returns. Raising the cap that far is therefore a change to the
+// upload client, not just to the knob — see the README's Media Attachments note.
 func mediaStreamTimeout(maxBytes int64) time.Duration {
 	secs := maxBytes / fileServiceMinThroughputBytesPerSec
 	// Clamp the size-proportional part to a sane ceiling: an absurd config (e.g. a
