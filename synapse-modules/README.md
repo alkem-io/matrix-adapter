@@ -159,13 +159,35 @@ mapping lives on the file-service document's opaque `externalReference`):
 
 Reads are streamed with real backpressure (the response-body transport is
 registered as a producer with the media consumer) and bounded by **per-request
-timeouts only**: `timeout_s` covers connect + response headers, the metadata body
-read, and the keep-alive drain, while the streamed content body is bounded by a
-**time-to-first-byte** deadline — after the first byte, legitimate slow-client
-backpressure governs and no further deadline is imposed. Any miss or failure
-(404, non-200, transport error, timeout, malformed body) returns `None`, which
-Synapse treats as a cache miss, so the Element media read path degrades rather
-than hanging.
+timeouts only**: `timeout_s` covers connect + response headers and the metadata
+body read, while the streamed content body is bounded by a **time-to-first-byte**
+deadline — after the first byte, legitimate slow-client backpressure governs and
+no further deadline is imposed. The keep-alive drain of a reply we have already
+decided to discard is **not** bounded by `timeout_s`: it uses the fixed
+`DRAIN_TIMEOUT_S` (2 s) module constant, deliberately far tighter, because it is
+a courtesy that must never add request-timeout-sized latency to a miss or to an
+already-durable `201` store. Any miss or failure (404, non-200, transport error,
+timeout, malformed body) returns `None`, which Synapse treats as a cache miss, so
+the Element media read path degrades rather than hanging.
+
+Redirects are **not specially handled**. file-service is an in-cluster internal
+service with no proxy in front and it never redirects on these endpoints, so a
+3xx cannot legitimately occur. (For the record, treq *follows* redirects by
+default — `allow_redirects=True`, wrapping the agent in twisted's
+`RedirectAgent`. Earlier comments in the module claimed the opposite; they were
+wrong. If file-service ever gains a redirecting front door, this is the
+assumption to revisit.)
+
+A streamed content body that ends short of its declared `Content-Length` is
+reported as an **error**, never as a completed media stream. Note the residual
+Synapse-side exposure documented on `_ConsumerSink`: Synapse's
+`ensure_media_is_in_local_cache` writes provider bytes straight to the **final**
+cache path with no temp file, no rename and no cleanup, and its later
+completeness gate is `os.path.exists` alone — so a failed fetch leaves a partial
+(or zero-byte) file behind that a subsequent request treats as complete. The
+provider deliberately does not delete it (the path is only reachable via a
+private attribute of a Synapse-internal consumer, and unlinking races a
+concurrent re-fetch); it fails loudly instead.
 
 There is deliberately **no circuit breaker** and no cross-request state: this
 follows the standard Synapse storage-provider model (per-request timeouts +
@@ -190,9 +212,11 @@ media_storage_providers:
       matrix_media_bucket_id: "<reserved matrix_media bucket uuid>"
       # optional tuning (seconds, must be finite and > 0):
       #   timeout_s        default 10 — connect + headers, metadata body read,
-      #                    drain, and the content stream's time-to-first-byte
+      #                    and the content stream's time-to-first-byte
       #   store_timeout_s  default 30 — FLOOR for the multipart upload; scaled up
       #                    by file size at an assumed 1 MB/s
+      # The keep-alive drain is NOT tunable: it is bounded by the fixed
+      # DRAIN_TIMEOUT_S (2 s) constant in the module.
       # No other keys are read; unknown keys are ignored.
 ```
 

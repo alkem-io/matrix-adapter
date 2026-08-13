@@ -38,7 +38,9 @@ from twisted.python.failure import Failure
 from twisted.internet.error import ConnectionDone
 from twisted.web.client import FileBodyProducer, ResponseDone
 from twisted.web.http import PotentialDataLoss
+from twisted.web.iweb import UNKNOWN_LENGTH
 
+import treq
 from treq.client import _convert_files, _convert_params
 from treq.multipart import MultiPartProducer
 
@@ -48,6 +50,7 @@ from alkemio_fileservice_provider import (
     _ConsumerSink,
     _DrainAndAbort,
     _FileServiceResponder,
+    _ShortBody,
 )
 
 
@@ -87,14 +90,21 @@ class FakeResponse:
       (transport.stopped stays False).
     - `stall_body=True`: deliverBody connects but never delivers (stalled body ->
       the caller times out and aborts).
+
+    `length` mirrors twisted's `IResponse.length`: the int Content-Length when the
+    server framed the body, otherwise the `UNKNOWN_LENGTH` SENTINEL (a str, which
+    is exactly what twisted leaves there for a chunked or gzip-decoded body). It
+    DEFAULTS to unknown, so every pre-existing test exercises the
+    no-Content-Length path and any regression there shows up suite-wide.
     """
 
-    def __init__(self, code, auto_body=None, stall_body=False):
+    def __init__(self, code, auto_body=None, stall_body=False, length=UNKNOWN_LENGTH):
         self.code = code
         self._auto_body = auto_body
         self._stall_body = stall_body
         self.delivered_to = None
         self.transport = None
+        self.length = length
 
     def deliverBody(self, protocol):
         self.delivered_to = protocol
@@ -951,8 +961,9 @@ def test_fetch_returns_none_on_content_404_and_drains(monkeypatch):
 
 @pytest.mark.parametrize("code", [204, 302])
 def test_fetch_content_non_200_is_miss_not_streamed(monkeypatch, code):
-    # Strict 200: a 2xx-non-200 (204) or a 3xx redirect (treq doesn't follow) on
-    # the content GET must be a MISS (drained), NOT streamed as media.
+    # Strict 200: anything else reaching this code — a 2xx-non-200 (204), or a
+    # 3xx that somehow arrived unfollowed — must be a MISS (drained), NOT
+    # streamed as media.
     prov = _make_provider()
     content_resp = _drainable(code)
     calls = []
@@ -1053,12 +1064,25 @@ def test_fetch_stalled_reply_drain_times_out_and_aborts(monkeypatch):
     # bounded by DRAIN_TIMEOUT_S, so on timeout it aborts (tears the connection
     # down) instead of hanging — and fetch still returns None. This is the
     # drained-vs-aborted counterpart to the fast-drain (reused) misses above.
+    #
+    # It also pins WHICH deadline governs. The drain is bounded by the fixed
+    # DRAIN_TIMEOUT_S, NOT by the operator-tunable `timeout_s` (the module
+    # docstring and README used to claim the latter, which would make worst-case
+    # miss latency scale with a knob that has nothing to do with a body we have
+    # already decided to discard). The two-step advance below is what makes that
+    # distinction load-bearing rather than incidental.
     prov = _make_provider()
+    assert mod.DRAIN_TIMEOUT_S < prov.timeout_s, (
+        "the drain deadline must be strictly tighter than the request timeout, "
+        "or this test cannot tell the two apart"
+    )
     stalling_miss = FakeResponse(404, stall_body=True)
     monkeypatch.setattr(mod.treq, "get", lambda url, **kw: _aval(stalling_miss))
 
     d = defer.ensureDeferred(prov.fetch("local_content/x", FakeFileInfo("missing")))
-    prov.reactor.advance(mod.DRAIN_TIMEOUT_S + 0.1)  # trip the SHORT drain deadline
+    prov.reactor.advance(mod.DRAIN_TIMEOUT_S - 0.1)  # just short of the drain deadline
+    assert not d.called, "the drain must still be running just before DRAIN_TIMEOUT_S"
+    prov.reactor.advance(0.2)  # cross it — and note this is far below timeout_s
     assert _result_of(d) is None
     assert stalling_miss.transport.stopped is True  # drain gave up -> aborted
 
@@ -1179,6 +1203,142 @@ def test_consumer_sink_treats_potential_data_loss_as_failure():
     # And the shared small-body helper still ACCEPTS it — the divergence is real,
     # not an accident of one shared predicate.
     assert mod._body_end_is_clean(Failure(PotentialDataLoss()))
+
+
+# --- truncation: a short body must never look like a completed stream ------
+#
+# Synapse's `ensure_media_is_in_local_cache` streams provider bytes into a
+# `BackgroundFileConsumer` opened on the FINAL cache path (no temp file, no
+# rename, no cleanup) and its later completeness gate is `os.path.exists` alone.
+# So a body that ends CLEANLY but short must be reported as an error, never as a
+# completed media stream — otherwise the partial file is served as complete. See
+# `_ConsumerSink`'s TRUNCATION CONTRACT for the residual, Synapse-side exposure
+# the provider deliberately does not try to clean up.
+
+
+def _drive_sink(expected_length, chunks, reason):
+    """Run a sink to completion and return its outcome dict ({written} | {err})."""
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+    outcome = {}
+    finished.addCallbacks(
+        lambda n: outcome.__setitem__("written", n),
+        lambda f: outcome.__setitem__("err", f),
+    )
+    sink = _ConsumerSink(consumer, finished, expected_length=expected_length)
+    sink.makeConnection(FakeTransport())
+    for chunk in chunks:
+        sink.dataReceived(chunk)
+    sink.connectionLost(reason)
+    return outcome, consumer
+
+
+@pytest.mark.parametrize(
+    "clean_reason", [None, Failure(ResponseDone()), Failure(ConnectionDone())]
+)
+def test_consumer_sink_short_body_against_content_length_errbacks(clean_reason):
+    # (a) Fewer bytes than the declared Content-Length, delivered with a CLEAN
+    # close: must errback, NOT report a completed stream.
+    outcome, consumer = _drive_sink(10, [b"SHO", b"RT"], clean_reason)
+
+    assert "written" not in outcome, (
+        "a body short of its declared Content-Length must NOT be reported as a "
+        "completed media stream"
+    )
+    assert outcome["err"].check(_ShortBody)
+    assert "5" in str(outcome["err"].value) and "10" in str(outcome["err"].value)
+    assert consumer.unregistered is True
+
+
+def test_consumer_sink_exact_length_body_succeeds():
+    # (b) Exactly the declared length still completes normally.
+    outcome, consumer = _drive_sink(5, [b"AB", b"CDE"], Failure(ResponseDone()))
+    assert "err" not in outcome
+    assert outcome["written"] == 5
+    assert consumer.unregistered is True
+
+
+def test_consumer_sink_without_declared_length_still_succeeds():
+    # (c) No Content-Length (chunked, or a gzip-decoded body whose header length
+    # describes the COMPRESSED bytes) — the guard stands down and behaviour is
+    # exactly as before: a clean close completes the stream.
+    outcome, _ = _drive_sink(None, [b"ABC"], Failure(ResponseDone()))
+    assert "err" not in outcome
+    assert outcome["written"] == 3
+
+
+def test_declared_body_length_reads_content_length_and_ignores_unknown():
+    # The int Content-Length is used; twisted's UNKNOWN_LENGTH sentinel (a str,
+    # what twisted leaves for a chunked body and what treq's GzipDecoder resets
+    # `length` to) reads as "unknown", so a gzipped stream is never failed
+    # against a compressed-byte length.
+    assert mod._declared_body_length(FakeResponse(200, length=7)) == 7
+    assert mod._declared_body_length(FakeResponse(200, length=0)) == 0
+    assert mod._declared_body_length(FakeResponse(200, length=UNKNOWN_LENGTH)) is None
+    assert mod._declared_body_length(FakeResponse(200)) is None  # defaults to unknown
+    # bool is an int subclass and would otherwise compare as 0/1.
+    assert mod._declared_body_length(FakeResponse(200, length=True)) is None
+    assert mod._declared_body_length(object()) is None  # no `length` at all
+
+
+def test_fetch_threads_content_length_into_the_stream(monkeypatch):
+    # End-to-end: the content response's declared length reaches the sink, so a
+    # truncated download fails the Responder Synapse is streaming from.
+    prov = _make_provider()
+    content = FakeResponse(200, length=7)
+
+    def fake_get(url, **kw):
+        if "by-reference" in url:
+            return _aval(_meta({"id": "doc-9"}))
+        return _aval(content)
+
+    monkeypatch.setattr(mod.treq, "get", fake_get)
+
+    responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
+    consumer = FakeConsumer()
+    outcome = {}
+    d = responder.write_to_consumer(consumer)
+    d.addCallbacks(
+        lambda n: outcome.__setitem__("written", n),
+        lambda f: outcome.__setitem__("err", f),
+    )
+
+    sink = content.delivered_to
+    sink.dataReceived(b"SHORT")  # 5 of the declared 7
+    sink.connectionLost(Failure(ResponseDone()))  # clean close, short body
+
+    assert "written" not in outcome
+    assert outcome["err"].check(_ShortBody)
+
+
+def test_fetch_full_length_stream_completes(monkeypatch):
+    # ...and the same wiring completes normally when every declared byte arrives.
+    prov = _make_provider()
+    content = FakeResponse(200, length=7)
+
+    def fake_get(url, **kw):
+        if "by-reference" in url:
+            return _aval(_meta({"id": "doc-9"}))
+        return _aval(content)
+
+    monkeypatch.setattr(mod.treq, "get", fake_get)
+
+    responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
+    consumer = FakeConsumer()
+    outcome = {}
+    d = responder.write_to_consumer(consumer)
+    d.addCallbacks(
+        lambda n: outcome.__setitem__("written", n),
+        lambda f: outcome.__setitem__("err", f),
+    )
+
+    sink = content.delivered_to
+    sink.dataReceived(b"CONTENT")  # exactly 7
+    sink.connectionLost(Failure(ResponseDone()))
+
+    assert "err" not in outcome
+    assert outcome["written"] == 7
+    assert bytes(consumer.data) == b"CONTENT"
 
 
 def test_consumer_sink_reports_mid_stream_failure():

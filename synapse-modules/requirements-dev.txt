@@ -6,6 +6,17 @@
 # stand-ins for the four symbols the provider imports at load time when it is
 # absent. twisted and treq ARE real — the provider's protocols, producers and
 # multipart serialisation are exercised against the actual libraries.
+#
+# Every pin carries an UPPER bound excluding the next major. The suite does not
+# only use these libraries' public API — it binds to treq PRIVATE internals
+# (`treq.client._convert_files`, `treq.client._convert_params`,
+# `treq.multipart.MultiPartProducer`) to assert the multipart ordering invariant
+# on the bytes treq actually serialises, and to twisted's `FileBodyProducer` /
+# `Cooperator` constructor surface. Private API carries no compatibility
+# promise, so an unbounded pin lets a major bump break collection in CI with no
+# warning. Bounds are chosen to keep the versions we develop and run CI against
+# valid (pytest 9.x, twisted 26.x, treq 26.x — both twisted and treq use CalVer,
+# so "major" is the year) while excluding the next major.
 pytest>=8,<10
-twisted>=24
-treq>=23
+twisted>=24,<27
+treq>=23,<27
