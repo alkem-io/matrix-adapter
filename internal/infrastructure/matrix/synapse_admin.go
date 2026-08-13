@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
@@ -314,6 +315,24 @@ func (s *SynapseAdmin) GetTimestampToEvent(ctx context.Context, roomID id.RoomID
 // finite.
 const maxRelationsPages = 20
 
+// relationsFetchBudget bounds the WHOLE GetRelations pagination loop.
+//
+// Pagination turned one admin round-trip into up to maxRelationsPages sequential
+// ones, and each runs on SynapseAdmin's http.DefaultClient (no Client.Timeout)
+// with whatever context the caller had. The callers are the watermill room-ops
+// handlers, whose message context carries NO deadline and which process messages
+// SEQUENTIALLY in one goroutine — so an unresponsive homeserver would otherwise
+// stall every room operation behind it, for as long as the TCP stack allows,
+// multiplied by the page count. One budget for the whole loop keeps that finite
+// regardless of how many pages are walked, and it is a CEILING: a caller with a
+// shorter deadline still wins.
+//
+// Exhausting it mid-pagination is not a special case: the request context
+// expires, MakeRequest fails, and the (partial, err) contract below already
+// covers "a later page failed", so callers degrade exactly as they do for a
+// transport error.
+const relationsFetchBudget = 60 * time.Second
+
 // relationsPageLimit is the `limit` GetRelations asks for on every page.
 //
 // It MUST be explicit. The Matrix `/relations` endpoint's default page size is
@@ -364,6 +383,10 @@ func (s *SynapseAdmin) GetRelations(
 	ctx context.Context, roomID id.RoomID, eventID id.EventID,
 	relType event.RelationType, eventType event.Type,
 ) ([]*event.Event, error) {
+	// One deadline for the whole page walk — see relationsFetchBudget.
+	ctx, cancel := context.WithTimeout(ctx, relationsFetchBudget)
+	defer cancel()
+
 	var base string
 	if eventType.Type == "" {
 		base = s.client.BuildClientURL("v1", "rooms", roomID, "relations", eventID, relType)

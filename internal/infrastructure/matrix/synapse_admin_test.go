@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
@@ -1472,5 +1473,112 @@ func TestServerDown_ReturnsError(t *testing.T) {
 	_, err = sa.GetUser(context.Background(), "@alice:hs")
 	if err == nil {
 		t.Fatal("expected error when server is down")
+	}
+}
+
+// deadlineRecordingTransport records the deadline carried by every outbound
+// request context, then delegates to the real transport.
+type deadlineRecordingTransport struct {
+	inner     http.RoundTripper
+	deadlines []time.Time
+	hasNone   int
+}
+
+func (d *deadlineRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if dl, ok := req.Context().Deadline(); ok {
+		d.deadlines = append(d.deadlines, dl)
+	} else {
+		d.hasNone++
+	}
+	return d.inner.RoundTrip(req)
+}
+
+// GetRelations turns ONE admin round-trip into up to maxRelationsPages sequential
+// ones, on a client with no Client.Timeout, driven from the deadline-less
+// watermill context of a SEQUENTIAL room-ops consumer. Every page must therefore
+// run under one bounded, shared deadline — otherwise an unresponsive homeserver
+// stalls all room operations for page-count times an unbounded wait.
+func TestGetRelations_BoundsTheWholePageWalk(t *testing.T) {
+	var pages int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		next := "tok"
+		if pages >= 3 {
+			next = ""
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"chunk": []map[string]interface{}{}, "next_batch": next,
+		})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	rec := &deadlineRecordingTransport{inner: http.DefaultTransport}
+	sa.client.Client = &http.Client{Transport: rec}
+
+	// A caller with NO deadline — exactly what the watermill handlers pass.
+	before := time.Now()
+	if _, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$evt1:hs", event.RelThread, event.Type{},
+	); err != nil {
+		t.Fatalf("GetRelations: %v", err)
+	}
+	after := time.Now()
+
+	if pages != 3 {
+		t.Fatalf("expected 3 pages, got %d", pages)
+	}
+	if rec.hasNone != 0 {
+		t.Fatalf("%d of %d page requests ran with NO deadline; the page walk must be bounded",
+			rec.hasNone, pages)
+	}
+	if len(rec.deadlines) != pages {
+		t.Fatalf("recorded %d deadlines for %d pages", len(rec.deadlines), pages)
+	}
+	// One budget for the WHOLE walk, not one per page: every page shares the same
+	// deadline, and it is no further out than the budget allows.
+	for i, dl := range rec.deadlines {
+		if dl.After(after.Add(relationsFetchBudget)) {
+			t.Errorf("page %d deadline %v exceeds the whole-loop budget", i+1, relationsFetchBudget)
+		}
+		if dl.Before(before) {
+			t.Errorf("page %d deadline %v is already in the past", i+1, dl)
+		}
+		if !dl.Equal(rec.deadlines[0]) {
+			t.Errorf("page %d has its OWN deadline (%v vs %v); the budget must be shared "+
+				"across pages, or N pages get N times the budget", i+1, dl, rec.deadlines[0])
+		}
+	}
+}
+
+// A caller deadline SHORTER than the budget still wins — the budget is a ceiling,
+// never an extension.
+func TestGetRelations_CallerDeadlineIsNotExtended(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"chunk": []map[string]interface{}{}})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	rec := &deadlineRecordingTransport{inner: http.DefaultTransport}
+	sa.client.Client = &http.Client{Transport: rec}
+
+	callerBudget := 250 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), callerBudget)
+	defer cancel()
+	ceiling := time.Now().Add(callerBudget)
+
+	if _, err := sa.GetRelations(
+		ctx, "!room1:hs", "$evt1:hs", event.RelThread, event.Type{},
+	); err != nil {
+		t.Fatalf("GetRelations: %v", err)
+	}
+	if len(rec.deadlines) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(rec.deadlines))
+	}
+	if rec.deadlines[0].After(ceiling) {
+		t.Errorf("the caller's %v deadline was extended to %v", callerBudget, rec.deadlines[0])
 	}
 }
