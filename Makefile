@@ -17,8 +17,10 @@ all: deps fmt lint test build
 
 # Generate OpenAPI spec from Go source.
 # Requires the `apispec` binary on PATH. CI installs the org-pinned version
-# (see go-ci.yml in antst/alkemio-github-workflows); locally:
-#   go install github.com/antst/go-apispec/cmd/apispec@v0.4.16
+# (see go-ci.yml in antst/alkemio-github-workflows); locally install the SAME
+# version, or `make openapi` will silently produce a spec CI then rejects as
+# stale — older builds omit summaries newer ones emit:
+#   go install github.com/antst/go-apispec/cmd/apispec@v0.4.25
 .PHONY: openapi
 openapi:
 	@echo "Generating OpenAPI spec..."
