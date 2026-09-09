@@ -18,6 +18,12 @@ const (
 	ErrCodeReactionNotFound ErrorCode = "REACTION_NOT_FOUND"
 	// ErrCodeMatrixError indicates a Matrix SDK/homeserver error.
 	ErrCodeMatrixError ErrorCode = "MATRIX_ERROR"
+	// ErrCodeDeadlineExceeded indicates the call reached its own execution
+	// deadline before every attempted write could be issued, with no Matrix
+	// write among those actually attempted having been rejected. Distinct
+	// from ErrCodeMatrixError so a caller can tell "the adapter ran out of
+	// time, repeat the call" from "Matrix rejected a write, investigate".
+	ErrCodeDeadlineExceeded ErrorCode = "DEADLINE_EXCEEDED"
 	// ErrCodeInternalError indicates an unexpected system error.
 	ErrCodeInternalError ErrorCode = "INTERNAL_ERROR"
 	// ErrCodeNotAllowed indicates the operation is not permitted.

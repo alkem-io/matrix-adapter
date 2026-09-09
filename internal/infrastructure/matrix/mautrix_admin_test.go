@@ -33,6 +33,7 @@ type mockAdminAPI struct {
 	getRoomStateErr            error
 	getStateEventContentResult map[string]interface{}
 	getStateEventContentErr    error
+	getStateEventContentCalled int
 	getCustomStateResult       map[string]map[string]interface{}
 	getCustomStateErr          error
 	getRoomMessagesResult      *mautrix.RespMessages
@@ -73,6 +74,7 @@ func (m *mockAdminAPI) GetRoomState(_ context.Context, _ id.RoomID, _ string) ([
 }
 
 func (m *mockAdminAPI) GetStateEventContent(_ context.Context, _ id.RoomID, _ string) (map[string]interface{}, error) {
+	m.getStateEventContentCalled++
 	return m.getStateEventContentResult, m.getStateEventContentErr
 }
 

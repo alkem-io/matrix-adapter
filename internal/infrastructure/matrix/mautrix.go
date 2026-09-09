@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2356,6 +2357,33 @@ func (m *MautrixAdapter) GetSpaceChildren(ctx context.Context, roomID id.RoomID)
 	return children, nil
 }
 
+// GetSpaceChildStateKeys returns the state_keys of a space's live m.space.child
+// edges (non-empty via) from a single state read, with no per-child admin call.
+func (m *MautrixAdapter) GetSpaceChildStateKeys(ctx context.Context, spaceID id.RoomID) ([]string, error) {
+	intent := m.as.BotIntent()
+
+	stateMap, err := intent.State(ctx, spaceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get space state: %w", err)
+	}
+
+	childEvents, ok := stateMap[event.StateSpaceChild]
+	if !ok {
+		return []string{}, nil
+	}
+
+	stateKeys := make([]string, 0, len(childEvents))
+	for stateKey, evt := range childEvents {
+		content, ok := parseEventContent[event.SpaceChildEventContent](evt)
+		if !ok || len(content.Via) == 0 {
+			continue
+		}
+		stateKeys = append(stateKeys, stateKey)
+	}
+
+	return stateKeys, nil
+}
+
 // AddSpaceChild adds a room or subspace as a child of a space.
 func (m *MautrixAdapter) AddSpaceChild(
 	ctx context.Context, spaceID id.RoomID, childID id.RoomID, order string, suggested bool,
@@ -2376,6 +2404,21 @@ func (m *MautrixAdapter) AddSpaceChild(
 	return nil
 }
 
+// RemoveSpaceChild removes a space's child edge by writing an empty-content
+// m.space.child state event for the given state_key. This is the MSC1772
+// removal mechanism: it clears the edge but never deletes the child room or
+// space, nor its alias — those are separate operations this method never calls.
+func (m *MautrixAdapter) RemoveSpaceChild(ctx context.Context, spaceID id.RoomID, childStateKey string) error {
+	intent := m.as.BotIntent()
+
+	_, err := intent.SendStateEvent(ctx, spaceID, event.StateSpaceChild, childStateKey, &event.SpaceChildEventContent{})
+	if err != nil {
+		return fmt.Errorf("failed to remove space child: %w", err)
+	}
+
+	return nil
+}
+
 // SetSpaceParent sets the parent space for a room or subspace (m.space.parent state event).
 func (m *MautrixAdapter) SetSpaceParent(ctx context.Context, childID id.RoomID, parentID id.RoomID) error {
 	intent := m.getIntentForRoom(ctx, childID)
@@ -2391,6 +2434,59 @@ func (m *MautrixAdapter) SetSpaceParent(ctx context.Context, childID id.RoomID, 
 	}
 
 	return nil
+}
+
+// ClearSpaceParent clears one specific stale m.space.parent pointer on a
+// child by writing an empty-content state event for that parent's own
+// state_key. Symmetric with RemoveSpaceChild's m.space.child removal
+// mechanism: it never deletes the child room or the stale parent space, only
+// the pointer between them, and it leaves any other live parent pointer on
+// the child untouched.
+func (m *MautrixAdapter) ClearSpaceParent(ctx context.Context, childID id.RoomID, staleParentID id.RoomID) error {
+	intent := m.getIntentForRoom(ctx, childID)
+
+	_, err := intent.SendStateEvent(ctx, childID, event.StateSpaceParent, string(staleParentID), &event.SpaceParentEventContent{})
+	if err != nil {
+		return fmt.Errorf("failed to clear stale space parent pointer: %w", err)
+	}
+
+	return nil
+}
+
+// spaceParentStateEvent is the minimal shape needed to read one m.space.parent
+// state event off the Synapse admin API's raw JSON room-state response.
+type spaceParentStateEvent struct {
+	StateKey string                        `json:"state_key"`
+	Content  event.SpaceParentEventContent `json:"content"`
+}
+
+// GetSpaceParents returns the room IDs currently named by all of a child's
+// live m.space.parent state events (empty via is the MSC1772 removal marker
+// and is excluded). It reads via the Synapse admin API — not a client intent
+// — so it requires no bot membership and issues no join: a pointer-repair
+// candidate check must never itself be the thing that admin-joins the bot
+// into a room people read, which is exactly what intent.State() would do by
+// calling EnsureJoined first.
+func (m *MautrixAdapter) GetSpaceParents(ctx context.Context, childID id.RoomID) ([]id.RoomID, error) {
+	rawEvents, err := m.admin.GetRoomState(ctx, childID, event.StateSpaceParent.Type)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get room state for parent pointers: %w", err)
+	}
+
+	var parents []id.RoomID
+	for _, raw := range rawEvents {
+		var evt spaceParentStateEvent
+		if err := json.Unmarshal(raw, &evt); err != nil {
+			continue
+		}
+		if len(evt.Content.Via) == 0 {
+			continue // cleared pointer — not a live parent.
+		}
+		parents = append(parents, id.RoomID(evt.StateKey))
+	}
+
+	sort.Slice(parents, func(i, j int) bool { return parents[i] < parents[j] })
+	return parents, nil
 }
 
 // InviteToSpace invites a user to a space.

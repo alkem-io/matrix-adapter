@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
 
+	"github.com/alkem-io/matrix-adapter/internal/config"
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter/internal/testutil"
@@ -16,6 +17,12 @@ import (
 // ============================================================================
 // Mock: mockSpaceMatrixPort
 // ============================================================================
+
+// clearSpaceParentCall records one ClearSpaceParent invocation.
+type clearSpaceParentCall struct {
+	childID       id.RoomID
+	staleParentID id.RoomID
+}
 
 type mockSpaceMatrixPort struct {
 	// ResolveAlias behavior — keyed by alias string
@@ -58,7 +65,32 @@ type mockSpaceMatrixPort struct {
 
 	// AddSpaceChild / SetSpaceParent
 	addSpaceChildCalled  bool
+	addSpaceChildErr     error
+	addSpaceChildCount   int
+	addSpaceChildIDs     []id.RoomID
 	setSpaceParentCalled bool
+	setSpaceParentErr    error
+	setSpaceParentCount  int
+
+	// GetSpaceParents — keyed by child room ID.
+	//
+	// getSpaceParentResults models the common single-live-parent case: absent
+	// entries report no live parent (matching a child never repaired before).
+	// getSpaceParentsResults models the full live-parent set directly, for
+	// dual-canonical-parent scenarios a single RoomID per child cannot express;
+	// when a child has an entry there, it takes precedence.
+	getSpaceParentResults  map[id.RoomID]id.RoomID
+	getSpaceParentsResults map[id.RoomID][]id.RoomID
+	getSpaceParentErr      error
+
+	// ClearSpaceParent captures — one entry per call, in call order.
+	clearSpaceParentCalls []clearSpaceParentCall
+	clearSpaceParentErr   error
+
+	// ResolveAlias — per-alias error injection (takes precedence over
+	// resolveAliasErr for aliases present in this map), for simulating a
+	// transient failure on one desired child while others resolve normally.
+	resolveAliasErrs map[string]error
 
 	// InviteToSpace
 	inviteToSpaceCalled int
@@ -69,13 +101,37 @@ type mockSpaceMatrixPort struct {
 
 	// SetCustomState
 	setCustomStateCalled bool
+
+	// Hierarchy convergence (communication.hierarchy.set_children)
+	getSpaceChildStateKeysResult []string
+	getSpaceChildStateKeysErr    error
+	getSpaceChildStateKeysCount  int
+	removeSpaceChildErr          error
+	removeSpaceChildCount        int
+	removeSpaceChildStateKeys    []string
+	resolveAlkemioIDResults      map[id.RoomID]uuid.UUID
+	// resolveAlkemioIDErrs injects a reverse-resolution failure for specific
+	// extra edges (takes precedence over resolveAlkemioIDResults), so a
+	// transient alias-lookup fault on one extra can be told apart from the
+	// confirmed no-alias ghost the same call may legitimately prune.
+	resolveAlkemioIDErrs map[id.RoomID]error
+	// callOrder records "add:<id>" / "remove:<id>" in the exact order the
+	// hierarchy write calls happened, for asserting add-before-remove ordering.
+	callOrder []string
 }
 
-// resolveAlias looks up the alias in the results map; if not found uses resolveAliasErr.
+// resolveAlias looks up the alias in the results map; if not found, an
+// alias-specific error takes precedence, then falls back to resolveAliasErr,
+// then to a default not-found.
 func (m *mockSpaceMatrixPort) ResolveAlias(_ context.Context, alias string) (id.RoomID, error) {
 	if m.resolveAliasResults != nil {
 		if roomID, ok := m.resolveAliasResults[alias]; ok {
 			return roomID, nil
+		}
+	}
+	if m.resolveAliasErrs != nil {
+		if err, ok := m.resolveAliasErrs[alias]; ok {
+			return "", err
 		}
 	}
 	if m.resolveAliasErr != nil {
@@ -142,14 +198,65 @@ func (m *mockSpaceMatrixPort) GetAllJoinedRooms(_ context.Context) ([]id.RoomID,
 	return m.getAllJoinedRoomsResult, nil
 }
 
-func (m *mockSpaceMatrixPort) AddSpaceChild(_ context.Context, _ id.RoomID, _ id.RoomID, _ string, _ bool) error {
+func (m *mockSpaceMatrixPort) AddSpaceChild(_ context.Context, _ id.RoomID, childID id.RoomID, _ string, _ bool) error {
 	m.addSpaceChildCalled = true
-	return nil
+	m.addSpaceChildCount++
+	m.addSpaceChildIDs = append(m.addSpaceChildIDs, childID)
+	m.callOrder = append(m.callOrder, "add:"+string(childID))
+	return m.addSpaceChildErr
 }
 
 func (m *mockSpaceMatrixPort) SetSpaceParent(_ context.Context, _ id.RoomID, _ id.RoomID) error {
 	m.setSpaceParentCalled = true
-	return nil
+	m.setSpaceParentCount++
+	return m.setSpaceParentErr
+}
+
+func (m *mockSpaceMatrixPort) GetSpaceParents(_ context.Context, childID id.RoomID) ([]id.RoomID, error) {
+	if m.getSpaceParentErr != nil {
+		return nil, m.getSpaceParentErr
+	}
+	if parents, ok := m.getSpaceParentsResults[childID]; ok {
+		return parents, nil
+	}
+	if m.getSpaceParentResults == nil {
+		return nil, nil
+	}
+	if parent, ok := m.getSpaceParentResults[childID]; ok && parent != "" {
+		return []id.RoomID{parent}, nil
+	}
+	return nil, nil
+}
+
+func (m *mockSpaceMatrixPort) ClearSpaceParent(_ context.Context, childID id.RoomID, staleParentID id.RoomID) error {
+	m.clearSpaceParentCalls = append(m.clearSpaceParentCalls, clearSpaceParentCall{childID: childID, staleParentID: staleParentID})
+	m.callOrder = append(m.callOrder, "clear-parent:"+string(childID)+":"+string(staleParentID))
+	return m.clearSpaceParentErr
+}
+
+func (m *mockSpaceMatrixPort) GetSpaceChildStateKeys(_ context.Context, _ id.RoomID) ([]string, error) {
+	m.getSpaceChildStateKeysCount++
+	if m.getSpaceChildStateKeysErr != nil {
+		return nil, m.getSpaceChildStateKeysErr
+	}
+	return m.getSpaceChildStateKeysResult, nil
+}
+
+func (m *mockSpaceMatrixPort) RemoveSpaceChild(_ context.Context, _ id.RoomID, childStateKey string) error {
+	m.removeSpaceChildCount++
+	m.removeSpaceChildStateKeys = append(m.removeSpaceChildStateKeys, childStateKey)
+	m.callOrder = append(m.callOrder, "remove:"+childStateKey)
+	return m.removeSpaceChildErr
+}
+
+func (m *mockSpaceMatrixPort) ResolveAlkemioID(_ context.Context, roomID id.RoomID) (uuid.UUID, error) {
+	if err, ok := m.resolveAlkemioIDErrs[roomID]; ok {
+		return uuid.Nil, err
+	}
+	if m.resolveAlkemioIDResults == nil {
+		return uuid.Nil, nil
+	}
+	return m.resolveAlkemioIDResults[roomID], nil
 }
 
 func (m *mockSpaceMatrixPort) InviteToSpace(_ context.Context, _ id.RoomID, _ domain.Actor) error {
@@ -256,8 +363,19 @@ var _ ports.MatrixPort = (*mockSpaceMatrixPort)(nil)
 // spaceIDMapper is a shared IDMapper for constructing Matrix IDs in space tests.
 var spaceIDMapper = domain.NewIDMapper("test.local")
 
+// fastHierarchyConfig configures hierarchy write budgets fast enough that
+// pacing never meaningfully slows a test down, while still exercising the real
+// rate-limiter/budget code paths.
+func fastHierarchyConfig() *config.Config {
+	cfg := &config.Config{}
+	cfg.Hierarchy.StateEventsPerSecond = 1000
+	cfg.Hierarchy.ParentPointerEventsPerSecond = 1000
+	cfg.Hierarchy.ParentPointerBudgetPerCall = 5
+	return cfg
+}
+
 func newSpaceService(matrix *mockSpaceMatrixPort) *SpaceService {
-	return NewSpaceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"))
+	return NewSpaceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), fastHierarchyConfig())
 }
 
 func mustAlias(contextID uuid.UUID) string {
@@ -740,7 +858,7 @@ func TestListSpaces_Success(t *testing.T) {
 		},
 		detailsByRoom: detailsByRoom,
 	}
-	svc := NewSpaceService(wrapper, &testutil.MockLogger{}, domain.NewIDMapper("test.local"))
+	svc := NewSpaceService(wrapper, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), fastHierarchyConfig())
 
 	contextIDs, cursor, err := svc.ListSpaces(context.Background(), "")
 	if err != nil {

@@ -255,3 +255,71 @@ rabbitmq:
 	assert.Equal(t, "https://env.matrix.local", cfg.Matrix.HomeserverURL, "env var should override YAML")
 	assert.Equal(t, "amqp://env-rabbit:5672/", cfg.RabbitMQ.URL, "env var should override YAML")
 }
+
+// TestLoad_HierarchyDefaults pins the hierarchy budgets an omitted config
+// section falls back to — in particular a positive set_children execution
+// deadline, so an absent key can never be the reason a convergence call
+// expires before its first write.
+func TestLoad_HierarchyDefaults(t *testing.T) {
+	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("HIERARCHY_SET_CHILDREN_TIMEOUT_SECONDS", "")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.InDelta(t, 5.0, cfg.Hierarchy.StateEventsPerSecond, 0)
+	assert.InDelta(t, 1.0, cfg.Hierarchy.ParentPointerEventsPerSecond, 0)
+	assert.Equal(t, 5, cfg.Hierarchy.ParentPointerBudgetPerCall)
+	assert.Equal(t, 500, cfg.Hierarchy.MaxWriteOperationsPerCall)
+	assert.InDelta(t, float64(defaultSetChildrenTimeoutSeconds), cfg.Hierarchy.SetChildrenTimeoutSeconds, 0)
+}
+
+// TestLoad_RejectsNonPositiveSetChildrenTimeout asserts that an explicitly
+// configured non-positive execution deadline fails startup instead of being
+// accepted. context.WithTimeout turns such a value into an already-expired
+// deadline, which would make every set_children call abort before its first
+// write and report DEADLINE_EXCEEDED — a silent, permanent disabling of the
+// operation that is indistinguishable, on the wire, from a genuinely
+// oversized convergence.
+func TestLoad_RejectsNonPositiveSetChildrenTimeout(t *testing.T) {
+	for _, value := range []string{"0", "-1", "-0.5"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+			t.Setenv("HIERARCHY_SET_CHILDREN_TIMEOUT_SECONDS", value)
+
+			cfg, err := Load()
+			require.Error(t, err)
+			assert.Nil(t, cfg)
+			assert.Contains(t, err.Error(), "hierarchy.set_children_timeout_seconds")
+		})
+	}
+}
+
+// TestLoad_RejectsNonPositiveSetChildrenTimeoutFromYAML covers the same guard
+// on the other override path: a YAML key, with no environment variable in
+// play, must fail startup identically.
+func TestLoad_RejectsNonPositiveSetChildrenTimeoutFromYAML(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("hierarchy:\n  set_children_timeout_seconds: 0\n"), 0o600))
+
+	t.Setenv("CONFIG_PATH", configFile)
+	t.Setenv("HIERARCHY_SET_CHILDREN_TIMEOUT_SECONDS", "")
+
+	cfg, err := Load()
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "hierarchy.set_children_timeout_seconds")
+}
+
+// TestLoad_AcceptsPositiveSetChildrenTimeoutOverride keeps the guard from
+// becoming a freeze: raising the deadline in lockstep with the server's RPC
+// timeout is the declared A-10 fallback for a category that outgrows the RPC
+// envelope, so a positive override must still be honored.
+func TestLoad_AcceptsPositiveSetChildrenTimeoutOverride(t *testing.T) {
+	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	t.Setenv("HIERARCHY_SET_CHILDREN_TIMEOUT_SECONDS", "20.5")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.InDelta(t, 20.5, cfg.Hierarchy.SetChildrenTimeoutSeconds, 0)
+}
