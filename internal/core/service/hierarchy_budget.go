@@ -96,3 +96,13 @@ func (b *pointerRepairBudget) reserve(pace bool) bool {
 func (b *pointerRepairBudget) canReserve(n int) bool {
 	return b.capacity <= 0 || b.spent+n <= b.capacity
 }
+
+// capacity reports the per-call ceiling, ignoring what this call has already
+// spent. It distinguishes a repair that is merely too big for what is *left*
+// of this call's budget — which the next call, starting fresh, will fit — from
+// one too big for the budget at all, which no call can ever fit and which must
+// therefore be reported as unprocessable rather than deferred forever.
+// A non-positive capacity means unbounded, so nothing is ever oversized.
+func (b *pointerRepairBudget) capacityLimit() int {
+	return b.capacity
+}

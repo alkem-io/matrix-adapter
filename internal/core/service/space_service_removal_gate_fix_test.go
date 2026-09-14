@@ -40,10 +40,11 @@ func TestSetChildren_UnresolvedDesiredChildDoesNotSuppressRemovalOfLiveExtras(t 
 	svc := newSpaceService(matrix)
 
 	result, err := svc.SetChildren(context.Background(), SetChildrenParams{
-		ParentContextID:        parentID,
-		DesiredChildContextIDs: []string{liveChild.String(), goneChild.String()},
-		ApplyRemovals:          true,
-		PruneUnknown:           true,
+		ParentContextID:          parentID,
+		DesiredChildContextIDs:   []string{liveChild.String(), goneChild.String()},
+		ApplyRemovals:            true,
+		RemovableChildContextIDs: []string{staleLeftover.String()},
+		PruneUnknown:             true,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

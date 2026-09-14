@@ -379,9 +379,14 @@ type SetChildrenParams struct {
 	DesiredChildContextIDs []string
 	ChildrenAreSpaces      bool
 	ApplyRemovals          bool
-	PruneUnknown           bool
-	SyncChildParent        bool
-	DryRun                 bool
+	// RemovableChildContextIDs is the caller's explicit authorization for which
+	// children may lose their edge to this parent. Absence from
+	// DesiredChildContextIDs is not consent to remove — see the field's
+	// documentation on dto.SetChildrenRequest.
+	RemovableChildContextIDs []string
+	PruneUnknown             bool
+	SyncChildParent          bool
+	DryRun                   bool
 }
 
 // SetChildrenResult is the in-memory outcome of SetChildren, mirroring
@@ -396,8 +401,20 @@ type SetChildrenResult struct {
 	Unresolved             []string
 	ParentPointersRepaired []string
 	ParentPointersDeferred []string
-	Changed                bool
-	Success                bool
+	// ParentPointersUnprocessable are children whose pointer repair needs more
+	// writes than the per-call pointer budget can ever reserve at once, so no
+	// future pass can clear them either. Reported apart from
+	// ParentPointersDeferred because it is actionable configuration rather than
+	// transient pressure — see dto.SetChildrenResponse.
+	ParentPointersUnprocessable []string
+	Changed                     bool
+	Success                     bool
+	// Converged reports that this parent's children match the desired set with
+	// nothing outstanding — no unresolved desired child, no extra edge kept, no
+	// deferred or unprocessable pointer repair, and no failed write. It is the
+	// caller's termination condition, and is deliberately stricter than
+	// Success, which only reports whether execution hit an error.
+	Converged bool
 	// DeadlineExceeded reports whether the call's own execution deadline (see
 	// config.Hierarchy.SetChildrenTimeoutSeconds) was reached before every
 	// attempted write could be issued. Set independently of WriteFailed so a
@@ -457,7 +474,8 @@ func (s *SpaceService) SetChildren(ctx context.Context, params SetChildrenParams
 
 	toAdd := diffKeys(desired, actual)
 
-	extras := s.planRemovals(ctx, diffKeys(actual, desired), params, resolveFailed, len(unresolved) > 0)
+	rawExtras := diffKeys(actual, desired)
+	extras := s.planRemovals(ctx, rawExtras, params, resolveFailed, len(unresolved) > 0)
 
 	outcome := &writeOutcome{maxWrites: s.maxWriteOperationsPerCall}
 	if extras.incompleteRead {
@@ -480,7 +498,7 @@ func (s *SpaceService) SetChildren(ctx context.Context, params SetChildrenParams
 	// can never be picked up again. Left false, SetSpaceParent (and so the
 	// admin-join it can trigger) is never called.
 	if params.SyncChildParent {
-		result.ParentPointersRepaired, result.ParentPointersDeferred =
+		result.ParentPointersRepaired, result.ParentPointersDeferred, result.ParentPointersUnprocessable =
 			s.applyParentPointerRepair(ctx, parentRoomID, sortedKeys(desired), params.DryRun, outcome)
 	}
 
@@ -498,6 +516,8 @@ func (s *SpaceService) SetChildren(ctx context.Context, params SetChildrenParams
 	result.DeadlineExceeded = outcome.deadlineExceeded
 	result.WriteFailed = outcome.writeFailed
 
+	result.Converged = convergedFrom(result, len(toAdd), len(rawExtras), outcome.failed, params.DryRun)
+
 	s.logger.Info("Space children convergence complete",
 		"parent_context_id", params.ParentContextID,
 		"added", len(result.Added), "removed", len(result.Removed),
@@ -508,6 +528,44 @@ func (s *SpaceService) SetChildren(ctx context.Context, params SetChildrenParams
 		"changed", result.Changed, "success", result.Success)
 
 	return result, nil
+}
+
+// convergedFrom decides whether this call leaves the parent with nothing
+// outstanding — the caller's termination condition, and deliberately stricter
+// than Success.
+//
+// Success answers "did execution hit an error". A call can answer no to that
+// and still leave the hierarchy short of the desired state: a desired child
+// that resolved to no room, an extra edge kept because its identity or its
+// authorization could not be established, a pointer repair deferred by budget
+// or too large for the budget at all. A caller terminating on Success alone
+// declares reconciliation finished with required work outstanding, which is
+// exactly what this separate flag exists to prevent.
+//
+// Extras are counted from what the call actually left attached
+// (extrasFound − removed − pruned) rather than from the kept report, because
+// that report is only populated when removals were in scope. An add-only phase
+// never classifies extras at all, so reading its empty kept list as "no
+// extras" would let precisely the phase that may not remove anything declare
+// the hierarchy converged while the edges it was not asked to touch are still
+// attached.
+//
+// Under DryRun nothing was written, so convergence additionally requires that
+// the pass found nothing it would have changed.
+func convergedFrom(result *SetChildrenResult, addsNeeded, extrasFound int, failed, dryRun bool) bool {
+	if failed {
+		return false
+	}
+	extrasOutstanding := extrasFound - len(result.Removed) - len(result.PrunedUnknown)
+	converged := len(result.Unresolved) == 0 &&
+		extrasOutstanding == 0 &&
+		len(result.ParentPointersDeferred) == 0 &&
+		len(result.ParentPointersUnprocessable) == 0 &&
+		len(result.Added) == addsNeeded
+	if dryRun {
+		return converged && !result.Changed
+	}
+	return converged
 }
 
 // resolveDesiredChildren resolves every desired child id to its Matrix room id
@@ -559,10 +617,18 @@ func (s *SpaceService) resolveDesiredChildren(ctx context.Context, params SetChi
 // them this call has actually earned the right to remove, which it may only
 // report, and whether the reads those decisions rest on were complete.
 type removalPlan struct {
-	// removableKnown are extras confirmed to reverse-resolve to a different,
-	// still-live Alkemio room — recategorisation leftovers, removed whenever
-	// ApplyRemovals is set.
+	// removableKnown are extras confirmed to reverse-resolve to a still-live
+	// Alkemio room that the caller explicitly authorized for removal from this
+	// parent — recategorisation leftovers the caller has established belong
+	// somewhere else.
 	removableKnown []string
+	// keptKnown are extras that reverse-resolve to a live Alkemio room the
+	// caller did NOT authorize for removal. They are reported and always left
+	// alone, and — unlike unknownExtras — are never eligible for the prune:
+	// prune exists for edges with no Alkemio identity left at all, and a live
+	// room that simply was not named is the exact case (a child created or
+	// recategorised after the caller read its snapshot) that must survive.
+	keptKnown []string
 	// unknownExtras are extras this call may not remove unless prune is still
 	// permitted: confirmed ghosts, plus any extra whose classification read
 	// failed. Whatever is not pruned is reported as unknown_kept — drift class
@@ -613,19 +679,46 @@ func (s *SpaceService) planRemovals(
 		return removalPlan{unknownExtras: extras, incompleteRead: true}
 	}
 
-	removableKnown, unknownExtras, classifyFailed := s.classifyExtras(ctx, extras)
+	authorized := authorizedRemovalSet(params.RemovableChildContextIDs)
+	removableKnown, keptKnown, unknownExtras, classifyFailed := s.classifyExtras(ctx, extras, authorized)
 	return removalPlan{
 		removableKnown: removableKnown,
+		keptKnown:      keptKnown,
 		unknownExtras:  unknownExtras,
 		prunePermitted: params.PruneUnknown && !unresolvedPresent && !classifyFailed,
 		incompleteRead: classifyFailed,
 	}
 }
 
-// classifyExtras reverse-resolves each extra edge's state_key: one that still
-// names a live Alkemio room is a recategorisation leftover (removableKnown);
-// one confirmed to carry no Alkemio alias is a ghost left by a deleted
-// discussion (unknownExtras). Cost is per extra edge, bounded by drift count.
+// authorizedRemovalSet indexes the caller's removal authorization by Alkemio
+// id. Entries that are not parseable uuids are dropped rather than matched
+// loosely: this set is the only thing standing between a live child edge and
+// deletion, so an id the adapter cannot make sense of authorizes nothing.
+func authorizedRemovalSet(removableContextIDs []string) map[uuid.UUID]struct{} {
+	authorized := make(map[uuid.UUID]struct{}, len(removableContextIDs))
+	for _, idStr := range removableContextIDs {
+		parsed, parseErr := uuid.Parse(idStr)
+		if parseErr != nil {
+			continue
+		}
+		authorized[parsed] = struct{}{}
+	}
+	return authorized
+}
+
+// classifyExtras reverse-resolves each extra edge's state_key into one of three
+// dispositions: a live Alkemio room the caller authorized for removal is a
+// recategorisation leftover (removableKnown); a live Alkemio room it did not
+// authorize is kept and reported (keptKnown); one confirmed to carry no Alkemio
+// alias is a ghost left by a deleted discussion (unknownExtras). Cost is per
+// extra edge, bounded by drift count.
+//
+// The authorization check is what makes the removal half safe. Without it,
+// "extra" means nothing more than "absent from the desired set the caller sent",
+// which is also true of every child created or recategorised after the caller
+// built that set — so a perfectly correct edge gets deleted for losing a race
+// with a snapshot. Removal is therefore driven by what the caller positively
+// established, never by the set difference alone.
 //
 // An extra whose reverse resolution *failed* is neither: its identity is
 // unknown, not confirmed absent. It is reported in unknownExtras — so it is
@@ -634,7 +727,9 @@ func (s *SpaceService) planRemovals(
 // by a read that answered, not by one that broke) and reports the call failed,
 // which is what makes "repeat until failed==0" terminate on a complete
 // classification rather than on a homeserver hiccup.
-func (s *SpaceService) classifyExtras(ctx context.Context, extras []string) (removableKnown, unknownExtras []string, classifyFailed bool) {
+func (s *SpaceService) classifyExtras(
+	ctx context.Context, extras []string, authorized map[uuid.UUID]struct{},
+) (removableKnown, keptKnown, unknownExtras []string, classifyFailed bool) {
 	for _, extraKey := range extras {
 		alkemioID, resolveErr := s.matrix.ResolveAlkemioID(ctx, id.RoomID(extraKey))
 		if resolveErr != nil {
@@ -644,13 +739,24 @@ func (s *SpaceService) classifyExtras(ctx context.Context, extras []string) (rem
 			unknownExtras = append(unknownExtras, extraKey)
 			continue
 		}
-		if alkemioID != uuid.Nil {
-			removableKnown = append(removableKnown, extraKey)
-		} else {
+		if alkemioID == uuid.Nil {
 			unknownExtras = append(unknownExtras, extraKey)
+			continue
 		}
+		if _, isAuthorized := authorized[alkemioID]; !isAuthorized {
+			// A live room the caller did not name. Being absent from `desired`
+			// is not evidence it should go: the caller's desired set is a
+			// snapshot, and a child created or recategorised after that read
+			// is missing from it while being entirely correct here. Removing
+			// on that basis is what deletes a good edge. Keep and report it.
+			s.logger.Info("Extra child edge resolves to a live Alkemio room that was not authorized for removal — kept",
+				"child_state_key", extraKey, "alkemio_id", alkemioID)
+			keptKnown = append(keptKnown, extraKey)
+			continue
+		}
+		removableKnown = append(removableKnown, extraKey)
 	}
-	return removableKnown, unknownExtras, classifyFailed
+	return removableKnown, keptKnown, unknownExtras, classifyFailed
 }
 
 // applyAdds writes every missing child edge (paced by budget unless dryRun),
@@ -696,13 +802,28 @@ func (s *SpaceService) applyRemovalsAndPrune(
 	removed = s.removeChildren(ctx, parentRoomID, plan.removableKnown, dryRun, budget, outcome,
 		"Failed to remove space child")
 
+	// keptKnown is never prunable. Prune is scoped to edges with no Alkemio
+	// identity left; a live room that merely went unnamed keeps its edge
+	// whatever the prune flag says.
 	if !plan.prunePermitted {
-		return removed, nil, plan.unknownExtras
+		return removed, nil, sortedConcat(plan.keptKnown, plan.unknownExtras)
 	}
 
 	prunedUnknown = s.removeChildren(ctx, parentRoomID, plan.unknownExtras, dryRun, budget, outcome,
 		"Failed to prune unknown space child")
-	return removed, prunedUnknown, nil
+	return removed, prunedUnknown, sortedConcat(plan.keptKnown, nil)
+}
+
+// sortedConcat joins two kept-edge reports into one stable, deterministic list.
+func sortedConcat(a, b []string) []string {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	joined := make([]string, 0, len(a)+len(b))
+	joined = append(joined, a...)
+	joined = append(joined, b...)
+	sort.Strings(joined)
+	return joined
 }
 
 // removeChildren issues a RemoveSpaceChild write (paced by budget unless
@@ -760,7 +881,7 @@ func (s *SpaceService) removeChildren(
 // half-applied.
 func (s *SpaceService) applyParentPointerRepair(
 	ctx context.Context, parentRoomID id.RoomID, candidates []string, dryRun bool, outcome *writeOutcome,
-) (repaired, deferred []string) {
+) (repaired, deferred, unprocessable []string) {
 	budget := newPointerRepairBudget(s.parentPointerEventsPerSecond, s.parentPointerBudgetPerCall, time.Now, time.Sleep)
 
 	for _, childKey := range candidates {
@@ -796,6 +917,20 @@ func (s *SpaceService) applyParentPointerRepair(
 		}
 
 		writesNeeded := plan.writesNeeded()
+		if pointerBudgetCap := budget.capacityLimit(); pointerBudgetCap > 0 && writesNeeded > pointerBudgetCap {
+			// This child's repair is larger than the per-call pointer budget
+			// can ever reserve at once, so deferring it is not "try again
+			// later" — every future pass recomputes the same plan and defers
+			// it identically, and a runbook that repeats until nothing is
+			// outstanding never terminates. Report it as its own actionable
+			// class instead: the fix is to raise the budget above the
+			// requirement, not to run the pass again.
+			s.logger.Warn("Parent-pointer repair exceeds the per-call pointer budget and cannot be completed by any pass — raise the budget",
+				"child_room_id", childKey, "writes_needed", writesNeeded,
+				"pointer_budget_per_call", pointerBudgetCap)
+			unprocessable = append(unprocessable, childKey)
+			continue
+		}
 		if !budget.canReserve(writesNeeded) {
 			deferred = append(deferred, childKey)
 			continue
@@ -813,7 +948,7 @@ func (s *SpaceService) applyParentPointerRepair(
 			repaired = append(repaired, childKey)
 		}
 	}
-	return repaired, deferred
+	return repaired, deferred, unprocessable
 }
 
 // parentPointerPlan is what one candidate child's pointer repair needs:

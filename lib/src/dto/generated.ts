@@ -404,6 +404,17 @@ export const ErrCodeMatrixError: ErrorCode = "MATRIX_ERROR";
  */
 export const ErrCodeDeadlineExceeded: ErrorCode = "DEADLINE_EXCEEDED";
 /**
+ * ErrCodeRequestExpired indicates the request carried a caller expiry that
+ * had already passed when the adapter picked it up, so it was rejected
+ * before performing any read or write.
+ * Distinct from ErrCodeDeadlineExceeded, which means the adapter started
+ * work and ran out of time part-way — leaving effects behind that the
+ * caller must reconcile. This one guarantees nothing was touched, so the
+ * caller can safely reissue from fresh state. It normally means the request
+ * waited in the queue longer than the caller was prepared to wait.
+ */
+export const ErrCodeRequestExpired: ErrorCode = "REQUEST_EXPIRED";
+/**
  * ErrCodeInternalError indicates an unexpected system error.
  */
 export const ErrCodeInternalError: ErrorCode = "INTERNAL_ERROR";
@@ -579,6 +590,23 @@ export interface SetChildrenRequest {
    */
   apply_removals: boolean;
   /**
+   * RemovableChildContextIDs is the caller's explicit authorization for which
+   * children may lose their edge to this parent. An extra edge is removed only
+   * if its state_key reverse-resolves to an Alkemio id named here; anything
+   * else is reported and left alone.
+   * Removal is authorized, never inferred. Absence from
+   * DesiredChildContextIDs is NOT consent to remove: a desired set is a
+   * snapshot, and a child created or recategorised after it was read is
+   * missing from it while being perfectly correct in Matrix. Deriving
+   * removals from the set difference alone deletes that child's edge. So the
+   * caller must name the children it has positively established belong
+   * elsewhere, and the adapter removes the intersection of that list with the
+   * edges actually present.
+   * Empty or absent means no known-live edge is removable — the safe default,
+   * and what an add-only phase sends. Ignored unless ApplyRemovals is set.
+   */
+  removable_child_context_ids?: string[];
+  /**
    * PruneUnknown additionally removes extra edges whose state_key no longer
    * resolves to any live Alkemio room (a deleted discussion's ghost edge).
    * Ignored unless ApplyRemovals is also set; extras that resolve to a live
@@ -595,6 +623,25 @@ export interface SetChildrenRequest {
    * DryRun computes and reports the full classification with zero writes.
    */
   dry_run: boolean;
+  /**
+   * OperationID correlates this call with the caller's own unit of work across
+   * the queue, the adapter log and the caller's audit record. Opaque to the
+   * adapter, which only ever echoes and logs it.
+   */
+  operation_id?: string;
+  /**
+   * ExpiresAtUnixMs is the absolute wall-clock instant, in Unix milliseconds,
+   * after which this request must not be executed at all.
+   * The adapter's own execution deadline starts when the handler begins, so it
+   * bounds processing but says nothing about how long the request waited in the
+   * queue first. Under load that wait can outlive the caller's RPC timeout,
+   * which means without this field an adapter can begin writing Matrix state
+   * for a request whose caller stopped waiting long ago and has since moved on
+   * to a newer snapshot. Checked before any read or write, so an expired
+   * request costs nothing and changes nothing.
+   * Zero means no caller expiry (the handler deadline alone applies).
+   */
+  expires_at_unix_ms?: number /* int64 */;
 }
 /**
  * SetChildrenResponse reports what a set_children call did (or, under DryRun,
@@ -644,9 +691,38 @@ export interface SetChildrenResponse extends BaseResponse {
    */
   parent_pointers_deferred: string[];
   /**
+   * ParentPointersUnprocessable holds the state_keys of children whose parent
+   * pointer cannot be repaired by any future call under the adapter's current
+   * per-call pointer budget, because that one child's repair needs more writes
+   * than the budget can ever reserve at once.
+   * Kept apart from ParentPointersDeferred because the two need opposite
+   * responses. A deferral clears itself — the next pass reconsiders the child
+   * with a fresh budget. This does not: every future pass recomputes the same
+   * oversized plan and defers it again, so a "repeat until nothing is
+   * outstanding" runbook driven by the deferred list alone never terminates.
+   * It is actionable configuration, not transient pressure — raise the
+   * adapter's pointer budget above the reported requirement.
+   */
+  parent_pointers_unprocessable: string[];
+  /**
    * Changed is true if any write was performed (or, under DryRun, would be).
    */
   changed: boolean;
+  /**
+   * Converged reports whether this parent's children match the desired set
+   * with no work left outstanding — the caller's termination condition.
+   * Deliberately distinct from BaseResponse.Success, which reports only
+   * whether execution hit an error. A call can execute flawlessly and still
+   * leave the hierarchy unconverged: a desired child that resolved to no room,
+   * a pointer repair deferred by budget, an extra edge kept because its
+   * identity could not be established. All of those return success=true, so a
+   * caller terminating on "no failures" declares a reconciliation complete
+   * while required work is still outstanding.
+   * True only when every desired edge is established and nothing is
+   * unresolved, deferred or unprocessable. Under DryRun it reports whether the
+   * hierarchy is already converged — that the pass found nothing to do.
+   */
+  converged: boolean;
   /**
    * DryRun echoes the request flag.
    */

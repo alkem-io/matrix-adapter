@@ -82,6 +82,7 @@ func TestSetChildren_ConfirmedExtrasAreStillRemovedWhenAnotherExtraIsUnclassifia
 	// edge says nothing about it.
 	parentID := uuid.New()
 	liveChild := uuid.New()
+	staleLeftover := uuid.New() // recategorised away from this parent; authorized for removal
 	parentRoomID := id.RoomID("!parent:test.local")
 	liveChildRoomID := id.RoomID("!live:test.local")
 	staleRoomID := id.RoomID("!stale:test.local")
@@ -96,7 +97,7 @@ func TestSetChildren_ConfirmedExtrasAreStillRemovedWhenAnotherExtraIsUnclassifia
 			string(liveChildRoomID), string(staleRoomID), string(flakyExtraRoomID),
 		},
 		resolveAlkemioIDResults: map[id.RoomID]uuid.UUID{
-			staleRoomID: uuid.New(),
+			staleRoomID: staleLeftover,
 		},
 		resolveAlkemioIDErrs: map[id.RoomID]error{
 			flakyExtraRoomID: errors.New("alias lookup failed: upstream 502"),
@@ -105,10 +106,11 @@ func TestSetChildren_ConfirmedExtrasAreStillRemovedWhenAnotherExtraIsUnclassifia
 	svc := newSpaceService(matrix)
 
 	result, err := svc.SetChildren(context.Background(), SetChildrenParams{
-		ParentContextID:        parentID,
-		DesiredChildContextIDs: []string{liveChild.String()},
-		ApplyRemovals:          true,
-		PruneUnknown:           true,
+		ParentContextID:          parentID,
+		DesiredChildContextIDs:   []string{liveChild.String()},
+		ApplyRemovals:            true,
+		RemovableChildContextIDs: []string{staleLeftover.String()},
+		PruneUnknown:             true,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

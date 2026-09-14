@@ -263,6 +263,39 @@ func (h *SpaceHandler) HandleSetParent(ctx context.Context, payload []byte) (int
 // that many entries take before the handler's own deadline below cuts it off.
 const maxDesiredChildContextIDs = 2000
 
+// overdueBy reports how long ago a caller's absolute expiry passed, or zero if
+// it has not passed or none was supplied. A zero ExpiresAtUnixMs means the
+// caller set no expiry, so the handler's own deadline is the only bound —
+// which is the behaviour every caller predating the field gets.
+func overdueBy(expiresAtUnixMs int64, now time.Time) time.Duration {
+	if expiresAtUnixMs <= 0 {
+		return 0
+	}
+	overdue := now.Sub(time.UnixMilli(expiresAtUnixMs))
+	if overdue <= 0 {
+		return 0
+	}
+	return overdue
+}
+
+// setChildrenBudget is how long this call may run: the configured processing
+// timeout, shortened to the caller's remaining allowance whenever that is
+// tighter. With no caller expiry it is just the configured timeout.
+//
+// The caller is known not to be already expired here — HandleSetChildren
+// rejects that case before this is reached — so the remaining allowance is
+// always positive.
+func setChildrenBudget(configured time.Duration, expiresAtUnixMs int64, now time.Time) time.Duration {
+	if expiresAtUnixMs <= 0 {
+		return configured
+	}
+	remaining := time.UnixMilli(expiresAtUnixMs).Sub(now)
+	if remaining < configured {
+		return remaining
+	}
+	return configured
+}
+
 // HandleSetChildren handles communication.hierarchy.set_children topic.
 func (h *SpaceHandler) HandleSetChildren(ctx context.Context, payload []byte) (interface{}, error) {
 	var req dto.SetChildrenRequest
@@ -278,18 +311,49 @@ func (h *SpaceHandler) HandleSetChildren(ctx context.Context, payload []byte) (i
 			"desired_child_context_ids has %d entries, exceeding the %d maximum per call",
 			len(req.DesiredChildContextIDs), maxDesiredChildContextIDs)), nil
 	}
+	if len(req.RemovableChildContextIDs) > maxDesiredChildContextIDs {
+		return NewInvalidParamError(fmt.Sprintf(
+			"removable_child_context_ids has %d entries, exceeding the %d maximum per call",
+			len(req.RemovableChildContextIDs), maxDesiredChildContextIDs)), nil
+	}
 
-	ctx, cancel := context.WithTimeout(ctx, h.setChildrenTimeout)
+	// The caller's expiry is checked before any Matrix read or write, and
+	// before the execution deadline below is even started.
+	//
+	// That deadline only measures processing: it starts when this handler runs
+	// and says nothing about how long the request sat in the queue first. Under
+	// the load this operation is most likely to meet, that wait can outlive the
+	// caller's own RPC timeout — at which point the caller has stopped waiting,
+	// very likely re-read its state and reissued from a newer snapshot. Writing
+	// Matrix state from the older snapshot at that point is not late work, it is
+	// wrong work, and it competes with the newer request that replaced it.
+	//
+	// Rejecting here guarantees an expired request touched nothing, which is
+	// what makes it safe for the caller to reissue from fresh state.
+	now := time.Now()
+	if expiredFor := overdueBy(req.ExpiresAtUnixMs, now); expiredFor > 0 {
+		return newSetChildrenResponse(dto.NewErrorResponse(dto.ErrCodeRequestExpired, fmt.Sprintf(
+			"request expired %s before it was picked up; nothing was read or written — reissue from current state",
+			expiredFor.Round(time.Millisecond))), nil, req.DryRun), nil
+	}
+
+	// Bound execution by whichever runs out first: this call's own processing
+	// budget, or what is left of the caller's end-to-end allowance. Using the
+	// processing budget alone would let a request that already spent most of
+	// its allowance queuing start a full-length run, and finish writing well
+	// after the caller gave up on it.
+	ctx, cancel := context.WithTimeout(ctx, setChildrenBudget(h.setChildrenTimeout, req.ExpiresAtUnixMs, now))
 	defer cancel()
 
 	result, err := h.service.SetChildren(ctx, service.SetChildrenParams{
-		ParentContextID:        req.ParentContextID.UUID(),
-		DesiredChildContextIDs: req.DesiredChildContextIDs,
-		ChildrenAreSpaces:      req.ChildrenAreSpaces,
-		ApplyRemovals:          req.ApplyRemovals,
-		PruneUnknown:           req.PruneUnknown,
-		SyncChildParent:        req.SyncChildParent,
-		DryRun:                 req.DryRun,
+		ParentContextID:          req.ParentContextID.UUID(),
+		DesiredChildContextIDs:   req.DesiredChildContextIDs,
+		ChildrenAreSpaces:        req.ChildrenAreSpaces,
+		ApplyRemovals:            req.ApplyRemovals,
+		RemovableChildContextIDs: req.RemovableChildContextIDs,
+		PruneUnknown:             req.PruneUnknown,
+		SyncChildParent:          req.SyncChildParent,
+		DryRun:                   req.DryRun,
 	})
 	if err != nil {
 		// result is nil here (e.g. SPACE_NOT_FOUND, or a children-read failure) —
@@ -345,15 +409,16 @@ func (h *SpaceHandler) HandleSetChildren(ctx context.Context, payload []byte) (i
 // the invariant cannot drift between the success and error paths again.
 func newSetChildrenResponse(base dto.BaseResponse, result *service.SetChildrenResult, dryRun bool) dto.SetChildrenResponse {
 	resp := dto.SetChildrenResponse{
-		BaseResponse:           base,
-		Added:                  []string{},
-		Removed:                []string{},
-		PrunedUnknown:          []string{},
-		UnknownKept:            []string{},
-		Unresolved:             []string{},
-		ParentPointersRepaired: []string{},
-		ParentPointersDeferred: []string{},
-		DryRun:                 dryRun,
+		BaseResponse:                base,
+		Added:                       []string{},
+		Removed:                     []string{},
+		PrunedUnknown:               []string{},
+		UnknownKept:                 []string{},
+		Unresolved:                  []string{},
+		ParentPointersRepaired:      []string{},
+		ParentPointersDeferred:      []string{},
+		ParentPointersUnprocessable: []string{},
+		DryRun:                      dryRun,
 	}
 	if result != nil {
 		resp.Added = emptyIfNil(result.Added)
@@ -363,8 +428,14 @@ func newSetChildrenResponse(base dto.BaseResponse, result *service.SetChildrenRe
 		resp.Unresolved = emptyIfNil(result.Unresolved)
 		resp.ParentPointersRepaired = emptyIfNil(result.ParentPointersRepaired)
 		resp.ParentPointersDeferred = emptyIfNil(result.ParentPointersDeferred)
+		resp.ParentPointersUnprocessable = emptyIfNil(result.ParentPointersUnprocessable)
 		resp.Changed = result.Changed
+		resp.Converged = result.Converged
 	}
+	// result == nil is an error branch: SetChildren returned before producing
+	// one, so nothing is known to have converged. Converged stays false, which
+	// is what the zero value already gives — stated here because the whole
+	// point of the flag is that it is never optimistic by default.
 	return resp
 }
 

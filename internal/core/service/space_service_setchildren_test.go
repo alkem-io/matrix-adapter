@@ -103,9 +103,10 @@ func TestSetChildren_Row3_MissingChildAddedAndAddsPrecedeRemoves(t *testing.T) {
 	svc := newSpaceService(matrix)
 
 	result, err := svc.SetChildren(context.Background(), SetChildrenParams{
-		ParentContextID:        parentID,
-		DesiredChildContextIDs: []string{newChild.String()},
-		ApplyRemovals:          true,
+		ParentContextID:          parentID,
+		DesiredChildContextIDs:   []string{newChild.String()},
+		ApplyRemovals:            true,
+		RemovableChildContextIDs: []string{staleChild.String()},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -177,8 +178,9 @@ func TestSetChildren_Row5_KnownExtraRemovedUnderApplyRemovals(t *testing.T) {
 	svc := newSpaceService(matrix)
 
 	result, err := svc.SetChildren(context.Background(), SetChildrenParams{
-		ParentContextID: parentID,
-		ApplyRemovals:   true,
+		ParentContextID:          parentID,
+		ApplyRemovals:            true,
+		RemovableChildContextIDs: []string{staleChild.String()},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -408,9 +410,10 @@ func TestSetChildren_Row8_RemovalFailureAfterAddIsHonestPartial(t *testing.T) {
 	svc := newSpaceService(matrix)
 
 	result, err := svc.SetChildren(context.Background(), SetChildrenParams{
-		ParentContextID:        parentID,
-		DesiredChildContextIDs: []string{newChild.String()},
-		ApplyRemovals:          true,
+		ParentContextID:          parentID,
+		DesiredChildContextIDs:   []string{newChild.String()},
+		ApplyRemovals:            true,
+		RemovableChildContextIDs: []string{staleChild.String()},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -516,11 +519,12 @@ func TestSetChildren_Row9_DryRunComputesWithZeroWrites(t *testing.T) {
 	svc := newSpaceService(matrix)
 
 	result, err := svc.SetChildren(context.Background(), SetChildrenParams{
-		ParentContextID:        parentID,
-		DesiredChildContextIDs: []string{newChild.String()},
-		ApplyRemovals:          true,
-		PruneUnknown:           true,
-		DryRun:                 true,
+		ParentContextID:          parentID,
+		DesiredChildContextIDs:   []string{newChild.String()},
+		ApplyRemovals:            true,
+		RemovableChildContextIDs: []string{staleChild.String()},
+		PruneUnknown:             true,
+		DryRun:                   true,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

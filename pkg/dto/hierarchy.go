@@ -50,6 +50,23 @@ type SetChildrenRequest struct {
 	// missing edges are added and no extra edge is inspected or touched — the
 	// shape a two-phase sweep uses for its add-only first pass.
 	ApplyRemovals bool `json:"apply_removals"`
+	// RemovableChildContextIDs is the caller's explicit authorization for which
+	// children may lose their edge to this parent. An extra edge is removed only
+	// if its state_key reverse-resolves to an Alkemio id named here; anything
+	// else is reported and left alone.
+	//
+	// Removal is authorized, never inferred. Absence from
+	// DesiredChildContextIDs is NOT consent to remove: a desired set is a
+	// snapshot, and a child created or recategorised after it was read is
+	// missing from it while being perfectly correct in Matrix. Deriving
+	// removals from the set difference alone deletes that child's edge. So the
+	// caller must name the children it has positively established belong
+	// elsewhere, and the adapter removes the intersection of that list with the
+	// edges actually present.
+	//
+	// Empty or absent means no known-live edge is removable — the safe default,
+	// and what an add-only phase sends. Ignored unless ApplyRemovals is set.
+	RemovableChildContextIDs []string `json:"removable_child_context_ids,omitempty"`
 	// PruneUnknown additionally removes extra edges whose state_key no longer
 	// resolves to any live Alkemio room (a deleted discussion's ghost edge).
 	// Ignored unless ApplyRemovals is also set; extras that resolve to a live
@@ -61,6 +78,23 @@ type SetChildrenRequest struct {
 	SyncChildParent bool `json:"sync_child_parent"`
 	// DryRun computes and reports the full classification with zero writes.
 	DryRun bool `json:"dry_run"`
+	// OperationID correlates this call with the caller's own unit of work across
+	// the queue, the adapter log and the caller's audit record. Opaque to the
+	// adapter, which only ever echoes and logs it.
+	OperationID string `json:"operation_id,omitempty"`
+	// ExpiresAtUnixMs is the absolute wall-clock instant, in Unix milliseconds,
+	// after which this request must not be executed at all.
+	//
+	// The adapter's own execution deadline starts when the handler begins, so it
+	// bounds processing but says nothing about how long the request waited in the
+	// queue first. Under load that wait can outlive the caller's RPC timeout,
+	// which means without this field an adapter can begin writing Matrix state
+	// for a request whose caller stopped waiting long ago and has since moved on
+	// to a newer snapshot. Checked before any read or write, so an expired
+	// request costs nothing and changes nothing.
+	//
+	// Zero means no caller expiry (the handler deadline alone applies).
+	ExpiresAtUnixMs int64 `json:"expires_at_unix_ms,omitempty"`
 }
 
 // SetChildrenResponse reports what a set_children call did (or, under DryRun,
@@ -95,8 +129,36 @@ type SetChildrenResponse struct {
 	// repair was skipped because the separate pointer-repair budget was spent —
 	// reported so a deferral is never mistaken for a completed repair.
 	ParentPointersDeferred []string `json:"parent_pointers_deferred"`
+	// ParentPointersUnprocessable holds the state_keys of children whose parent
+	// pointer cannot be repaired by any future call under the adapter's current
+	// per-call pointer budget, because that one child's repair needs more writes
+	// than the budget can ever reserve at once.
+	//
+	// Kept apart from ParentPointersDeferred because the two need opposite
+	// responses. A deferral clears itself — the next pass reconsiders the child
+	// with a fresh budget. This does not: every future pass recomputes the same
+	// oversized plan and defers it again, so a "repeat until nothing is
+	// outstanding" runbook driven by the deferred list alone never terminates.
+	// It is actionable configuration, not transient pressure — raise the
+	// adapter's pointer budget above the reported requirement.
+	ParentPointersUnprocessable []string `json:"parent_pointers_unprocessable"`
 	// Changed is true if any write was performed (or, under DryRun, would be).
 	Changed bool `json:"changed"`
+	// Converged reports whether this parent's children match the desired set
+	// with no work left outstanding — the caller's termination condition.
+	//
+	// Deliberately distinct from BaseResponse.Success, which reports only
+	// whether execution hit an error. A call can execute flawlessly and still
+	// leave the hierarchy unconverged: a desired child that resolved to no room,
+	// a pointer repair deferred by budget, an extra edge kept because its
+	// identity could not be established. All of those return success=true, so a
+	// caller terminating on "no failures" declares a reconciliation complete
+	// while required work is still outstanding.
+	//
+	// True only when every desired edge is established and nothing is
+	// unresolved, deferred or unprocessable. Under DryRun it reports whether the
+	// hierarchy is already converged — that the pass found nothing to do.
+	Converged bool `json:"converged"`
 	// DryRun echoes the request flag.
 	DryRun bool `json:"dry_run"`
 }
