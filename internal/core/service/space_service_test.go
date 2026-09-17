@@ -396,7 +396,7 @@ func TestCreateSpace_WithCustomState(t *testing.T) {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 	// Custom state now travels as initial state inside the create request
-	// (069: visibility filtering active before members join), never as a
+	// (visibility filtering active before members join), never as a
 	// post-create SetCustomState call.
 	if matrix.createSpaceCustomState == nil {
 		t.Error("expected custom state to be passed into CreateSpace params")
@@ -1096,7 +1096,7 @@ func searchSubstring(s, substr string) bool {
 	return false
 }
 
-// --- Governance operations (069-matrix-governance-hardening) ---
+// --- Governance operations ---
 
 func (m *mockSpaceMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions, _ bool) (bool, error) {
 	return false, nil
@@ -1139,7 +1139,7 @@ func (m *mockSpaceMatrixPort) SweepDevices(_ context.Context, _ time.Duration, _
 }
 
 // ============================================================================
-// Cascading revocation (T021 — contract membership-revocation §3)
+// Cascading revocation (contract membership-revocation)
 // ============================================================================
 
 func TestRevokeSpaceMember_KicksSpaceAndChildRooms(t *testing.T) {

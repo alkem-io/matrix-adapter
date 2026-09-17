@@ -7,7 +7,7 @@ import (
 
 // DivergenceClass classifies a disagreement between Alkemio and the messaging
 // side (data-model E7). Divergences are recorded as one structured log event
-// plus an in-process counter — never a persistent store of their own (FR-023).
+// plus an in-process counter — never a persistent store of their own.
 type DivergenceClass string
 
 // Divergence classes emitted by the adapter and the server (E7).

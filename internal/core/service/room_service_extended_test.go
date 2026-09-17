@@ -1026,7 +1026,7 @@ func TestGetMessage_Error(t *testing.T) {
 	}
 }
 
-// --- Governance operations (069-matrix-governance-hardening) ---
+// --- Governance operations ---
 
 func (m *mockExtendedMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions, _ bool) (bool, error) {
 	return false, nil
@@ -1069,7 +1069,7 @@ func (m *mockExtendedMatrixPort) SweepDevices(_ context.Context, _ time.Duration
 }
 
 // ============================================================================
-// Create idempotency re-applies the ladder (T017 — FR-020, SC-004)
+// Create idempotency re-applies the ladder
 // ============================================================================
 
 // idempotencyMockPort tracks the governance calls a repair-on-retry performs.

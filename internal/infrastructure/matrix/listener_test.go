@@ -502,7 +502,7 @@ func TestParseStateChange_TopicFromVeryRaw(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Bridge guarantees (T024 — contract appservice-event-bridge G2–G4)
+// Bridge guarantees (contract appservice-event-bridge)
 // ---------------------------------------------------------------------------
 
 // newListenerTestAdapter builds an adapter whose alias lookup resolves the
@@ -597,7 +597,7 @@ func TestListener_UnresolvedSender_ZeroUUID(t *testing.T) {
 
 	// A sender that is not a platform actor (non-UUID localpart) still
 	// produces exactly one emitted event, with the zero-UUID unresolved
-	// marker — never dropped, never misattributed (G3, US6-AS4).
+	// marker — never dropped, never misattributed.
 	a.processEvent(&event.Event{
 		Type:    event.EventMessage,
 		RoomID:  "!room:test.local",

@@ -113,7 +113,7 @@ func TestCreateRoom_AtomicAlias(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, botIntent.lastCreateRoomReq)
 
-	// The canonical alias is written atomically with creation (FR-020) …
+	// The canonical alias is written atomically with creation …
 	assert.Equal(t, govTestRoomID.String(), botIntent.lastCreateRoomReq.RoomAliasName)
 	// … so CreateAlias runs exactly once, for the #t_ alias only.
 	assert.Equal(t, 1, botIntent.createAliasCalled)

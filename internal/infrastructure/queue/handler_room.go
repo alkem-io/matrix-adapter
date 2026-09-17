@@ -119,7 +119,7 @@ func (h *RoomHandler) HandleCreateRoom(ctx context.Context, payload []byte) (int
 		}
 	}
 
-	// Honour the room's owning space (class T anchoring — spec FR-008)
+	// Honour the room's owning space (class T anchoring)
 	var parentContextID *uuid.UUID
 	if req.ParentContextID != nil && req.ParentContextID.UUID() != uuid.Nil {
 		parentID := req.ParentContextID.UUID()

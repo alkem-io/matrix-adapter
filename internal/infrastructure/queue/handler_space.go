@@ -383,7 +383,7 @@ func (h *SpaceHandler) HandleGetSpaceState(ctx context.Context, payload []byte) 
 }
 
 // ============================================================================
-// Governance Repair & Cascading Revocation (069-matrix-governance-hardening)
+// Governance Repair & Cascading Revocation
 // ============================================================================
 
 // HandleRepairSpaceGovernance handles communication.space.governance.repair.

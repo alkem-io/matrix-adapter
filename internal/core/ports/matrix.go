@@ -130,7 +130,7 @@ type MatrixPort interface {
 	KickFromSpace(ctx context.Context, spaceID id.RoomID, userID id.UserID, reason string) error
 
 	// ============================================================================
-	// Governance Operations (069-matrix-governance-hardening)
+	// Governance Operations
 	// ============================================================================
 
 	// ApplyLadder rewrites the room's power levels wholesale from the governance

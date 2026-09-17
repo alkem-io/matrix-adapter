@@ -11,7 +11,7 @@ import (
 	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 )
 
-// Defaults of the report-first repair protocol (spec FR-022).
+// Defaults of the report-first repair protocol.
 const (
 	// defaultRepairWriteInterval paces state writes at 5/s against the
 	// rate-limited homeserver (plan: reuse 061's budget pattern).
@@ -98,7 +98,7 @@ func (s *GovernanceService) RepairRoom(ctx context.Context, params RepairRoomPar
 		return run.outcome
 	}
 
-	// 3. Room version caps the declared mode (never upgrade in place — FR-009).
+	// 3. Room version caps the declared mode (never upgrade in place).
 	joinRule, membershipMode, skipped := s.resolveDeclaredMode(ctx, roomID, entityID, params)
 	if skipped {
 		run.outcome.SkippedPreVersion = append(run.outcome.SkippedPreVersion, entityID)

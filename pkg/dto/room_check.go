@@ -36,7 +36,7 @@ type GetRoomInfoRequest struct {
 // GetRoomInfoResponse is the RabbitMQ payload returned from server with room details.
 // The governance fields (entity_type, parent_context_id, join_rule, visibility)
 // are optional: an old server omits them and the adapter falls back to
-// thread / platform-driven / shared defaults (069-matrix-governance-hardening).
+// thread / platform-driven / shared defaults.
 type GetRoomInfoResponse struct {
 	AlkemioRoomID string           `json:"alkemio_room_id"`
 	Type          string           `json:"type"`

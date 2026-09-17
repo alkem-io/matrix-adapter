@@ -69,7 +69,7 @@ const (
 	TopicSpaceStateGet = "communication.space.state.get"
 )
 
-// Governance and revocation command topics (069-matrix-governance-hardening).
+// Governance and revocation command topics.
 // New topics rather than flags on existing ones: an old adapter must fail
 // loud (no consumer queue -> transport timeout), never degrade silently.
 const (
@@ -230,7 +230,7 @@ var CommandRegistry = []CommandDef{
 	{Topic: TopicSpaceStateSet, RequestType: "SetSpaceStateRequest", ResponseType: "BaseResponse"},
 	{Topic: TopicSpaceStateGet, RequestType: "GetSpaceStateRequest", ResponseType: "GetSpaceStateResponse"},
 
-	// Governance and revocation commands (069-matrix-governance-hardening)
+	// Governance and revocation commands
 	{Topic: TopicRoomGovernanceRepair, RequestType: "RepairRoomGovernanceRequest", ResponseType: "RepairReport"},
 	{Topic: TopicSpaceGovernanceRepair, RequestType: "RepairSpaceGovernanceRequest", ResponseType: "RepairReport"},
 	{Topic: TopicSpaceMemberRevoke, RequestType: "RevokeSpaceMemberRequest", ResponseType: "RevokeSpaceMemberResponse"},

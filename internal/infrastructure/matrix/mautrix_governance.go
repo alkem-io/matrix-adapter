@@ -15,7 +15,7 @@ import (
 )
 
 // ============================================================================
-// Governance Operations (069-matrix-governance-hardening)
+// Governance Operations
 // ============================================================================
 
 // clock returns the adapter's time source (injectable for tests).
