@@ -815,38 +815,9 @@ export interface SetChildrenResponse extends BaseResponse {
    */
   parent_pointers_deferred: string[];
   /**
-   * ParentPointersUnprocessable holds the state_keys of children whose parent
-   * pointer cannot be repaired by any future call under the adapter's current
-   * per-call pointer budget, because that one child's repair needs more writes
-   * than the budget can ever reserve at once.
-   * Kept apart from ParentPointersDeferred because the two need opposite
-   * responses. A deferral clears itself — the next pass reconsiders the child
-   * with a fresh budget. This does not: every future pass recomputes the same
-   * oversized plan and defers it again, so a "repeat until nothing is
-   * outstanding" runbook driven by the deferred list alone never terminates.
-   * It is actionable configuration, not transient pressure — raise the
-   * adapter's pointer budget above the reported requirement.
-   */
-  parent_pointers_unprocessable: string[];
-  /**
    * Changed is true if any write was performed (or, under DryRun, would be).
    */
   changed: boolean;
-  /**
-   * Converged reports whether this parent's children match the desired set
-   * with no work left outstanding — the caller's termination condition.
-   * Deliberately distinct from BaseResponse.Success, which reports only
-   * whether execution hit an error. A call can execute flawlessly and still
-   * leave the hierarchy unconverged: a desired child that resolved to no room,
-   * a pointer repair deferred by budget, an extra edge kept because its
-   * identity could not be established. All of those return success=true, so a
-   * caller terminating on "no failures" declares a reconciliation complete
-   * while required work is still outstanding.
-   * True only when every desired edge is established and nothing is
-   * unresolved, deferred or unprocessable. Under DryRun it reports whether the
-   * hierarchy is already converged — that the pass found nothing to do.
-   */
-  converged: boolean;
   /**
    * DryRun echoes the request flag.
    */
