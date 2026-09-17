@@ -16,9 +16,10 @@ import (
 
 // SpaceService handles operations related to Matrix Spaces.
 type SpaceService struct {
-	matrix   ports.MatrixPort
-	logger   ports.Logger
-	idMapper *domain.IDMapper
+	matrix     ports.MatrixPort
+	logger     ports.Logger
+	idMapper   *domain.IDMapper
+	governance *GovernanceService
 
 	// Hierarchy convergence write budgets — see hierarchy_budget.go.
 	stateEventsPerSecond         float64
@@ -28,11 +29,12 @@ type SpaceService struct {
 }
 
 // NewSpaceService creates a new instance of SpaceService.
-func NewSpaceService(matrix ports.MatrixPort, logger ports.Logger, idMapper *domain.IDMapper, cfg *config.Config) *SpaceService {
+func NewSpaceService(matrix ports.MatrixPort, logger ports.Logger, idMapper *domain.IDMapper, governance *GovernanceService, cfg *config.Config) *SpaceService {
 	return &SpaceService{
 		matrix:                       matrix,
 		logger:                       logger,
 		idMapper:                     idMapper,
+		governance:                   governance,
 		stateEventsPerSecond:         cfg.Hierarchy.StateEventsPerSecond,
 		parentPointerEventsPerSecond: cfg.Hierarchy.ParentPointerEventsPerSecond,
 		parentPointerBudgetPerCall:   cfg.Hierarchy.ParentPointerBudgetPerCall,
@@ -67,10 +69,20 @@ func (s *SpaceService) CreateSpace(
 	// Check if space already exists (idempotency)
 	existingRoomID, err := s.matrix.ResolveAlias(ctx, alias)
 	if err == nil {
-		// Space already exists - idempotent success
-		s.logger.Info("Space already exists (idempotent)",
+		// Space already exists — a retry converges a lagging space room to
+		// the ladder instead of returning blindly (FR-020, SC-004).
+		s.logger.Info("Space already exists (idempotent) — running governance repair",
 			"alkemio_context_id", alkemioContextID,
 			"existing_room_id", existingRoomID)
+		outcome := s.governance.RepairSpace(ctx, RepairSpaceParams{
+			AlkemioContextID: alkemioContextID,
+			CustomState:      customState,
+			DryRun:           false,
+		})
+		for _, failure := range outcome.Failed {
+			s.logger.Warn("Repair of existing space reported a failure",
+				"alkemio_context_id", alkemioContextID, "reason", failure.Reason)
+		}
 		return nil
 	}
 
@@ -85,8 +97,17 @@ func (s *SpaceService) CreateSpace(
 		effectiveJoinRule = "invite"
 	}
 
-	// Create the space
-	spaceRoomID, err := s.matrix.CreateSpace(ctx, alkemioContextID, name, topic, avatarURL, effectiveJoinRule, initialMembers)
+	// Create the governed space (ladder, markers, custom state as initial state)
+	spaceRoomID, err := s.matrix.CreateSpace(ctx, domain.CreateSpaceParams{
+		AlkemioContextID: alkemioContextID,
+		Name:             name,
+		Topic:            topic,
+		AvatarURL:        avatarURL,
+		JoinRule:         effectiveJoinRule,
+		ParentContextID:  parentContextID,
+		CustomState:      customState,
+		InitialMembers:   initialMembers,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create space: %w", err)
 	}
@@ -96,14 +117,6 @@ func (s *SpaceService) CreateSpace(
 		if err := s.matrix.SetRoomDirectoryVisibility(ctx, spaceRoomID, *isPublic); err != nil {
 			s.logger.Warn("Failed to set space directory visibility",
 				"alkemio_context_id", alkemioContextID, "is_public", *isPublic, "error", err)
-		}
-	}
-
-	// Set custom io.alkemio.* state events if specified
-	if len(customState) > 0 {
-		if err := s.matrix.SetCustomState(ctx, spaceRoomID, customState); err != nil {
-			s.logger.Warn("Failed to set custom state on space",
-				"alkemio_context_id", alkemioContextID, "error", err)
 		}
 	}
 
@@ -1174,4 +1187,71 @@ func (s *SpaceService) BatchRemoveMember(
 	}
 
 	return results
+}
+
+// ============================================================================
+// Cascading Revocation (communication.space.member.revoke)
+// ============================================================================
+
+// RevokeMemberResult is the outcome of one space's cascading revocation.
+type RevokeMemberResult struct {
+	Results          map[string]error
+	ChildRoomsKicked int
+}
+
+// RevokeMember kicks an actor from each named space room AND from every child
+// ROOM of that space (child spaces are separate grants and are not touched) —
+// contract membership-revocation §3. A failed child kick is recorded as a
+// divergence, never silent.
+func (s *SpaceService) RevokeMember(
+	ctx context.Context,
+	actorID uuid.UUID,
+	contextIDs []uuid.UUID,
+	reason string,
+) RevokeMemberResult {
+	result := RevokeMemberResult{Results: make(map[string]error)}
+	userMatrixID := s.idMapper.UserID(actorID)
+
+	for _, contextID := range contextIDs {
+		alias := s.idMapper.SpaceAlias(contextID)
+		spaceRoomID, err := s.matrix.ResolveAlias(ctx, alias)
+		if err != nil {
+			result.Results[contextID.String()] = domain.ErrSpaceNotFound
+			continue
+		}
+
+		// Kick from the space room itself (idempotent — already left is a no-op).
+		if err := s.matrix.KickFromSpace(ctx, spaceRoomID, userMatrixID, reason); err != nil {
+			domain.LogDivergence(s.logger, spaceRoomID.String(), contextID.String(),
+				domain.DivergenceMembership, "space-room kick failed: "+err.Error())
+			result.Results[contextID.String()] = err
+			continue
+		}
+
+		// Kick from every child ROOM of the space.
+		children, err := s.matrix.GetSpaceChildren(ctx, spaceRoomID)
+		if err != nil {
+			domain.LogDivergence(s.logger, spaceRoomID.String(), contextID.String(),
+				domain.DivergenceMembership, "failed to enumerate child rooms: "+err.Error())
+			result.Results[contextID.String()] = err
+			continue
+		}
+		var childErr error
+		for _, child := range children {
+			if child.IsSpace {
+				continue
+			}
+			childRoomID := id.RoomID(child.ChildID)
+			if err := s.matrix.KickUser(ctx, childRoomID, userMatrixID, reason); err != nil {
+				domain.LogDivergence(s.logger, childRoomID.String(), contextID.String(),
+					domain.DivergenceMembership, "child-room kick failed: "+err.Error())
+				childErr = err
+				continue
+			}
+			result.ChildRoomsKicked++
+		}
+		result.Results[contextID.String()] = childErr
+	}
+
+	return result
 }

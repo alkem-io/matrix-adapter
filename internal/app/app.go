@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -55,18 +56,20 @@ func NewApp(cfg *config.Config) (*App, error) {
 	idMapper := domain.NewIDMapper(cfg.Matrix.HomeserverName)
 
 	// 4. Initialize Services (using shared IDMapper)
-	roomService := service.NewRoomService(matrixAdapter, log, idMapper)
+	governanceService := service.NewGovernanceService(matrixAdapter, log, idMapper)
+	roomService := service.NewRoomService(matrixAdapter, log, idMapper, governanceService)
 	actorService := service.NewActorService(matrixAdapter, log)
+	deviceService := service.NewDeviceService(matrixAdapter, log)
 	eventService := service.NewEventService(queueAdapter, log, cfg)
-	spaceService := service.NewSpaceService(matrixAdapter, log, idMapper, cfg)
+	spaceService := service.NewSpaceService(matrixAdapter, log, idMapper, governanceService, cfg)
 	dmService := service.NewDMService(queueAdapter, log)
 	roomCheckService := service.NewRoomCheckService(queueAdapter, idMapper, log)
 	readReceiptService := service.NewReadReceiptService(matrixAdapter, log)
 
 	// 5. Initialize Handlers (using shared IDMapper)
-	roomHandler := queue.NewRoomHandler(roomService, matrixAdapter, idMapper)
-	actorHandler := queue.NewActorHandler(actorService)
-	spaceHandler := queue.NewSpaceHandler(spaceService, matrixAdapter, idMapper, cfg)
+	roomHandler := queue.NewRoomHandler(roomService, governanceService, matrixAdapter, idMapper)
+	actorHandler := queue.NewActorHandler(actorService, deviceService)
+	spaceHandler := queue.NewSpaceHandler(spaceService, governanceService, matrixAdapter, idMapper, cfg)
 	readReceiptHandler := queue.NewReadReceiptHandler(readReceiptService, matrixAdapter, idMapper, log)
 
 	// 6. Register all HTTP endpoints on AppService router (single port 8280)
@@ -78,8 +81,15 @@ func NewApp(cfg *config.Config) (*App, error) {
 		_, _ = w.Write([]byte("OK"))
 	})
 	router.HandleFunc("GET /health/ready", func(w http.ResponseWriter, _ *http.Request) {
+		// The readiness JSON carries the in-process divergence counters
+		// (governance_divergence_total{class}) — the adapter has no
+		// Prometheus registry, so this is the operator-scrapeable surface.
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":                      "ok",
+			"governance_divergence_total": domain.DivergenceCounts(),
+		})
 	})
 
 	// DM Webhook endpoint (using shared IDMapper)

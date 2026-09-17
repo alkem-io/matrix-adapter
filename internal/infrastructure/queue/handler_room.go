@@ -27,19 +27,21 @@ const fallbackAttachmentName = "attachment"
 
 // RoomHandler handles queue messages related to room operations.
 type RoomHandler struct {
-	service  *service.RoomService
-	matrix   ports.MatrixPort
-	resolver *AliasResolver
-	idMapper *domain.IDMapper
+	service    *service.RoomService
+	governance *service.GovernanceService
+	matrix     ports.MatrixPort
+	resolver   *AliasResolver
+	idMapper   *domain.IDMapper
 }
 
 // NewRoomHandler creates a new instance of RoomHandler.
-func NewRoomHandler(service *service.RoomService, matrix ports.MatrixPort, idMapper *domain.IDMapper) *RoomHandler {
+func NewRoomHandler(service *service.RoomService, governance *service.GovernanceService, matrix ports.MatrixPort, idMapper *domain.IDMapper) *RoomHandler {
 	return &RoomHandler{
-		service:  service,
-		matrix:   matrix,
-		resolver: NewAliasResolver(matrix, idMapper),
-		idMapper: idMapper,
+		service:    service,
+		governance: governance,
+		matrix:     matrix,
+		resolver:   NewAliasResolver(matrix, idMapper),
+		idMapper:   idMapper,
 	}
 }
 
@@ -156,6 +158,13 @@ func (h *RoomHandler) HandleCreateRoom(ctx context.Context, payload []byte) (int
 		}
 	}
 
+	// Honour the room's owning space (class T anchoring — spec FR-008)
+	var parentContextID *uuid.UUID
+	if req.ParentContextID != nil && req.ParentContextID.UUID() != uuid.Nil {
+		parentID := req.ParentContextID.UUID()
+		parentContextID = &parentID
+	}
+
 	err := h.service.CreateRoomWithAlkemioID(
 		ctx,
 		req.AlkemioRoomID.UUID(),
@@ -164,6 +173,7 @@ func (h *RoomHandler) HandleCreateRoom(ctx context.Context, payload []byte) (int
 		req.Topic,
 		req.AvatarURL,
 		string(req.JoinRule),
+		parentContextID,
 		req.IsPublic,
 		req.CustomState,
 		initialMembers,
@@ -925,4 +935,59 @@ func (h *RoomHandler) HandleGetRoomState(ctx context.Context, payload []byte) (i
 		AlkemioRoomID: req.AlkemioRoomID,
 		State:         state,
 	}, nil
+}
+
+// ============================================================================
+// Governance Repair (communication.room.governance.repair)
+// ============================================================================
+
+// domainRepairOutcome is a readability alias for the converter below.
+type domainRepairOutcome = domain.RepairOutcome
+
+// convertRepairOutcome maps a domain repair outcome onto the wire report.
+func convertRepairOutcome(outcome domainRepairOutcome) dto.RepairReport {
+	report := dto.RepairReport{
+		BaseResponse:    dto.NewSuccessResponse(),
+		Scanned:         outcome.Scanned,
+		Repaired:        outcome.Repaired,
+		DryRun:          outcome.DryRun,
+		Writes:          outcome.Writes,
+		BudgetRemaining: outcome.BudgetRemaining,
+	}
+	for _, problem := range outcome.Unresolved {
+		report.Unresolved = append(report.Unresolved, dto.RepairIssue{ID: problem.ID, Reason: problem.Reason})
+	}
+	for _, problem := range outcome.Failed {
+		report.Failed = append(report.Failed, dto.RepairFailure{ID: problem.ID, Error: problem.Reason})
+	}
+	report.SkippedPreVersion = append(report.SkippedPreVersion, outcome.SkippedPreVersion...)
+	return report
+}
+
+// HandleRepairRoomGovernance handles communication.room.governance.repair.
+func (h *RoomHandler) HandleRepairRoomGovernance(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.RepairRoomGovernanceRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+	if errResp := RequireUUID(req.AlkemioRoomID, "alkemio_room_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	var parentContextID *uuid.UUID
+	if req.ParentContextID != nil && req.ParentContextID.UUID() != uuid.Nil {
+		parentID := req.ParentContextID.UUID()
+		parentContextID = &parentID
+	}
+
+	outcome := h.governance.RepairRoom(ctx, service.RepairRoomParams{
+		AlkemioRoomID:   req.AlkemioRoomID.UUID(),
+		JoinRule:        string(req.JoinRule),
+		ParentContextID: parentContextID,
+		CustomState:     req.CustomState,
+		Visibility:      string(req.Visibility),
+		IsDirect:        req.IsDirect,
+		DryRun:          req.DryRun,
+	})
+	return convertRepairOutcome(outcome), nil
 }

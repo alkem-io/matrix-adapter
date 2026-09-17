@@ -587,7 +587,7 @@ func TestSetChildren_Row10_ParentPointerRepairIsOptInAndBudgeted(t *testing.T) {
 		matrix := newFixture()
 		cfg := fastHierarchyConfig()
 		cfg.Hierarchy.ParentPointerBudgetPerCall = 1 // force exhaustion after one repair
-		svc := NewSpaceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), cfg)
+		svc := NewSpaceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), NewGovernanceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local")), cfg)
 
 		result, err := svc.SetChildren(context.Background(), SetChildrenParams{
 			ParentContextID:        parentID,
@@ -632,7 +632,7 @@ func TestSetChildren_Row10_DeferredPointerIsPickedUpByALaterConvergentPass(t *te
 	}
 	cfg := fastHierarchyConfig()
 	cfg.Hierarchy.ParentPointerBudgetPerCall = 1 // force exhaustion after one repair
-	svc := NewSpaceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), cfg)
+	svc := NewSpaceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), NewGovernanceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local")), cfg)
 
 	params := SetChildrenParams{
 		ParentContextID:        parentID,

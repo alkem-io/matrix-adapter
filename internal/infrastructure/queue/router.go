@@ -69,6 +69,12 @@ func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, s
 		TopicRoomStateGet:  room.HandleGetRoomState,
 		TopicSpaceStateSet: space.HandleSetSpaceState,
 		TopicSpaceStateGet: space.HandleGetSpaceState,
+
+		// Governance & Revocation Routes (069-matrix-governance-hardening)
+		TopicRoomGovernanceRepair:  room.HandleRepairRoomGovernance,
+		TopicSpaceGovernanceRepair: space.HandleRepairSpaceGovernance,
+		TopicSpaceMemberRevoke:     space.HandleRevokeSpaceMember,
+		TopicActorDevicesRevoke:    actor.HandleRevokeActorDevices,
 	}
 
 	for topic, handler := range routes {

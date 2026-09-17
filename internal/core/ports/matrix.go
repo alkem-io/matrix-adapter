@@ -25,8 +25,10 @@ type MatrixPort interface {
 	// SetUserProfile updates the display name and avatar for a Matrix user.
 	SetUserProfile(ctx context.Context, actorID domain.Actor) error
 
-	// CreateRoomWithAlias creates a new Matrix room with the specified alias and initial members.
-	CreateRoomWithAlias(ctx context.Context, alkemioRoomID uuid.UUID, roomType string, name, topic, avatarURL, joinRule string, customState map[string]map[string]interface{}, initialMembers []domain.Actor) (id.RoomID, error)
+	// CreateRoomWithAlias creates a governed Matrix room: ladder, markers,
+	// atomic #<uuid> alias, #t_<uuid> alias, declared join rule (restricted
+	// capped by parent resolution), history visibility and guest access.
+	CreateRoomWithAlias(ctx context.Context, params domain.CreateRoomParams) (id.RoomID, error)
 	// InviteUser joins a user to a Matrix room (appservice ghosts join directly, no invite event).
 	InviteUser(ctx context.Context, roomID id.RoomID, inviteeID domain.Actor) error
 	// GetRoomDetails retrieves room metadata including name, topic, and state.
@@ -98,8 +100,9 @@ type MatrixPort interface {
 	// Space Operations (MSC1772)
 	// ============================================================================
 
-	// CreateSpace creates a Matrix Space room with the given parameters.
-	CreateSpace(ctx context.Context, alkemioContextID uuid.UUID, name, topic, avatarURL string, joinRule string, initialMembers []domain.Actor) (id.RoomID, error)
+	// CreateSpace creates a governed Matrix Space room: ladder, markers,
+	// guest access forbidden, shared history.
+	CreateSpace(ctx context.Context, params domain.CreateSpaceParams) (id.RoomID, error)
 
 	// GetSpaceDetails retrieves space metadata and state.
 	GetSpaceDetails(ctx context.Context, roomID id.RoomID) (*domain.Space, error)
@@ -181,7 +184,7 @@ type MatrixPort interface {
 	// ladder as the bot, preserving guest 0-entries (and, for ClassSpace, applying
 	// the elevated 75-entries from opts). Returns whether a write happened —
 	// a converged room produces zero writes.
-	ApplyLadder(ctx context.Context, roomID id.RoomID, class domain.RoomClass, opts domain.LadderOptions) (bool, error)
+	ApplyLadder(ctx context.Context, roomID id.RoomID, class domain.RoomClass, opts domain.LadderOptions, dryRun bool) (bool, error)
 
 	// EnsureBotAdmin establishes the control-plane bot as a joined, power-100
 	// member of the room, following the ordered recovery of contract
@@ -191,6 +194,18 @@ type MatrixPort interface {
 
 	// GetRoomVersion returns the room's Matrix room version.
 	GetRoomVersion(ctx context.Context, roomID id.RoomID) (string, error)
+
+	// GetRoomGovernanceState reads the room's current governed state in one
+	// pass — the compare half of every compare-before-write in repair.
+	GetRoomGovernanceState(ctx context.Context, roomID id.RoomID) (*domain.RoomGovernanceState, error)
+
+	// SetRoomAccessState writes the desired join rule / history visibility /
+	// guest access as the bot. Nil fields are left untouched.
+	SetRoomAccessState(ctx context.Context, roomID id.RoomID, access domain.RoomAccessState) error
+
+	// EnsureDirectRoomMarked ensures both participants of a direct room carry
+	// it in their m.direct account data (idempotent, best-effort).
+	EnsureDirectRoomMarked(ctx context.Context, roomID id.RoomID) error
 
 	// SetGovernanceState writes the platform identity and/or governance markers
 	// (io.alkemio.entity / io.alkemio.governance) as the bot. Nil markers are skipped.

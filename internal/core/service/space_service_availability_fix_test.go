@@ -71,7 +71,7 @@ func TestSetChildren_MaxWriteOperationsPerCallStopsTheCallHonestly(t *testing.T)
 	}
 	cfg := fastHierarchyConfig()
 	cfg.Hierarchy.MaxWriteOperationsPerCall = 2 // fewer than the 3 adds needed
-	svc := NewSpaceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), cfg)
+	svc := NewSpaceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), NewGovernanceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local")), cfg)
 
 	result, err := svc.SetChildren(context.Background(), SetChildrenParams{
 		ParentContextID:        parentID,

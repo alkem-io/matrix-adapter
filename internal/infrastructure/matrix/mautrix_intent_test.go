@@ -141,6 +141,8 @@ type mockIntentAPI struct {
 	lastSetAccountDataName    string
 	lastSetAccountDataContent interface{}
 	lastBuildClientURLParts   []any
+	sendStateEventTypes       []event.Type
+	sendStateEventContents    []any
 	buildClientURLResult      string
 
 	// Media
@@ -242,6 +244,8 @@ func (m *mockIntentAPI) SendStateEvent(_ context.Context, roomID id.RoomID, even
 	m.lastSendStateEventType = eventType
 	m.lastSendStateEventStateKey = stateKey
 	m.lastSendStateEventContent = contentJSON
+	m.sendStateEventTypes = append(m.sendStateEventTypes, eventType)
+	m.sendStateEventContents = append(m.sendStateEventContents, contentJSON)
 	return m.sendStateEventResult, m.sendStateEventErr
 }
 
@@ -1292,7 +1296,10 @@ func TestCreateSpace_Success(t *testing.T) {
 	contextID := uuid.MustParse("770e8400-e29b-41d4-a716-446655440002")
 	members := []domain.Actor{testActor(testActorID, "Alice")}
 
-	roomID, err := a.CreateSpace(context.Background(), contextID, "Space Name", "Space Topic", "", "invite", members)
+	roomID, err := a.CreateSpace(
+		context.Background(),
+		domain.CreateSpaceParams{AlkemioContextID: contextID, Name: "Space Name", Topic: "Space Topic", JoinRule: "invite", InitialMembers: members},
+	)
 	require.NoError(t, err)
 	assert.Equal(t, id.RoomID("!newspace:test.local"), roomID)
 	assert.Equal(t, 1, botIntent.createRoomCalled)
@@ -1309,7 +1316,10 @@ func TestCreateSpace_CreateError(t *testing.T) {
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
 	contextID := uuid.MustParse("770e8400-e29b-41d4-a716-446655440002")
-	_, err := a.CreateSpace(context.Background(), contextID, "Space", "", "", "invite", nil)
+	_, err := a.CreateSpace(
+		context.Background(),
+		domain.CreateSpaceParams{AlkemioContextID: contextID, Name: "Space", JoinRule: "invite"},
+	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to create space")
 }
@@ -1339,8 +1349,8 @@ func TestCreateRoomWithAlias_Success(t *testing.T) {
 	members := []domain.Actor{testActor(testActorID, "Alice")}
 
 	roomID, err := a.CreateRoomWithAlias(
-		context.Background(), alkemioRoomID, "community",
-		"Room Name", "Room Topic", "", "", nil, members,
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: alkemioRoomID, RoomType: "community", Name: "Room Name", Topic: "Room Topic", InitialMembers: members},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, id.RoomID("!newroom:test.local"), roomID)
@@ -1358,28 +1368,34 @@ func TestCreateRoomWithAlias_CreateError(t *testing.T) {
 
 	alkemioRoomID := uuid.MustParse("880e8400-e29b-41d4-a716-446655440003")
 	_, err := a.CreateRoomWithAlias(
-		context.Background(), alkemioRoomID, "community",
-		"Room", "", "", "", nil, nil,
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: alkemioRoomID, RoomType: "community", Name: "Room"},
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to create room with alias")
 }
 
-func TestCreateRoomWithAlias_AliasError(t *testing.T) {
+func TestCreateRoomWithAlias_ThreadAliasError_Divergence(t *testing.T) {
+	// The canonical #<uuid> alias is atomic (RoomAliasName in the create
+	// request); only the best-effort #t_<uuid> alias goes through CreateAlias.
+	// Its failure (e.g. the registration namespace not yet rolled out) is a
+	// recorded divergence, never a creation failure (spec edge case).
 	botIntent := &mockIntentAPI{
 		createRoomResult: &mautrix.RespCreateRoom{RoomID: "!newroom:test.local"},
-		createAliasErr:   errors.New("alias conflict"),
+		createAliasErr:   errors.New("M_EXCLUSIVE: alias not in namespace"),
 	}
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
 	alkemioRoomID := uuid.MustParse("880e8400-e29b-41d4-a716-446655440003")
-	_, err := a.CreateRoomWithAlias(
-		context.Background(), alkemioRoomID, "community",
-		"Room", "", "", "", nil, nil,
+	roomID, err := a.CreateRoomWithAlias(
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: alkemioRoomID, RoomType: "community", Name: "Room"},
 	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to set alias on room")
+	require.NoError(t, err, "a refused #t_ alias must not fail the creation")
+	assert.Equal(t, id.RoomID("!newroom:test.local"), roomID)
+	assert.Equal(t, 1, botIntent.createAliasCalled, "the #t_ alias was attempted")
+	assert.Equal(t, id.RoomAlias("#t_880e8400-e29b-41d4-a716-446655440003:test.local"), botIntent.lastCreateAliasAlias)
 }
 
 func TestCreateRoomWithAlias_BotStays(t *testing.T) {
@@ -1392,8 +1408,8 @@ func TestCreateRoomWithAlias_BotStays(t *testing.T) {
 
 	alkemioRoomID := uuid.MustParse("880e8400-e29b-41d4-a716-446655440003")
 	roomID, err := a.CreateRoomWithAlias(
-		context.Background(), alkemioRoomID, "community",
-		"Room", "", "", "", nil, nil, // no initial members
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: alkemioRoomID, RoomType: "community", Name: "Room"},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, id.RoomID("!newroom:test.local"), roomID)
@@ -1410,8 +1426,8 @@ func TestCreateRoomWithAlias_DirectRoom(t *testing.T) {
 
 	alkemioRoomID := uuid.MustParse("880e8400-e29b-41d4-a716-446655440003")
 	roomID, err := a.CreateRoomWithAlias(
-		context.Background(), alkemioRoomID, "direct",
-		"", "", "", "", nil, nil,
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: alkemioRoomID, RoomType: "direct"},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, id.RoomID("!dm:test.local"), roomID)
@@ -1455,8 +1471,8 @@ func TestCreateRoomWithAlias_DirectRoom_SetsAccountData(t *testing.T) {
 	}
 
 	roomID, err := a.CreateRoomWithAlias(
-		context.Background(), alkemioRoomID, "direct",
-		"", "", "", "", nil, members,
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: alkemioRoomID, RoomType: "direct", InitialMembers: members},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, id.RoomID("!dm:test.local"), roomID)
@@ -1495,8 +1511,8 @@ func TestCreateRoomWithAlias_DirectRoom_AccountDataIdempotent(t *testing.T) {
 	}
 
 	_, err := a.CreateRoomWithAlias(
-		context.Background(), alkemioRoomID, "direct",
-		"", "", "", "", nil, members,
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: alkemioRoomID, RoomType: "direct", InitialMembers: members},
 	)
 	require.NoError(t, err)
 
@@ -1541,8 +1557,8 @@ func TestCreateRoomWithAlias_DirectRoom_TransientError_NoWrite(t *testing.T) {
 	}
 
 	_, err := a.CreateRoomWithAlias(
-		context.Background(), alkemioRoomID, "direct",
-		"", "", "", "", nil, members,
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: alkemioRoomID, RoomType: "direct", InitialMembers: members},
 	)
 	require.NoError(t, err)
 
@@ -1715,7 +1731,7 @@ func TestClearSpaceParent_Success(t *testing.T) {
 	botIntent := &mockIntentAPI{
 		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$cleared1"},
 	}
-	admin := &mockAdminAPI{getRoomMembersResult: []string{"@bot:test.local"}}
+	admin := adminWithBot()
 	a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
 
 	err := a.ClearSpaceParent(context.Background(), "!child:test.local", "!stale-parent:test.local")
@@ -1733,7 +1749,7 @@ func TestClearSpaceParent_Error(t *testing.T) {
 	botIntent := &mockIntentAPI{
 		sendStateEventErr: errors.New("clear parent failed"),
 	}
-	admin := &mockAdminAPI{getRoomMembersResult: []string{"@bot:test.local"}}
+	admin := adminWithBot()
 	a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
 
 	err := a.ClearSpaceParent(context.Background(), "!child:test.local", "!stale-parent:test.local")
@@ -1910,9 +1926,8 @@ func TestBotStaysInRoom_AfterCreate(t *testing.T) {
 	a := newFullTestAdapter(as, admin)
 
 	_, err := a.CreateRoomWithAlias(
-		context.Background(), uuid.MustParse("880e8400-e29b-41d4-a716-446655440003"),
-		"community", "Room", "", "", "", nil,
-		[]domain.Actor{testActor(testActorID, "Alice")},
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: uuid.MustParse("880e8400-e29b-41d4-a716-446655440003"), RoomType: "community", Name: "Room", InitialMembers: []domain.Actor{testActor(testActorID, "Alice")}},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, 0, botIntent.leaveRoomCalled, "the bot never leaves governed rooms")
@@ -2116,8 +2131,8 @@ func TestCreateRoomWithAlias_WithJoinRule(t *testing.T) {
 
 	alkemioRoomID := uuid.MustParse("880e8400-e29b-41d4-a716-446655440003")
 	roomID, err := a.CreateRoomWithAlias(
-		context.Background(), alkemioRoomID, "community",
-		"Room", "", "", "invite", nil, nil,
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: alkemioRoomID, RoomType: "community", Name: "Room", JoinRule: "invite"},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, id.RoomID("!newroom:test.local"), roomID)
@@ -2135,8 +2150,8 @@ func TestCreateRoomWithAlias_WithAvatar(t *testing.T) {
 
 	alkemioRoomID := uuid.MustParse("880e8400-e29b-41d4-a716-446655440003")
 	roomID, err := a.CreateRoomWithAlias(
-		context.Background(), alkemioRoomID, "community",
-		"Room", "", "mxc://test.local/avatar", "", nil, nil,
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: alkemioRoomID, RoomType: "community", Name: "Room", AvatarURL: "mxc://test.local/avatar"},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, id.RoomID("!newroom:test.local"), roomID)
@@ -2157,8 +2172,8 @@ func TestCreateRoomWithAlias_WithCustomState(t *testing.T) {
 		"io.alkemio.meta": {"version": "1"},
 	}
 	roomID, err := a.CreateRoomWithAlias(
-		context.Background(), alkemioRoomID, "community",
-		"Room", "", "", "", customState, nil,
+		context.Background(),
+		domain.CreateRoomParams{AlkemioRoomID: alkemioRoomID, RoomType: "community", Name: "Room", CustomState: customState},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, id.RoomID("!newroom:test.local"), roomID)

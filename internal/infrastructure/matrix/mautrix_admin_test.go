@@ -164,7 +164,9 @@ func (m *mockAdminAPI) DeleteDevices(_ context.Context, userID id.UserID, device
 }
 
 func (m *mockAdminAPI) ListUsers(_ context.Context, _ string, _ int) ([]AdminUser, string, error) {
-	return m.listUsersResult, m.listUsersNext, m.listUsersErr
+	next := m.listUsersNext
+	m.listUsersNext = "" // one-shot: the follow-up page is the last
+	return m.listUsersResult, next, m.listUsersErr
 }
 
 // ============================================================================

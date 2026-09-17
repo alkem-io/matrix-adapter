@@ -49,9 +49,10 @@ func (m *MautrixAdapter) getPowerLevels(ctx context.Context, roomID id.RoomID) (
 
 // ApplyLadder rewrites the room's power levels wholesale from the governance
 // ladder as the bot, preserving guest 0-entries from the current event and
-// applying opts (class-S elevated entries). A converged room produces zero writes.
+// applying opts (class-S elevated entries). A converged room produces zero
+// writes; a dry run computes the diff and writes nothing.
 func (m *MautrixAdapter) ApplyLadder(
-	ctx context.Context, roomID id.RoomID, class domain.RoomClass, opts domain.LadderOptions,
+	ctx context.Context, roomID id.RoomID, class domain.RoomClass, opts domain.LadderOptions, dryRun bool,
 ) (bool, error) {
 	current, err := m.getPowerLevels(ctx, roomID)
 	if err != nil {
@@ -67,10 +68,152 @@ func (m *MautrixAdapter) ApplyLadder(
 	if current != nil && !LadderDiff(current, want) {
 		return false, nil
 	}
+	if dryRun {
+		return true, nil
+	}
 	if _, err := m.as.BotIntent().SendStateEvent(ctx, roomID, event.StatePowerLevels, "", want); err != nil {
 		return false, fmt.Errorf("failed to apply ladder to %s: %w", roomID, err)
 	}
 	return true, nil
+}
+
+// GetRoomGovernanceState reads the room's current governed state in one pass
+// via the admin API (works regardless of bot membership).
+func (m *MautrixAdapter) GetRoomGovernanceState(
+	ctx context.Context, roomID id.RoomID,
+) (*domain.RoomGovernanceState, error) {
+	stateEvents, err := m.admin.GetRoomState(ctx, roomID, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read state of %s: %w", roomID, err)
+	}
+
+	state := &domain.RoomGovernanceState{}
+	for _, raw := range stateEvents {
+		var evt struct {
+			Type     string                 `json:"type"`
+			StateKey string                 `json:"state_key"`
+			Content  map[string]interface{} `json:"content"`
+		}
+		if err := json.Unmarshal(raw, &evt); err != nil {
+			continue
+		}
+		m.applyGovernanceStateEvent(state, evt.Type, evt.StateKey, evt.Content)
+	}
+
+	if aliases, err := m.GetRoomAliases(ctx, roomID); err == nil {
+		state.Aliases = aliases
+	}
+	return state, nil
+}
+
+// applyGovernanceStateEvent folds one state event into a RoomGovernanceState.
+func (m *MautrixAdapter) applyGovernanceStateEvent(
+	state *domain.RoomGovernanceState, eventType, stateKey string, content map[string]interface{},
+) {
+	switch eventType {
+	case "m.room.join_rules":
+		applyJoinRulesContent(state, content)
+	case "m.room.history_visibility":
+		if visibility, ok := content["history_visibility"].(string); ok {
+			state.HistoryVisibility = visibility
+		}
+	case "m.room.guest_access":
+		if access, ok := content["guest_access"].(string); ok {
+			state.GuestAccess = access
+		}
+	case "m.space.parent":
+		state.SpaceParents = append(state.SpaceParents, stateKey)
+	case StateAlkemioEntity.Type:
+		state.Entity = decodeMarker[domain.EntityMarker](content)
+	case StateAlkemioGovernance.Type:
+		state.Governance = decodeMarker[domain.GovernanceMarker](content)
+	}
+}
+
+// applyJoinRulesContent folds an m.room.join_rules content into the state.
+func applyJoinRulesContent(state *domain.RoomGovernanceState, content map[string]interface{}) {
+	if rule, ok := content["join_rule"].(string); ok {
+		state.JoinRule = rule
+	}
+	allow, ok := content["allow"].([]interface{})
+	if !ok || len(allow) == 0 {
+		return
+	}
+	if entry, ok := allow[0].(map[string]interface{}); ok {
+		if allowRoom, ok := entry["room_id"].(string); ok {
+			state.JoinRuleAllowRoom = allowRoom
+		}
+	}
+}
+
+// decodeMarker round-trips a raw state content into a typed marker (nil on failure).
+func decodeMarker[T any](content map[string]interface{}) *T {
+	raw, err := json.Marshal(content)
+	if err != nil {
+		return nil
+	}
+	var marker T
+	if json.Unmarshal(raw, &marker) != nil {
+		return nil
+	}
+	return &marker
+}
+
+// SetRoomAccessState writes the desired join rule / history visibility / guest
+// access as the bot. Nil fields are left untouched.
+func (m *MautrixAdapter) SetRoomAccessState(
+	ctx context.Context, roomID id.RoomID, access domain.RoomAccessState,
+) error {
+	botIntent := m.as.BotIntent()
+
+	if access.JoinRule != nil {
+		joinRules := &event.JoinRulesEventContent{JoinRule: event.JoinRule(*access.JoinRule)}
+		if *access.JoinRule == "restricted" && access.JoinRuleAllowRoom != "" {
+			joinRules.Allow = []event.JoinRuleAllow{{
+				RoomID: id.RoomID(access.JoinRuleAllowRoom),
+				Type:   event.JoinRuleAllowRoomMembership,
+			}}
+		}
+		if _, err := botIntent.SendStateEvent(ctx, roomID, event.StateJoinRules, "", joinRules); err != nil {
+			return fmt.Errorf("failed to set join rules on %s: %w", roomID, err)
+		}
+	}
+	if access.HistoryVisibility != nil {
+		content := &event.HistoryVisibilityEventContent{
+			HistoryVisibility: event.HistoryVisibility(*access.HistoryVisibility),
+		}
+		if _, err := botIntent.SendStateEvent(ctx, roomID, event.StateHistoryVisibility, "", content); err != nil {
+			return fmt.Errorf("failed to set history visibility on %s: %w", roomID, err)
+		}
+	}
+	if access.GuestAccess != nil {
+		content := &event.GuestAccessEventContent{GuestAccess: event.GuestAccess(*access.GuestAccess)}
+		if _, err := botIntent.SendStateEvent(ctx, roomID, event.StateGuestAccess, "", content); err != nil {
+			return fmt.Errorf("failed to set guest access on %s: %w", roomID, err)
+		}
+	}
+	return nil
+}
+
+// EnsureDirectRoomMarked ensures both participants of a direct room carry it
+// in their m.direct account data. Idempotent — existing entries are kept.
+func (m *MautrixAdapter) EnsureDirectRoomMarked(ctx context.Context, roomID id.RoomID) error {
+	members, err := m.admin.GetRoomMemberIDs(ctx, roomID)
+	if err != nil {
+		return fmt.Errorf("failed to read members of %s: %w", roomID, err)
+	}
+	botMXID := m.as.BotMXID()
+	var participants []id.UserID
+	for _, member := range members {
+		if member == botMXID {
+			continue
+		}
+		if m.idMapper.AlkemioActorID(member) != uuid.Nil {
+			participants = append(participants, member)
+		}
+	}
+	m.registerDirectRoomParticipants(ctx, roomID, true, participants)
+	return nil
 }
 
 // botUnreachable is the unresolved reason of contract governed-operations-authority §4.

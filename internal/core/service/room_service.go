@@ -13,17 +13,19 @@ import (
 
 // RoomService handles operations related to Matrix rooms.
 type RoomService struct {
-	matrix   ports.MatrixPort
-	logger   ports.Logger
-	idMapper *domain.IDMapper
+	matrix     ports.MatrixPort
+	logger     ports.Logger
+	idMapper   *domain.IDMapper
+	governance *GovernanceService
 }
 
 // NewRoomService creates a new instance of RoomService.
-func NewRoomService(matrix ports.MatrixPort, logger ports.Logger, idMapper *domain.IDMapper) *RoomService {
+func NewRoomService(matrix ports.MatrixPort, logger ports.Logger, idMapper *domain.IDMapper, governance *GovernanceService) *RoomService {
 	return &RoomService{
-		matrix:   matrix,
-		logger:   logger,
-		idMapper: idMapper,
+		matrix:     matrix,
+		logger:     logger,
+		idMapper:   idMapper,
+		governance: governance,
 	}
 }
 
@@ -39,6 +41,7 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	alkemioRoomID uuid.UUID,
 	roomType string,
 	name, topic, avatarURL, joinRule string,
+	parentContextID *uuid.UUID,
 	isPublic *bool,
 	customState map[string]map[string]interface{},
 	initialMembers []domain.Actor,
@@ -56,12 +59,26 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	// Check if room already exists (idempotency)
 	existingRoomID, err := s.matrix.ResolveAlias(ctx, alias)
 	if err == nil {
-		// Room already exists - idempotent success
+		// Room already exists — a retry converges a lagging room to the
+		// ladder instead of returning blindly (FR-020, SC-004).
 		s.logger.Info(
-			"Room already exists (idempotent)",
+			"Room already exists (idempotent) — running governance repair",
 			"alkemio_room_id", alkemioRoomID,
 			"existing_room_id", existingRoomID,
 		)
+		outcome := s.governance.RepairRoom(ctx, RepairRoomParams{
+			AlkemioRoomID:   alkemioRoomID,
+			JoinRule:        joinRule,
+			ParentContextID: parentContextID,
+			CustomState:     customState,
+			Visibility:      historyVisibilityFor(isPublic, roomType),
+			IsDirect:        roomType == "direct",
+			DryRun:          false,
+		})
+		for _, failure := range outcome.Failed {
+			s.logger.Warn("Repair of existing room reported a failure",
+				"alkemio_room_id", alkemioRoomID, "reason", failure.Reason)
+		}
 		return nil
 	}
 
@@ -104,9 +121,20 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 		effectiveJoinRule = ""
 	}
 
-	// Create the room with alias (custom state is included as initial state
-	// so visibility filtering is active before members are invited)
-	roomID, err := s.matrix.CreateRoomWithAlias(ctx, alkemioRoomID, roomType, name, topic, avatarURL, effectiveJoinRule, customState, initialMembers)
+	// Create the governed room (ladder, markers, atomic alias — the custom
+	// state is initial state so visibility filtering is active from the start)
+	roomID, err := s.matrix.CreateRoomWithAlias(ctx, domain.CreateRoomParams{
+		AlkemioRoomID:   alkemioRoomID,
+		RoomType:        roomType,
+		Name:            name,
+		Topic:           topic,
+		AvatarURL:       avatarURL,
+		JoinRule:        effectiveJoinRule,
+		ParentContextID: parentContextID,
+		WorldReadable:   historyVisibilityFor(isPublic, roomType) == "world_readable",
+		CustomState:     customState,
+		InitialMembers:  initialMembers,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create room: %w", err)
 	}
@@ -409,4 +437,13 @@ func (s *RoomService) GetMessage(ctx context.Context, roomID id.RoomID, eventID 
 	}
 
 	return msg, nil
+}
+
+// historyVisibilityFor maps the room's public flag onto the governed history
+// visibility: world_readable only for non-direct rooms under a public space.
+func historyVisibilityFor(isPublic *bool, roomType string) string {
+	if isPublic != nil && *isPublic && roomType != "direct" {
+		return "world_readable"
+	}
+	return "shared"
 }

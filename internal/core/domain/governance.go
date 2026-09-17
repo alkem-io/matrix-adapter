@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
 )
 
@@ -68,4 +69,70 @@ type SweepReport struct {
 	SkippedNoLastSeen int  `json:"skipped_no_last_seen"`
 	Failed            int  `json:"failed"`
 	DryRun            bool `json:"dry_run"`
+}
+
+// CreateRoomParams carries a governed room creation (port CreateRoomWithAlias).
+type CreateRoomParams struct {
+	AlkemioRoomID   uuid.UUID
+	RoomType        string // "direct" | "community"
+	Name            string
+	Topic           string
+	AvatarURL       string
+	JoinRule        string // declared membership mode: "restricted" | "invite" | ""
+	ParentContextID *uuid.UUID
+	WorldReadable   bool // history_visibility world_readable (room under a public space)
+	CustomState     map[string]map[string]interface{}
+	InitialMembers  []Actor
+}
+
+// CreateSpaceParams carries a governed space creation (port CreateSpace).
+type CreateSpaceParams struct {
+	AlkemioContextID uuid.UUID
+	Name             string
+	Topic            string
+	AvatarURL        string
+	JoinRule         string
+	ParentContextID  *uuid.UUID
+	CustomState      map[string]map[string]interface{}
+	InitialMembers   []Actor
+}
+
+// RoomGovernanceState is the current governed state of a room as read from
+// the homeserver — the compare half of every compare-before-write in repair.
+type RoomGovernanceState struct {
+	JoinRule          string
+	JoinRuleAllowRoom string // the m.space room id of a restricted rule's allow entry
+	HistoryVisibility string
+	GuestAccess       string
+	Entity            *EntityMarker
+	Governance        *GovernanceMarker
+	Aliases           []string
+	SpaceParents      []string // state keys of m.space.parent events
+	IsDirect          bool     // room's create content marks it a DM? (not readable — derived by caller)
+}
+
+// RoomAccessState is the desired access shape a repair writes (nil = no change).
+type RoomAccessState struct {
+	JoinRule          *string
+	JoinRuleAllowRoom string // used only with JoinRule "restricted"
+	HistoryVisibility *string
+	GuestAccess       *string
+}
+
+// RepairOutcome is the counted outcome of one repair invocation (data-model E7).
+type RepairOutcome struct {
+	Scanned           int
+	Repaired          int
+	Unresolved        []RepairProblem
+	Failed            []RepairProblem
+	SkippedPreVersion []string
+	DryRun            bool
+	Writes            int
+	BudgetRemaining   int
+}
+
+// RepairProblem names one room or entity a repair could not converge or failed on.
+type RepairProblem struct {
+	ID     string
+	Reason string
 }
