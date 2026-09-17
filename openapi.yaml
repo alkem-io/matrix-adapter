@@ -154,7 +154,7 @@ paths:
       summary: handleDMRequest processes DM request webhooks from Synapse.
   /health/live:
     get:
-      operationId: app.go:76:40
+      operationId: app.go:79:40
       responses:
         "200":
           content:
@@ -164,11 +164,13 @@ paths:
           description: OK
   /health/ready:
     get:
-      operationId: app.go:80:41
+      operationId: app.go:83:41
       responses:
         "200":
           content:
             application/json:
               schema:
-                type: string
+                additionalProperties:
+                  type: object
+                type: object
           description: OK

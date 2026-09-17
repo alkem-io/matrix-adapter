@@ -20,10 +20,10 @@ import type {
   CheckRoomResponse,
   CreateRoomRequest,
   CreateSpaceRequest,
+  DMRequestedEvent,
   DeleteMessageRequest,
   DeleteRoomRequest,
   DeleteSpaceRequest,
-  DMRequestedEvent,
   GetLastMessageRequest,
   GetLastMessageResponse,
   GetMessageRequest,
@@ -60,6 +60,13 @@ import type {
   ReactionRemovedEvent,
   ReadReceiptUpdatedEvent,
   RemoveReactionRequest,
+  RepairReport,
+  RepairRoomGovernanceRequest,
+  RepairSpaceGovernanceRequest,
+  RevokeActorDevicesRequest,
+  RevokeActorDevicesResponse,
+  RevokeSpaceMemberRequest,
+  RevokeSpaceMemberResponse,
   RoomCreatedEvent,
   RoomMemberLeftEvent,
   RoomMemberUpdatedEvent,
@@ -80,6 +87,10 @@ import type {
  * Use RequestFor<T> and ResponseFor<T> type helpers for type-safe access.
  */
 export const Commands = {
+  'communication.actor.devices.revoke': {
+    request: {} as RevokeActorDevicesRequest,
+    response: {} as RevokeActorDevicesResponse,
+  },
   'communication.actor.sync': {
     request: {} as SyncActorRequest,
     response: {} as BaseResponse,
@@ -144,6 +155,10 @@ export const Commands = {
     request: {} as GetRoomAsUserRequest,
     response: {} as GetRoomAsUserResponse,
   },
+  'communication.room.governance.repair': {
+    request: {} as RepairRoomGovernanceRequest,
+    response: {} as RepairReport,
+  },
   'communication.room.info': {
     request: {} as GetRoomInfoRequest,
     response: {} as GetRoomInfoResponse,
@@ -196,6 +211,10 @@ export const Commands = {
     request: {} as GetSpaceRequest,
     response: {} as GetSpaceResponse,
   },
+  'communication.space.governance.repair': {
+    request: {} as RepairSpaceGovernanceRequest,
+    response: {} as RepairReport,
+  },
   'communication.space.list': {
     request: {} as ListSpacesRequest,
     response: {} as ListSpacesResponse,
@@ -207,6 +226,10 @@ export const Commands = {
   'communication.space.member.batch.remove': {
     request: {} as BatchRemoveSpaceMemberRequest,
     response: {} as BatchRemoveSpaceMemberResponse,
+  },
+  'communication.space.member.revoke': {
+    request: {} as RevokeSpaceMemberRequest,
+    response: {} as RevokeSpaceMemberResponse,
   },
   'communication.space.state.get': {
     request: {} as GetSpaceStateRequest,

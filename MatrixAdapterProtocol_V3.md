@@ -1,7 +1,7 @@
 # Matrix Adapter Protocol Specification (V3)
 
 > **Status**: ✅ **Current** (v3.4.0)
-> **Last Updated**: 2026-03-07
+> **Last Updated**: 2026-09-17
 
 ---
 
@@ -184,6 +184,8 @@ type CreateRoomRequest struct {
     AvatarURL       string            `json:"avatar_url,omitempty"`
     ParentContextID *AlkemioContextID `json:"parent_context_id,omitempty"` // Optional parent Space
     JoinRule        JoinRule          `json:"join_rule,omitempty"`         // Defaults to 'invite'
+    IsPublic        *bool             `json:"is_public,omitempty"`         // Room directory visibility
+    CustomState     map[string]map[string]interface{} `json:"custom_state,omitempty"` // io.alkemio.* initial state
 }
 
 type JoinRule string
@@ -812,6 +814,129 @@ type ListSpacesResponse struct {
 }
 ```
 
+
+### 22b. Governance & Revocation (069-matrix-governance-hardening)
+
+Every governed operation is performed by the AppService bot (the control-plane
+identity). These four commands are NEW topics — an old adapter has no consumer
+queue for them, so a newer server fails loud on a transport timeout instead of
+degrading silently.
+
+#### Repair Room Governance
+
+*   **Event Subject**: `communication.room.governance.repair`
+
+Report-first (dry-run capable) convergence of one room to the governance
+ladder: power levels (share-link guest 0-entries preserved), join rules
+(declared mode capped by room version ≥ 8 and parent resolution — never an
+in-place upgrade), history visibility, guest access, `io.alkemio.entity`,
+both aliases (`#<uuid>`, `#t_<uuid>`), `m.direct` for direct rooms, and
+`io.alkemio.governance` last. A converged room produces zero writes.
+
+```go
+type RepairRoomGovernanceRequest struct {
+    AlkemioRoomID   AlkemioRoomID                     `json:"alkemio_room_id"`
+    JoinRule        JoinRule                          `json:"join_rule"`
+    ParentContextID *AlkemioContextID                 `json:"parent_context_id,omitempty"`
+    CustomState     map[string]map[string]interface{} `json:"custom_state,omitempty"`
+    Visibility      RoomVisibility                    `json:"visibility"` // "shared" | "world_readable"
+    IsDirect        bool                              `json:"is_direct"`
+    DryRun          bool                              `json:"dry_run"`
+}
+
+type RepairReport struct {
+    BaseResponse
+    Scanned           int             `json:"scanned"`
+    Repaired          int             `json:"repaired"`
+    Unresolved        []RepairIssue   `json:"unresolved,omitempty"`          // {id, reason}
+    Failed            []RepairFailure `json:"failed,omitempty"`              // {id, error}
+    SkippedPreVersion []string        `json:"skipped_pre_version,omitempty"` // rooms < v8, membership stays platform-driven
+    DryRun            bool            `json:"dry_run"`
+    Writes            int             `json:"writes"`
+    BudgetRemaining   int             `json:"budget_remaining"`
+}
+```
+
+#### Repair Space Governance
+
+*   **Event Subject**: `communication.space.governance.repair`
+
+Space-room convergence: the ladder with the RECOMPUTED elevated (power 75)
+admin/lead entries, access state, markers. Hierarchy links
+(`m.space.parent`/`m.space.child`) are verified as a report only — this
+command never writes them.
+
+```go
+type RepairSpaceGovernanceRequest struct {
+    AlkemioContextID AlkemioContextID                  `json:"alkemio_context_id"`
+    CustomState      map[string]map[string]interface{} `json:"custom_state,omitempty"`
+    ElevatedActorIDs []AlkemioActorID                  `json:"elevated_actor_ids"`
+    DryRun           bool                              `json:"dry_run"`
+}
+// Response: RepairReport (above)
+```
+
+#### Revoke Space Member (cascading)
+
+*   **Event Subject**: `communication.space.member.revoke`
+
+Kicks the actor from each space room AND from every child ROOM of that space
+(child spaces are separate grants and are untouched). Per-context results; a
+failed child kick surfaces in the context's result and as a
+`governance.divergence` record, never silently.
+
+```go
+type RevokeSpaceMemberRequest struct {
+    ActorID           AlkemioActorID     `json:"actor_id"`
+    AlkemioContextIDs []AlkemioContextID `json:"alkemio_context_ids"`
+    Reason            string             `json:"reason,omitempty"`
+}
+
+type RevokeSpaceMemberResponse struct {
+    BaseResponse
+    Results          map[string]BaseResponse `json:"results,omitempty"`
+    ChildRoomsKicked int                     `json:"child_rooms_kicked"`
+}
+```
+
+#### Revoke Actor Devices
+
+*   **Event Subject**: `communication.actor.devices.revoke`
+
+Deletes ALL of the actor's Matrix devices, invalidating access and refresh
+tokens in one homeserver transaction. Idempotent: zero devices is a success
+with `deleted_count: 0`. Part of the platform's single session-revocation
+operation (server `revokeAllForSub`).
+
+```go
+type RevokeActorDevicesRequest struct {
+    ActorID AlkemioActorID `json:"actor_id"`
+    Reason  string         `json:"reason,omitempty"`
+}
+
+type RevokeActorDevicesResponse struct {
+    BaseResponse
+    DeletedCount int      `json:"deleted_count"`
+    DeviceIDs    []string `json:"device_ids,omitempty"`
+}
+```
+
+### 22c. Additional Commands (post-V3.0, authoritative shapes in `pkg/dto`)
+
+These topics landed after this document's V3.0 baseline; their request and
+response DTOs are generated into `lib/` from `pkg/dto` (single source of truth):
+
+| Subject | Request → Response | Purpose |
+|---|---|---|
+| `communication.room.state.set` / `communication.room.state.get` | `SetRoomStateRequest` → `BaseResponse` / `GetRoomStateRequest` → `GetRoomStateResponse` | io.alkemio.* custom room state |
+| `communication.space.state.set` / `communication.space.state.get` | `SetSpaceStateRequest` → `BaseResponse` / `GetSpaceStateRequest` → `GetSpaceStateResponse` | io.alkemio.* custom space state |
+| `communication.room.last_message.get` | `GetLastMessageRequest` → `GetLastMessageResponse` | most recent message of a room |
+| `communication.room.batch.last_messages.get` | `BatchGetLastMessagesRequest` → `BatchGetLastMessagesResponse` | per-room last messages |
+| `communication.room.batch.unread_counts.get` | `BatchGetUnreadCountsRequest` → `BatchGetUnreadCountsResponse` | per-room unread counts |
+| `communication.room.check` | `CheckRoomRequest` → `CheckRoomResponse` (adapter → server) | mediated Element room creation: consent/dedup |
+| `communication.room.info` | `GetRoomInfoRequest` → `GetRoomInfoResponse` (adapter → server) | room details for reconciliation — **extended (069)** with optional `entity_type` ("thread"), `parent_context_id`, `join_rule`, `visibility`; an old server omits them and the adapter falls back to thread / platform-driven / shared |
+| `communication.space.updated` | — → `SpaceUpdatedEvent` (outgoing) | space property change events |
+
 ---
 
 ## Outgoing Events
@@ -1233,6 +1358,27 @@ type GetRoomAsUserResponse struct {
 6.  Return enriched response with `is_read` flag per message.
 
 **Note**: Read state uses the "high water mark" model - when a user reads message N, all messages before N are also considered read.
+
+
+### Bridge Guarantees (contract `appservice-event-bridge`, 069)
+
+What the adapter's event bridge guarantees to platform consumers (slice 066
+builds its platform-side exactly-once on these):
+
+| # | Guarantee |
+|---|---|
+| G1 | **At-most-once per Synapse transaction**: an already-processed transaction id is acknowledged and ignored (mautrix `TransactionIDCache`); events inside one transaction dispatch in order |
+| G2 | **Every membership transition is emitted** as `communication.room.member.updated` — including transitions the bot performs (kicks): membership dispatch precedes the own-sender filter |
+| G3 | **Sender resolution**: `sender_actor_id` is the UUID localpart when it parses as one; otherwise the zero UUID marks an UNRESOLVED sender — the event is still emitted, never dropped or misattributed |
+| G4 | **Identity ≠ authentication**: an AS-impersonated send and the user's own session are indistinguishable on the wire; never infer "sent by the platform" from the sender |
+| G5 | **Trusted fields need a proof**: `io.alkemio.document_id` is trusted only with a valid `io.alkemio.document_sig` = base64(HMAC-SHA256(key = AS token, msg = room_id "\n" sender "\n" value)) — see `internal/infrastructure/matrix/trust.go`; identity checks are NOT a trust basis |
+| G6 | **Room identity**: `alkemio_room_id` is the UUID parsed from the `#<uuid>` alias; rooms without one reconcile first, then emit |
+| G7 | **Governed state is bot-only** (module-enforced), so no new state-event families are emitted for other senders |
+| G8 | **Reconciliation emits exactly one `communication.room.created`** after the ladder is applied, never before |
+| G9 | **Ungoverned window**: between a mediated Element creation and reconciliation, events may precede `room.created`; consumers keep the `room.check`/`room.info` handshake |
+
+No de-duplication exists ACROSS transactions (a Synapse redelivery under a new
+txn id is a new delivery — platform-side dedupe is slice 066's, by `event_id`).
 
 ---
 
