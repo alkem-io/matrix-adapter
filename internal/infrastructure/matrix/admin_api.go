@@ -23,4 +23,9 @@ type adminAPI interface {
 	GetEvent(ctx context.Context, roomID id.RoomID, eventID id.EventID) (*event.Event, error)
 	GetRelations(ctx context.Context, roomID id.RoomID, eventID id.EventID, relType event.RelationType, eventType event.Type) ([]*event.Event, error)
 	JoinRoom(ctx context.Context, roomID id.RoomID, userID id.UserID) error
+	MakeRoomAdmin(ctx context.Context, roomID id.RoomID, userID id.UserID) error
+	GetRoomVersion(ctx context.Context, roomID id.RoomID) (string, error)
+	ListDevices(ctx context.Context, userID id.UserID) ([]AdminDevice, error)
+	DeleteDevices(ctx context.Context, userID id.UserID, deviceIDs []string) error
+	ListUsers(ctx context.Context, from string, limit int) ([]AdminUser, string, error)
 }

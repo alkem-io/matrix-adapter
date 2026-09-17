@@ -331,3 +331,92 @@ func (s *SynapseAdmin) JoinRoom(ctx context.Context, roomID id.RoomID, userID id
 	}, nil)
 	return err
 }
+
+// MakeRoomAdmin grants a user the highest power available in a room
+// (POST /_synapse/admin/v1/rooms/<id>/make_room_admin). Synapse promotes the
+// target to the power of the highest-powered JOINED local user in the room's
+// power-level `users` map; it fails when no joined local user is in that map.
+func (s *SynapseAdmin) MakeRoomAdmin(ctx context.Context, roomID id.RoomID, userID id.UserID) error {
+	_, err := s.client.MakeRequest(ctx, http.MethodPost, s.buildURL("v1", "rooms", roomID, "make_room_admin"), map[string]interface{}{
+		"user_id": userID,
+	}, nil)
+	return err
+}
+
+// GetRoomVersion returns a room's version (GET /_synapse/admin/v1/rooms/<id> → `version`).
+func (s *SynapseAdmin) GetRoomVersion(ctx context.Context, roomID id.RoomID) (string, error) {
+	var resp struct {
+		Version string `json:"version"`
+	}
+	_, err := s.client.MakeRequest(ctx, http.MethodGet, s.buildURL("v1", "rooms", roomID), nil, &resp)
+	if err != nil {
+		return "", err
+	}
+	return resp.Version, nil
+}
+
+// ============================================================================
+// Device Operations
+// ============================================================================
+
+// AdminDevice is one device of a user as reported by the admin API.
+// LastSeenTS is nil when Synapse has no recorded last use for the device.
+type AdminDevice struct {
+	DeviceID          string `json:"device_id"`
+	LastSeenTS        *int64 `json:"last_seen_ts"`
+	DisplayName       string `json:"display_name"`
+	LastSeenUserAgent string `json:"last_seen_user_agent"`
+}
+
+// ListDevices returns all of a user's devices (GET /_synapse/admin/v2/users/<id>/devices).
+func (s *SynapseAdmin) ListDevices(ctx context.Context, userID id.UserID) ([]AdminDevice, error) {
+	var resp struct {
+		Devices []AdminDevice `json:"devices"`
+	}
+	_, err := s.client.MakeRequest(ctx, http.MethodGet, s.buildURL("v2", "users", userID, "devices"), nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Devices, nil
+}
+
+// DeleteDevices deletes the named devices of a user, invalidating their access
+// and refresh tokens in one transaction (POST …/delete_devices). Deleting an
+// empty list is a no-op the caller should short-circuit.
+func (s *SynapseAdmin) DeleteDevices(ctx context.Context, userID id.UserID, deviceIDs []string) error {
+	_, err := s.client.MakeRequest(ctx, http.MethodPost, s.buildURL("v2", "users", userID, "delete_devices"), map[string]interface{}{
+		"devices": deviceIDs,
+	}, nil)
+	return err
+}
+
+// AdminUser is one user row from the admin user list.
+type AdminUser struct {
+	Name id.UserID `json:"name"`
+}
+
+// ListUsers pages through the server's non-deactivated local users
+// (GET /_synapse/admin/v2/users?deactivated=false). It returns the page and
+// the `next_token` to pass as `from` for the following page; an empty next
+// token means the listing is complete.
+func (s *SynapseAdmin) ListUsers(ctx context.Context, from string, limit int) ([]AdminUser, string, error) {
+	query := url.Values{}
+	query.Set("deactivated", "false")
+	if from != "" {
+		query.Set("from", from)
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	urlPath := fmt.Sprintf("%s?%s", s.buildURL("v2", "users"), query.Encode())
+
+	var resp struct {
+		Users     []AdminUser `json:"users"`
+		NextToken string      `json:"next_token"`
+	}
+	_, err := s.client.MakeRequest(ctx, http.MethodGet, urlPath, nil, &resp)
+	if err != nil {
+		return nil, "", err
+	}
+	return resp.Users, resp.NextToken, nil
+}

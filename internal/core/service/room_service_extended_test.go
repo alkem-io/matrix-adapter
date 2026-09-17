@@ -193,7 +193,7 @@ func (m *mockExtendedMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (
 	return "@bot:test.local", nil
 }
 func (m *mockExtendedMatrixPort) SetUserProfile(_ context.Context, _ domain.Actor) error { return nil }
-func (m *mockExtendedMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor, _ domain.Actor) error {
+func (m *mockExtendedMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor) error {
 	return nil
 }
 func (m *mockExtendedMatrixPort) GetCustomState(_ context.Context, _ id.RoomID, _ []string) (map[string]map[string]interface{}, error) {
@@ -1024,4 +1024,30 @@ func TestGetMessage_Error(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from GetMessage")
 	}
+}
+
+// --- Governance operations (069-matrix-governance-hardening) ---
+
+func (m *mockExtendedMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions) (bool, error) {
+	return false, nil
+}
+
+func (m *mockExtendedMatrixPort) EnsureBotAdmin(_ context.Context, _ id.RoomID) (domain.BotPresence, error) {
+	return domain.BotPresence{Joined: true, PowerOK: true}, nil
+}
+
+func (m *mockExtendedMatrixPort) GetRoomVersion(_ context.Context, _ id.RoomID) (string, error) {
+	return "10", nil
+}
+
+func (m *mockExtendedMatrixPort) SetGovernanceState(_ context.Context, _ id.RoomID, _ *domain.EntityMarker, _ *domain.GovernanceMarker) error {
+	return nil
+}
+
+func (m *mockExtendedMatrixPort) RevokeActorDevices(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockExtendedMatrixPort) SweepDevices(_ context.Context, _ time.Duration, _ bool) (domain.SweepReport, error) {
+	return domain.SweepReport{}, nil
 }

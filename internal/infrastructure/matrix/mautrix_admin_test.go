@@ -42,9 +42,25 @@ type mockAdminAPI struct {
 	getRelationsResult         []*event.Event
 	getRelationsErr            error
 	joinRoomErr                error
+	makeRoomAdminErr           error
+	getRoomVersionResult       string
+	getRoomVersionErr          error
+	listDevicesResult          []AdminDevice
+	listDevicesErr             error
+	deleteDevicesErr           error
+	listUsersResult            []AdminUser
+	listUsersNext              string
+	listUsersErr               error
 
 	// Call tracking
-	joinRoomCalls []joinRoomCall
+	joinRoomCalls      []joinRoomCall
+	makeRoomAdminCalls []joinRoomCall
+	deleteDevicesCalls []deleteDevicesCall
+}
+
+type deleteDevicesCall struct {
+	UserID    id.UserID
+	DeviceIDs []string
 }
 
 type joinRoomCall struct {
@@ -95,6 +111,28 @@ func (m *mockAdminAPI) GetRelations(_ context.Context, _ id.RoomID, _ id.EventID
 func (m *mockAdminAPI) JoinRoom(_ context.Context, roomID id.RoomID, userID id.UserID) error {
 	m.joinRoomCalls = append(m.joinRoomCalls, joinRoomCall{RoomID: roomID, UserID: userID})
 	return m.joinRoomErr
+}
+
+func (m *mockAdminAPI) MakeRoomAdmin(_ context.Context, roomID id.RoomID, userID id.UserID) error {
+	m.makeRoomAdminCalls = append(m.makeRoomAdminCalls, joinRoomCall{RoomID: roomID, UserID: userID})
+	return m.makeRoomAdminErr
+}
+
+func (m *mockAdminAPI) GetRoomVersion(_ context.Context, _ id.RoomID) (string, error) {
+	return m.getRoomVersionResult, m.getRoomVersionErr
+}
+
+func (m *mockAdminAPI) ListDevices(_ context.Context, _ id.UserID) ([]AdminDevice, error) {
+	return m.listDevicesResult, m.listDevicesErr
+}
+
+func (m *mockAdminAPI) DeleteDevices(_ context.Context, userID id.UserID, deviceIDs []string) error {
+	m.deleteDevicesCalls = append(m.deleteDevicesCalls, deleteDevicesCall{UserID: userID, DeviceIDs: deviceIDs})
+	return m.deleteDevicesErr
+}
+
+func (m *mockAdminAPI) ListUsers(_ context.Context, _ string, _ int) ([]AdminUser, string, error) {
+	return m.listUsersResult, m.listUsersNext, m.listUsersErr
 }
 
 // ============================================================================

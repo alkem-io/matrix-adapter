@@ -34,11 +34,22 @@ type GetRoomInfoRequest struct {
 }
 
 // GetRoomInfoResponse is the RabbitMQ payload returned from server with room details.
+// The governance fields (entity_type, parent_context_id, join_rule, visibility)
+// are optional: an old server omits them and the adapter falls back to
+// thread / platform-driven / shared defaults (069-matrix-governance-hardening).
 type GetRoomInfoResponse struct {
 	AlkemioRoomID string           `json:"alkemio_room_id"`
 	Type          string           `json:"type"`
 	IsDirect      bool             `json:"is_direct"`
 	Members       []RoomInfoMember `json:"members"`
+	// EntityType is "thread" for every conversation-backed room ("space" is never served here).
+	EntityType string `json:"entity_type,omitempty"`
+	// ParentContextID is the owning space id when the room is space-anchored.
+	ParentContextID string `json:"parent_context_id,omitempty"`
+	// JoinRule is the membership mode Alkemio declares ("restricted" or "invite").
+	JoinRule string `json:"join_rule,omitempty"`
+	// Visibility is "world_readable" when the owning space is public, else "shared".
+	Visibility string `json:"visibility,omitempty"`
 }
 
 // RoomInfoMember represents a member in the server-side room info response.

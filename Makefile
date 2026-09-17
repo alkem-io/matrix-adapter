@@ -13,7 +13,7 @@ GOFMT=$(GO) fmt
 
 # Default target
 .PHONY: all
-all: deps fmt lint test build
+all: deps fmt lint test test-module build
 
 # Generate OpenAPI spec from Go source.
 # Requires the `apispec` binary on PATH. CI installs the org-pinned version
@@ -42,6 +42,12 @@ run:
 test:
 	@echo "Running tests..."
 	$(GOTEST) -v ./...
+
+# Run the Synapse module's unit tests (pure decision functions, stdlib only)
+.PHONY: test-module
+test-module:
+	@echo "Running Synapse module tests..."
+	python3 -m unittest discover -s synapse-modules/tests -v
 
 # Run tests with coverage
 .PHONY: test-coverage

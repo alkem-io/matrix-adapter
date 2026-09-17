@@ -817,7 +817,6 @@ func TestInviteUser_Success(t *testing.T) {
 	err := a.InviteUser(
 		context.Background(),
 		"!room:test.local",
-		testActor(testActorID2, "Inviter"),
 		testActor(testActorID, "Invitee"),
 	)
 	require.NoError(t, err)
@@ -837,7 +836,6 @@ func TestInviteUser_JoinError(t *testing.T) {
 	err := a.InviteUser(
 		context.Background(),
 		"!room:test.local",
-		testActor(testActorID2, "Inviter"),
 		testActor(testActorID, "Invitee"),
 	)
 	require.Error(t, err)

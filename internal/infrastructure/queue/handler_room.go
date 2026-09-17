@@ -572,8 +572,8 @@ func (h *RoomHandler) HandleBatchAddMember(ctx context.Context, payload []byte) 
 			continue
 		}
 
-		// Invite user to room (uses the bot to invite)
-		err = h.matrix.InviteUser(ctx, roomID, domain.Actor{}, actor)
+		// Join the ghost user to the room
+		err = h.matrix.InviteUser(ctx, roomID, actor)
 		results[alkemioRoomID.String()] = MapToBatchResult(err)
 	}
 

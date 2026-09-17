@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
@@ -75,7 +76,7 @@ func (m *arMockMatrixPort) HomeserverDomain() string        { return "test.local
 func (m *arMockMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, _, _, _, _, _ string, _ map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
 	return "", nil
 }
-func (m *arMockMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor, _ domain.Actor) error {
+func (m *arMockMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor) error {
 	return nil
 }
 func (m *arMockMatrixPort) GetRoomDetails(_ context.Context, _ id.RoomID) (*domain.Room, error) {
@@ -425,4 +426,30 @@ func TestReadReceiptService_GetUnreadCounts_Error(t *testing.T) {
 	if !matrix.getUnreadCountsCalled {
 		t.Fatal("expected GetUnreadCounts to be called")
 	}
+}
+
+// --- Governance operations (069-matrix-governance-hardening) ---
+
+func (m *arMockMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions) (bool, error) {
+	return false, nil
+}
+
+func (m *arMockMatrixPort) EnsureBotAdmin(_ context.Context, _ id.RoomID) (domain.BotPresence, error) {
+	return domain.BotPresence{Joined: true, PowerOK: true}, nil
+}
+
+func (m *arMockMatrixPort) GetRoomVersion(_ context.Context, _ id.RoomID) (string, error) {
+	return "10", nil
+}
+
+func (m *arMockMatrixPort) SetGovernanceState(_ context.Context, _ id.RoomID, _ *domain.EntityMarker, _ *domain.GovernanceMarker) error {
+	return nil
+}
+
+func (m *arMockMatrixPort) RevokeActorDevices(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *arMockMatrixPort) SweepDevices(_ context.Context, _ time.Duration, _ bool) (domain.SweepReport, error) {
+	return domain.SweepReport{}, nil
 }

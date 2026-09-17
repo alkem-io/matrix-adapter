@@ -42,6 +42,7 @@ type MautrixAdapter struct {
 	server         *http.Server // our own HTTP server wrapping as.Router
 	gateOpen       atomic.Bool  // when false, transactions are ack'd and dropped
 	queuePort      ports.QueuePort
+	now            func() time.Time // injectable clock (nil means time.Now)
 }
 
 // NewMautrixAdapter creates a new instance of MautrixAdapter.
@@ -634,12 +635,11 @@ func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id
 	return userID, nil
 }
 
-// InviteUser invites a user to a room and auto-joins them.
 // InviteUser joins a ghost user directly to a room (no invite event).
 // Since all users are appservice ghosts, we skip the invite and join directly
 // to avoid triggering invite notifications in Element for invisible rooms.
 func (m *MautrixAdapter) InviteUser(
-	ctx context.Context, roomID id.RoomID, _ domain.Actor, inviteeID domain.Actor,
+	ctx context.Context, roomID id.RoomID, inviteeID domain.Actor,
 ) error {
 	inviteeUserID, err := m.EnsureUser(ctx, inviteeID)
 	if err != nil {

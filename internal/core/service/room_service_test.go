@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
@@ -70,7 +71,7 @@ func (m *mockMatrixPort) UpdateRoomState(_ context.Context, _ id.RoomID, _ domai
 }
 
 // Stub implementations for remaining MatrixPort interface methods
-func (m *mockMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor, _ domain.Actor) error {
+func (m *mockMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor) error {
 	return nil
 }
 func (m *mockMatrixPort) GetRoomDetails(_ context.Context, _ id.RoomID) (*domain.Room, error) {
@@ -318,4 +319,30 @@ func TestUpdateRoom_JoinRuleOmitted(t *testing.T) {
 	if matrix.updateRoomJoinRule != nil {
 		t.Errorf("expected nil joinRule when omitted, got '%s'", *matrix.updateRoomJoinRule)
 	}
+}
+
+// --- Governance operations (069-matrix-governance-hardening) ---
+
+func (m *mockMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions) (bool, error) {
+	return false, nil
+}
+
+func (m *mockMatrixPort) EnsureBotAdmin(_ context.Context, _ id.RoomID) (domain.BotPresence, error) {
+	return domain.BotPresence{Joined: true, PowerOK: true}, nil
+}
+
+func (m *mockMatrixPort) GetRoomVersion(_ context.Context, _ id.RoomID) (string, error) {
+	return "10", nil
+}
+
+func (m *mockMatrixPort) SetGovernanceState(_ context.Context, _ id.RoomID, _ *domain.EntityMarker, _ *domain.GovernanceMarker) error {
+	return nil
+}
+
+func (m *mockMatrixPort) RevokeActorDevices(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockMatrixPort) SweepDevices(_ context.Context, _ time.Duration, _ bool) (domain.SweepReport, error) {
+	return domain.SweepReport{}, nil
 }
