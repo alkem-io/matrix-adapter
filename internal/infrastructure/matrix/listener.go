@@ -490,6 +490,39 @@ func (m *MautrixAdapter) resolveAlkemioRoomID(ctx context.Context, roomID id.Roo
 	return m.idMapper.AlkemioRoomID(alias)
 }
 
+// ResolveAlkemioID resolves a raw Matrix room or space id back to the Alkemio
+// UUID encoded in its alias. It repeats resolveAlkemioRoomID's alias lookup —
+// room and space aliases use the identical #uuid:domain pattern, so the same
+// resolution works for either, and the caller already knows from context (the
+// children_are_spaces flag on a hierarchy convergence request) which kind of
+// id it is asking about — but keeps apart the two outcomes
+// resolveAlkemioRoomID deliberately collapses, because this method's caller
+// uses the answer to decide whether to remove state:
+//
+//	(uuid.Nil, nil) — the room carries no Alkemio-patterned alias. A confirmed
+//	ghost: exactly the state a deleted discussion's child edge is left in, and
+//	the only answer that may drive a prune.
+//
+//	(uuid.Nil, err) — the alias read itself failed. The room's identity is
+//	unknown, not absent; reporting it as a ghost would let a transient
+//	homeserver fault masquerade as proof that a live edge is prunable.
+func (m *MautrixAdapter) ResolveAlkemioID(ctx context.Context, roomID id.RoomID) (uuid.UUID, error) {
+	aliases, err := m.GetRoomAliases(ctx, roomID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to read aliases for room %s: %w", roomID, err)
+	}
+	if len(aliases) == 0 {
+		return uuid.Nil, nil
+	}
+
+	alias := m.selectPreferredAlias(aliases)
+	if alias == "" {
+		return uuid.Nil, nil
+	}
+
+	return m.idMapper.AlkemioRoomID(alias), nil
+}
+
 // resolveOrReconcile tries to resolve the Alkemio room ID from the room alias.
 // If no alias exists, checks for io.alkemio.pending state event and triggers reconciliation.
 // Returns uuid.Nil if the room is not an Alkemio room or reconciliation is already in progress.

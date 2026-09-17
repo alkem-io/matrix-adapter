@@ -229,11 +229,26 @@ func (m *mockExtendedMatrixPort) UpdateSpaceState(_ context.Context, _ id.RoomID
 func (m *mockExtendedMatrixPort) GetSpaceChildren(_ context.Context, _ id.RoomID) ([]domain.SpaceChild, error) {
 	return nil, nil
 }
+func (m *mockExtendedMatrixPort) GetSpaceChildStateKeys(_ context.Context, _ id.RoomID) ([]string, error) {
+	return nil, nil
+}
 func (m *mockExtendedMatrixPort) AddSpaceChild(_ context.Context, _ id.RoomID, _ id.RoomID, _ string, _ bool) error {
+	return nil
+}
+func (m *mockExtendedMatrixPort) RemoveSpaceChild(_ context.Context, _ id.RoomID, _ string) error {
 	return nil
 }
 func (m *mockExtendedMatrixPort) SetSpaceParent(_ context.Context, _ id.RoomID, _ id.RoomID) error {
 	return nil
+}
+func (m *mockExtendedMatrixPort) ClearSpaceParent(_ context.Context, _ id.RoomID, _ id.RoomID) error {
+	return nil
+}
+func (m *mockExtendedMatrixPort) GetSpaceParents(_ context.Context, _ id.RoomID) ([]id.RoomID, error) {
+	return nil, nil
+}
+func (m *mockExtendedMatrixPort) ResolveAlkemioID(_ context.Context, _ id.RoomID) (uuid.UUID, error) {
+	return uuid.Nil, nil
 }
 func (m *mockExtendedMatrixPort) InviteToSpace(_ context.Context, _ id.RoomID, _ domain.Actor) error {
 	return nil

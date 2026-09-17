@@ -198,6 +198,12 @@ export const TopicSpaceList = "communication.space.list";
  */
 export const TopicHierarchySetParent = "communication.hierarchy.set_parent";
 /**
+ * TopicHierarchySetChildren is the topic for declarative, parent-keyed hierarchy
+ * convergence commands — the only command in this registry that can remove an
+ * m.space.child edge.
+ */
+export const TopicHierarchySetChildren = "communication.hierarchy.set_children";
+/**
  * Space batch member command topics
  */
 export const TopicSpaceMemberBatchAdd = "communication.space.member.batch.add";
@@ -318,10 +324,10 @@ Package dto provides Data Transfer Objects for the Matrix Adapter.
 */
 
 /**
- * Deprecated: DMRequestedEvent represents the event published when Synapse requests approval
+ * DMRequestedEvent represents the event published when Synapse requests approval
  * for a DM room creation between two Alkemio users.
  * This is published to the communication.room.dm.requested topic.
- * Replaced by CheckRoomHTTPRequest/CheckRoomHTTPResponse and the synchronous check-room flow.
+ * Deprecated: Replaced by CheckRoomHTTPRequest/CheckRoomHTTPResponse and the synchronous check-room flow.
  */
 export interface DMRequestedEvent {
   /**
@@ -339,9 +345,9 @@ export interface DMRequestedEvent {
   timestamp: number /* int64 */;
 }
 /**
- * Deprecated: DMWebhookPayload represents the payload received from Synapse's DM request webhook.
+ * DMWebhookPayload represents the payload received from Synapse's DM request webhook.
  * The spam checker module sends this when a user attempts to create a DM room.
- * Replaced by CheckRoomHTTPRequest and the synchronous check-room flow.
+ * Deprecated: Replaced by CheckRoomHTTPRequest and the synchronous check-room flow.
  */
 export interface DMWebhookPayload {
   /**
@@ -389,6 +395,25 @@ export const ErrCodeReactionNotFound: ErrorCode = "REACTION_NOT_FOUND";
  * ErrCodeMatrixError indicates a Matrix SDK/homeserver error.
  */
 export const ErrCodeMatrixError: ErrorCode = "MATRIX_ERROR";
+/**
+ * ErrCodeDeadlineExceeded indicates the call reached its own execution
+ * deadline before every attempted write could be issued, with no Matrix
+ * write among those actually attempted having been rejected. Distinct
+ * from ErrCodeMatrixError so a caller can tell "the adapter ran out of
+ * time, repeat the call" from "Matrix rejected a write, investigate".
+ */
+export const ErrCodeDeadlineExceeded: ErrorCode = "DEADLINE_EXCEEDED";
+/**
+ * ErrCodeRequestExpired indicates the request carried a caller expiry that
+ * had already passed when the adapter picked it up, so it was rejected
+ * before performing any read or write.
+ * Distinct from ErrCodeDeadlineExceeded, which means the adapter started
+ * work and ran out of time part-way — leaving effects behind that the
+ * caller must reconcile. This one guarantees nothing was touched, so the
+ * caller can safely reissue from fresh state. It normally means the request
+ * waited in the queue longer than the caller was prepared to wait.
+ */
+export const ErrCodeRequestExpired: ErrorCode = "REQUEST_EXPIRED";
 /**
  * ErrCodeInternalError indicates an unexpected system error.
  */
@@ -524,6 +549,184 @@ export interface SetParentRequest {
   parent_context_id: AlkemioContextID;
   order?: string;
   suggested?: boolean;
+}
+/**
+ * SetChildrenRequest declares the full desired child set of a parent space (a
+ * category space, or the forum space itself) and converges the space's actual
+ * m.space.child edges toward it in one call: missing edges are added, and —
+ * only when requested — edges that no longer belong are removed.
+ * Unlike SetParentRequest, this operation can remove edges, which is why
+ * removal is always keyed on the raw Matrix child state_key read back from the
+ * parent's own state, never on an Alkemio identifier: once a discussion is
+ * deleted its room alias is gone for good, and no Alkemio UUID can ever name
+ * that child edge again. The parent itself is resolved by alias exactly like
+ * every other space operation and is never created if it is missing.
+ * Topic: communication.hierarchy.set_children
+ */
+export interface SetChildrenRequest {
+  /**
+   * ParentContextID is the Alkemio context of the parent space. If it does not
+   * resolve to an existing space the call fails with SPACE_NOT_FOUND — this
+   * operation never lazily creates a space.
+   */
+  parent_context_id: AlkemioContextID;
+  /**
+   * DesiredChildContextIDs are the Alkemio context/room ids that must end up as
+   * children of the parent. An id that cannot be resolved to a room is reported
+   * in the response's unresolved list rather than guessed at or created.
+   */
+  desired_child_context_ids: string[];
+  /**
+   * ChildrenAreSpaces selects which alias namespace DesiredChildContextIDs are
+   * resolved through: false resolves each id as a discussion room (the normal
+   * category-level call), true resolves each id as a subspace (the forum-level
+   * call that converges category spaces under the forum).
+   */
+  children_are_spaces: boolean;
+  /**
+   * ApplyRemovals enables the removal half of convergence. When false, only
+   * missing edges are added and no extra edge is inspected or touched — the
+   * shape a two-phase sweep uses for its add-only first pass.
+   */
+  apply_removals: boolean;
+  /**
+   * RemovableChildContextIDs is the caller's explicit authorization for which
+   * children may lose their edge to this parent. An extra edge is removed only
+   * if its state_key reverse-resolves to an Alkemio id named here; anything
+   * else is reported and left alone.
+   * Removal is authorized, never inferred. Absence from
+   * DesiredChildContextIDs is NOT consent to remove: a desired set is a
+   * snapshot, and a child created or recategorised after it was read is
+   * missing from it while being perfectly correct in Matrix. Deriving
+   * removals from the set difference alone deletes that child's edge. So the
+   * caller must name the children it has positively established belong
+   * elsewhere, and the adapter removes the intersection of that list with the
+   * edges actually present.
+   * Empty or absent means no known-live edge is removable — the safe default,
+   * and what an add-only phase sends. Ignored unless ApplyRemovals is set.
+   */
+  removable_child_context_ids?: string[];
+  /**
+   * PruneUnknown additionally removes extra edges whose state_key no longer
+   * resolves to any live Alkemio room (a deleted discussion's ghost edge).
+   * Ignored unless ApplyRemovals is also set; extras that resolve to a live
+   * room are always eligible for removal regardless of this flag.
+   */
+  prune_unknown: boolean;
+  /**
+   * SyncChildParent opts into repairing the room-side m.space.parent pointer on
+   * children that were just added, under its own separate, lower write budget.
+   * Left false, no room-side state is ever touched by this call.
+   */
+  sync_child_parent: boolean;
+  /**
+   * DryRun computes and reports the full classification with zero writes.
+   */
+  dry_run: boolean;
+  /**
+   * OperationID correlates this call with the caller's own unit of work across
+   * the queue, the adapter log and the caller's audit record. Opaque to the
+   * adapter, which only ever echoes and logs it.
+   */
+  operation_id?: string;
+  /**
+   * ExpiresAtUnixMs is the absolute wall-clock instant, in Unix milliseconds,
+   * after which this request must not be executed at all.
+   * The adapter's own execution deadline starts when the handler begins, so it
+   * bounds processing but says nothing about how long the request waited in the
+   * queue first. Under load that wait can outlive the caller's RPC timeout,
+   * which means without this field an adapter can begin writing Matrix state
+   * for a request whose caller stopped waiting long ago and has since moved on
+   * to a newer snapshot. Checked before any read or write, so an expired
+   * request costs nothing and changes nothing.
+   * Zero means no caller expiry (the handler deadline alone applies).
+   */
+  expires_at_unix_ms?: number /* int64 */;
+}
+/**
+ * SetChildrenResponse reports what a set_children call did (or, under DryRun,
+ * would have done) to converge one parent space's children toward the desired
+ * set. Every count a caller derives from this operation must come from these
+ * arrays, never from iterating a request list — a disabled or unreachable
+ * adapter never produces one of these at all.
+ */
+export interface SetChildrenResponse extends BaseResponse {
+  /**
+   * Added holds the state_keys of edges added (or, under DryRun, that would be
+   * added) because a desired child was missing from the actual set.
+   */
+  added: string[];
+  /**
+   * Removed holds the state_keys of extra edges removed (or would be removed)
+   * because they no longer belong and still resolve to a live Alkemio room —
+   * the recategorisation-leftover class.
+   */
+  removed: string[];
+  /**
+   * PrunedUnknown holds the state_keys of extra edges removed (or would be
+   * removed) under PruneUnknown because they resolve to no Alkemio room at all
+   * — the ghost-edge class left behind by a deleted discussion.
+   */
+  pruned_unknown: string[];
+  /**
+   * UnknownKept holds the state_keys of extra edges that resolve to no Alkemio
+   * room and were left in place because PruneUnknown was not set. This is the
+   * drift a report-only pass surfaces without ever touching it.
+   */
+  unknown_kept: string[];
+  /**
+   * Unresolved holds the desired child ids that did not resolve to any room —
+   * reported only, never fabricated and never created.
+   */
+  unresolved: string[];
+  /**
+   * ParentPointersRepaired holds the state_keys of children whose room-side
+   * m.space.parent was corrected (only ever populated when SyncChildParent).
+   */
+  parent_pointers_repaired: string[];
+  /**
+   * ParentPointersDeferred holds the state_keys of children whose parent-pointer
+   * repair was skipped because the separate pointer-repair budget was spent —
+   * reported so a deferral is never mistaken for a completed repair.
+   */
+  parent_pointers_deferred: string[];
+  /**
+   * ParentPointersUnprocessable holds the state_keys of children whose parent
+   * pointer cannot be repaired by any future call under the adapter's current
+   * per-call pointer budget, because that one child's repair needs more writes
+   * than the budget can ever reserve at once.
+   * Kept apart from ParentPointersDeferred because the two need opposite
+   * responses. A deferral clears itself — the next pass reconsiders the child
+   * with a fresh budget. This does not: every future pass recomputes the same
+   * oversized plan and defers it again, so a "repeat until nothing is
+   * outstanding" runbook driven by the deferred list alone never terminates.
+   * It is actionable configuration, not transient pressure — raise the
+   * adapter's pointer budget above the reported requirement.
+   */
+  parent_pointers_unprocessable: string[];
+  /**
+   * Changed is true if any write was performed (or, under DryRun, would be).
+   */
+  changed: boolean;
+  /**
+   * Converged reports whether this parent's children match the desired set
+   * with no work left outstanding — the caller's termination condition.
+   * Deliberately distinct from BaseResponse.Success, which reports only
+   * whether execution hit an error. A call can execute flawlessly and still
+   * leave the hierarchy unconverged: a desired child that resolved to no room,
+   * a pointer repair deferred by budget, an extra edge kept because its
+   * identity could not be established. All of those return success=true, so a
+   * caller terminating on "no failures" declares a reconciliation complete
+   * while required work is still outstanding.
+   * True only when every desired edge is established and nothing is
+   * unresolved, deferred or unprocessable. Under DryRun it reports whether the
+   * hierarchy is already converged — that the pass found nothing to do.
+   */
+  converged: boolean;
+  /**
+   * DryRun echoes the request flag.
+   */
+  dry_run: boolean;
 }
 
 //////////

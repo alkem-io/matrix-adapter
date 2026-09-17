@@ -48,7 +48,8 @@ func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, s
 		TopicSpaceList:   space.HandleListSpaces,
 
 		// Hierarchy Routes (communication.hierarchy.*)
-		TopicHierarchySetParent: space.HandleSetParent,
+		TopicHierarchySetParent:   space.HandleSetParent,
+		TopicHierarchySetChildren: space.HandleSetChildren,
 
 		// Batch Space Member Routes (communication.space.member.batch.*)
 		TopicSpaceMemberBatchAdd:    space.HandleBatchAddSpaceMember,

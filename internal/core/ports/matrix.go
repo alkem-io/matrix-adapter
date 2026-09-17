@@ -113,11 +113,58 @@ type MatrixPort interface {
 	// GetSpaceChildren returns child rooms and subspaces of a space.
 	GetSpaceChildren(ctx context.Context, roomID id.RoomID) ([]domain.SpaceChild, error)
 
+	// GetSpaceChildStateKeys returns the raw Matrix state_keys of a space's live
+	// m.space.child edges (those with non-empty via) via a single state read, with
+	// no per-child classification call. Used by hierarchy convergence, which
+	// already knows from the request whether it is dealing with rooms or spaces
+	// and has no need for GetSpaceChildren's per-child is-space lookup.
+	GetSpaceChildStateKeys(ctx context.Context, spaceID id.RoomID) ([]string, error)
+
 	// AddSpaceChild adds a room or subspace as a child of a space.
 	AddSpaceChild(ctx context.Context, spaceID id.RoomID, childID id.RoomID, order string, suggested bool) error
 
+	// RemoveSpaceChild removes a room or subspace from a space's children by
+	// writing an empty-content m.space.child state event for the given state_key
+	// (the MSC1772 removal mechanism). The state_key must be the raw Matrix child
+	// id as read from the parent's own state — this is the only way to remove an
+	// edge whose child's alias is already gone. It never deletes the child room or
+	// space itself, nor its alias.
+	RemoveSpaceChild(ctx context.Context, spaceID id.RoomID, childStateKey string) error
+
 	// SetSpaceParent sets the parent space for a room or subspace (m.space.parent state event).
 	SetSpaceParent(ctx context.Context, childID id.RoomID, parentID id.RoomID) error
+
+	// ClearSpaceParent clears one specific stale m.space.parent pointer on a
+	// child by writing an empty-content state event for that parent's own
+	// state_key, leaving any other live parent pointer on the child untouched.
+	// This is the room-side counterpart of RemoveSpaceChild: it never deletes
+	// the child room or the stale parent space, only the pointer between them.
+	ClearSpaceParent(ctx context.Context, childID id.RoomID, staleParentID id.RoomID) error
+
+	// GetSpaceParents returns the room IDs currently named by all of a child's
+	// live m.space.parent state events (a state event with empty via is the
+	// MSC1772 removal marker for a cleared pointer and is excluded). A child
+	// can carry more than one live pointer — a pre-existing dual-canonical-parent
+	// violation — and callers repairing drift must see the whole set, not an
+	// arbitrary single member of it, to know which pointers are stale and must
+	// be cleared as well as which (if any) already name the desired parent.
+	//
+	// It reads via the Synapse admin API rather than a client intent, so it
+	// requires no bot membership and issues no join: it is called as an
+	// unbudgeted probe for every pointer-repair candidate, including under
+	// dry_run, and a join-triggering read there would defeat the whole point of
+	// gating room-side writes behind their own separate, lower budget.
+	GetSpaceParents(ctx context.Context, childID id.RoomID) ([]id.RoomID, error)
+
+	// ResolveAlkemioID resolves a raw Matrix room or space id back to the Alkemio
+	// UUID encoded in its alias, mirroring ResolveAlias in the opposite direction.
+	// Returns (uuid.Nil, nil) when the id confirmedly carries no Alkemio-patterned
+	// alias — the case for a room whose alias was deleted (a ghost child edge) or
+	// one this adapter never created — and a non-nil error when the alias lookup
+	// itself failed, which is not the same answer: the id's identity is then
+	// unknown rather than absent, and a caller must never let that drive a
+	// removal decision.
+	ResolveAlkemioID(ctx context.Context, roomID id.RoomID) (uuid.UUID, error)
 
 	// InviteToSpace invites a user to a space.
 	InviteToSpace(ctx context.Context, spaceID id.RoomID, inviteeID domain.Actor) error

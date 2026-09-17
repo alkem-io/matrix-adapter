@@ -2,6 +2,7 @@ package matrix
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -1465,6 +1466,130 @@ func TestSetSpaceParent_Error(t *testing.T) {
 }
 
 // ============================================================================
+// GetSpaceParents
+// ============================================================================
+
+// spaceParentStateJSON builds one raw m.space.parent state event as the
+// Synapse admin API would return it, for GetSpaceParents fixtures.
+func spaceParentStateJSON(t *testing.T, stateKey string, via []string, canonical bool) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(map[string]interface{}{
+		"type":      "m.space.parent",
+		"state_key": stateKey,
+		"content": map[string]interface{}{
+			"via":       via,
+			"canonical": canonical,
+		},
+	})
+	require.NoError(t, err)
+	return raw
+}
+
+func TestGetSpaceParents_ReturnsCurrentCanonicalParent(t *testing.T) {
+	botIntent := &mockIntentAPI{}
+	as := newMockAS(botIntent, nil)
+	admin := &mockAdminAPI{
+		getRoomStateResult: []json.RawMessage{
+			spaceParentStateJSON(t, "!parent:test.local", []string{"test.local"}, true),
+		},
+	}
+	a := newFullTestAdapter(as, admin)
+
+	parents, err := a.GetSpaceParents(context.Background(), "!child:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, []id.RoomID{"!parent:test.local"}, parents)
+	// The read must never touch a client intent — it must issue no join.
+	assert.Equal(t, 0, botIntent.ensureJoinedCalled)
+	assert.Equal(t, 0, botIntent.sendStateEventCalled)
+}
+
+func TestGetSpaceParents_ReturnsEveryLiveParentForADualCanonicalChild(t *testing.T) {
+	// A child can carry more than one live m.space.parent pointer — a
+	// pre-existing dual-canonical-parent violation from before it was
+	// recategorised. Repair needs to see the whole set, not an arbitrary
+	// single member of it.
+	admin := &mockAdminAPI{
+		getRoomStateResult: []json.RawMessage{
+			spaceParentStateJSON(t, "!old-parent:test.local", []string{"test.local"}, true),
+			spaceParentStateJSON(t, "!new-parent:test.local", []string{"test.local"}, true),
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	parents, err := a.GetSpaceParents(context.Background(), "!child:test.local")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []id.RoomID{"!old-parent:test.local", "!new-parent:test.local"}, parents)
+}
+
+func TestGetSpaceParents_EmptyViaIsNotACurrentParent(t *testing.T) {
+	// Empty via is the MSC1772 removal marker (mirrors GetSpaceChildStateKeys'
+	// treatment of a removed m.space.child edge) — a stale, cleared pointer
+	// must not be reported as a live parent.
+	admin := &mockAdminAPI{
+		getRoomStateResult: []json.RawMessage{
+			spaceParentStateJSON(t, "!old-parent:test.local", []string{}, false),
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	parents, err := a.GetSpaceParents(context.Background(), "!child:test.local")
+	require.NoError(t, err)
+	assert.Empty(t, parents)
+}
+
+func TestGetSpaceParents_NoParentSet(t *testing.T) {
+	admin := &mockAdminAPI{getRoomStateResult: []json.RawMessage{}}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	parents, err := a.GetSpaceParents(context.Background(), "!child:test.local")
+	require.NoError(t, err)
+	assert.Empty(t, parents)
+}
+
+func TestGetSpaceParents_StateError(t *testing.T) {
+	admin := &mockAdminAPI{getRoomStateErr: errors.New("state fetch failed")}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	_, err := a.GetSpaceParents(context.Background(), "!child:test.local")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get room state for parent pointers")
+}
+
+// ============================================================================
+// ClearSpaceParent
+// ============================================================================
+
+func TestClearSpaceParent_Success(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$cleared1"},
+	}
+	admin := &mockAdminAPI{getRoomMembersResult: []string{"@bot:test.local"}}
+	a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
+
+	err := a.ClearSpaceParent(context.Background(), "!child:test.local", "!stale-parent:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, 1, botIntent.sendStateEventCalled)
+	assert.Equal(t, event.StateSpaceParent, botIntent.lastSendStateEventType)
+	assert.Equal(t, "!stale-parent:test.local", botIntent.lastSendStateEventStateKey)
+
+	content, ok := botIntent.lastSendStateEventContent.(*event.SpaceParentEventContent)
+	require.True(t, ok)
+	assert.Empty(t, content.Via)
+}
+
+func TestClearSpaceParent_Error(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		sendStateEventErr: errors.New("clear parent failed"),
+	}
+	admin := &mockAdminAPI{getRoomMembersResult: []string{"@bot:test.local"}}
+	a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
+
+	err := a.ClearSpaceParent(context.Background(), "!child:test.local", "!stale-parent:test.local")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to clear stale space parent pointer")
+}
+
+// ============================================================================
 // InviteToSpace
 // ============================================================================
 
@@ -2057,6 +2182,153 @@ func TestGetSpaceChildren_NoChildren(t *testing.T) {
 	children, err := a.GetSpaceChildren(context.Background(), "!space:test.local")
 	require.NoError(t, err)
 	assert.Empty(t, children)
+}
+
+// ============================================================================
+// GetSpaceChildStateKeys (uses intent.State — no per-child admin call)
+// ============================================================================
+
+func TestGetSpaceChildStateKeys_Success(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		stateResult: mautrix.RoomStateMap{
+			event.StateSpaceChild: {
+				"!live:test.local": &event.Event{
+					Content: event.Content{
+						Parsed: &event.SpaceChildEventContent{Via: []string{"test.local"}},
+					},
+				},
+				"!ghost:test.local": &event.Event{
+					// Empty via means this edge has already been removed (MSC1772) —
+					// GetSpaceChildStateKeys must ignore it, exactly like GetSpaceChildren.
+					Content: event.Content{
+						Parsed: &event.SpaceChildEventContent{Via: []string{}},
+					},
+				},
+			},
+		},
+	}
+	admin := &mockAdminAPI{}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, admin)
+
+	keys, err := a.GetSpaceChildStateKeys(context.Background(), "!space:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"!live:test.local"}, keys)
+	// No per-child admin lookup: unlike GetSpaceChildren, this call makes no
+	// is-space classification request.
+	assert.Equal(t, 0, admin.getStateEventContentCalled)
+}
+
+func TestGetSpaceChildStateKeys_StateError(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		stateErr: errors.New("state fetch failed"),
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	_, err := a.GetSpaceChildStateKeys(context.Background(), "!space:test.local")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get space state")
+}
+
+func TestGetSpaceChildStateKeys_NoChildren(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		stateResult: mautrix.RoomStateMap{},
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	keys, err := a.GetSpaceChildStateKeys(context.Background(), "!space:test.local")
+	require.NoError(t, err)
+	assert.Empty(t, keys)
+}
+
+// ============================================================================
+// RemoveSpaceChild
+// ============================================================================
+
+func TestRemoveSpaceChild_Success(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$removed1"},
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	err := a.RemoveSpaceChild(context.Background(), "!space:test.local", "!child:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, 1, botIntent.sendStateEventCalled)
+	assert.Equal(t, event.StateSpaceChild, botIntent.lastSendStateEventType)
+	assert.Equal(t, "!child:test.local", botIntent.lastSendStateEventStateKey)
+
+	content, ok := botIntent.lastSendStateEventContent.(*event.SpaceChildEventContent)
+	require.True(t, ok)
+	assert.Empty(t, content.Via, "empty via is the MSC1772 removal marker")
+	assert.Empty(t, content.Order)
+	assert.False(t, content.Suggested)
+}
+
+func TestRemoveSpaceChild_Error(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		sendStateEventErr: errors.New("state event failed"),
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	err := a.RemoveSpaceChild(context.Background(), "!space:test.local", "!child:test.local")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to remove space child")
+}
+
+// ============================================================================
+// ResolveAlkemioID
+// ============================================================================
+
+func TestResolveAlkemioID_ResolvesFromAlkemioPatternedAlias(t *testing.T) {
+	alkemioID := uuid.New()
+	botIntent := &mockIntentAPI{
+		getAliasesResult: &mautrix.RespAliasList{
+			Aliases: []id.RoomAlias{id.RoomAlias("#" + alkemioID.String() + ":test.local")},
+		},
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	got, err := a.ResolveAlkemioID(context.Background(), "!child:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, alkemioID, got)
+}
+
+func TestResolveAlkemioID_GhostEdgeHasNoAliasReturnsNil(t *testing.T) {
+	// A deleted discussion's room has had its alias removed: GetAliases returns
+	// none, exactly the state a ghost child edge is left in. That is a
+	// confirmed answer, not a failure — nil error — because it is the only
+	// answer allowed to drive a prune.
+	botIntent := &mockIntentAPI{
+		getAliasesResult: &mautrix.RespAliasList{Aliases: []id.RoomAlias{}},
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	got, err := a.ResolveAlkemioID(context.Background(), "!ghost:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, uuid.Nil, got)
+}
+
+// TestResolveAlkemioID_LookupErrorIsReportedNotFlattenedToNil pins the
+// distinction the prune path depends on: a failed alias lookup must not be
+// indistinguishable from a room confirmed to have no alias, or a transient
+// homeserver fault would present itself to the reconciler as proof that a
+// live child edge is a prunable ghost.
+func TestResolveAlkemioID_LookupErrorIsReportedNotFlattenedToNil(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		getAliasesErr: errors.New("lookup failed"),
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	got, err := a.ResolveAlkemioID(context.Background(), "!child:test.local")
+	require.Error(t, err)
+	assert.Equal(t, uuid.Nil, got)
 }
 
 // ============================================================================

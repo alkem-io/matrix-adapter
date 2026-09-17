@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
 
+	"github.com/alkem-io/matrix-adapter/internal/config"
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter/pkg/dto"
@@ -20,6 +21,22 @@ import (
 
 const testDomain = "matrix.test.local"
 const testOtherDomain = "matrix.example.com"
+
+// testHierarchyConfig returns a config with hierarchy write budgets fast enough
+// that pacing never meaningfully slows a test down, while still exercising the
+// real rate-limiter/budget code paths (as opposed to a zero-value config, whose
+// clamped 1/s default would make any test issuing several writes slow).
+func testHierarchyConfig() *config.Config {
+	cfg := &config.Config{}
+	cfg.Hierarchy.StateEventsPerSecond = 1000
+	cfg.Hierarchy.ParentPointerEventsPerSecond = 1000
+	cfg.Hierarchy.ParentPointerBudgetPerCall = 5
+	// Long enough that HandleSetChildren's own deadline (see
+	// config.Hierarchy.SetChildrenTimeoutSeconds) never fires mid-test; tests
+	// that specifically exercise deadline behavior set their own short value.
+	cfg.Hierarchy.SetChildrenTimeoutSeconds = 30
+	return cfg
+}
 
 // ============================================================================
 // Mock Logger
@@ -167,6 +184,15 @@ type testMockMatrixPort struct {
 	inviteToSpaceErr       error
 	kickFromSpaceErr       error
 
+	// Hierarchy convergence (communication.hierarchy.set_children)
+	getSpaceChildStateKeysResult []string
+	getSpaceChildStateKeysErr    error
+	removeSpaceChildErr          error
+	resolveAlkemioIDResults      map[id.RoomID]uuid.UUID
+	resolveAlkemioIDErrs         map[id.RoomID]error
+	getSpaceParentResults        map[id.RoomID]id.RoomID
+	getSpaceParentErr            error
+
 	// Read receipt operations
 	sendReadReceiptErr       error
 	getBatchUnreadCountsRes  map[id.RoomID]int
@@ -247,6 +273,10 @@ type testMockMatrixPort struct {
 
 	capturedSetSpaceParentChildID  id.RoomID
 	capturedSetSpaceParentParentID id.RoomID
+
+	capturedRemoveSpaceChildSpaceID   id.RoomID
+	capturedRemoveSpaceChildStateKeys []string
+	setSpaceParentCallCount           int
 
 	capturedInviteToSpaceRoomID id.RoomID
 	capturedInviteToSpaceActor  domain.Actor
@@ -461,16 +491,54 @@ func (m *testMockMatrixPort) GetSpaceChildren(_ context.Context, _ id.RoomID) ([
 	return m.getSpaceChildrenResult, m.getSpaceChildrenErr
 }
 
+func (m *testMockMatrixPort) GetSpaceChildStateKeys(_ context.Context, _ id.RoomID) ([]string, error) {
+	return m.getSpaceChildStateKeysResult, m.getSpaceChildStateKeysErr
+}
+
 func (m *testMockMatrixPort) AddSpaceChild(_ context.Context, spaceID id.RoomID, childID id.RoomID, _ string, _ bool) error {
 	m.capturedAddSpaceChildSpaceID = spaceID
 	m.capturedAddSpaceChildChildID = childID
 	return m.addSpaceChildErr
 }
 
+func (m *testMockMatrixPort) RemoveSpaceChild(_ context.Context, spaceID id.RoomID, childStateKey string) error {
+	m.capturedRemoveSpaceChildSpaceID = spaceID
+	m.capturedRemoveSpaceChildStateKeys = append(m.capturedRemoveSpaceChildStateKeys, childStateKey)
+	return m.removeSpaceChildErr
+}
+
 func (m *testMockMatrixPort) SetSpaceParent(_ context.Context, childID id.RoomID, parentID id.RoomID) error {
 	m.capturedSetSpaceParentChildID = childID
 	m.capturedSetSpaceParentParentID = parentID
+	m.setSpaceParentCallCount++
 	return m.setSpaceParentErr
+}
+
+func (m *testMockMatrixPort) ClearSpaceParent(_ context.Context, _ id.RoomID, _ id.RoomID) error {
+	return nil
+}
+
+func (m *testMockMatrixPort) GetSpaceParents(_ context.Context, childID id.RoomID) ([]id.RoomID, error) {
+	if m.getSpaceParentErr != nil {
+		return nil, m.getSpaceParentErr
+	}
+	if m.getSpaceParentResults == nil {
+		return nil, nil
+	}
+	if parent, ok := m.getSpaceParentResults[childID]; ok && parent != "" {
+		return []id.RoomID{parent}, nil
+	}
+	return nil, nil
+}
+
+func (m *testMockMatrixPort) ResolveAlkemioID(_ context.Context, roomID id.RoomID) (uuid.UUID, error) {
+	if err, ok := m.resolveAlkemioIDErrs[roomID]; ok {
+		return uuid.Nil, err
+	}
+	if m.resolveAlkemioIDResults == nil {
+		return uuid.Nil, nil
+	}
+	return m.resolveAlkemioIDResults[roomID], nil
 }
 
 func (m *testMockMatrixPort) InviteToSpace(_ context.Context, roomID id.RoomID, invitee domain.Actor) error {
