@@ -38,10 +38,10 @@ func (m *mockMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (id.UserI
 }
 func (m *mockMatrixPort) SetUserProfile(_ context.Context, _ domain.Actor) error { return nil }
 
-func (m *mockMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, roomType string, _, _, _ string, joinRule string, _ map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
+func (m *mockMatrixPort) CreateRoomWithAlias(_ context.Context, params domain.CreateRoomParams) (id.RoomID, error) {
 	m.createRoomCalled = true
-	m.createRoomJoinRule = joinRule
-	m.createRoomType = roomType
+	m.createRoomJoinRule = params.JoinRule
+	m.createRoomType = params.RoomType
 	if m.createRoomErr != nil {
 		return "", m.createRoomErr
 	}
@@ -124,7 +124,7 @@ func (m *mockMatrixPort) SetRoomAlias(_ context.Context, _ id.RoomID, _ string) 
 func (m *mockMatrixPort) GetAllJoinedRooms(_ context.Context) ([]id.RoomID, error) {
 	return nil, nil
 }
-func (m *mockMatrixPort) CreateSpace(_ context.Context, _ uuid.UUID, _, _, _ string, _ string, _ []domain.Actor) (id.RoomID, error) {
+func (m *mockMatrixPort) CreateSpace(_ context.Context, _ domain.CreateSpaceParams) (id.RoomID, error) {
 	return "", nil
 }
 func (m *mockMatrixPort) GetSpaceDetails(_ context.Context, _ id.RoomID) (*domain.Space, error) {
@@ -171,7 +171,7 @@ func TestCreateRoom_JoinRulePublic(t *testing.T) {
 	}
 	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
-	svc := NewRoomService(matrix, logger, idMapper)
+	svc := NewRoomService(matrix, logger, idMapper, NewGovernanceService(matrix, logger, idMapper))
 
 	err := svc.CreateRoomWithAlkemioID(
 		context.Background(),
@@ -179,8 +179,8 @@ func TestCreateRoom_JoinRulePublic(t *testing.T) {
 		"community",
 		"Test Room", "", "",
 		"public",
-		nil, nil, nil,
-	)
+		nil,
+		nil, nil, nil)
 
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -199,7 +199,7 @@ func TestCreateRoom_JoinRuleInvite(t *testing.T) {
 	}
 	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
-	svc := NewRoomService(matrix, logger, idMapper)
+	svc := NewRoomService(matrix, logger, idMapper, NewGovernanceService(matrix, logger, idMapper))
 
 	err := svc.CreateRoomWithAlkemioID(
 		context.Background(),
@@ -207,8 +207,8 @@ func TestCreateRoom_JoinRuleInvite(t *testing.T) {
 		"community",
 		"Test Room", "", "",
 		"invite",
-		nil, nil, nil,
-	)
+		nil,
+		nil, nil, nil)
 
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -224,7 +224,7 @@ func TestCreateRoom_JoinRuleOmitted(t *testing.T) {
 	}
 	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
-	svc := NewRoomService(matrix, logger, idMapper)
+	svc := NewRoomService(matrix, logger, idMapper, NewGovernanceService(matrix, logger, idMapper))
 
 	err := svc.CreateRoomWithAlkemioID(
 		context.Background(),
@@ -232,8 +232,8 @@ func TestCreateRoom_JoinRuleOmitted(t *testing.T) {
 		"community",
 		"Test Room", "", "",
 		"",
-		nil, nil, nil,
-	)
+		nil,
+		nil, nil, nil)
 
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -249,16 +249,16 @@ func TestCreateRoom_DirectMessage_JoinRuleIgnored(t *testing.T) {
 	}
 	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
-	svc := NewRoomService(matrix, logger, idMapper)
+	svc := NewRoomService(matrix, logger, idMapper, NewGovernanceService(matrix, logger, idMapper))
 
 	err := svc.CreateRoomWithAlkemioID(
 		context.Background(),
 		uuid.New(),
 		"direct",
 		"", "", "",
-		"public", // should be ignored for DM rooms
-		nil, nil, nil,
-	)
+		"public",
+		nil, // should be ignored for DM rooms
+		nil, nil, nil)
 
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -276,7 +276,7 @@ func TestUpdateRoom_JoinRuleProvided(t *testing.T) {
 	matrix := &mockMatrixPort{}
 	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
-	svc := NewRoomService(matrix, logger, idMapper)
+	svc := NewRoomService(matrix, logger, idMapper, NewGovernanceService(matrix, logger, idMapper))
 
 	joinRule := "public"
 	err := svc.UpdateRoomMetadata(
@@ -302,7 +302,7 @@ func TestUpdateRoom_JoinRuleOmitted(t *testing.T) {
 	matrix := &mockMatrixPort{}
 	logger := &testutil.MockLogger{}
 	idMapper := domain.NewIDMapper("test.local")
-	svc := NewRoomService(matrix, logger, idMapper)
+	svc := NewRoomService(matrix, logger, idMapper, NewGovernanceService(matrix, logger, idMapper))
 
 	err := svc.UpdateRoomMetadata(
 		context.Background(),
@@ -323,8 +323,24 @@ func TestUpdateRoom_JoinRuleOmitted(t *testing.T) {
 
 // --- Governance operations (069-matrix-governance-hardening) ---
 
-func (m *mockMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions) (bool, error) {
+func (m *mockMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions, _ bool) (bool, error) {
 	return false, nil
+}
+
+func (m *mockMatrixPort) GetRoomGovernanceState(_ context.Context, _ id.RoomID) (*domain.RoomGovernanceState, error) {
+	return &domain.RoomGovernanceState{
+		JoinRule:          "invite",
+		HistoryVisibility: "shared",
+		GuestAccess:       "forbidden",
+	}, nil
+}
+
+func (m *mockMatrixPort) SetRoomAccessState(_ context.Context, _ id.RoomID, _ domain.RoomAccessState) error {
+	return nil
+}
+
+func (m *mockMatrixPort) EnsureDirectRoomMarked(_ context.Context, _ id.RoomID) error {
+	return nil
 }
 
 func (m *mockMatrixPort) EnsureBotAdmin(_ context.Context, _ id.RoomID) (domain.BotPresence, error) {

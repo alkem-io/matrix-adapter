@@ -3,9 +3,14 @@ package matrix
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
+
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 )
 
 // adapter returns a zero-value MautrixAdapter suitable for testing pure helper
@@ -493,5 +498,122 @@ func TestParseStateChange_TopicFromVeryRaw(t *testing.T) {
 	}
 	if sc.Topic == nil || *sc.Topic != "Raw Topic" {
 		t.Errorf("expected 'Raw Topic', got %v", sc.Topic)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Bridge guarantees (T024 — contract appservice-event-bridge G2–G4)
+// ---------------------------------------------------------------------------
+
+// newListenerTestAdapter builds an adapter whose alias lookup resolves the
+// test room to the given Alkemio uuid, with OnMemberUpdated/OnMessage wired
+// to channels for synchronising with the handlers' goroutines.
+func newListenerTestAdapter(alkemioRoomID string) (*MautrixAdapter, chan domain.RoomMemberUpdatedEvent, chan domain.Message) {
+	botIntent := &mockIntentAPI{
+		getAliasesResult: &mautrix.RespAliasList{Aliases: []id.RoomAlias{id.RoomAlias("#" + alkemioRoomID + ":test.local")}},
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	memberCh := make(chan domain.RoomMemberUpdatedEvent, 1)
+	messageCh := make(chan domain.Message, 1)
+	a.SetEventHandlers(EventHandlers{
+		OnMemberUpdated: func(evt domain.RoomMemberUpdatedEvent) error {
+			memberCh <- evt
+			return nil
+		},
+		OnMessage: func(msg domain.Message) error {
+			messageCh <- msg
+			return nil
+		},
+	})
+	return a, memberCh, messageCh
+}
+
+func TestListener_BotKick_EmitsMemberLeave(t *testing.T) {
+	roomUUID := "880e8400-e29b-41d4-a716-446655440003"
+	target := "550e8400-e29b-41d4-a716-446655440000"
+	a, memberCh, _ := newListenerTestAdapter(roomUUID)
+
+	stateKey := "@" + target + ":test.local"
+	a.processEvent(&event.Event{
+		Type:     event.StateMember,
+		RoomID:   "!room:test.local",
+		Sender:   "@bot:test.local", // the bot performed the kick
+		StateKey: &stateKey,
+		Content:  event.Content{Parsed: &event.MemberEventContent{Membership: event.MembershipLeave}},
+	})
+
+	select {
+	case evt := <-memberCh:
+		if evt.Membership != "leave" {
+			t.Errorf("membership = %q, want leave", evt.Membership)
+		}
+		if evt.MemberID.String() != target {
+			t.Errorf("member = %s, want %s", evt.MemberID, target)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a bot-performed kick must still emit a membership event (G2)")
+	}
+}
+
+func TestListener_MemberEvent_BeforeOwnSenderFilter(t *testing.T) {
+	// A message FROM the bot is dropped (own-sender filter) …
+	roomUUID := "880e8400-e29b-41d4-a716-446655440003"
+	a, memberCh, messageCh := newListenerTestAdapter(roomUUID)
+
+	a.processEvent(&event.Event{
+		Type:    event.EventMessage,
+		RoomID:  "!room:test.local",
+		Sender:  "@bot:test.local",
+		Content: event.Content{Raw: map[string]interface{}{"body": "own message"}},
+	})
+	select {
+	case <-messageCh:
+		t.Fatal("the bot's own timeline events must be filtered")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// … but a membership event with the bot as SENDER is dispatched, because
+	// membership handling precedes the own-sender filter.
+	stateKey := "@550e8400-e29b-41d4-a716-446655440000:test.local"
+	a.processEvent(&event.Event{
+		Type:     event.StateMember,
+		RoomID:   "!room:test.local",
+		Sender:   "@bot:test.local",
+		StateKey: &stateKey,
+		Content:  event.Content{Parsed: &event.MemberEventContent{Membership: event.MembershipLeave}},
+	})
+	select {
+	case <-memberCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("membership dispatch must precede the own-sender filter")
+	}
+}
+
+func TestListener_UnresolvedSender_ZeroUUID(t *testing.T) {
+	roomUUID := "880e8400-e29b-41d4-a716-446655440003"
+	a, _, messageCh := newListenerTestAdapter(roomUUID)
+
+	// A sender that is not a platform actor (non-UUID localpart) still
+	// produces exactly one emitted event, with the zero-UUID unresolved
+	// marker — never dropped, never misattributed (G3, US6-AS4).
+	a.processEvent(&event.Event{
+		Type:    event.EventMessage,
+		RoomID:  "!room:test.local",
+		Sender:  "@alice-admin:test.local",
+		Content: event.Content{Raw: map[string]interface{}{"body": "hello from a non-actor"}},
+	})
+
+	select {
+	case msg := <-messageCh:
+		if msg.SenderID != uuid.Nil {
+			t.Errorf("sender = %s, want the zero UUID (unresolved)", msg.SenderID)
+		}
+		if msg.Content != "hello from a non-actor" {
+			t.Errorf("content = %q", msg.Content)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("an event from a non-actor sender must be emitted, not dropped")
 	}
 }

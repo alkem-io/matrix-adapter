@@ -73,7 +73,7 @@ func (m *arMockMatrixPort) GetUnreadCounts(_ context.Context, _ domain.Actor, _ 
 func (m *arMockMatrixPort) Connect(_ context.Context) error { return nil }
 func (m *arMockMatrixPort) Disconnect() error               { return nil }
 func (m *arMockMatrixPort) HomeserverDomain() string        { return "test.local" }
-func (m *arMockMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, _, _, _, _, _ string, _ map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
+func (m *arMockMatrixPort) CreateRoomWithAlias(_ context.Context, _ domain.CreateRoomParams) (id.RoomID, error) {
 	return "", nil
 }
 func (m *arMockMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor) error {
@@ -144,7 +144,7 @@ func (m *arMockMatrixPort) SetRoomAlias(_ context.Context, _ id.RoomID, _ string
 func (m *arMockMatrixPort) GetAllJoinedRooms(_ context.Context) ([]id.RoomID, error) {
 	return nil, nil
 }
-func (m *arMockMatrixPort) CreateSpace(_ context.Context, _ uuid.UUID, _, _, _ string, _ string, _ []domain.Actor) (id.RoomID, error) {
+func (m *arMockMatrixPort) CreateSpace(_ context.Context, _ domain.CreateSpaceParams) (id.RoomID, error) {
 	return "", nil
 }
 func (m *arMockMatrixPort) GetSpaceDetails(_ context.Context, _ id.RoomID) (*domain.Space, error) {
@@ -430,8 +430,24 @@ func TestReadReceiptService_GetUnreadCounts_Error(t *testing.T) {
 
 // --- Governance operations (069-matrix-governance-hardening) ---
 
-func (m *arMockMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions) (bool, error) {
+func (m *arMockMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions, _ bool) (bool, error) {
 	return false, nil
+}
+
+func (m *arMockMatrixPort) GetRoomGovernanceState(_ context.Context, _ id.RoomID) (*domain.RoomGovernanceState, error) {
+	return &domain.RoomGovernanceState{
+		JoinRule:          "invite",
+		HistoryVisibility: "shared",
+		GuestAccess:       "forbidden",
+	}, nil
+}
+
+func (m *arMockMatrixPort) SetRoomAccessState(_ context.Context, _ id.RoomID, _ domain.RoomAccessState) error {
+	return nil
+}
+
+func (m *arMockMatrixPort) EnsureDirectRoomMarked(_ context.Context, _ id.RoomID) error {
+	return nil
 }
 
 func (m *arMockMatrixPort) EnsureBotAdmin(_ context.Context, _ id.RoomID) (domain.BotPresence, error) {

@@ -23,8 +23,9 @@ func testRoomHandler(mock *testMockMatrixPort) *RoomHandler {
 	mock.homeserverDomain = testDomain
 	idMapper := domain.NewIDMapper(testDomain)
 	logger := &testMockLogger{}
-	svc := service.NewRoomService(mock, logger, idMapper)
-	return NewRoomHandler(svc, mock, idMapper)
+	governance := service.NewGovernanceService(mock, logger, idMapper)
+	svc := service.NewRoomService(mock, logger, idMapper, governance)
+	return NewRoomHandler(svc, governance, mock, idMapper)
 }
 
 // ============================================================================
