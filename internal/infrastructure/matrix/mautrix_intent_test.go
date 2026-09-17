@@ -1909,7 +1909,7 @@ func TestAutoJoinAndMarkRead_EmptyInvites(t *testing.T) {
 }
 
 // ============================================================================
-// Bot stays in rooms (069: the bot never leaves governed rooms)
+// Bot stays in rooms (the bot never leaves governed rooms)
 // ============================================================================
 
 func TestBotStaysInRoom_AfterCreate(t *testing.T) {

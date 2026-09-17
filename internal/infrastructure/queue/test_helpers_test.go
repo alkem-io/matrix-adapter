@@ -256,7 +256,7 @@ type testMockMatrixPort struct {
 	capturedInviteUserRoomID  id.RoomID
 	capturedInviteUserInvitee domain.Actor
 
-	// Governance operations (069-matrix-governance-hardening)
+	// Governance operations
 	capturedCreateRoomParentContextID *uuid.UUID
 	capturedCreateSpaceCustomState    map[string]map[string]interface{}
 	applyLadderCalls                  []applyLadderCall
@@ -608,7 +608,7 @@ func (m *testMockMatrixPort) GetBatchUnreadCounts(_ context.Context, actor domai
 	return m.getBatchUnreadCountsRes, m.getBatchUnreadCountsErrs
 }
 
-// --- Governance operations (069-matrix-governance-hardening) ---
+// --- Governance operations ---
 
 type applyLadderCall struct {
 	RoomID id.RoomID

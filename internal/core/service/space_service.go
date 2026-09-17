@@ -70,7 +70,7 @@ func (s *SpaceService) CreateSpace(
 	existingRoomID, err := s.matrix.ResolveAlias(ctx, alias)
 	if err == nil {
 		// Space already exists — a retry converges a lagging space room to
-		// the ladder instead of returning blindly (FR-020, SC-004).
+		// the ladder instead of returning blindly.
 		s.logger.Info("Space already exists (idempotent) — running governance repair",
 			"alkemio_context_id", alkemioContextID,
 			"existing_room_id", existingRoomID)

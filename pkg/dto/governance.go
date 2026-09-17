@@ -3,7 +3,6 @@ package dto
 // ============================================================================
 // Governance Repair DTOs (communication.room.governance.repair,
 // communication.space.governance.repair, communication.space.member.revoke)
-// 069-matrix-governance-hardening
 // ============================================================================
 
 // RoomVisibility declares the history-visibility class of a governed room.

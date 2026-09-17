@@ -110,7 +110,7 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 	// Parse sender UUID from Matrix user ID. A sender that is not a platform
 	// actor resolves to the zero UUID and the event is STILL emitted — the
 	// platform side decides, the bridge never drops or misattributes
-	// (contract appservice-event-bridge G3, spec US6-AS4).
+	// (contract appservice-event-bridge).
 	senderUUID := m.resolveActorID(context.Background(), evt.Sender)
 	if senderUUID == uuid.Nil {
 		m.logger.Debug("Unresolved message sender (non-actor account)", "sender", evt.Sender)

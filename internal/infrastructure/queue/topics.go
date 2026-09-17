@@ -111,7 +111,7 @@ const (
 	TopicSpaceStateSet = dto.TopicSpaceStateSet
 	TopicSpaceStateGet = dto.TopicSpaceStateGet
 
-	// Governance & Revocation Topics (069-matrix-governance-hardening)
+	// Governance & Revocation Topics
 	// TopicRoomGovernanceRepair is the topic for report-first room governance repair.
 	TopicRoomGovernanceRepair = dto.TopicRoomGovernanceRepair
 	// TopicSpaceGovernanceRepair is the topic for report-first space governance repair.

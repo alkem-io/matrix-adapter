@@ -36,8 +36,8 @@ func (s *DeviceService) RevokeActorDevices(ctx context.Context, actorID uuid.UUI
 	return deviceIDs, nil
 }
 
-// Sweep deletes devices idle longer than the given duration (nightly CronJob;
-// spec FR-018). Devices without a recorded last use are skipped and counted;
+// Sweep deletes devices idle longer than the given duration (nightly
+// CronJob). Devices without a recorded last use are skipped and counted;
 // the bot is never touched; a dry run reports without deleting.
 func (s *DeviceService) Sweep(ctx context.Context, idle time.Duration, dryRun bool) (domain.SweepReport, error) {
 	return s.matrix.SweepDevices(ctx, idle, dryRun)

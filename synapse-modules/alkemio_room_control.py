@@ -32,7 +32,7 @@ import uuid
 from typing import Optional
 
 try:  # Synapse is absent in the unit-test environment; the pure decision
-    # functions below must import without it (069-matrix-governance-hardening).
+    # functions below must import without it.
     from synapse.module_api import NOT_SPAM, ModuleApi
     from synapse.module_api.errors import Codes, SynapseError
     from synapse.http.client import SimpleHttpClient
@@ -128,7 +128,7 @@ class AlkemioRoomControl:
         self.hs_token = detected.get("hs_token")
 
         # Register third-party rules callbacks: room creation control (existing)
-        # and governed-room event enforcement (069-matrix-governance-hardening)
+        # and governed-room event enforcement
         self.api.register_third_party_rules_callbacks(
             on_create_room=self.on_create_room,
             check_event_allowed=self.check_event_allowed,

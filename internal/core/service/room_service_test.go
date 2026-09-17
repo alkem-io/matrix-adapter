@@ -336,7 +336,7 @@ func TestUpdateRoom_JoinRuleOmitted(t *testing.T) {
 	}
 }
 
-// --- Governance operations (069-matrix-governance-hardening) ---
+// --- Governance operations ---
 
 func (m *mockMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions, _ bool) (bool, error) {
 	return false, nil

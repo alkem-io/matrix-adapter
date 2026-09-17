@@ -60,7 +60,7 @@ func (s *RoomService) CreateRoomWithAlkemioID(
 	existingRoomID, err := s.matrix.ResolveAlias(ctx, alias)
 	if err == nil {
 		// Room already exists — a retry converges a lagging room to the
-		// ladder instead of returning blindly (FR-020, SC-004).
+		// ladder instead of returning blindly.
 		s.logger.Info(
 			"Room already exists (idempotent) — running governance repair",
 			"alkemio_room_id", alkemioRoomID,

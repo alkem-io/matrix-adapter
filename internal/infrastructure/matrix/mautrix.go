@@ -627,7 +627,7 @@ func (m *MautrixAdapter) InviteUser(
 		m.markRoomAsReadForUsers(ctx, roomID, []id.UserID{inviteeUserID}, latestEventID)
 	}
 
-	// The bot stays in the room — it administers every governed room (FR-021).
+	// The bot stays in the room — it administers every governed room.
 
 	return nil
 }
@@ -1476,7 +1476,7 @@ func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
 }
 
 // KickUser kicks a user from a room as the bot. Kicking a user who has
-// already left is a success (no-op) — removal is idempotent (spec FR-020).
+// already left is a success (no-op) — removal is idempotent.
 func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
 	intent, err := m.botIntentForGoverned(ctx, roomID)
 	if err != nil {
@@ -1993,7 +1993,7 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		Topic:              params.Topic,
 		Preset:             preset,
 		IsDirect:           isDirect,
-		RoomAliasName:      m.idMapper.RoomAliasLocalpart(params.AlkemioRoomID), // atomic alias (FR-020)
+		RoomAliasName:      m.idMapper.RoomAliasLocalpart(params.AlkemioRoomID), // atomic alias
 		PowerLevelOverride: BuildLadder(class, m.as.BotMXID(), LadderOptions{}),
 	}
 	req.InitialState = m.buildGovernedInitialState(

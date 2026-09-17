@@ -2,15 +2,16 @@ package matrix
 
 import (
 	"encoding/json"
-	"github.com/alkem-io/matrix-adapter/internal/core/domain"
-	"github.com/google/uuid"
 	"math"
-	"maunium.net/go/mautrix"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
+
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 )
 
 // adapter returns a zero-value MautrixAdapter suitable for testing pure helper
@@ -881,7 +882,7 @@ func TestExtractInboundMessage_DoesNotParseRawOnSharedEvent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Bridge guarantees (T024 — contract appservice-event-bridge G2–G4)
+// Bridge guarantees (contract appservice-event-bridge)
 // ---------------------------------------------------------------------------
 
 // newListenerTestAdapter builds an adapter whose alias lookup resolves the
@@ -976,7 +977,7 @@ func TestListener_UnresolvedSender_ZeroUUID(t *testing.T) {
 
 	// A sender that is not a platform actor (non-UUID localpart) still
 	// produces exactly one emitted event, with the zero-UUID unresolved
-	// marker — never dropped, never misattributed (G3, US6-AS4).
+	// marker — never dropped, never misattributed.
 	a.processEvent(&event.Event{
 		Type:    event.EventMessage,
 		RoomID:  "!room:test.local",

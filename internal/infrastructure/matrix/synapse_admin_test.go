@@ -1584,7 +1584,7 @@ func TestGetRelations_CallerDeadlineIsNotExtended(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
-// MakeRoomAdmin / GetRoomVersion / Devices / ListUsers (069-matrix-governance-hardening)
+// MakeRoomAdmin / GetRoomVersion / Devices / ListUsers
 // --------------------------------------------------------------------------
 
 func TestMakeRoomAdmin_Success(t *testing.T) {
