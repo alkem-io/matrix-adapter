@@ -367,55 +367,6 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 	}
 }
 
-// findGhostIntentInRoom finds the ghost user with the highest power level in a room.
-// Returns their intent and PL, or nil if no ghost users are found.
-func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.RoomID) (intentAPI, float64) {
-	members, err := m.admin.GetRoomMembers(ctx, roomID)
-	if err != nil {
-		return nil, -1
-	}
-
-	// Get power levels to find the most privileged ghost
-	powerLevels := make(map[string]float64)
-	var usersDefault float64
-	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.power_levels"); err == nil && content != nil {
-		if users, ok := content["users"].(map[string]interface{}); ok {
-			for uid, pl := range users {
-				if v, ok := pl.(float64); ok {
-					powerLevels[uid] = v
-				}
-			}
-		}
-		if d, ok := content["users_default"].(float64); ok {
-			usersDefault = d
-		}
-	}
-
-	botMXID := m.as.BotMXID().String()
-	var bestIntent intentAPI
-	bestPL := float64(-1)
-
-	for _, member := range members {
-		if member == botMXID {
-			continue
-		}
-		userID := id.UserID(member)
-		if m.idMapper.AlkemioActorID(userID) == uuid.Nil {
-			continue
-		}
-		pl, ok := powerLevels[member]
-		if !ok {
-			pl = usersDefault
-		}
-		if pl > bestPL {
-			bestPL = pl
-			bestIntent = m.as.Intent(userID)
-		}
-	}
-
-	return bestIntent, bestPL
-}
-
 // waitForSynapse retries connecting to Synapse until it responds or context is cancelled.
 func (m *MautrixAdapter) waitForSynapse(ctx context.Context) {
 	client := m.newDirectClient("")
@@ -664,9 +615,7 @@ func (m *MautrixAdapter) InviteUser(
 		m.markRoomAsReadForUsers(ctx, roomID, []id.UserID{inviteeUserID}, latestEventID)
 	}
 
-	// If bot is still in the room (e.g. room created without initial members),
-	// leave now that a real member has joined.
-	m.leaveBotIfNotNeeded(ctx, roomID)
+	// The bot stays in the room — it administers every governed room (FR-021).
 
 	return nil
 }
@@ -799,7 +748,10 @@ func (m *MautrixAdapter) GetRoomMembers(ctx context.Context, roomID id.RoomID) (
 func (m *MautrixAdapter) UpdateRoomState(
 	ctx context.Context, roomID id.RoomID, _ domain.Actor, name, topic, avatarURL, joinRule *string,
 ) error {
-	intent := m.getIntentForRoom(ctx, roomID)
+	intent, err := m.botIntentForGoverned(ctx, roomID)
+	if err != nil {
+		return err
+	}
 
 	if name != nil {
 		if err := m.setOrRedactState(ctx, intent, roomID, event.StateRoomName, *name); err != nil {
@@ -1473,10 +1425,12 @@ func (m *MautrixAdapter) SetRoomDirectoryVisibility(ctx context.Context, roomID 
 
 // SetCustomState sets custom io.alkemio.* state events on a room.
 // Only event types with the "io.alkemio." prefix are allowed.
-// Uses BotIntent if bot is in the room, otherwise finds a ghost user.
+// Every governed write acts as the bot (governed-operations-authority §1).
 func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, state map[string]map[string]interface{}) error {
-	// Try bot first; if it fails (not in room), find a ghost user
-	intent := m.getIntentForRoom(ctx, roomID)
+	intent, err := m.botIntentForGoverned(ctx, roomID)
+	if err != nil {
+		return err
+	}
 
 	for eventType, content := range state {
 		if !strings.HasPrefix(eventType, "io.alkemio.") {
@@ -1491,62 +1445,6 @@ func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, s
 		}
 	}
 	return nil
-}
-
-// getIntentForRoom returns an intent that has access to a room with at least
-// the given power level. Tries BotIntent first (for spaces where bot is a member),
-// then falls back to finding a joined ghost user with sufficient PL.
-// If no suitable intent is found, admin-joins the bot (PL 100 as room creator).
-func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID, minPL ...float64) intentAPI {
-	requiredPL := float64(50) // default: state events require PL 50
-	if len(minPL) > 0 {
-		requiredPL = minPL[0]
-	}
-	botIntent := m.as.BotIntent()
-
-	// Check if bot is in the room via admin API
-	members, err := m.admin.GetRoomMembers(ctx, roomID)
-	if err == nil {
-		botMXID := m.as.BotMXID().String()
-		for _, member := range members {
-			if member == botMXID {
-				m.logger.Debug("getIntentForRoom: using bot (member of room)", "room_id", roomID)
-				return botIntent
-			}
-		}
-	}
-
-	// Bot not in room — find a ghost user with sufficient PL
-	intent, pl := m.findGhostIntentInRoom(ctx, roomID)
-	if intent != nil && pl >= requiredPL {
-		m.logger.Debug("getIntentForRoom: using ghost user", "room_id", roomID, "power_level", pl)
-		return intent
-	}
-
-	// No ghost with sufficient PL — admin-join the bot (PL 100 as room creator).
-	// The bot will leave once a real member is added (via leaveBotIfNotNeeded).
-	if intent != nil {
-		m.logger.Debug("getIntentForRoom: ghost PL too low, admin-joining bot",
-			"room_id", roomID, "ghost_pl", pl)
-	} else {
-		m.logger.Debug("getIntentForRoom: no ghost user found, admin-joining bot",
-			"room_id", roomID)
-	}
-	if err := m.admin.JoinRoom(ctx, roomID, m.as.BotMXID()); err != nil {
-		m.logger.Debug("getIntentForRoom: admin join failed",
-			"room_id", roomID, "error", err)
-	} else {
-		// Sync the StateStore so EnsureJoined (called by SendStateEvent, etc.)
-		// sees the bot as already joined and doesn't create a duplicate join event.
-		if err := m.as.SetMembership(ctx, roomID, m.as.BotMXID(), event.MembershipJoin); err != nil {
-			m.logger.Error("getIntentForRoom: failed to sync StateStore after admin join — risk of duplicate join",
-				"room_id", roomID, "error", err)
-			if intent != nil {
-				return intent // fall back to ghost to avoid duplicate-join risk
-			}
-		}
-	}
-	return botIntent
 }
 
 // GetCustomState retrieves io.alkemio.* state events from a room.
@@ -1565,19 +1463,42 @@ func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
 	return nil
 }
 
-// KickUser kicks a user from a room.
+// KickUser kicks a user from a room as the bot. Kicking a user who has
+// already left is a success (no-op) — removal is idempotent (spec FR-020).
 func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
-	intent := m.getIntentForRoom(ctx, roomID)
-	_, err := intent.KickUser(
+	intent, err := m.botIntentForGoverned(ctx, roomID)
+	if err != nil {
+		return err
+	}
+	_, err = intent.KickUser(
 		ctx, roomID, &mautrix.ReqKickUser{
 			UserID: userID,
 			Reason: reason,
 		},
 	)
 	if err != nil {
+		if left, checkErr := m.hasLeftRoom(ctx, roomID, userID); checkErr == nil && left {
+			m.logger.Debug("KickUser: target already left, treating as no-op",
+				"room_id", roomID, "user_id", userID)
+			return nil
+		}
 		return fmt.Errorf("failed to kick user %s from room %s: %w", userID, roomID, err)
 	}
 	return nil
+}
+
+// hasLeftRoom reports whether the user is currently NOT a joined member of the room.
+func (m *MautrixAdapter) hasLeftRoom(ctx context.Context, roomID id.RoomID, userID id.UserID) (bool, error) {
+	members, err := m.admin.GetRoomMemberIDs(ctx, roomID)
+	if err != nil {
+		return false, err
+	}
+	for _, member := range members {
+		if member == userID {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // GetRoomMessages retrieves all messages from a room, including their reactions.
@@ -2110,19 +2031,9 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 
 	m.registerDirectRoomParticipants(ctx, resp.RoomID, isDirect, memberUserIDs)
 
-	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, memberUserIDs)
+	m.autoJoinAndMarkRead(ctx, resp.RoomID, memberUserIDs)
 
-	// Bot leaves only if other members are present — an empty room becomes
-	// unreachable if the last member leaves (Synapse loses server tracking).
-	if joinedCount > 0 {
-		if _, err := intent.LeaveRoom(ctx, resp.RoomID); err != nil {
-			m.logger.Warn("Failed to leave room after creation",
-				"room_id", resp.RoomID, "error", err)
-		}
-	} else {
-		m.logger.Info("Bot staying in room (no other members joined yet)",
-			"room_id", resp.RoomID)
-	}
+	// The bot never leaves governed rooms — it stays to administer them (FR-021).
 
 	m.logger.Info(
 		"Room created",
@@ -2157,44 +2068,6 @@ func (m *MautrixAdapter) autoJoinAndMarkRead(ctx context.Context, roomID id.Room
 		}
 	}
 	return len(joinedUsers)
-}
-
-// leaveBotIfNotNeeded checks if the bot is in a non-space room and leaves
-// if at least one ghost user is also present. This ensures the bot doesn't
-// appear as a member in rooms visible to users.
-func (m *MautrixAdapter) leaveBotIfNotNeeded(ctx context.Context, roomID id.RoomID) {
-	if isSpace, _ := m.isSpaceRoom(ctx, roomID); isSpace {
-		return // Bot stays in spaces
-	}
-
-	members, err := m.admin.GetRoomMembers(ctx, roomID)
-	if err != nil {
-		return
-	}
-
-	botMXID := m.as.BotMXID().String()
-	botIsMember := false
-	ghostCount := 0
-
-	for _, member := range members {
-		if member == botMXID {
-			botIsMember = true
-			continue
-		}
-		if m.idMapper.AlkemioActorID(id.UserID(member)) != uuid.Nil {
-			ghostCount++
-		}
-	}
-
-	if botIsMember && ghostCount > 0 {
-		intent := m.as.BotIntent()
-		if _, err := intent.LeaveRoom(ctx, roomID); err != nil {
-			m.logger.Warn("Failed to leave room after member added",
-				"room_id", roomID, "error", err)
-		} else {
-			m.logger.Debug("Bot left room after member joined", "room_id", roomID)
-		}
-	}
 }
 
 // FindExistingDirectRoom finds an existing direct room between two users.
@@ -2768,15 +2641,17 @@ func (m *MautrixAdapter) RemoveSpaceChild(ctx context.Context, spaceID id.RoomID
 
 // SetSpaceParent sets the parent space for a room or subspace (m.space.parent state event).
 func (m *MautrixAdapter) SetSpaceParent(ctx context.Context, childID id.RoomID, parentID id.RoomID) error {
-	intent := m.getIntentForRoom(ctx, childID)
+	intent, err := m.botIntentForGoverned(ctx, childID)
+	if err != nil {
+		return err
+	}
 
 	content := &event.SpaceParentEventContent{
 		Via:       []string{m.as.HomeserverDomain()},
 		Canonical: true,
 	}
 
-	_, err := intent.SendStateEvent(ctx, childID, event.StateSpaceParent, string(parentID), content)
-	if err != nil {
+	if _, err = intent.SendStateEvent(ctx, childID, event.StateSpaceParent, string(parentID), content); err != nil {
 		return fmt.Errorf("failed to set space parent: %w", err)
 	}
 

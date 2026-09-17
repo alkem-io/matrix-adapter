@@ -76,6 +76,20 @@ func (m *MautrixAdapter) ApplyLadder(
 // botUnreachable is the unresolved reason of contract governed-operations-authority §4.
 const botUnreachable = "bot-unreachable"
 
+// botIntentForGoverned establishes the bot in the room and returns its intent.
+// Every governed write goes through here — there is no ghost fallback
+// (governed-operations-authority §1).
+func (m *MautrixAdapter) botIntentForGoverned(ctx context.Context, roomID id.RoomID) (intentAPI, error) {
+	presence, err := m.EnsureBotAdmin(ctx, roomID)
+	if err != nil {
+		return nil, err
+	}
+	if presence.UnresolvedReason != "" {
+		return nil, fmt.Errorf("bot could not be established in room %s: %s", roomID, presence.UnresolvedReason)
+	}
+	return m.as.BotIntent(), nil
+}
+
 // EnsureBotAdmin establishes the bot as a joined, power-100 member of the room
 // in the §4 order: already joined → join → ghost-invite then join →
 // make_room_admin for power. An unrecoverable room yields UnresolvedReason,
