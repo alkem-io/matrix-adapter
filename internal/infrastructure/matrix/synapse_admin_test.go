@@ -1582,3 +1582,166 @@ func TestGetRelations_CallerDeadlineIsNotExtended(t *testing.T) {
 		t.Errorf("the caller's %v deadline was extended to %v", callerBudget, rec.deadlines[0])
 	}
 }
+
+// --------------------------------------------------------------------------
+// MakeRoomAdmin / GetRoomVersion / Devices / ListUsers (069-matrix-governance-hardening)
+// --------------------------------------------------------------------------
+
+func TestMakeRoomAdmin_Success(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if !strings.Contains(r.URL.Path, "/make_room_admin") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	if err := sa.MakeRoomAdmin(context.Background(), "!room:example.com", "@bot:example.com"); err != nil {
+		t.Fatalf("MakeRoomAdmin: %v", err)
+	}
+	if !strings.Contains(gotBody, "@bot:example.com") {
+		t.Errorf("body missing user_id: %s", gotBody)
+	}
+}
+
+func TestMakeRoomAdmin_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errcode":"M_NOT_FOUND","error":"No local admin user in room"}`))
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	if err := sa.MakeRoomAdmin(context.Background(), "!room:example.com", "@bot:example.com"); err == nil {
+		t.Fatal("expected error on 404")
+	}
+}
+
+func TestGetRoomVersion_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if !strings.Contains(r.URL.Path, "/_synapse/admin/v1/rooms/") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"room_id":"!room:example.com","version":"10"}`))
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	v, err := sa.GetRoomVersion(context.Background(), "!room:example.com")
+	if err != nil {
+		t.Fatalf("GetRoomVersion: %v", err)
+	}
+	if v != "10" {
+		t.Errorf("version = %q, want %q", v, "10")
+	}
+}
+
+func TestListDevices_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if !strings.Contains(r.URL.Path, "/devices") || !strings.Contains(r.URL.Path, "/_synapse/admin/v2/users/") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"devices":[{"device_id":"AAA","last_seen_ts":1757000000000,"display_name":"browser","last_seen_user_agent":"ff"},{"device_id":"BBB","last_seen_ts":null,"display_name":"","last_seen_user_agent":""}],"total":2}`))
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	devices, err := sa.ListDevices(context.Background(), "@alice:example.com")
+	if err != nil {
+		t.Fatalf("ListDevices: %v", err)
+	}
+	if len(devices) != 2 {
+		t.Fatalf("len(devices) = %d, want 2", len(devices))
+	}
+	if devices[0].DeviceID != "AAA" || devices[0].LastSeenTS == nil || *devices[0].LastSeenTS != 1757000000000 {
+		t.Errorf("device[0] parsed wrong: %+v", devices[0])
+	}
+	if devices[1].LastSeenTS != nil {
+		t.Errorf("device[1].LastSeenTS should be nil (no recorded last use), got %v", *devices[1].LastSeenTS)
+	}
+}
+
+func TestListDevices_Empty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"devices":[],"total":0}`))
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	devices, err := sa.ListDevices(context.Background(), "@alice:example.com")
+	if err != nil {
+		t.Fatalf("ListDevices: %v", err)
+	}
+	if len(devices) != 0 {
+		t.Errorf("len(devices) = %d, want 0", len(devices))
+	}
+}
+
+func TestDeleteDevices_Success(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if !strings.Contains(r.URL.Path, "/delete_devices") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	if err := sa.DeleteDevices(context.Background(), "@alice:example.com", []string{"AAA", "BBB"}); err != nil {
+		t.Fatalf("DeleteDevices: %v", err)
+	}
+	if !strings.Contains(gotBody, `"AAA"`) || !strings.Contains(gotBody, `"BBB"`) {
+		t.Errorf("body missing device ids: %s", gotBody)
+	}
+}
+
+func TestListUsers_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Query().Get("deactivated") != "false" {
+			t.Errorf("expected deactivated=false, got %q", r.URL.Query().Get("deactivated"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"users":[{"name":"@alice:example.com"},{"name":"@bob:example.com"}],"next_token":"100","total":250}`))
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	users, next, err := sa.ListUsers(context.Background(), "", 100)
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 2 || users[0].Name != "@alice:example.com" {
+		t.Errorf("users parsed wrong: %+v", users)
+	}
+	if next != "100" {
+		t.Errorf("next = %q, want %q", next, "100")
+	}
+}

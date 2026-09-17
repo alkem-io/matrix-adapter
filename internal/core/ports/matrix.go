@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
@@ -26,8 +27,8 @@ type MatrixPort interface {
 
 	// CreateRoomWithAlias creates a new Matrix room with the specified alias and initial members.
 	CreateRoomWithAlias(ctx context.Context, alkemioRoomID uuid.UUID, roomType string, name, topic, avatarURL, joinRule string, customState map[string]map[string]interface{}, initialMembers []domain.Actor) (id.RoomID, error)
-	// InviteUser invites a user to a Matrix room on behalf of another user.
-	InviteUser(ctx context.Context, roomID id.RoomID, inviterID domain.Actor, inviteeID domain.Actor) error
+	// InviteUser joins a user to a Matrix room (appservice ghosts join directly, no invite event).
+	InviteUser(ctx context.Context, roomID id.RoomID, inviteeID domain.Actor) error
 	// GetRoomDetails retrieves room metadata including name, topic, and state.
 	GetRoomDetails(ctx context.Context, roomID id.RoomID) (*domain.Room, error)
 	// GetRoomMembers returns the list of member user IDs in a room.
@@ -171,6 +172,37 @@ type MatrixPort interface {
 
 	// KickFromSpace kicks a user from a space.
 	KickFromSpace(ctx context.Context, spaceID id.RoomID, userID id.UserID, reason string) error
+
+	// ============================================================================
+	// Governance Operations (069-matrix-governance-hardening)
+	// ============================================================================
+
+	// ApplyLadder rewrites the room's power levels wholesale from the governance
+	// ladder as the bot, preserving guest 0-entries (and, for ClassSpace, applying
+	// the elevated 75-entries from opts). Returns whether a write happened —
+	// a converged room produces zero writes.
+	ApplyLadder(ctx context.Context, roomID id.RoomID, class domain.RoomClass, opts domain.LadderOptions) (bool, error)
+
+	// EnsureBotAdmin establishes the control-plane bot as a joined, power-100
+	// member of the room, following the ordered recovery of contract
+	// governed-operations-authority §4. Never returns an error for an
+	// unreachable room — that outcome is BotPresence.UnresolvedReason.
+	EnsureBotAdmin(ctx context.Context, roomID id.RoomID) (domain.BotPresence, error)
+
+	// GetRoomVersion returns the room's Matrix room version.
+	GetRoomVersion(ctx context.Context, roomID id.RoomID) (string, error)
+
+	// SetGovernanceState writes the platform identity and/or governance markers
+	// (io.alkemio.entity / io.alkemio.governance) as the bot. Nil markers are skipped.
+	SetGovernanceState(ctx context.Context, roomID id.RoomID, entity *domain.EntityMarker, governance *domain.GovernanceMarker) error
+
+	// RevokeActorDevices deletes ALL of the actor's Matrix devices, invalidating
+	// access and refresh tokens. Zero devices is a success with an empty result.
+	RevokeActorDevices(ctx context.Context, actorID uuid.UUID) ([]string, error)
+
+	// SweepDevices deletes devices whose last recorded use is older than idle,
+	// skipping and counting devices without one; a dry run deletes nothing.
+	SweepDevices(ctx context.Context, idle time.Duration, dryRun bool) (domain.SweepReport, error)
 
 	// ============================================================================
 	// Read Receipt Operations (008-read-receipts)

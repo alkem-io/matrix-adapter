@@ -69,6 +69,20 @@ const (
 	TopicSpaceStateGet = "communication.space.state.get"
 )
 
+// Governance and revocation command topics (069-matrix-governance-hardening).
+// New topics rather than flags on existing ones: an old adapter must fail
+// loud (no consumer queue -> transport timeout), never degrade silently.
+const (
+	// TopicRoomGovernanceRepair is the topic for report-first room governance repair commands.
+	TopicRoomGovernanceRepair = "communication.room.governance.repair"
+	// TopicSpaceGovernanceRepair is the topic for report-first space governance repair commands.
+	TopicSpaceGovernanceRepair = "communication.space.governance.repair"
+	// TopicSpaceMemberRevoke is the topic for revoking an actor from a space room and its child rooms.
+	TopicSpaceMemberRevoke = "communication.space.member.revoke"
+	// TopicActorDevicesRevoke is the topic for deleting all of an actor's Matrix devices.
+	TopicActorDevicesRevoke = "communication.actor.devices.revoke"
+)
+
 // TopicRoomDMRequested is the topic for DM room request events (outbound to Server).
 const TopicRoomDMRequested = "communication.room.dm.requested"
 
@@ -215,6 +229,12 @@ var CommandRegistry = []CommandDef{
 	{Topic: TopicRoomStateGet, RequestType: "GetRoomStateRequest", ResponseType: "GetRoomStateResponse"},
 	{Topic: TopicSpaceStateSet, RequestType: "SetSpaceStateRequest", ResponseType: "BaseResponse"},
 	{Topic: TopicSpaceStateGet, RequestType: "GetSpaceStateRequest", ResponseType: "GetSpaceStateResponse"},
+
+	// Governance and revocation commands (069-matrix-governance-hardening)
+	{Topic: TopicRoomGovernanceRepair, RequestType: "RepairRoomGovernanceRequest", ResponseType: "RepairReport"},
+	{Topic: TopicSpaceGovernanceRepair, RequestType: "RepairSpaceGovernanceRequest", ResponseType: "RepairReport"},
+	{Topic: TopicSpaceMemberRevoke, RequestType: "RevokeSpaceMemberRequest", ResponseType: "RevokeSpaceMemberResponse"},
+	{Topic: TopicActorDevicesRevoke, RequestType: "RevokeActorDevicesRequest", ResponseType: "RevokeActorDevicesResponse"},
 }
 
 // OutgoingEventRegistry defines events emitted by the adapter (not commands).
