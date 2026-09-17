@@ -47,6 +47,7 @@ type mockIntentAPI struct {
 	joinedRoomsResult      *mautrix.RespJoinedRooms
 	joinedRoomsErr         error
 	ensureJoinedErr        error
+	ensureJoinedErrQueue   []error // consumed first, one per call
 	getAliasesResult       *mautrix.RespAliasList
 	getAliasesErr          error
 	messagesResult         *mautrix.RespMessages
@@ -128,6 +129,11 @@ func (m *mockIntentAPI) EnsureRegistered(_ context.Context) error {
 func (m *mockIntentAPI) EnsureJoined(_ context.Context, roomID id.RoomID, _ ...appservice.EnsureJoinedParams) error {
 	m.ensureJoinedCalled++
 	m.lastEnsureJoinedRoomID = roomID
+	if len(m.ensureJoinedErrQueue) > 0 {
+		err := m.ensureJoinedErrQueue[0]
+		m.ensureJoinedErrQueue = m.ensureJoinedErrQueue[1:]
+		return err
+	}
 	return m.ensureJoinedErr
 }
 
@@ -370,6 +376,17 @@ var intentTestIDMapper = domain.NewIDMapper("test.local")
 // expectedUserID returns the Matrix user ID for a test actor UUID.
 func expectedUserID(actorID uuid.UUID) id.UserID {
 	return intentTestIDMapper.UserID(actorID)
+}
+
+// adminWithBot returns an admin mock where the bot is a joined, power-100
+// member of every room — the precondition every governed bot write needs.
+func adminWithBot(members ...id.UserID) *mockAdminAPI {
+	return &mockAdminAPI{
+		getRoomMemberIDsResult: append([]id.UserID{"@bot:test.local"}, members...),
+		getStateEventContentResult: map[string]interface{}{
+			"users": map[string]interface{}{"@bot:test.local": float64(100)},
+		},
+	}
 }
 
 // newMockAS creates a mockAppserviceAPI where both botIntent and any user intent
@@ -724,30 +741,42 @@ func TestDeleteAlias_Error(t *testing.T) {
 // KickUser
 // ============================================================================
 
-func TestKickUser_Success(t *testing.T) {
+func TestKickUser_UsesBot(t *testing.T) {
 	botIntent := &mockIntentAPI{}
-	admin := &mockAdminAPI{
-		// Bot is a member of the room
-		getRoomMembersResult: []string{"@bot:test.local", "@user:test.local"},
-	}
+	admin := adminWithBot("@baduser:test.local")
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, admin)
 
 	err := a.KickUser(context.Background(), "!room:test.local", "@baduser:test.local", "rule violation")
 	require.NoError(t, err)
-	assert.Equal(t, 1, botIntent.kickUserCalled)
+	assert.Equal(t, 1, botIntent.kickUserCalled, "kick must be performed by the bot")
 	assert.Equal(t, id.RoomID("!room:test.local"), botIntent.lastKickUserRoomID)
 	assert.Equal(t, id.UserID("@baduser:test.local"), botIntent.lastKickUserReq.UserID)
 	assert.Equal(t, "rule violation", botIntent.lastKickUserReq.Reason)
+	// No ghost intent was ever requested: mockAppserviceAPI.Intent panics on
+	// unmapped ids and this test maps none.
+}
+
+func TestKickUser_AlreadyLeft_NoOp(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		kickUserErr: errors.New("M_FORBIDDEN: target not in room"),
+	}
+	// The target is NOT among the members — the failed kick is a no-op success.
+	admin := adminWithBot()
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, admin)
+
+	err := a.KickUser(context.Background(), "!room:test.local", "@gone:test.local", "cleanup")
+	require.NoError(t, err, "kicking a user who already left must succeed as a no-op")
+	assert.Equal(t, 1, botIntent.kickUserCalled)
 }
 
 func TestKickUser_Error(t *testing.T) {
 	botIntent := &mockIntentAPI{
 		kickUserErr: errors.New("kick failed"),
 	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	// The target IS still a member — the failure is real and surfaces.
+	admin := adminWithBot("@user:test.local")
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -791,7 +820,6 @@ func TestSetRoomAlias_Error(t *testing.T) {
 func TestInviteUser_Success(t *testing.T) {
 	inviteeIntent := &mockIntentAPI{}
 	botIntent := &mockIntentAPI{
-		// For leaveBotIfNotNeeded - bot will leave since ghost is present
 		leaveRoomErr: nil,
 	}
 	admin := &mockAdminAPI{
@@ -801,7 +829,6 @@ func TestInviteUser_Success(t *testing.T) {
 				{ID: "$latest1"},
 			},
 		},
-		// For leaveBotIfNotNeeded — bot is member, ghost is member
 		getRoomMembersResult: []string{
 			"@bot:test.local",
 			expectedUserID(testActorID).String(),
@@ -850,10 +877,7 @@ func TestUpdateRoomState_NameChange(t *testing.T) {
 	intent := &mockIntentAPI{
 		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$state1"},
 	}
-	admin := &mockAdminAPI{
-		// Bot is in the room
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	admin := adminWithBot()
 	as := newMockAS(intent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -868,9 +892,7 @@ func TestUpdateRoomState_TopicChange(t *testing.T) {
 	intent := &mockIntentAPI{
 		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$state1"},
 	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	admin := adminWithBot()
 	as := newMockAS(intent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -885,9 +907,7 @@ func TestUpdateRoomState_AvatarChange(t *testing.T) {
 	intent := &mockIntentAPI{
 		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$state1"},
 	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	admin := adminWithBot()
 	as := newMockAS(intent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -902,9 +922,7 @@ func TestUpdateRoomState_JoinRuleChange(t *testing.T) {
 	intent := &mockIntentAPI{
 		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$state1"},
 	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	admin := adminWithBot()
 	as := newMockAS(intent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -919,9 +937,7 @@ func TestUpdateRoomState_NilFields_NoChanges(t *testing.T) {
 	intent := &mockIntentAPI{
 		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$state1"},
 	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	admin := adminWithBot()
 	as := newMockAS(intent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -934,9 +950,7 @@ func TestUpdateRoomState_MultipleFields(t *testing.T) {
 	intent := &mockIntentAPI{
 		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$state1"},
 	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	admin := adminWithBot()
 	as := newMockAS(intent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -951,9 +965,7 @@ func TestUpdateRoomState_NameError(t *testing.T) {
 	intent := &mockIntentAPI{
 		sendStateEventErr: errors.New("state event error"),
 	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	admin := adminWithBot()
 	as := newMockAS(intent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -971,10 +983,7 @@ func TestSetCustomState_Success(t *testing.T) {
 	botIntent := &mockIntentAPI{
 		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$state1"},
 	}
-	admin := &mockAdminAPI{
-		// Bot is in the room
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	admin := adminWithBot()
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -991,9 +1000,7 @@ func TestSetCustomState_InvalidPrefix(t *testing.T) {
 	botIntent := &mockIntentAPI{
 		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$state1"},
 	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	admin := adminWithBot()
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -1009,9 +1016,7 @@ func TestSetCustomState_SendError(t *testing.T) {
 	botIntent := &mockIntentAPI{
 		sendStateEventErr: errors.New("send state failed"),
 	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	admin := adminWithBot()
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -1180,7 +1185,7 @@ func TestCreateRoomWithAlias_Success(t *testing.T) {
 	assert.Equal(t, id.RoomID("!newroom:test.local"), roomID)
 	assert.Equal(t, 1, botIntent.createRoomCalled)
 	assert.Equal(t, 1, botIntent.createAliasCalled, "should set the room alias")
-	assert.Equal(t, 1, botIntent.leaveRoomCalled, "bot should leave after members joined")
+	assert.Equal(t, 0, botIntent.leaveRoomCalled, "the bot never leaves governed rooms")
 }
 
 func TestCreateRoomWithAlias_CreateError(t *testing.T) {
@@ -1216,7 +1221,7 @@ func TestCreateRoomWithAlias_AliasError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to set alias on room")
 }
 
-func TestCreateRoomWithAlias_NoMembers_BotStays(t *testing.T) {
+func TestCreateRoomWithAlias_BotStays(t *testing.T) {
 	botIntent := &mockIntentAPI{
 		createRoomResult: &mautrix.RespCreateRoom{RoomID: "!newroom:test.local"},
 	}
@@ -1425,46 +1430,31 @@ func TestAddSpaceChild_Error(t *testing.T) {
 // SetSpaceParent
 // ============================================================================
 
-func TestSetSpaceParent_Success(t *testing.T) {
+func TestSetSpaceParent_UsesBot(t *testing.T) {
 	botIntent := &mockIntentAPI{
 		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$parent1"},
 	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
 	as := newMockAS(botIntent, nil)
-	a := newFullTestAdapter(as, admin)
+	a := newFullTestAdapter(as, adminWithBot())
 
 	err := a.SetSpaceParent(context.Background(), "!child:test.local", "!parent:test.local")
 	require.NoError(t, err)
-	assert.Equal(t, 1, botIntent.sendStateEventCalled)
+	assert.Equal(t, 1, botIntent.sendStateEventCalled, "m.space.parent must be written by the bot")
 	assert.Equal(t, event.StateSpaceParent, botIntent.lastSendStateEventType)
 	assert.Equal(t, "!parent:test.local", botIntent.lastSendStateEventStateKey)
-
-	content, ok := botIntent.lastSendStateEventContent.(*event.SpaceParentEventContent)
-	require.True(t, ok)
-	assert.True(t, content.Canonical)
-	assert.Contains(t, content.Via, "test.local")
 }
 
 func TestSetSpaceParent_Error(t *testing.T) {
 	botIntent := &mockIntentAPI{
-		sendStateEventErr: errors.New("set parent failed"),
-	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
+		sendStateEventErr: errors.New("state denied"),
 	}
 	as := newMockAS(botIntent, nil)
-	a := newFullTestAdapter(as, admin)
+	a := newFullTestAdapter(as, adminWithBot())
 
 	err := a.SetSpaceParent(context.Background(), "!child:test.local", "!parent:test.local")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to set space parent")
 }
-
-// ============================================================================
-// InviteToSpace
-// ============================================================================
 
 func TestInviteToSpace_Success(t *testing.T) {
 	inviteeIntent := &mockIntentAPI{}
@@ -1506,11 +1496,9 @@ func TestInviteToSpace_EnsureJoinedError(t *testing.T) {
 // KickFromSpace
 // ============================================================================
 
-func TestKickFromSpace_Success(t *testing.T) {
+func TestKickFromSpace_UsesBot(t *testing.T) {
 	botIntent := &mockIntentAPI{}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	admin := adminWithBot()
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -1523,9 +1511,8 @@ func TestKickFromSpace_Error(t *testing.T) {
 	botIntent := &mockIntentAPI{
 		kickUserErr: errors.New("kick from space failed"),
 	}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
-	}
+	// The target is still a member, so the failed kick is a real error.
+	admin := adminWithBot("@user:test.local")
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, admin)
 
@@ -1617,155 +1604,47 @@ func TestAutoJoinAndMarkRead_EmptyInvites(t *testing.T) {
 }
 
 // ============================================================================
-// leaveBotIfNotNeeded
+// Bot stays in rooms (069: the bot never leaves governed rooms)
 // ============================================================================
 
-func TestLeaveBotIfNotNeeded_Leaves_WhenGhostPresent(t *testing.T) {
-	botIntent := &mockIntentAPI{}
-	admin := &mockAdminAPI{
-		// Room members include bot and a ghost user (UUID-formatted localpart)
-		getRoomMembersResult: []string{
-			"@bot:test.local",
-			expectedUserID(testActorID).String(),
-		},
-		// Not a space
-		getStateEventContentResult: map[string]interface{}{},
+func TestBotStaysInRoom_AfterCreate(t *testing.T) {
+	memberIntent := &mockIntentAPI{}
+	botIntent := &mockIntentAPI{
+		createRoomResult: &mautrix.RespCreateRoom{RoomID: "!stay:test.local"},
 	}
-	as := newMockAS(botIntent, nil)
-	a := newFullTestAdapter(as, admin)
-
-	a.leaveBotIfNotNeeded(context.Background(), "!room:test.local")
-	assert.Equal(t, 1, botIntent.leaveRoomCalled, "bot should leave when ghost is present")
-}
-
-func TestLeaveBotIfNotNeeded_Stays_NoGhost(t *testing.T) {
-	botIntent := &mockIntentAPI{}
 	admin := &mockAdminAPI{
-		// Only bot and a non-ghost external user
-		getRoomMembersResult: []string{
-			"@bot:test.local",
-			"@external-user:other.server",
-		},
-		getStateEventContentResult: map[string]interface{}{},
-	}
-	as := newMockAS(botIntent, nil)
-	a := newFullTestAdapter(as, admin)
-
-	a.leaveBotIfNotNeeded(context.Background(), "!room:test.local")
-	assert.Equal(t, 0, botIntent.leaveRoomCalled, "bot should stay when no ghost user is present")
-}
-
-func TestLeaveBotIfNotNeeded_Stays_IsSpace(t *testing.T) {
-	botIntent := &mockIntentAPI{}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{
-			"@bot:test.local",
-			expectedUserID(testActorID).String(),
-		},
-		// This is a space room
-		getStateEventContentResult: map[string]interface{}{"type": "m.space"},
-	}
-	as := newMockAS(botIntent, nil)
-	a := newFullTestAdapter(as, admin)
-
-	a.leaveBotIfNotNeeded(context.Background(), "!space:test.local")
-	assert.Equal(t, 0, botIntent.leaveRoomCalled, "bot should stay in spaces")
-}
-
-func TestLeaveBotIfNotNeeded_Stays_BotNotMember(t *testing.T) {
-	botIntent := &mockIntentAPI{}
-	admin := &mockAdminAPI{
-		// Bot is NOT in the room
-		getRoomMembersResult: []string{
-			expectedUserID(testActorID).String(),
-		},
-		getStateEventContentResult: map[string]interface{}{},
-	}
-	as := newMockAS(botIntent, nil)
-	a := newFullTestAdapter(as, admin)
-
-	a.leaveBotIfNotNeeded(context.Background(), "!room:test.local")
-	assert.Equal(t, 0, botIntent.leaveRoomCalled, "bot should not try to leave if not a member")
-}
-
-func TestLeaveBotIfNotNeeded_MemberFetchError(t *testing.T) {
-	botIntent := &mockIntentAPI{}
-	admin := &mockAdminAPI{
-		getRoomMembersErr:          errors.New("member fetch failed"),
-		getStateEventContentResult: map[string]interface{}{},
-	}
-	as := newMockAS(botIntent, nil)
-	a := newFullTestAdapter(as, admin)
-
-	a.leaveBotIfNotNeeded(context.Background(), "!room:test.local")
-	assert.Equal(t, 0, botIntent.leaveRoomCalled, "should not leave on member fetch error")
-}
-
-// ============================================================================
-// getIntentForRoom
-// ============================================================================
-
-func TestGetIntentForRoom_BotIsMember(t *testing.T) {
-	botIntent := &mockIntentAPI{}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local", "@other:test.local"},
-	}
-	as := newMockAS(botIntent, nil)
-	a := newFullTestAdapter(as, admin)
-
-	intent := a.getIntentForRoom(context.Background(), "!room:test.local")
-	assert.Equal(t, botIntent, intent, "should return bot intent when bot is a member")
-}
-
-func TestGetIntentForRoom_FallbackToGhost(t *testing.T) {
-	botIntent := &mockIntentAPI{}
-	ghostIntent := &mockIntentAPI{}
-	ghostUserID := expectedUserID(testActorID)
-	admin := &mockAdminAPI{
-		// Bot is NOT a member, but a ghost user is
-		getRoomMembersResult: []string{
-			ghostUserID.String(),
-		},
-		// For power levels lookup
-		getStateEventContentResult: map[string]interface{}{
-			"users": map[string]interface{}{
-				ghostUserID.String(): float64(50),
-			},
-		},
+		getRoomMessagesResult: &mautrix.RespMessages{Chunk: []*event.Event{{ID: "$latest"}}},
 	}
 	as := newMockAS(botIntent, map[id.UserID]intentAPI{
-		ghostUserID: ghostIntent,
+		expectedUserID(testActorID): memberIntent,
 	})
 	a := newFullTestAdapter(as, admin)
 
-	intent := a.getIntentForRoom(context.Background(), "!room:test.local")
-	assert.Equal(t, ghostIntent, intent, "should return ghost intent when bot is not in room")
+	_, err := a.CreateRoomWithAlias(
+		context.Background(), uuid.MustParse("880e8400-e29b-41d4-a716-446655440003"),
+		"community", "Room", "", "", "", nil,
+		[]domain.Actor{testActor(testActorID, "Alice")},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 0, botIntent.leaveRoomCalled, "the bot never leaves governed rooms")
 }
 
-func TestGetIntentForRoom_AdminJoinFallback(t *testing.T) {
+func TestBotStaysInRoom_AfterInvite(t *testing.T) {
+	inviteeIntent := &mockIntentAPI{}
 	botIntent := &mockIntentAPI{}
 	admin := &mockAdminAPI{
-		// No members at all (or only non-ghost external users)
-		getRoomMembersResult: []string{"@external:other.server"},
-		getStateEventContentResult: map[string]interface{}{
-			"users": map[string]interface{}{},
-		},
+		getRoomMessagesResult: &mautrix.RespMessages{Chunk: []*event.Event{{ID: "$latest"}}},
 	}
-	as := newMockAS(botIntent, nil)
+	as := newMockAS(botIntent, map[id.UserID]intentAPI{
+		expectedUserID(testActorID): inviteeIntent,
+	})
 	a := newFullTestAdapter(as, admin)
 
-	intent := a.getIntentForRoom(context.Background(), "!room:test.local")
-	assert.Equal(t, botIntent, intent, "should return bot intent as last resort after admin-join")
-	assert.Equal(t, 1, len(admin.joinRoomCalls), "should admin-join the bot")
-	// Verify StateStore was synced to prevent EnsureJoined from creating duplicate join
-	assert.Equal(t, 1, len(as.setMembershipCalls), "should sync StateStore after admin join")
-	assert.Equal(t, id.RoomID("!room:test.local"), as.setMembershipCalls[0].RoomID)
-	assert.Equal(t, event.MembershipJoin, as.setMembershipCalls[0].Membership)
+	err := a.InviteUser(context.Background(), "!room:test.local", testActor(testActorID, "Invitee"))
+	require.NoError(t, err)
+	assert.Equal(t, 0, botIntent.leaveRoomCalled, "adding a member must not make the bot leave")
+	assert.Equal(t, 1, inviteeIntent.ensureJoinedCalled)
 }
-
-// ============================================================================
-// GetAllJoinedRooms
-// ============================================================================
 
 func TestGetAllJoinedRooms_Success(t *testing.T) {
 	botIntent := &mockIntentAPI{
@@ -2124,110 +2003,5 @@ func TestSetOrRedactState_Error(t *testing.T) {
 }
 
 // ============================================================================
-// findGhostIntentInRoom
+// (ghost-intent fallback deleted in 069 — every governed write is bot-only)
 // ============================================================================
-
-func TestFindGhostIntentInRoom_FindsHighestPL(t *testing.T) {
-	ghostUserID1 := expectedUserID(testActorID)
-	ghostUserID2 := expectedUserID(testActorID2)
-	ghost1Intent := &mockIntentAPI{}
-	ghost2Intent := &mockIntentAPI{}
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{
-			"@bot:test.local",
-			ghostUserID1.String(),
-			ghostUserID2.String(),
-		},
-		getStateEventContentResult: map[string]interface{}{
-			"users": map[string]interface{}{
-				ghostUserID1.String(): float64(50),
-				ghostUserID2.String(): float64(100),
-			},
-		},
-	}
-	as := newMockAS(&mockIntentAPI{}, map[id.UserID]intentAPI{
-		ghostUserID1: ghost1Intent,
-		ghostUserID2: ghost2Intent,
-	})
-	a := newFullTestAdapter(as, admin)
-
-	intent, pl := a.findGhostIntentInRoom(context.Background(), "!room:test.local")
-	assert.Equal(t, ghost2Intent, intent, "should return ghost with highest power level")
-	assert.Equal(t, float64(100), pl)
-}
-
-func TestFindGhostIntentInRoom_NoGhosts(t *testing.T) {
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local", "@external:other.server"},
-		getStateEventContentResult: map[string]interface{}{
-			"users": map[string]interface{}{},
-		},
-	}
-	as := newMockAS(&mockIntentAPI{}, nil)
-	a := newFullTestAdapter(as, admin)
-
-	intent, pl := a.findGhostIntentInRoom(context.Background(), "!room:test.local")
-	assert.Nil(t, intent, "should return nil when no ghost users")
-	assert.Equal(t, float64(-1), pl)
-}
-
-func TestFindGhostIntentInRoom_MemberFetchError(t *testing.T) {
-	admin := &mockAdminAPI{
-		getRoomMembersErr: errors.New("fetch error"),
-	}
-	as := newMockAS(&mockIntentAPI{}, nil)
-	a := newFullTestAdapter(as, admin)
-
-	intent, pl := a.findGhostIntentInRoom(context.Background(), "!room:test.local")
-	assert.Nil(t, intent)
-	assert.Equal(t, float64(-1), pl)
-}
-
-func TestGetIntentForRoom_LowPLGhost_AdminJoinFallback(t *testing.T) {
-	botIntent := &mockIntentAPI{}
-	ghostIntent := &mockIntentAPI{}
-	ghostUserID := expectedUserID(testActorID)
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{
-			ghostUserID.String(),
-		},
-		getStateEventContentResult: map[string]interface{}{
-			"users": map[string]interface{}{
-				ghostUserID.String(): float64(10),
-			},
-		},
-	}
-	as := newMockAS(botIntent, map[id.UserID]intentAPI{
-		ghostUserID: ghostIntent,
-	})
-	a := newFullTestAdapter(as, admin)
-
-	intent := a.getIntentForRoom(context.Background(), "!room:test.local")
-	assert.Equal(t, botIntent, intent, "should admin-join bot when ghost PL < 50")
-	assert.Len(t, admin.joinRoomCalls, 1)
-}
-
-func TestGetIntentForRoom_CustomMinPL(t *testing.T) {
-	botIntent := &mockIntentAPI{}
-	ghostIntent := &mockIntentAPI{}
-	ghostUserID := expectedUserID(testActorID)
-	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{
-			ghostUserID.String(),
-		},
-		getStateEventContentResult: map[string]interface{}{
-			"users": map[string]interface{}{
-				ghostUserID.String(): float64(10),
-			},
-		},
-	}
-	as := newMockAS(botIntent, map[id.UserID]intentAPI{
-		ghostUserID: ghostIntent,
-	})
-	a := newFullTestAdapter(as, admin)
-
-	// Ghost has PL 10 — sufficient if caller only needs PL 0
-	intent := a.getIntentForRoom(context.Background(), "!room:test.local", 0)
-	assert.Equal(t, ghostIntent, intent, "should use ghost when PL >= minPL")
-	assert.Len(t, admin.joinRoomCalls, 0, "should not admin-join bot")
-}
