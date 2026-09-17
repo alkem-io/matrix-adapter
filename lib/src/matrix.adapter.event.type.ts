@@ -2,6 +2,7 @@ export enum MatrixAdapterEventType {
 
   COMMUNICATION_ACTOR_DEVICES_REVOKE = 'communication.actor.devices.revoke',
   COMMUNICATION_ACTOR_SYNC = 'communication.actor.sync',
+  COMMUNICATION_HIERARCHY_SET_CHILDREN = 'communication.hierarchy.set_children',
   COMMUNICATION_HIERARCHY_SET_PARENT = 'communication.hierarchy.set_parent',
   COMMUNICATION_MESSAGE_DELETE = 'communication.message.delete',
   COMMUNICATION_MESSAGE_EDITED = 'communication.message.edited',
