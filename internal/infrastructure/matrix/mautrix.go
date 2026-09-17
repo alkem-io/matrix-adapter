@@ -88,37 +88,7 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 	// This ensures bot follows the same ID pattern as all other actors
 	botLocalpart := cfg.Matrix.BotActorID
 
-	// Build registration
-	registration := &appservice.Registration{
-		ID:              "alkemio-matrix-adapter",
-		URL:             "http://localhost:8280",
-		AppToken:        cfg.Matrix.AppServiceToken,
-		ServerToken:     cfg.Matrix.HomeserverToken,
-		SenderLocalpart: botLocalpart,
-		EphemeralEvents: true, // Enable receiving ephemeral events (m.receipt for read receipts)
-		Namespaces: appservice.Namespaces{
-			UserIDs: []appservice.Namespace{
-				{
-					// Bot user - exclusive, only AS can control (security: prevents impersonation)
-					Exclusive: true,
-					Regex:     fmt.Sprintf("@%s:.*", botLocalpart),
-				},
-				{
-					// Regular UUID users - NOT exclusive so they can login via OIDC/Element
-					// Events received via room alias registration instead
-					Exclusive: false,
-					Regex:     "@[0-9a-fA-F-]{36}:.*",
-				},
-			},
-			RoomAliases: []appservice.Namespace{
-				{
-					// Room aliases - exclusive, AS receives all events for these rooms
-					Exclusive: true,
-					Regex:     "#[0-9a-fA-F-]{36}:.*",
-				},
-			},
-		},
-	}
+	registration := buildRegistration(botLocalpart, cfg.Matrix.AppServiceToken, cfg.Matrix.HomeserverToken)
 
 	// Create AppService using CreateFull to ensure StateStore is set from the start
 	as, err := appservice.CreateFull(
@@ -167,6 +137,48 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		admin:          admin,
 		botDisplayName: cfg.Matrix.BotDisplayName,
 	}, nil
+}
+
+// buildRegistration builds the in-process AppService registration. It must
+// mirror registration.yaml — the canonical file PR #55's workflow syncs
+// downstream — including the thread-room alias namespace #t_<uuid> (A-3).
+func buildRegistration(botLocalpart, asToken, hsToken string) *appservice.Registration {
+	return &appservice.Registration{
+		ID:              "alkemio-matrix-adapter",
+		URL:             "http://localhost:8280",
+		AppToken:        asToken,
+		ServerToken:     hsToken,
+		SenderLocalpart: botLocalpart,
+		EphemeralEvents: true, // Enable receiving ephemeral events (m.receipt for read receipts)
+		Namespaces: appservice.Namespaces{
+			UserIDs: []appservice.Namespace{
+				{
+					// Bot user - exclusive, only AS can control (security: prevents impersonation)
+					Exclusive: true,
+					Regex:     fmt.Sprintf("@%s:.*", botLocalpart),
+				},
+				{
+					// Regular UUID users - NOT exclusive so they can login via OIDC/Element
+					// Events received via room alias registration instead
+					Exclusive: false,
+					Regex:     "@[0-9a-fA-F-]{36}:.*",
+				},
+			},
+			RoomAliases: []appservice.Namespace{
+				{
+					// Room aliases - exclusive, AS receives all events for these rooms
+					Exclusive: true,
+					Regex:     "#[0-9a-fA-F-]{36}:.*",
+				},
+				{
+					// Thread-room aliases #t_<uuid> - the cutover-stable naming
+					// convention (target-alignment A-3), written beside #<uuid>
+					Exclusive: true,
+					Regex:     "#t_[0-9a-fA-F-]{36}:.*",
+				},
+			},
+		},
+	}
 }
 
 // safePrefix returns the first n characters of s, or all of s if shorter.

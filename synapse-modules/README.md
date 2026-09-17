@@ -60,41 +60,44 @@ The module **automatically loads all configuration** from the AppService with id
 
 ## Behavior
 
-| User Type | Room Type | Result |
-|-----------|-----------|--------|
-| AppService Bot | Any | ✅ Allowed |
-| Ghost User | Community Room | ❌ Blocked |
-| Ghost User | DM Room | ✅ Allowed (but notifies Adapter for async creation) |
+The module enforces the governed-operations-authority contract
+(`agents-hq/specs/069-matrix-governance-hardening/contracts/governed-operations-authority.md` §3).
+A room is **governed** iff `io.alkemio.entity` is present in its current state;
+the **bot** is the `sender_localpart` of AppService `alkemio-matrix-adapter`.
 
-## DM Creation Flow
+| Callback | Rule |
+|----------|------|
+| `on_create_room` | admins and the bot bypass; `m.space` and rooms-in-spaces denied to users; standalone rooms mediated by `POST /_matrix/app/alkemio/check-room` (server room check) and stamped `io.alkemio.pending` |
+| `user_may_invite` | governed room ⇒ **deny** unless the invitee is the bot (repair rejoin); ungoverned ⇒ allow |
+| `check_event_allowed` | bot ⇒ allow. Else: any `io.alkemio.*` state event ⇒ **deny** (every room). Governed room: any state event ⇒ **deny** except `m.room.member` with `state_key == sender` and membership `join`/`leave`; timeline events ⇒ allow. Ungoverned ⇒ allow |
+| `user_may_join_room` | not registered — Synapse join rules decide (restricted/invite) |
 
-When a ghost user tries to create a DM in Element:
+Consequences on governed rooms: kicks, bans, invites-as-state, power-level,
+join-rule, name/topic/avatar, space-link and marker changes by any ordinary
+session are refused with `M_FORBIDDEN`; self-join (via restricted allow or
+invite) and self-leave work; sending, reacting and redacting one's own
+messages work (whose events may be redacted is the power ladder's job).
 
-1. Module intercepts the `createRoom` request
-2. Detects it's a DM (`is_direct=true`, single invitee)
-3. Sends webhook to Adapter: `POST /_matrix/app/alkemio/dm-request`
-4. Don't stop from room creation.
-5. Adapter notifies Alkemio Server via RabbitMQ
-6. Server decides and commands Adapter to create room
-7. AppService bot creates the DM room
-8. User sees new room in Element
+## AppService alias namespaces
 
-## Webhook Payload
+The registration claims two exclusive room-alias namespaces (both required
+for the adapter to receive events and create aliases):
 
-```json
-POST /_matrix/app/alkemio/dm-request
-Authorization: Bearer <hs_token>
-{
-    "inviter": "@uuid1:alkemio.matrix.host",
-    "invitee": "@uuid2:alkemio.matrix.host"
-}
-```
+- `#<uuid>` — canonical room lookup alias (rooms and spaces)
+- `#t_<uuid>` — the cutover-stable thread-room alias (target-alignment A-3)
 
-## Error Messages
+## Room Creation Flow (mediated)
 
-When a user tries to create a room, they will receive:
-- Error code: `M_FORBIDDEN`
-- For DMs: The room will be created asynchronously by the bot if approved
+When a ghost user creates a standalone room (DM/group) from a Matrix client:
+
+1. `on_create_room` intercepts the request (admins and the bot bypass)
+2. The module synchronously calls the adapter: `POST /_matrix/app/alkemio/check-room`
+3. The adapter asks the Alkemio server for consent/dedup over RabbitMQ
+4. On rejection the creation fails with `M_FORBIDDEN`
+5. On approval the module strips invites, injects the power-level override and
+   the `io.alkemio.visibility` + `io.alkemio.pending` markers
+6. The adapter reconciles the room after creation (bot admin, ladder, markers,
+   aliases), removing the creator's administrative power
 
 ## Testing
 
