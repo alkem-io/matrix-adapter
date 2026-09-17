@@ -24,4 +24,8 @@ namespaces:
     # Room aliases - exclusive, AS receives all events for rooms with these aliases
     - exclusive: true
       regex: "#[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:.*"
+    # Thread-room aliases #t_<uuid> - cutover-stable naming (target-alignment A-3),
+    # written beside the #<uuid> alias on class T/C rooms
+    - exclusive: true
+      regex: "#t_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:.*"
   rooms: []
