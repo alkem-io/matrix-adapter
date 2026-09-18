@@ -39,7 +39,14 @@ jobs:
           version: 10
 
       - name: Generate Library
-        run: make generate
+        # Only the TypeScript artifacts are needed to publish the library:
+        # generate-go runs tygo for lib/src/dto/generated.ts, generate-events
+        # produces commands.ts and the event-type enum. The full `generate`
+        # target also runs `openapi`, which shells out to apispec — a tool this
+        # job does not install (CI gets it from the shared go-ci workflow), so
+        # invoking it here fails with "apispec: No such file or directory".
+        # openapi.yaml is not part of the published package.
+        run: make generate-go generate-events
 
       - name: Install Dependencies
         working-directory: lib

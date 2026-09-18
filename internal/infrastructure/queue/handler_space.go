@@ -3,9 +3,12 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/alkem-io/matrix-adapter/internal/config"
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter/internal/core/service"
@@ -17,14 +20,22 @@ type SpaceHandler struct {
 	service  *service.SpaceService
 	matrix   ports.MatrixPort
 	resolver *AliasResolver
+
+	// setChildrenTimeout bounds one HandleSetChildren call's own execution —
+	// see config.Hierarchy.SetChildrenTimeoutSeconds. Set once at
+	// construction from configuration rather than read as a compile-time
+	// constant at call time, so it is overridable the same way the adapter's
+	// other hierarchy budgets are.
+	setChildrenTimeout time.Duration
 }
 
 // NewSpaceHandler creates a new instance of SpaceHandler.
-func NewSpaceHandler(service *service.SpaceService, matrix ports.MatrixPort, idMapper *domain.IDMapper) *SpaceHandler {
+func NewSpaceHandler(service *service.SpaceService, matrix ports.MatrixPort, idMapper *domain.IDMapper, cfg *config.Config) *SpaceHandler {
 	return &SpaceHandler{
-		service:  service,
-		matrix:   matrix,
-		resolver: NewAliasResolver(matrix, idMapper),
+		service:            service,
+		matrix:             matrix,
+		resolver:           NewAliasResolver(matrix, idMapper),
+		setChildrenTimeout: time.Duration(cfg.Hierarchy.SetChildrenTimeoutSeconds * float64(time.Second)),
 	}
 }
 
@@ -242,6 +253,199 @@ func (h *SpaceHandler) HandleSetParent(ctx context.Context, payload []byte) (int
 	}
 
 	return dto.NewSuccessResponse(), nil
+}
+
+// maxDesiredChildContextIDs caps how many children one set_children call may
+// name. The platform's forum holds a category count in the tens to low
+// hundreds; this is a generous multiple of that expected scale, not a tuned
+// operational limit — its purpose is to reject a pathologically oversized
+// request outright rather than let it run the write loops for however long
+// that many entries take before the handler's own deadline below cuts it off.
+const maxDesiredChildContextIDs = 2000
+
+// overdueBy reports how long ago a caller's absolute expiry passed, or zero if
+// it has not passed or none was supplied. A zero ExpiresAtUnixMs means the
+// caller set no expiry, so the handler's own deadline is the only bound —
+// which is the behaviour every caller predating the field gets.
+func overdueBy(expiresAtUnixMs int64, now time.Time) time.Duration {
+	if expiresAtUnixMs <= 0 {
+		return 0
+	}
+	overdue := now.Sub(time.UnixMilli(expiresAtUnixMs))
+	if overdue <= 0 {
+		return 0
+	}
+	return overdue
+}
+
+// setChildrenBudget is how long this call may run: the configured processing
+// timeout, shortened to the caller's remaining allowance whenever that is
+// tighter. With no caller expiry it is just the configured timeout.
+//
+// The caller is known not to be already expired here — HandleSetChildren
+// rejects that case before this is reached — so the remaining allowance is
+// always positive.
+func setChildrenBudget(configured time.Duration, expiresAtUnixMs int64, now time.Time) time.Duration {
+	if expiresAtUnixMs <= 0 {
+		return configured
+	}
+	remaining := time.UnixMilli(expiresAtUnixMs).Sub(now)
+	if remaining < configured {
+		return remaining
+	}
+	return configured
+}
+
+// HandleSetChildren handles communication.hierarchy.set_children topic.
+func (h *SpaceHandler) HandleSetChildren(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.SetChildrenRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.ParentContextID, "parent_context_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if len(req.DesiredChildContextIDs) > maxDesiredChildContextIDs {
+		return NewInvalidParamError(fmt.Sprintf(
+			"desired_child_context_ids has %d entries, exceeding the %d maximum per call",
+			len(req.DesiredChildContextIDs), maxDesiredChildContextIDs)), nil
+	}
+	if len(req.RemovableChildContextIDs) > maxDesiredChildContextIDs {
+		return NewInvalidParamError(fmt.Sprintf(
+			"removable_child_context_ids has %d entries, exceeding the %d maximum per call",
+			len(req.RemovableChildContextIDs), maxDesiredChildContextIDs)), nil
+	}
+
+	// The caller's expiry is checked before any Matrix read or write, and
+	// before the execution deadline below is even started.
+	//
+	// That deadline only measures processing: it starts when this handler runs
+	// and says nothing about how long the request sat in the queue first. Under
+	// the load this operation is most likely to meet, that wait can outlive the
+	// caller's own RPC timeout — at which point the caller has stopped waiting,
+	// very likely re-read its state and reissued from a newer snapshot. Writing
+	// Matrix state from the older snapshot at that point is not late work, it is
+	// wrong work, and it competes with the newer request that replaced it.
+	//
+	// Rejecting here guarantees an expired request touched nothing, which is
+	// what makes it safe for the caller to reissue from fresh state.
+	now := time.Now()
+	if expiredFor := overdueBy(req.ExpiresAtUnixMs, now); expiredFor > 0 {
+		return newSetChildrenResponse(dto.NewErrorResponse(dto.ErrCodeRequestExpired, fmt.Sprintf(
+			"request expired %s before it was picked up; nothing was read or written — reissue from current state",
+			expiredFor.Round(time.Millisecond))), nil, req.DryRun), nil
+	}
+
+	// Bound execution by whichever runs out first: this call's own processing
+	// budget, or what is left of the caller's end-to-end allowance. Using the
+	// processing budget alone would let a request that already spent most of
+	// its allowance queuing start a full-length run, and finish writing well
+	// after the caller gave up on it.
+	ctx, cancel := context.WithTimeout(ctx, setChildrenBudget(h.setChildrenTimeout, req.ExpiresAtUnixMs, now))
+	defer cancel()
+
+	result, err := h.service.SetChildren(ctx, service.SetChildrenParams{
+		ParentContextID:          req.ParentContextID.UUID(),
+		DesiredChildContextIDs:   req.DesiredChildContextIDs,
+		ChildrenAreSpaces:        req.ChildrenAreSpaces,
+		ApplyRemovals:            req.ApplyRemovals,
+		RemovableChildContextIDs: req.RemovableChildContextIDs,
+		PruneUnknown:             req.PruneUnknown,
+		SyncChildParent:          req.SyncChildParent,
+		DryRun:                   req.DryRun,
+	})
+	if err != nil {
+		// result is nil here (e.g. SPACE_NOT_FOUND, or a children-read failure) —
+		// newSetChildrenResponse still normalizes every array to [] rather than
+		// letting them marshal as null, exactly as it does on the success path.
+		return newSetChildrenResponse(MapServiceError(err), nil, req.DryRun), nil
+	}
+
+	base := dto.NewSuccessResponse()
+	if !result.Success {
+		// Honest partial converge: some or all attempted writes did not
+		// complete after others may have succeeded. No compensating rollback
+		// — the caller repeats the operation until a pass reports success.
+		//
+		// The abort cause is reported distinctly so a caller does not read a
+		// self-inflicted timeout as a Matrix-side failure: when the call's own
+		// deadline (SetChildrenTimeout) was reached before every write it
+		// still needed to attempt, and no attempted write actually failed,
+		// that is reported as ErrCodeDeadlineExceeded ("run me again, I ran
+		// out of time"), never as a write failure. Any actual write rejection
+		// by Matrix — even one that happens to coincide with the deadline —
+		// takes priority and is reported as ErrCodeMatrixError, since that is
+		// the more actionable signal.
+		switch {
+		case result.DeadlineExceeded && !result.WriteFailed:
+			base = dto.NewErrorResponse(dto.ErrCodeDeadlineExceeded,
+				"set_children reached its own execution deadline before every hierarchy write could be attempted; no attempted write failed — convergence is partial, repeat the call to continue")
+		case result.WriteFailed:
+			base = dto.NewErrorResponse(dto.ErrCodeMatrixError, "one or more hierarchy writes failed; convergence is partial")
+		default:
+			// Failed with neither a rejected write nor an expired deadline:
+			// a Matrix *read* this pass's decisions depend on (alias
+			// resolution, extra-edge classification, room-side parent
+			// pointers) did not answer, so the pass deliberately withheld
+			// the actions that read would have justified. Saying "writes
+			// failed" here would send an operator hunting a write rejection
+			// that never happened.
+			base = dto.NewErrorResponse(dto.ErrCodeMatrixError,
+				"one or more Matrix reads this pass depends on did not answer, so part of the convergence was withheld rather than performed on an unverified read; convergence is partial, repeat the call to continue")
+		}
+	}
+
+	return newSetChildrenResponse(base, result, req.DryRun), nil
+}
+
+// newSetChildrenResponse builds the wire response from a service result that
+// may be nil (the error branches, where SetChildren returned before producing
+// one). Every array field is normalized to [] rather than left as a nil Go
+// slice on either branch — the generated TS contract declares them
+// non-nullable string[], and a caller that accumulates counts from these
+// arrays before checking `success` (the documented usage pattern) would throw
+// on a null. This is the single place that response shape is assembled, so
+// the invariant cannot drift between the success and error paths again.
+func newSetChildrenResponse(base dto.BaseResponse, result *service.SetChildrenResult, dryRun bool) dto.SetChildrenResponse {
+	resp := dto.SetChildrenResponse{
+		BaseResponse:                base,
+		Added:                       []string{},
+		Removed:                     []string{},
+		PrunedUnknown:               []string{},
+		UnknownKept:                 []string{},
+		Unresolved:                  []string{},
+		ParentPointersRepaired:      []string{},
+		ParentPointersDeferred:      []string{},
+		ParentPointersUnprocessable: []string{},
+		DryRun:                      dryRun,
+	}
+	if result != nil {
+		resp.Added = emptyIfNil(result.Added)
+		resp.Removed = emptyIfNil(result.Removed)
+		resp.PrunedUnknown = emptyIfNil(result.PrunedUnknown)
+		resp.UnknownKept = emptyIfNil(result.UnknownKept)
+		resp.Unresolved = emptyIfNil(result.Unresolved)
+		resp.ParentPointersRepaired = emptyIfNil(result.ParentPointersRepaired)
+		resp.ParentPointersDeferred = emptyIfNil(result.ParentPointersDeferred)
+		resp.ParentPointersUnprocessable = emptyIfNil(result.ParentPointersUnprocessable)
+		resp.Changed = result.Changed
+		resp.Converged = result.Converged
+	}
+	// result == nil is an error branch: SetChildren returned before producing
+	// one, so nothing is known to have converged. Converged stays false, which
+	// is what the zero value already gives — stated here because the whole
+	// point of the flag is that it is never optimistic by default.
+	return resp
+}
+
+// emptyIfNil normalizes a nil slice to an empty one so response arrays are
+// always present on the wire rather than sometimes null.
+func emptyIfNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // ============================================================================

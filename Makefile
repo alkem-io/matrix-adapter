@@ -19,8 +19,11 @@ all: deps fmt lint test build
 # (like generate-events/tygo) so NO pre-installed binary on PATH is required — it
 # works on any runner (e.g. the publish-lib workflow's ubuntu-latest, which does
 # not go through the shared go-ci workflow that installs the org-pinned apispec).
-# Keep the version in sync with the org-pinned apispec (the shared
-# alkem-io/github-workflows go-ci.yml@v1 default — currently v0.4.25).
+# Pinning the version here is what keeps the spec reproducible: running a
+# DIFFERENT apispec build silently produces a spec CI then rejects as stale —
+# older builds omit summaries newer ones emit. Keep this in sync with the
+# org-pinned apispec (the shared alkem-io/github-workflows go-ci.yml@v1 default
+# — currently v0.4.25).
 APISPEC_VERSION ?= v0.4.25
 .PHONY: openapi
 openapi:
