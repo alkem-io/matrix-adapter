@@ -14,7 +14,7 @@ running inside the matrixdotorg/synapse image) NOTHING here applies and the real
 package is used. Only when it is absent do we register minimal `sys.modules`
 stand-ins for exactly the symbols imported at module load:
 
-    synapse.logging.context.defer_to_thread
+    synapse.logging.context.defer_to_threadpool
     synapse.logging.context.make_deferred_yieldable
     synapse.media._base.Responder
     synapse.media.storage_provider.StorageProvider
@@ -48,17 +48,17 @@ def _install_synapse_shims() -> None:
         """
         return deferred
 
-    def defer_to_thread(reactor, f, *args, **kwargs):
-        """Stand-in for Synapse's logcontext-preserving deferToThread.
+    def defer_to_threadpool(reactor, threadpool, f, *args, **kwargs):
+        """Stand-in for Synapse's logcontext-preserving deferToThreadPool.
 
-        Uses twisted's own threadpool bridge when the reactor provides one;
-        otherwise (e.g. a `twisted.internet.task.Clock`) it runs `f` inline and
-        wraps the outcome, which is all the import-time shape requires.
+        Uses twisted's own threadpool bridge when handed a usable pool;
+        otherwise (e.g. a stand-in reactor whose pool is a plain sentinel) it
+        runs `f` inline and wraps the outcome, which is all the import-time
+        shape requires.
         """
-        get_pool = getattr(reactor, "getThreadPool", None)
-        if get_pool is None:
+        if not hasattr(threadpool, "callInThreadWithCallback"):
             return defer.execute(f, *args, **kwargs)
-        return threads.deferToThreadPool(reactor, get_pool(), f, *args, **kwargs)
+        return threads.deferToThreadPool(reactor, threadpool, f, *args, **kwargs)
 
     class Responder:
         """Stand-in for synapse.media._base.Responder (a context manager)."""
@@ -92,7 +92,7 @@ def _install_synapse_shims() -> None:
     logging_pkg = _module("synapse.logging")
     context = _module(
         "synapse.logging.context",
-        defer_to_thread=defer_to_thread,
+        defer_to_threadpool=defer_to_threadpool,
         make_deferred_yieldable=make_deferred_yieldable,
     )
     media = _module("synapse.media")

@@ -27,7 +27,9 @@ import io
 import json
 import logging
 import re
+import threading
 import types
+from typing import ClassVar
 
 import pytest
 
@@ -52,6 +54,11 @@ from alkemio_fileservice_provider import (
     _FileServiceResponder,
     _ShortBody,
 )
+
+# Captured BEFORE the autouse `_isolate_cache_pool` fixture can replace it, so
+# the lifecycle tests can drive the genuine factory while every other test gets
+# the harmless stand-in.
+_REAL_CACHE_FILE_POOL = mod._cache_file_pool
 
 
 # --- test doubles ----------------------------------------------------------
@@ -349,13 +356,31 @@ def _multipart_part_names_str(body):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_cache_pool(monkeypatch):
+    """Never let a test create the provider's REAL thread pool.
+
+    `_cache_file_pool` starts OS threads and registers a reactor shutdown
+    trigger; the fake reactors used throughout this suite (`task.Clock`, bare
+    `object()`) support neither. Hand every caller a recording stand-in instead,
+    and reset the process-wide `_cache_pool` around each test so the handful of
+    tests that DO exercise the real lifecycle stay hermetic.
+    """
+    pool = _InlineThreadPool()
+    monkeypatch.setattr(mod, "_cache_file_pool", lambda reactor: pool)
+    monkeypatch.setattr(mod, "_cache_pool", None)
+    return pool
+
+
+@pytest.fixture(autouse=True)
 def _patch_async_helpers(monkeypatch):
-    # make_deferred_yieldable passes the awaitable through. defer_to_thread runs
-    # the function synchronously and returns a (fired) Deferred — the provider now
+    # make_deferred_yieldable passes the awaitable through. defer_to_threadpool
+    # runs the function synchronously and returns a (fired) Deferred — the provider
     # calls addTimeout on it, so it must be a real Deferred, not a coroutine.
     monkeypatch.setattr(mod, "make_deferred_yieldable", lambda d: d)
     monkeypatch.setattr(
-        mod, "defer_to_thread", lambda reactor, fn, *a: defer.execute(fn, *a)
+        mod,
+        "defer_to_threadpool",
+        lambda reactor, threadpool, fn, *a: defer.execute(fn, *a),
     )
     # store_file fstats the OPEN upload fd to scale the timeout by size; the fake
     # handle's fd isn't a real inode, so default os.fstat to a small st_size
@@ -774,7 +799,7 @@ def test_store_hung_open_times_out_raises(monkeypatch):
     prov = _make_provider()
     # The off-reactor open never completes.
     monkeypatch.setattr(
-        mod, "defer_to_thread", lambda reactor, fn, *a: defer.Deferred()
+        mod, "defer_to_threadpool", lambda reactor, pool, fn, *a: defer.Deferred()
     )
     posted = {"n": 0}
     monkeypatch.setattr(
@@ -801,11 +826,11 @@ def test_store_late_open_closes_late_handle(monkeypatch):
 
     captured = {}
 
-    def fake_dtt(reactor, fn, *a):
+    def fake_dtt(reactor, pool, fn, *a):
         captured["fn"] = fn  # the guarded-open closure
         return defer.Deferred()  # never fires on its own
 
-    monkeypatch.setattr(mod, "defer_to_thread", fake_dtt)
+    monkeypatch.setattr(mod, "defer_to_threadpool", fake_dtt)
     monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(FakeResponse(201)))
 
     d = defer.ensureDeferred(prov.store_file("local_content/x", FakeFileInfo("m")))
@@ -841,18 +866,18 @@ def test_store_guarded_open_fstat_raises_closes_handle(monkeypatch):
 
 def test_store_open_not_routed_through_with_timeout(monkeypatch):
     # Structural logcontext guard: the cache-file open must be awaited via
-    # addTimeout DIRECTLY on the already-yieldable defer_to_thread Deferred, never
-    # through `_with_timeout` (which adds a second make_deferred_yieldable that
-    # would resume the upload under the sentinel logcontext). The autouse fixture
-    # stubs make_deferred_yieldable to identity, so the wrap is invisible at
-    # runtime — we spy the DEFERRED `_with_timeout` is called with and assert the
-    # open's defer_to_thread Deferred is NOT among them. This is decoupled from
-    # whichever timeout constant the reply drain happens to use.
+    # addTimeout DIRECTLY on the already-yieldable defer_to_threadpool Deferred,
+    # never through `_with_timeout` (which adds a second make_deferred_yieldable
+    # that would resume the upload under the sentinel logcontext). The autouse
+    # fixture stubs make_deferred_yieldable to identity, so the wrap is invisible
+    # at runtime — we spy the DEFERRED `_with_timeout` is called with and assert
+    # the open's Deferred is NOT among them. This is decoupled from whichever
+    # timeout constant the reply drain happens to use.
     prov = _make_provider()
 
     open_deferreds = []
 
-    def capturing_dtt(reactor, fn, *a):
+    def capturing_dtt(reactor, pool, fn, *a):
         d = defer.execute(fn, *a)
         open_deferreds.append(d)
         return d
@@ -864,17 +889,45 @@ def test_store_open_not_routed_through_with_timeout(monkeypatch):
         seen.append(d)
         return await orig(reactor, timeout_s, d)
 
-    monkeypatch.setattr(mod, "defer_to_thread", capturing_dtt)
+    monkeypatch.setattr(mod, "defer_to_threadpool", capturing_dtt)
     monkeypatch.setattr(mod, "_with_timeout", spy)
     monkeypatch.setattr(mod, "_open_stream", lambda p: FakeFile(b"x"))
     monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(_drainable(201)))
 
     _run(prov.store_file("local_content/x", FakeFileInfo("m")))
-    assert open_deferreds  # the open went through defer_to_thread
+    assert open_deferreds  # the open went through defer_to_threadpool
     # The open's Deferred is bounded by addTimeout DIRECTLY, never via _with_timeout.
     assert all(od not in seen for od in open_deferreds)
     # ...and the guard is not vacuous — the reply DRAIN does route through it.
     assert seen
+
+
+def test_store_guarded_open_runs_in_the_provider_pool(monkeypatch):
+    # The guarded open is the THIRD piece of cache-file work this module hands to
+    # a thread, and the first thing an upload does. It carries its own
+    # `store_timeout_s` deadline, so an open merely QUEUED behind Synapse's full
+    # ten-thread pool fails the upload just as surely as a queued read would.
+    # It uses Synapse's `defer_to_threadpool` (not twisted's) because unlike the
+    # Cooperator tick it runs under a real logcontext — but on OUR pool.
+    prov = _make_provider()
+    provider_pool = object()
+    monkeypatch.setattr(mod, "_cache_file_pool", lambda r: provider_pool)
+
+    seen = {}
+
+    def capturing(reactor, threadpool, fn, *a):
+        seen["pool"] = threadpool
+        return defer.execute(fn, *a)
+
+    monkeypatch.setattr(mod, "defer_to_threadpool", capturing)
+    monkeypatch.setattr(mod, "_open_stream", lambda p: FakeFile(b"x"))
+    monkeypatch.setattr(mod.treq, "post", lambda *a, **k: _aval(_drainable(201)))
+
+    _run(prov.store_file("local_content/x", FakeFileInfo("m")))
+
+    assert seen.get("pool") is provider_pool, (
+        "the guarded open must not queue behind the shared reactor pool either"
+    )
 
 
 # --- fetch -----------------------------------------------------------------
@@ -1894,8 +1947,26 @@ class _RecordingThreadBridge:
         return defer.execute(fn)
 
 
+class _InlineThreadPool:
+    """Default provider-pool stand-in (see `_isolate_cache_pool`): runs work NOW.
+
+    Before the provider owned a pool, the suite's `Clock` reactor exposed none
+    and `_close_off_reactor` therefore closed inline. Running dispatched work
+    immediately preserves that for every test that only cares the handle ends up
+    closed. Tests that assert work was genuinely DEFERRED to a pool substitute
+    `_RecordingThreadPool` instead.
+    """
+
+    def __init__(self):
+        self.ran = []
+
+    def callInThread(self, fn, *args, **kwargs):
+        self.ran.append(fn)
+        fn(*args, **kwargs)
+
+
 class _RecordingThreadPool:
-    """Stand-in for the reactor thread pool that DEFERS the work it is handed.
+    """Stand-in for the PROVIDER's thread pool that DEFERS the work it is handed.
 
     Deferring is the point: it is what distinguishes "dispatched to the pool"
     from "run inline on the calling (reactor) thread".
@@ -1922,7 +1993,7 @@ def test_threaded_body_producer_reads_off_reactor_and_preserves_the_bytes(monkey
     payload = b"0123456789" * 7  # 70 bytes
     producer = mod._ThreadedFileBodyProducer(
         io.BytesIO(payload),
-        reactor=object(),  # no getThreadPool -> the EOF close falls back inline
+        reactor=object(),  # the autouse fixture supplies the provider pool
         length=len(payload),
         cooperator=coop,
         read_size=16,
@@ -1982,7 +2053,8 @@ def test_threaded_body_producer_stop_closes_the_handle_off_the_reactor(monkeypat
     coop, _pump = _sync_cooperator()
     monkeypatch.setattr(mod, "_read_in_thread", _RecordingThreadBridge())
     pool = _RecordingThreadPool()
-    reactor = types.SimpleNamespace(getThreadPool=lambda: pool)
+    monkeypatch.setattr(mod, "_cache_file_pool", lambda r: pool)
+    reactor = object()
 
     handle = io.BytesIO(b"AB")
     producer = mod._ThreadedFileBodyProducer(
@@ -1995,7 +2067,7 @@ def test_threaded_body_producer_stop_closes_the_handle_off_the_reactor(monkeypat
     assert handle.closed is False, (
         "the handle must NOT be closed on the calling (reactor) thread"
     )
-    assert pool.queued, "the close must be dispatched to the reactor thread pool"
+    assert pool.queued, "the close must be dispatched to the provider thread pool"
     pool.run()
     assert handle.closed is True, "and must actually happen once the pool runs it"
 
@@ -2005,11 +2077,19 @@ def test_threaded_body_producer_stop_closes_the_handle_off_the_reactor(monkeypat
     producer.stopProducing()
 
 
-def test_read_in_thread_dispatches_to_the_reactor_thread_pool(monkeypatch):
+def test_read_in_thread_dispatches_to_the_provider_pool_not_the_reactors(monkeypatch):
     # The seam every cache-file read passes through must really hand the call to
-    # the reactor's thread pool. If it ever degraded to running inline, the
-    # producer above would silently be back to reading on the reactor thread and
-    # every test that substitutes the seam would still pass.
+    # a thread pool. If it ever degraded to running inline, the producer above
+    # would silently be back to reading on the reactor thread and every test that
+    # substitutes the seam would still pass.
+    #
+    # And it must be the PROVIDER's pool. The shared reactor pool is
+    # `ThreadPool(0, 10)` and Synapse never resizes it, while
+    # `BackgroundFileConsumer._writer` parks one of those ten on an untimed
+    # `Queue.get()` for the whole duration of every `ensure_media_is_in_local_cache`
+    # transfer — i.e. of our own `fetch`, which a thumbnail of any purged upload
+    # takes. A read QUEUED behind that still burns `effective_timeout`, so a
+    # healthy upload would fail on a timeout. See `_cache_file_pool`.
     seen = {}
 
     def fake_defer_to_thread_pool(reactor, pool, fn):
@@ -2018,8 +2098,10 @@ def test_read_in_thread_dispatches_to_the_reactor_thread_pool(monkeypatch):
 
     monkeypatch.setattr(mod.threads, "deferToThreadPool", fake_defer_to_thread_pool)
 
-    pool = object()
-    reactor = types.SimpleNamespace(getThreadPool=lambda: pool)
+    provider_pool = object()
+    monkeypatch.setattr(mod, "_cache_file_pool", lambda r: provider_pool)
+    reactor_pool = object()
+    reactor = types.SimpleNamespace(getThreadPool=lambda: reactor_pool)
 
     def read():
         return b"x"
@@ -2027,9 +2109,209 @@ def test_read_in_thread_dispatches_to_the_reactor_thread_pool(monkeypatch):
     result = _result_of(mod._read_in_thread(reactor, read))
 
     assert seen.get("reactor") is reactor
-    assert seen.get("pool") is pool, "the reactor's own thread pool must be used"
+    assert seen.get("pool") is provider_pool, "the PROVIDER's own pool must be used"
+    assert seen.get("pool") is not reactor_pool, (
+        "never the shared reactor pool — that is the starvation this fixes"
+    )
     assert seen.get("fn") is read
     assert result == b"chunk"
+
+
+def test_close_off_reactor_dispatches_to_the_provider_pool(monkeypatch):
+    # The close is the tail of the same upload and blocks on the handle's buffer
+    # lock behind any in-flight read, so on a wedged mount it strands a thread for
+    # as long as that read does. It must strand one of OURS, not one of Synapse's
+    # ten.
+    pool = _RecordingThreadPool()
+    monkeypatch.setattr(mod, "_cache_file_pool", lambda r: pool)
+    reactor_pool = _RecordingThreadPool()
+    reactor = types.SimpleNamespace(getThreadPool=lambda: reactor_pool)
+
+    handle = io.BytesIO(b"x")
+    mod._close_off_reactor(reactor, handle)
+
+    assert not reactor_pool.queued, "the shared reactor pool must not be used"
+    assert pool.queued, "the close must go to the provider's pool"
+    assert handle.closed is False, "and must not happen on the calling thread"
+    pool.run()
+    assert handle.closed is True
+
+
+def test_close_off_reactor_falls_back_inline_when_the_pool_is_unavailable(monkeypatch):
+    # Dispatch is best-effort, but a close must never be silently DROPPED — that
+    # would leak the FD for every upload. If the pool cannot be obtained at all,
+    # close inline rather than raise out of a teardown path.
+    def no_pool(reactor):
+        raise RuntimeError("no pool available")
+
+    monkeypatch.setattr(mod, "_cache_file_pool", no_pool)
+
+    handle = io.BytesIO(b"x")
+    mod._close_off_reactor(object(), handle)
+
+    assert handle.closed is True
+
+
+# --- the provider-owned thread pool: lifecycle -----------------------------
+#
+# A pool is a process RESOURCE, unlike the per-request state this module
+# deliberately keeps none of. That earns it a real lifecycle: created once,
+# bounded, and stopped on reactor shutdown. A pool leaked on a second
+# instantiation, or never stopped, would be worse than the contention it fixes
+# — mainline shipped the pool without a stop and paid ~30s on every Synapse
+# shutdown until it retrofitted the trigger.
+
+
+class _FakeThreadPool:
+    """Records construction/start/stop without spawning a single real thread."""
+
+    instances: ClassVar[list] = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.started = 0
+        self.stopped = 0
+        _FakeThreadPool.instances.append(self)
+
+    def start(self):
+        self.started += 1
+
+    def stop(self):
+        self.stopped += 1
+
+
+@pytest.fixture
+def fake_pool_class(monkeypatch):
+    monkeypatch.setattr(_FakeThreadPool, "instances", [])
+    monkeypatch.setattr(mod, "ThreadPool", _FakeThreadPool)
+    monkeypatch.setattr(mod, "_cache_pool", None)
+    return _FakeThreadPool
+
+
+def _trigger_recording_reactor(triggers):
+    return types.SimpleNamespace(
+        addSystemEventTrigger=lambda phase, event, fn: triggers.append(
+            (phase, event, fn)
+        )
+    )
+
+
+def test_cache_file_pool_is_created_once_per_process(fake_pool_class):
+    # Synapse builds one provider per `media_storage_providers` entry, but nothing
+    # stops a process from constructing the provider more than once (a second
+    # entry, a second HomeServer, a test harness). Mainline's per-instance
+    # `ThreadPool(...)` in `__init__` is unguarded and would start a second pool
+    # AND register a second shutdown trigger. One pool per PROCESS.
+    triggers = []
+    reactor = _trigger_recording_reactor(triggers)
+
+    first = _REAL_CACHE_FILE_POOL(reactor)
+    second = _REAL_CACHE_FILE_POOL(reactor)
+
+    assert first is second, "every caller must share the one pool"
+    assert len(fake_pool_class.instances) == 1, (
+        "a second call must NOT construct a second pool"
+    )
+    assert first.started == 1, "nor start one twice"
+    assert len(triggers) == 1, "nor register a second shutdown trigger"
+
+
+def test_cache_file_pool_registers_a_shutdown_trigger_that_stops_it(fake_pool_class):
+    # Without this the non-daemon worker threads keep the interpreter alive and
+    # Synapse shutdown hangs. ModuleApi exposes no shutdown hook, so the reactor
+    # trigger is the only route available.
+    triggers = []
+    pool = _REAL_CACHE_FILE_POOL(_trigger_recording_reactor(triggers))
+
+    assert len(triggers) == 1, "the pool must register a shutdown trigger"
+    phase, event, fn = triggers[0]
+    assert (phase, event) == ("during", "shutdown")
+
+    assert pool.stopped == 0
+    fn()  # the reactor shutting down
+    assert pool.stopped == 1, "the trigger must actually stop the pool"
+
+
+def test_cache_file_pool_starts_nothing_if_the_shutdown_trigger_cannot_register(
+    fake_pool_class,
+):
+    # Ordering guard: the trigger is registered BEFORE start(). A pool that has
+    # been started but can never be stopped is exactly the leak this ordering
+    # exists to make impossible.
+    class _NoTriggers:
+        def addSystemEventTrigger(self, *args):
+            raise RuntimeError("this reactor cannot register shutdown triggers")
+
+    with pytest.raises(RuntimeError):
+        _REAL_CACHE_FILE_POOL(_NoTriggers())
+
+    assert fake_pool_class.instances, "the pool object was constructed"
+    assert fake_pool_class.instances[0].started == 0, (
+        "an unstoppable pool must never be STARTED"
+    )
+    assert mod._cache_pool is None, "and must not be cached for later callers"
+
+
+def test_cache_file_pool_is_bounded_and_idles_at_zero_threads(fake_pool_class):
+    # The bound is the whole point of owning a pool rather than an unbounded
+    # thread-per-read. It is deliberately far below mainline's 40: that number
+    # sizes for threads PARKED on `wakeup_event.wait(90)` for a whole download,
+    # whereas nothing here ever parks — a thread is held for one syscall.
+    _REAL_CACHE_FILE_POOL(_trigger_recording_reactor([]))
+    kwargs = fake_pool_class.instances[0].kwargs
+
+    assert kwargs["maxthreads"] == mod._CACHE_POOL_MAX_THREADS
+    assert 0 < mod._CACHE_POOL_MAX_THREADS < 40, (
+        "the bound must be justified by this module's never-parking reads, "
+        "not copied from mainline's parking-sized 40"
+    )
+    assert kwargs["minthreads"] == 0, (
+        "an idle Synapse must pay no threads at all (mainline keeps 5 alive "
+        "forever by leaving twisted's minthreads default in place)"
+    )
+    assert kwargs["name"], "the pool must be named so it is identifiable in a dump"
+
+
+def test_cache_file_pool_really_starts_and_stops_a_twisted_thread_pool(monkeypatch):
+    # The tests above substitute ThreadPool, so none of them would catch a
+    # mistyped constructor argument or a twisted API change — they never touch
+    # the real class. This one builds the GENUINE pool, runs work on a genuine
+    # worker thread, and stops it through the registered trigger. It is the only
+    # test in this suite that spawns a thread, and it joins it before returning.
+    monkeypatch.setattr(mod, "_cache_pool", None)
+    triggers = []
+    pool = _REAL_CACHE_FILE_POOL(_trigger_recording_reactor(triggers))
+
+    try:
+        assert pool.started is True
+        assert (pool.min, pool.max) == (0, mod._CACHE_POOL_MAX_THREADS)
+
+        ran = threading.Event()
+        where = []
+        pool.callInThread(
+            lambda: (where.append(threading.current_thread()), ran.set())
+        )
+        assert ran.wait(10), "the real pool must actually run dispatched work"
+        assert where[0] is not threading.current_thread(), (
+            "...on a worker thread, never the caller's"
+        )
+    finally:
+        _phase, _event, stop = triggers[0]
+        stop()  # the reactor shutting down, for real this time
+        stopped_by_trigger = pool.started is False
+        workers_joined = all(not t.is_alive() for t in pool.threads)
+        if not stopped_by_trigger:
+            # Report the regression as a FAILURE, never as a hung test run: a
+            # live non-daemon worker would keep the interpreter (and so pytest)
+            # alive forever — which is precisely the Synapse-shutdown hang this
+            # trigger exists to prevent.
+            pool.stop()
+
+    assert stopped_by_trigger, "the shutdown trigger must really stop the pool"
+    assert workers_joined, (
+        "and must JOIN every worker — an unjoined non-daemon thread is exactly "
+        "what hangs Synapse shutdown"
+    )
 
 
 def test_store_body_serialises_through_real_treq_with_the_threaded_producer(monkeypatch):
