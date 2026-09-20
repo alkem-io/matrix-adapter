@@ -107,6 +107,7 @@ func TestParseMessageEvent_GenuineCaption_Preserved(t *testing.T) {
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
 	assert.Equal(t, "please review this", msg.Content, "a caption differing from the filename is surfaced")
+	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
 }
 
@@ -139,7 +140,73 @@ func TestParseMessageEvent_FilenameEqualsBody_BothSurfaced(t *testing.T) {
 	assert.Equal(t, "report.pdf", msg.Content,
 		"body must be surfaced verbatim; 'body == filename ⇒ no caption' is the "+
 			"renderer's inference to make, not a fact the adapter may destroy")
+	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "report.pdf", msg.Attachments[0].DisplayName)
+}
+
+// A DEGENERATE modern media event: the `filename` field is PRESENT but empty.
+// Presence — not non-emptiness — is what separates MSC2530 media from legacy
+// media, so this event is still MSC2530-shaped and its `body` is still a
+// CAPTION. The caption must therefore NOT be promoted to DisplayName: the
+// adapter would be handing the server "look at this sunset" to use as a
+// filename. An empty DisplayName is the honest answer; Content still carries the
+// body verbatim, so nothing is lost.
+func TestParseMessageEvent_EmptyFilenamePresent_CaptionNotPromotedToDisplayName(t *testing.T) {
+	a := newTestAdapter("test.local")
+
+	evt := &event.Event{
+		ID:        id.EventID("$emptyfn"),
+		Sender:    expectedUserID(testActorID),
+		Type:      event.EventMessage,
+		Timestamp: 1700000000000,
+		Content: event.Content{
+			Raw: map[string]any{
+				"msgtype":  "m.image",
+				"body":     "look at this sunset",
+				"filename": "",
+				"url":      "mxc://test.local/emptyfnmedia",
+				"info":     map[string]any{"mimetype": "image/jpeg"},
+			},
+		},
+	}
+
+	msg := a.parseMessageEvent(evt, "!room:test.local")
+	require.NotNil(t, msg)
+	assert.Equal(t, "look at this sunset", msg.Content, "body still reaches Content verbatim")
+	require.Len(t, msg.Attachments, 1)
+	assert.Empty(t, msg.Attachments[0].DisplayName,
+		"a present `filename` makes body a caption; an empty one yields no display "+
+			"name rather than a caption masquerading as a filename")
+}
+
+// A NON-STRING `filename` (null, a number) reads as ABSENT, not as a declared
+// empty filename: only an event that actually declares a string filename opts
+// into MSC2530 caption semantics. Everything else keeps the legacy body-is-the-
+// filename fallback.
+func TestParseMessageEvent_NonStringFilename_FallsBackToLegacyBody(t *testing.T) {
+	a := newTestAdapter("test.local")
+
+	evt := &event.Event{
+		ID:        id.EventID("$nullfn"),
+		Sender:    expectedUserID(testActorID),
+		Type:      event.EventMessage,
+		Timestamp: 1700000000000,
+		Content: event.Content{
+			Raw: map[string]any{
+				"msgtype":  "m.image",
+				"body":     "photo.jpg",
+				"filename": nil,
+				"url":      "mxc://test.local/nullfnmedia",
+				"info":     map[string]any{"mimetype": "image/jpeg"},
+			},
+		},
+	}
+
+	msg := a.parseMessageEvent(evt, "!room:test.local")
+	require.NotNil(t, msg)
+	require.Len(t, msg.Attachments, 1)
+	assert.Equal(t, "photo.jpg", msg.Attachments[0].DisplayName,
+		"a non-string `filename` is not a declared filename — legacy fallback applies")
 }
 
 // Legacy media (no `filename` field): `body` IS the filename. Same rule as above
@@ -165,6 +232,7 @@ func TestParseMessageEvent_LegacyBodyIsFilename_BothSurfaced(t *testing.T) {
 	msg := a.parseMessageEvent(evt, "!room:test.local")
 	require.NotNil(t, msg)
 	assert.Equal(t, "photo.jpg", msg.Content, "legacy body must reach Content")
+	require.Len(t, msg.Attachments, 1)
 	assert.Equal(t, "photo.jpg", msg.Attachments[0].DisplayName)
 }
 

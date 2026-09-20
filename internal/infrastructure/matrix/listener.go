@@ -986,8 +986,26 @@ func extractAttachment(evt *event.Event, idMapper *domain.IDMapper) *domain.Atta
 // media events carry the filename in a dedicated top-level `filename` field and
 // use `body` for a human caption. Prefer `filename`; fall back to `body` for
 // legacy media where the body IS the filename.
+//
+// The fallback is gated on `filename` being ABSENT, not on it being empty.
+// Presence is what distinguishes the two event shapes: a string `filename`
+// declares the event MSC2530-shaped, which makes `body` a human CAPTION. Falling
+// back to it because the declared filename happened to be "" would hand the
+// server a caption ("look at this sunset") to use as a FILENAME. An empty
+// display name is the honest answer for a degenerate `filename: ""` and is
+// already a supported outcome here (a media event whose body is absent or
+// non-string yields one too), so the server's own naming fallback handles it.
+//
+// The predicate stays a type assertion, so a non-string `filename` (null, a
+// number) reads as absent and keeps the legacy body fallback — only a media
+// event that actually declares a string filename opts into caption semantics.
+//
+// This resolves the DISPLAY NAME only. Content is a separate concern and always
+// carries the event body verbatim (see extractInboundMessage): whether a body
+// that equals the filename is "really" a caption is the renderer's inference to
+// make, never a fact this adapter may destroy.
 func attachmentDisplayName(raw map[string]interface{}) string {
-	if filename, ok := raw["filename"].(string); ok && filename != "" {
+	if filename, ok := raw["filename"].(string); ok {
 		return filename
 	}
 	if body, ok := raw["body"].(string); ok {

@@ -99,6 +99,11 @@ func (w *WatermillAdapter) Connect(_ context.Context) error {
 	// Create Subscriber
 	subscriber, err := amqp.NewSubscriber(amqpConfig, watermill.NewStdLogger(false, false))
 	if err != nil {
+		// The publisher above already holds an AMQP connection. Release it on the
+		// way out, exactly as the rpcConn failure path below does — a half-built
+		// Connect must not leave a live broker connection behind for a caller that
+		// (reasonably) does not call Close() on a constructor that returned an error.
+		_ = publisher.Close()
 		return fmt.Errorf("failed to create AMQP subscriber: %w", err)
 	}
 	w.subscriber = subscriber
