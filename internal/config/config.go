@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 
@@ -35,6 +36,16 @@ type Config struct {
 	RabbitMQ struct {
 		URL string `yaml:"url"`
 	} `yaml:"rabbitmq"`
+
+	FileService struct {
+		// URL is the internal base URL of the Alkemio file-service
+		// (cluster-only). Used to fetch document bytes for outbound media
+		// attachments, e.g. GET {URL}/internal/file/{id}/content.
+		URL string `yaml:"url"`
+		// MaxAttachmentBytes caps how many bytes are read from file-service for a
+		// single outbound attachment. <= 0 means use the built-in default (50 MiB).
+		MaxAttachmentBytes int64 `yaml:"max_attachment_bytes"`
+	} `yaml:"file_service"`
 
 	Hierarchy struct {
 		// StateEventsPerSecond paces m.space.child add/remove/prune writes issued by
@@ -70,6 +81,24 @@ type Config struct {
 		// maxOperations sizing; see contracts/hierarchy-set-children.md).
 		SetChildrenTimeoutSeconds float64 `yaml:"set_children_timeout_seconds"`
 	} `yaml:"hierarchy"`
+}
+
+// File-service attachment size defaults (applied when the corresponding config
+// value is <= 0).
+const (
+	// DefaultMaxAttachmentBytes caps how many bytes are read from file-service for
+	// a single outbound attachment (50 MiB).
+	DefaultMaxAttachmentBytes int64 = 50 * 1024 * 1024
+)
+
+// MaxAttachmentBytes returns the configured per-attachment byte cap, falling back
+// to DefaultMaxAttachmentBytes when unset or non-positive. Nil-safe so callers
+// need not guard a nil *Config.
+func (c *Config) MaxAttachmentBytes() int64 {
+	if c != nil && c.FileService.MaxAttachmentBytes > 0 {
+		return c.FileService.MaxAttachmentBytes
+	}
+	return DefaultMaxAttachmentBytes
 }
 
 // Load reads the configuration from config.yaml and overrides it with environment variables.
@@ -109,7 +138,9 @@ func Load() (*Config, error) {
 		}
 	}
 
-	loadEnvVars(cfg)
+	if err := loadEnvVars(cfg); err != nil {
+		return nil, err
+	}
 
 	if err := validateHierarchy(cfg); err != nil {
 		return nil, err
@@ -140,7 +171,7 @@ func validateHierarchy(cfg *Config) error {
 	return nil
 }
 
-func loadEnvVars(cfg *Config) {
+func loadEnvVars(cfg *Config) error {
 	// Override with Env Vars (Consistent with TS Service)
 	if v := os.Getenv("ENVIRONMENT"); v != "" {
 		cfg.App.Environment = v
@@ -152,6 +183,53 @@ func loadEnvVars(cfg *Config) {
 	loadMatrixEnv(cfg)
 	loadRabbitMQEnv(cfg)
 	loadHierarchyEnv(cfg)
+	return loadFileServiceEnv(cfg)
+}
+
+func loadFileServiceEnv(cfg *Config) error {
+	if v := os.Getenv("FILE_SERVICE_URL"); v != "" {
+		cfg.FileService.URL = v
+	}
+	if v := os.Getenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid FILE_SERVICE_MAX_ATTACHMENT_BYTES %q: %w", v, err)
+		}
+		cfg.FileService.MaxAttachmentBytes = n
+	}
+	return validateFileServiceURL(cfg.FileService.URL)
+}
+
+// validateFileServiceURL fails FAST on a malformed file-service base URL.
+//
+// Without this, a typo ("file-service:4003", "htp://…", a stray trailing
+// newline) boots green and only surfaces on the first outbound attachment — the
+// worst place for it, because a media failure there is swallowed into a
+// partial-fan-out "success" (see fanOutAttachments), so the operator sees a
+// working service quietly dropping every attachment.
+//
+// An EMPTY value stays valid: outbound media is optional (see the
+// FILE_SERVICE_URL row in README.md), and sendAttachment already fails that case
+// with an explicit "file-service URL not configured (set FILE_SERVICE_URL)".
+// What must not boot is a value that LOOKS configured but cannot be used.
+func validateFileServiceURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid FILE_SERVICE_URL %q: %w", raw, err)
+	}
+	// The adapter builds "{URL}/internal/file/{id}/content" and hands it to
+	// http.NewRequest, which needs an absolute URL: a scheme AND a host.
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf(
+			"invalid FILE_SERVICE_URL %q: must be an absolute http(s) URL (e.g. http://file-service:4003)", raw)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("invalid FILE_SERVICE_URL %q: missing host", raw)
+	}
+	return nil
 }
 
 func loadMatrixEnv(cfg *Config) {

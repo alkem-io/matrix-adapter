@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -69,6 +72,12 @@ type mockIntentAPI struct {
 	whoamiResult           *mautrix.RespWhoami
 	whoamiErr              error
 	inviteUserErr          error
+	uploadBytesResult      *mautrix.RespMediaUpload
+	uploadBytesErr         error
+
+	// Optional per-call results for fan-out failure tests.
+	sendMessageEventResults []*mautrix.RespSendEvent
+	sendMessageEventErrs    []error
 
 	// Call tracking
 	ensureRegisteredCalled int
@@ -102,6 +111,9 @@ type mockIntentAPI struct {
 	lastLeaveRoomID            id.RoomID
 	lastRedactRoomID           id.RoomID
 	lastRedactEventID          id.EventID
+	redactEventIDs             []id.EventID
+	redactReasons              []string
+	redactEventErrs            map[id.EventID]error
 	lastDisplayName            string
 	lastMakeRequestMethod      string
 	lastMakeRequestURL         string
@@ -112,11 +124,73 @@ type mockIntentAPI struct {
 	lastSendMsgEventRoomID     id.RoomID
 	lastSendMsgEventType       event.Type
 	lastSendMsgEventContent    any
-	lastEnsureJoinedRoomID     id.RoomID
-	lastSetAccountDataName     string
-	lastSetAccountDataContent  interface{}
-	lastBuildClientURLParts    []any
-	buildClientURLResult       string
+	lastSendMsgEventExtra      []mautrix.ReqSendEvent
+	// lastSendMsgEventDeadline is the deadline carried by the context handed to
+	// SendMessageEvent, zero when it carries none. The AMQP/watermill message
+	// context has NO deadline, so on the media path a non-zero value here can
+	// only come from fanOutAttachments' whole-message budget.
+	lastSendMsgEventDeadline time.Time
+	// sendMsgEventTxns accumulates the transaction ID seen on each
+	// SendMessageEvent call (empty string when none was supplied), in call order.
+	sendMsgEventTxns []string
+	// sendMsgEventContents accumulates the content passed to each
+	// SendMessageEvent call, in call order (parallel to sendMsgEventTxns).
+	sendMsgEventContents      []any
+	lastEnsureJoinedRoomID    id.RoomID
+	lastSetAccountDataName    string
+	lastSetAccountDataContent interface{}
+	lastBuildClientURLParts   []any
+	buildClientURLResult      string
+
+	// Media
+	uploadBytesCalled   int
+	lastUploadBytesData []byte
+	lastUploadBytesType string
+	// lastUploadContentLength is the raw ReqUploadMedia.ContentLength field.
+	// It is NOT what goes on the wire — see lastUploadWireContentLength.
+	lastUploadContentLength int64
+	// lastUploadWireContentLength is the net/http request ContentLength mautrix
+	// would actually derive from this ReqUploadMedia (-1 = chunked, i.e. NO
+	// Content-Length header). Asserting the raw field instead lets a request that
+	// Synapse rejects ("Request must specify a Content-Length") pass vacuously.
+	lastUploadWireContentLength int64
+	// Which ReqUploadMedia branch the caller used. The project's hard
+	// requirement is that blob bytes STREAM (Content, an io.Reader) with
+	// constant memory and are never buffered whole (ContentBytes), so tests
+	// must be able to assert the branch — folding both into
+	// lastUploadBytesData alone would let a re-introduced io.ReadAll pass.
+	lastUploadContentWasReader bool
+	lastUploadUsedContentBytes bool
+}
+
+// mautrixWireContentLength reproduces mautrix v0.28.0's mapping from
+// ReqUploadMedia to the net/http request's ContentLength — the ONLY thing that
+// decides whether the upload carries a "Content-Length" header or goes out
+// chunked (which Synapse rejects outright).
+//
+// Client.UploadMedia builds FullRequest{RequestBytes: ContentBytes,
+// RequestBody: Content, RequestLength: ContentLength} and
+// FullRequest.compileRequest then:
+//   - checks RequestBytes FIRST and, when non-nil, sets reqLen = len(RequestBytes)
+//     (so an EMPTY non-nil slice yields a real 0);
+//   - otherwise, on the RequestBody branch, starts at reqLen = -1 and overrides it
+//     only when RequestLength > 0 — RequestLength == 0 just logs a warning, so the
+//     request goes out with NO Content-Length.
+//
+// TestUploadRequestWireLength_MautrixContract pins this model against the real
+// mautrix + net/http stack, so it cannot silently drift from the library.
+func mautrixWireContentLength(req mautrix.ReqUploadMedia) int64 {
+	switch {
+	case req.ContentBytes != nil:
+		return int64(len(req.ContentBytes))
+	case req.Content != nil:
+		if req.ContentLength > 0 {
+			return req.ContentLength
+		}
+		return -1
+	default:
+		return 0
+	}
 }
 
 var _ intentAPI = (*mockIntentAPI)(nil)
@@ -132,12 +206,28 @@ func (m *mockIntentAPI) EnsureJoined(_ context.Context, roomID id.RoomID, _ ...a
 	return m.ensureJoinedErr
 }
 
-func (m *mockIntentAPI) SendMessageEvent(_ context.Context, roomID id.RoomID, eventType event.Type, contentJSON any, _ ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {
+func (m *mockIntentAPI) SendMessageEvent(ctx context.Context, roomID id.RoomID, eventType event.Type, contentJSON any, extra ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {
+	callIndex := m.sendMessageEventCalled
 	m.sendMessageEventCalled++
+	m.lastSendMsgEventDeadline, _ = ctx.Deadline()
 	m.lastSendMsgEventRoomID = roomID
 	m.lastSendMsgEventType = eventType
 	m.lastSendMsgEventContent = contentJSON
-	return m.sendMessageEventResult, m.sendMessageEventErr
+	m.lastSendMsgEventExtra = extra
+	var txn string
+	if len(extra) > 0 {
+		txn = extra[0].TransactionID
+	}
+	m.sendMsgEventTxns = append(m.sendMsgEventTxns, txn)
+	m.sendMsgEventContents = append(m.sendMsgEventContents, contentJSON)
+	result, err := m.sendMessageEventResult, m.sendMessageEventErr
+	if callIndex < len(m.sendMessageEventResults) {
+		result = m.sendMessageEventResults[callIndex]
+	}
+	if callIndex < len(m.sendMessageEventErrs) {
+		err = m.sendMessageEventErrs[callIndex]
+	}
+	return result, err
 }
 
 func (m *mockIntentAPI) SendStateEvent(_ context.Context, roomID id.RoomID, eventType event.Type, stateKey string, contentJSON any, _ ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {
@@ -171,10 +261,19 @@ func (m *mockIntentAPI) SendText(_ context.Context, roomID id.RoomID, text strin
 	return m.sendTextResult, m.sendTextErr
 }
 
-func (m *mockIntentAPI) RedactEvent(_ context.Context, roomID id.RoomID, eventID id.EventID, _ ...mautrix.ReqRedact) (*mautrix.RespSendEvent, error) {
+func (m *mockIntentAPI) RedactEvent(
+	_ context.Context, roomID id.RoomID, eventID id.EventID, extra ...mautrix.ReqRedact,
+) (*mautrix.RespSendEvent, error) {
 	m.redactEventCalled++
 	m.lastRedactRoomID = roomID
 	m.lastRedactEventID = eventID
+	m.redactEventIDs = append(m.redactEventIDs, eventID)
+	if len(extra) > 0 {
+		m.redactReasons = append(m.redactReasons, extra[0].Reason)
+	}
+	if err := m.redactEventErrs[eventID]; err != nil {
+		return m.redactEventResult, err
+	}
 	return m.redactEventResult, m.redactEventErr
 }
 
@@ -225,6 +324,64 @@ func (m *mockIntentAPI) CreateAlias(_ context.Context, alias id.RoomAlias, roomI
 func (m *mockIntentAPI) DeleteAlias(_ context.Context, _ id.RoomAlias) (*mautrix.RespAliasDelete, error) {
 	m.deleteAliasCalled++
 	return &mautrix.RespAliasDelete{}, m.deleteAliasErr
+}
+
+// UploadMedia drains req.Content into the mock's captured data. A read error
+// from the streaming reader (e.g. the oversize cap tripping) is surfaced so
+// sendAttachment can classify it. The branch actually taken is recorded so
+// tests can assert the bytes STREAMED rather than being buffered.
+//
+// It reproduces the two ways a bad upload actually fails in production, both
+// keyed off the WIRE length mautrix derives (mautrixWireContentLength), never
+// the raw ReqUploadMedia.ContentLength field:
+//   - a declared length that disagrees with the body → net/http's
+//     "http: ContentLength=%d with Body length %d";
+//   - no Content-Length at all (chunked) → Synapse's M_UNKNOWN 400.
+//
+// Asserting the raw field instead would let a request Synapse rejects outright
+// pass here vacuously.
+func (m *mockIntentAPI) UploadMedia(_ context.Context, req mautrix.ReqUploadMedia) (*mautrix.RespMediaUpload, error) {
+	m.uploadBytesCalled++
+	m.lastUploadBytesType = req.ContentType
+	m.lastUploadContentLength = req.ContentLength
+	wireLen := mautrixWireContentLength(req)
+	m.lastUploadWireContentLength = wireLen
+	m.lastUploadContentWasReader = req.Content != nil
+	m.lastUploadUsedContentBytes = req.ContentBytes != nil
+	// compileRequest prefers RequestBytes, so a non-nil ContentBytes is what goes
+	// on the wire even if Content is also set.
+	if req.ContentBytes == nil && req.Content != nil {
+		data, err := io.ReadAll(req.Content)
+		m.lastUploadBytesData = data
+		if err != nil {
+			return nil, err
+		}
+		// Mirror net/http's transfer-length contract, which is how a declared
+		// length that disagrees with the body actually surfaces in production:
+		// the transport fails the request with
+		// "http: ContentLength=%d with Body length %d" (and, when the body is
+		// SHORT, only after the homeserver has already stored the truncated
+		// prefix). Reproducing it here keeps "declared length must be the true
+		// length" an enforced contract instead of an untested comment.
+		if wireLen >= 0 && int64(len(data)) != wireLen {
+			return nil, fmt.Errorf("http: ContentLength=%d with Body length %d", wireLen, len(data))
+		}
+	} else {
+		m.lastUploadBytesData = req.ContentBytes
+	}
+	// A negative wire length means mautrix sends the upload CHUNKED with no
+	// Content-Length header, which Synapse refuses. Reproduce the real rejection
+	// rather than accepting an upload production would never have completed.
+	if wireLen < 0 {
+		return nil, fmt.Errorf("M_UNKNOWN (HTTP 400): Request must specify a Content-Length")
+	}
+	if m.uploadBytesErr != nil {
+		return nil, m.uploadBytesErr
+	}
+	if m.uploadBytesResult != nil {
+		return m.uploadBytesResult, nil
+	}
+	return &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/stub")}, nil
 }
 
 func (m *mockIntentAPI) SendReceipt(_ context.Context, _ id.RoomID, _ id.EventID, _ event.ReceiptType, _ interface{}) error {
@@ -365,12 +522,14 @@ func testActor(id uuid.UUID, displayName string) domain.Actor {
 	}
 }
 
-// intentTestIDMapper is a shared IDMapper for constructing Matrix IDs in intent tests.
-var intentTestIDMapper = domain.NewIDMapper("test.local")
+// testIDMapper is the package-wide test IDMapper. Its domain matches every
+// fixture mxc:// url and Matrix user id in these tests ("test.local"), so those
+// references count as LOCAL to our homeserver.
+var testIDMapper = domain.NewIDMapper("test.local")
 
 // expectedUserID returns the Matrix user ID for a test actor UUID.
 func expectedUserID(actorID uuid.UUID) id.UserID {
-	return intentTestIDMapper.UserID(actorID)
+	return testIDMapper.UserID(actorID)
 }
 
 // newMockAS creates a mockAppserviceAPI where both botIntent and any user intent
@@ -525,10 +684,11 @@ func TestSendMessage_Success(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	eventID, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello")
+	eventID, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil)
 	require.NoError(t, err)
 	assert.Equal(t, id.EventID("$msg1"), eventID)
 	assert.Equal(t, 1, intent.sendTextCalled)
+	assert.Equal(t, 0, intent.sendMessageEventCalled)
 	assert.Equal(t, id.RoomID("!room:test.local"), intent.lastSendTextRoomID)
 	assert.Equal(t, "Hello", intent.lastSendTextContent)
 }
@@ -542,7 +702,7 @@ func TestSendMessage_Error(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello")
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to send message")
 }
@@ -560,7 +720,7 @@ func TestSendReply_Success(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	eventID, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply text", "$thread-root")
+	eventID, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply text", "$thread-root", nil)
 	require.NoError(t, err)
 	assert.Equal(t, id.EventID("$reply1"), eventID)
 	assert.Equal(t, 1, intent.sendMessageEventCalled)
@@ -584,7 +744,7 @@ func TestSendReply_Error(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	_, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply", "$thread")
+	_, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply", "$thread", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to send reply")
 }

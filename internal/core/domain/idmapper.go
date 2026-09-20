@@ -115,6 +115,31 @@ func (m *IDMapper) AlkemioActorID(userID id.UserID) uuid.UUID {
 	return actorID
 }
 
+// LocalMediaID extracts the Synapse media id from an mxc:// URI, but ONLY when
+// the URI is hosted on our own homeserver. Returns "" for an empty/malformed URI
+// or one hosted on a FOREIGN homeserver.
+//
+// This mirrors the AlkemioRoomID/AlkemioContextID contract (a reference that does
+// not belong to our homeserver maps to "nothing"), and it is the single place the
+// mxc-homeserver comparison lives. It matters because a bare media_id is the
+// Alkemio server's re-home key: it is resolved by externalReference against media
+// this deployment's own Synapse stored. Surfacing a foreign homeserver's media_id
+// as if it were local would either miss (attachment silently lost) or COLLIDE
+// with an unrelated local media_id and resolve to the wrong document.
+func (m *IDMapper) LocalMediaID(mxcURL string) string {
+	if mxcURL == "" {
+		return ""
+	}
+	uri, err := id.ParseContentURI(mxcURL)
+	if err != nil {
+		return ""
+	}
+	if uri.Homeserver != m.homeserverDomain {
+		return ""
+	}
+	return uri.FileID
+}
+
 // HomeserverDomain returns the homeserver domain used for ID mapping.
 func (m *IDMapper) HomeserverDomain() string {
 	return m.homeserverDomain

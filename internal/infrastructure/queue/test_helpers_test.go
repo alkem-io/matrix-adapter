@@ -4,6 +4,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -117,7 +118,8 @@ type testMockMatrixPort struct {
 	sendReplyErr    error
 
 	// RedactEvent
-	redactEventErr error
+	redactEventErr    error
+	redactEventCalled int
 
 	// SendReaction
 	sendReactionResult id.EventID
@@ -211,14 +213,16 @@ type testMockMatrixPort struct {
 	capturedCreateRoomMembers     []domain.Actor
 
 	// SendMessage
-	capturedSendMessageRoomID  id.RoomID
-	capturedSendMessageSender  domain.Actor
-	capturedSendMessageContent string
+	capturedSendMessageRoomID      id.RoomID
+	capturedSendMessageSender      domain.Actor
+	capturedSendMessageContent     string
+	capturedSendMessageAttachments []domain.Attachment
 
 	// SendReply
-	capturedSendReplyRoomID  id.RoomID
-	capturedSendReplyContent string
-	capturedSendReplyThread  id.EventID
+	capturedSendReplyRoomID      id.RoomID
+	capturedSendReplyContent     string
+	capturedSendReplyThread      id.EventID
+	capturedSendReplyAttachments []domain.Attachment
 
 	// UpdateRoomState
 	capturedUpdateRoomStateRoomID   id.RoomID
@@ -396,21 +400,24 @@ func (m *testMockMatrixPort) KickUser(_ context.Context, roomID id.RoomID, userI
 	return m.kickUserErr
 }
 
-func (m *testMockMatrixPort) SendMessage(_ context.Context, roomID id.RoomID, sender domain.Actor, content string) (id.EventID, error) {
+func (m *testMockMatrixPort) SendMessage(_ context.Context, roomID id.RoomID, sender domain.Actor, content string, attachments []domain.Attachment) (id.EventID, error) {
 	m.capturedSendMessageRoomID = roomID
 	m.capturedSendMessageSender = sender
 	m.capturedSendMessageContent = content
+	m.capturedSendMessageAttachments = attachments
 	return m.sendMessageResult, m.sendMessageErr
 }
 
-func (m *testMockMatrixPort) SendReply(_ context.Context, roomID id.RoomID, _ domain.Actor, content string, threadID id.EventID) (id.EventID, error) {
+func (m *testMockMatrixPort) SendReply(_ context.Context, roomID id.RoomID, _ domain.Actor, content string, threadID id.EventID, attachments []domain.Attachment) (id.EventID, error) {
 	m.capturedSendReplyRoomID = roomID
 	m.capturedSendReplyContent = content
 	m.capturedSendReplyThread = threadID
+	m.capturedSendReplyAttachments = attachments
 	return m.sendReplyResult, m.sendReplyErr
 }
 
 func (m *testMockMatrixPort) RedactEvent(_ context.Context, roomID id.RoomID, _ domain.Actor, eventID id.EventID, _ string) error {
+	m.redactEventCalled++
 	m.capturedRedactEventRoomID = roomID
 	m.capturedRedactEventID = eventID
 	return m.redactEventErr
@@ -649,19 +656,41 @@ func assertSuccess(t *testing.T, result interface{}) {
 }
 
 // assertErrorCode checks that the result is an error response with the given code.
-func assertErrorCode(t *testing.T, result interface{}, expectedCode dto.ErrorCode) {
+// assertErrorMessageContains asserts on the error MESSAGE, not just its code.
+// Several distinct validation failures share dto.ErrCodeInvalidParam, so a test
+// naming a specific invariant must pin the message or it cannot fail when the
+// request is rejected for an unrelated reason.
+func assertErrorMessageContains(t *testing.T, result interface{}, want string) {
+	t.Helper()
+	base := asBaseResponse(t, result)
+	if base.Error == nil {
+		t.Fatalf("expected error to be non-nil")
+	}
+	if !strings.Contains(base.Error.Message, want) {
+		t.Errorf("expected error message to contain %q, got %q", want, base.Error.Message)
+	}
+}
+
+// asBaseResponse coerces a handler result to dto.BaseResponse.
+func asBaseResponse(t *testing.T, result interface{}) dto.BaseResponse {
 	t.Helper()
 	base, ok := result.(dto.BaseResponse)
-	if !ok {
-		// Try JSON round-trip
-		data, err := json.Marshal(result)
-		if err != nil {
-			t.Fatalf("failed to marshal result: %v", err)
-		}
-		if err := json.Unmarshal(data, &base); err != nil {
-			t.Fatalf("failed to unmarshal base response: %v", err)
-		}
+	if ok {
+		return base
 	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("failed to marshal result: %v", err)
+	}
+	if err := json.Unmarshal(data, &base); err != nil {
+		t.Fatalf("failed to unmarshal base response: %v", err)
+	}
+	return base
+}
+
+func assertErrorCode(t *testing.T, result interface{}, expectedCode dto.ErrorCode) {
+	t.Helper()
+	base := asBaseResponse(t, result)
 	if base.Success {
 		t.Fatalf("expected success=false, got true")
 	}

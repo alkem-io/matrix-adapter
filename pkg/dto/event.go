@@ -11,12 +11,13 @@ type MessageReceivedPayload struct {
 
 // Message represents a Matrix message event.
 type Message struct {
-	ID        string     `json:"id"`
-	Message   string     `json:"message"`
-	ThreadID  *MessageID `json:"threadID,omitempty"`
-	Sender    string     `json:"sender"`
-	Timestamp int64      `json:"timestamp"`
-	Reactions []Reaction `json:"reactions"`
+	ID          string               `json:"id"`
+	Message     string               `json:"message"`
+	ThreadID    *MessageID           `json:"threadID,omitempty"`
+	Sender      string               `json:"sender"`
+	Timestamp   int64                `json:"timestamp"`
+	Reactions   []Reaction           `json:"reactions"`
+	Attachments []ReceivedAttachment `json:"attachments,omitempty"`
 }
 
 // Reaction represents a reaction to a message.

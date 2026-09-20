@@ -367,18 +367,19 @@ func (s *RoomService) extractAlkemioRoomIDs(ctx context.Context, rooms []id.Room
 // Shared Methods (used by handlers)
 // ============================================================================
 
-// SendMessage sends a text message to a room.
+// SendMessage sends a text message and/or media attachments to a room.
 func (s *RoomService) SendMessage(
-	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string,
+	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment,
 ) (id.EventID, error) {
-	return s.matrix.SendMessage(ctx, roomID, senderID, content)
+	return s.matrix.SendMessage(ctx, roomID, senderID, content, attachments)
 }
 
-// SendReply sends a reply to a specific event in a room.
+// SendReply sends a reply (text and/or media attachments) to a specific event in a room.
 func (s *RoomService) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
+	attachments []domain.Attachment,
 ) (id.EventID, error) {
-	return s.matrix.SendReply(ctx, roomID, senderID, content, threadID)
+	return s.matrix.SendReply(ctx, roomID, senderID, content, threadID, attachments)
 }
 
 // RedactEvent redacts (deletes) an event from a room.
