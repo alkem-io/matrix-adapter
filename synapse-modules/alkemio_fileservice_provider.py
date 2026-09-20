@@ -335,8 +335,25 @@ class _ConsumerSink(Protocol):
         if self._producer_registered:
             try:
                 self._consumer.unregisterProducer()
-            except (AttributeError, RuntimeError):
-                pass
+            except (AttributeError, RuntimeError) as exc:
+                # SWALLOWED DELIBERATELY — this is teardown, and the request is
+                # already being failed on the next lines. A consumer that has
+                # itself finished/closed first raises here (a Synapse
+                # BackgroundFileConsumer whose file is closed, or a twisted
+                # Request already finished), which is a benign shutdown race, not
+                # a fault: there is nothing left to unregister. Raising instead
+                # would replace the ACCURATE "file-service content stall" error
+                # below with a misleading AttributeError and skip
+                # `_stop_producing`, leaking the unbuffered connection we came
+                # here to abort. Debug-level only: on the normal path this is
+                # noise, and the outcome (a failed media fetch) is already
+                # reported by the errback.
+                logger.debug(
+                    "unregisterProducer during TTFB-timeout teardown raised "
+                    "%s: %s — consumer already torn down, ignoring",
+                    type(exc).__name__,
+                    exc,
+                )
             self._producer_registered = False
         _stop_producing(getattr(self, "transport", None))
         self._finished.errback(
@@ -363,8 +380,22 @@ class _ConsumerSink(Protocol):
         if self._producer_registered:
             try:
                 self._consumer.unregisterProducer()
-            except (AttributeError, RuntimeError):
-                pass
+            except (AttributeError, RuntimeError) as exc:
+                # SWALLOWED DELIBERATELY — same teardown race as
+                # `_on_ttfb_timeout`: the connection is already gone, so a
+                # consumer that closed first has nothing left to unregister.
+                # Raising here would be strictly worse than ignoring it, because
+                # `connectionLost` is the ONLY place the result of this stream is
+                # decided: the callback/errback below would never run and
+                # `_finished` would hang forever, stalling the media request
+                # rather than completing or failing it. Debug-level only — the
+                # real outcome is carried by the callback/errback that follows.
+                logger.debug(
+                    "unregisterProducer during connectionLost raised %s: %s — "
+                    "consumer already torn down, ignoring",
+                    type(exc).__name__,
+                    exc,
+                )
             self._producer_registered = False
 
         if self._finished.called:

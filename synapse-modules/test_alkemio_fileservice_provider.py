@@ -132,12 +132,16 @@ def _drainable(code):
 class FakeConsumer:
     """Stand-in for a Synapse media IConsumer on the read path."""
 
-    def __init__(self, reject_producer=False):
+    def __init__(self, reject_producer=False, reject_unregister=False):
         self.data = bytearray()
         self.producer = None
         self.streaming = None
         self.unregistered = False
         self._reject_producer = reject_producer
+        # Models the teardown race: a consumer that finished/closed FIRST (a
+        # Synapse BackgroundFileConsumer whose file is closed, a twisted Request
+        # already finished) raises when we try to unregister the producer.
+        self._reject_unregister = reject_unregister
 
     def registerProducer(self, producer, streaming):
         if self._reject_producer:
@@ -146,6 +150,8 @@ class FakeConsumer:
         self.streaming = streaming
 
     def unregisterProducer(self):
+        if self._reject_unregister:
+            raise RuntimeError("consumer already torn down")
         self.unregistered = True
 
     def write(self, data):
@@ -1152,6 +1158,59 @@ def test_consumer_sink_degrades_when_consumer_rejects_producer(caplog):
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warnings, "the backpressure degrade must be logged, not swallowed"
     assert "backpressure" in warnings[0].getMessage()
+
+
+# The two `unregisterProducer` teardown swallows below are the SAME race seen
+# from the two ends the stream can finish at. Both are deliberate: the consumer
+# that closed first has nothing left to unregister, and in both cases raising
+# would be strictly worse than ignoring — it would replace an accurate outcome
+# with a misleading AttributeError/RuntimeError (TTFB) or leave `finished`
+# hanging forever with the media request unresolved (connectionLost). These
+# tests pin the control flow those comments promise.
+
+
+def test_consumer_sink_connection_lost_survives_unregister_race(caplog):
+    # The consumer closed first and raises on unregisterProducer. connectionLost
+    # is the ONLY place this stream's result is decided, so it must swallow that
+    # and still fire `finished` — a raise here would hang the media request.
+    consumer = FakeConsumer(reject_unregister=True)
+    finished = defer.Deferred()
+    result = {}
+    finished.addCallback(lambda n: result.__setitem__("written", n))
+
+    sink = _ConsumerSink(consumer, finished)
+    sink.makeConnection(FakeTransport())
+    sink.dataReceived(b"ABC")
+    with caplog.at_level(logging.DEBUG, logger=mod.logger.name):
+        sink.connectionLost(None)  # clean close; must not raise
+
+    assert finished.called, "the stream result must still be delivered"
+    assert result["written"] == 3
+    # The swallow is justified, not invisible: it leaves a debug breadcrumb.
+    assert any(
+        "unregisterProducer" in r.getMessage() for r in caplog.records
+    ), "the teardown swallow must leave a debug trace"
+
+
+def test_consumer_sink_ttfb_timeout_survives_unregister_race():
+    # Same race on the TTFB path: the errback and the transport abort must both
+    # still happen, so the caller gets the accurate "content stall" failure and
+    # the unbuffered connection is released rather than leaked.
+    clock = Clock()
+    consumer = FakeConsumer(reject_unregister=True)
+    finished = defer.Deferred()
+    errors = {}
+    finished.addErrback(lambda f: errors.__setitem__("err", f) or None)
+
+    sink = _ConsumerSink(consumer, finished, reactor=clock, ttfb_timeout=5.0)
+    transport = FakeTransport()
+    sink.makeConnection(transport)
+
+    clock.advance(5.1)  # no first byte -> trip the deadline
+
+    assert "err" in errors
+    assert errors["err"].check(_TimeoutError), "the stall error must survive the race"
+    assert transport.stopped is True, "the connection must still be aborted"
 
 
 # `_ConsumerSink.connectionLost` deliberately DIVERGES from `_body_end_is_clean`
