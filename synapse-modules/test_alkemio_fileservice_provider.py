@@ -29,6 +29,7 @@ import logging
 import re
 import threading
 import types
+from typing import ClassVar
 
 import pytest
 
@@ -2164,7 +2165,7 @@ def test_close_off_reactor_falls_back_inline_when_the_pool_is_unavailable(monkey
 class _FakeThreadPool:
     """Records construction/start/stop without spawning a single real thread."""
 
-    instances = []
+    instances: ClassVar[list] = []
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
