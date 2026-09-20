@@ -70,13 +70,26 @@ class FakeFileInfo:
 
 
 class FakeTransport:
-    """Stand-in for Twisted's response-body TransportProxyProducer."""
+    """Stand-in for Twisted's response-body TransportProxyProducer.
+
+    Records the full IPushProducer triple, because `_ConsumerSink` now registers
+    ITSELF with the consumer and proxies to this transport — so these counters
+    are what prove the proxy still delivers real backpressure.
+    """
 
     def __init__(self):
         self.stopped = False
+        self.paused = 0
+        self.resumed = 0
 
     def stopProducing(self):
         self.stopped = True
+
+    def pauseProducing(self):
+        self.paused += 1
+
+    def resumeProducing(self):
+        self.resumed += 1
 
 
 class FakeResponse:
@@ -175,6 +188,18 @@ class FakeFile:
 
     def close(self):
         self.closed = True
+
+
+class _RealBytesFile(io.BytesIO):
+    """A genuinely readable cache-file handle that also answers `fileno()`.
+
+    `store_file` fstats the OPEN fd to size the upload deadline, so a plain
+    BytesIO (whose `fileno()` raises) cannot stand in where the real producer
+    has to read real bytes.
+    """
+
+    def fileno(self):
+        return FakeFile._FAKE_FD
 
 
 async def _aval(x):
@@ -418,6 +443,41 @@ def test_parse_config_rejects_bad_tuning(overrides):
         FileServiceStorageProvider.parse_config(base)
 
 
+@pytest.mark.parametrize(
+    "bad, cause_type",
+    [
+        ("not-a-number", ValueError),  # float() refuses the string
+        (True, TypeError),             # our explicit bool reject
+        (float("nan"), ValueError),    # our explicit "value is not finite"
+        (10 ** 400, OverflowError),    # int too large to convert to float
+    ],
+)
+def test_parse_config_bad_tuning_chains_the_original_cause(bad, cause_type):
+    """The boot-time ValueError must CHAIN its cause (ruff B904).
+
+    `_positive_number` collapses four distinct failures — not a number at all, a
+    YAML bool, NaN/inf, and an int too large for float() — into ONE
+    operator-facing message that names neither. Raising bare inside the `except`
+    leaves `__cause__` unset, so the traceback reads "During handling of the
+    above exception, another exception occurred", which looks like a bug in the
+    validator rather than a bad homeserver.yaml value. `from err` makes the
+    original the explicit cause, and that traceback is the only diagnostic an
+    operator gets for a Synapse that refuses to boot.
+    """
+    base = {
+        "file_service_url": "http://fs:4003",
+        "matrix_media_bucket_id": "b",
+        "timeout_s": bad,
+    }
+    with pytest.raises(ValueError) as excinfo:
+        FileServiceStorageProvider.parse_config(base)
+
+    assert excinfo.value.__cause__ is not None, (
+        "the original exception must be chained with `from err`, not dropped"
+    )
+    assert isinstance(excinfo.value.__cause__, cause_type)
+
+
 # --- routing ---------------------------------------------------------------
 
 
@@ -490,11 +550,18 @@ def test_store_posts_verbatim_multipart_streamed(monkeypatch):
     # Per-request timeout + unbuffered (so the reply can be drained/released).
     assert captured["timeout"] == prov.store_timeout_s
     assert captured["unbuffered"] is True
-    # The body must be the STREAMED file handle, not a fully-buffered bytes blob.
+    # The body must be STREAMED from the cache handle, not a fully-buffered bytes
+    # blob — and streamed by the OFF-REACTOR producer, not by treq's stock
+    # `FileBodyProducer` (which reads on the reactor thread). Passing the bare
+    # handle is what would silently get the stock one, via `IBodyProducer(...)`
+    # adaptation inside treq's `_convert_files`.
     body = captured["files"]["file"][1]
-    assert body is fake_file
+    assert isinstance(body, mod._ThreadedFileBodyProducer)
+    assert body._inputFile is fake_file
     assert not isinstance(body, (bytes, bytearray))
-    assert hasattr(body, "read")
+    # The declared length comes from the off-reactor fstat, not a reactor-side
+    # seek/tell probe (the autouse fixture stubs st_size to 1024).
+    assert body.length == 1024
     # Handle closed; and the 201 reply body was DRAINED (keep-alive) not aborted.
     assert fake_file.closed is True
     assert store_resp.transport.stopped is False
@@ -1129,8 +1196,10 @@ def test_consumer_sink_streams_with_backpressure_and_completes():
     sink = _ConsumerSink(consumer, finished)
     transport = FakeTransport()
     sink.makeConnection(transport)
-    # Producer registered for real backpressure (streaming=True).
-    assert consumer.producer is transport
+    # The sink registers ITSELF as the streaming producer (it has to see
+    # pause/resume to suspend the body-idle deadline) and proxies to the body
+    # transport — so the consumer still gets real backpressure.
+    assert consumer.producer is sink
     assert consumer.streaming is True
 
     sink.dataReceived(b"AB")
@@ -1504,7 +1573,7 @@ def test_consumer_sink_ttfb_timeout_aborts_and_errbacks():
     sink = _ConsumerSink(consumer, finished, reactor=clock, ttfb_timeout=5.0)
     transport = FakeTransport()
     sink.makeConnection(transport)
-    assert consumer.producer is transport  # producer registered for backpressure
+    assert consumer.producer is sink  # sink proxies backpressure to the transport
     assert clock.getDelayedCalls()  # TTFB deadline scheduled
 
     clock.advance(5.1)  # no first byte -> trip the deadline
@@ -1516,9 +1585,12 @@ def test_consumer_sink_ttfb_timeout_aborts_and_errbacks():
 
 
 def test_consumer_sink_first_byte_cancels_ttfb():
-    # The first byte cancels the TTFB timer; afterwards client backpressure governs
-    # (a paused producer stops dataReceived) and NO further timeout fires even if
-    # the clock advances far — a slow client must not be mistaken for a stall.
+    # The first byte cancels the TTFB timer. This sink is built WITHOUT an
+    # idle_timeout (the TTFB-only configuration), so nothing replaces it and the
+    # clock may advance arbitrarily far without firing. The production wiring
+    # DOES pass an idle_timeout — see the body-idle tests below — but the two
+    # deadlines stay independently configurable, and this pins that a sink given
+    # only a TTFB budget arms exactly one timer.
     clock = Clock()
     consumer = FakeConsumer()
     finished = defer.Deferred()
@@ -1566,3 +1638,486 @@ def test_fetch_content_stream_ttfb_wired_through_responder(monkeypatch):
     prov.reactor.advance(prov.timeout_s + 1)  # trip the TTFB deadline
     assert "err" in errors
     assert content.transport.stopped is True  # connection aborted
+
+
+# --- content stream: backpressure-aware BODY-IDLE deadline -----------------
+#
+# The TTFB deadline alone left a one-byte-then-silent stream unbounded forever,
+# and NOTHING outside this module closes that hole: Synapse bare-`await`s
+# `write_to_consumer` in both `respond_with_responder` and
+# `ensure_media_is_in_local_cache`; twisted DISABLES the HTTP channel idle
+# timeout for the whole duration of response generation (and Synapse never
+# installs one anyway); and treq's `timeout=` is cancelled the moment the
+# response headers arrive, so it never covers the body. These pin the deadline
+# that does close it — and, just as importantly, pin that it does NOT fire while
+# a slow consumer is the reason no bytes are moving.
+
+
+def _idle_sink(clock, consumer, finished, idle=5.0):
+    """A sink wired the way `_FileServiceResponder` wires it: both deadlines."""
+    return _ConsumerSink(
+        consumer, finished, reactor=clock, ttfb_timeout=idle, idle_timeout=idle
+    )
+
+
+def test_consumer_sink_body_idle_timeout_fires_after_first_byte():
+    # One byte then silence: the TTFB deadline is gone (it did its job), so the
+    # body-idle deadline is what must bound the stream. Without it `finished`
+    # never resolves and Synapse holds the request + connection forever.
+    clock = Clock()
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+    errors = {}
+    finished.addErrback(lambda f: errors.__setitem__("err", f) or None)
+
+    sink = _idle_sink(clock, consumer, finished)
+    transport = FakeTransport()
+    sink.makeConnection(transport)
+
+    sink.dataReceived(b"X")  # first byte: cancels TTFB, arms body-idle
+    assert not finished.called
+
+    clock.advance(5.1)  # then silence past the idle deadline
+
+    assert "err" in errors
+    assert errors["err"].check(_TimeoutError), "a stalled body must fail, not hang"
+    assert transport.stopped is True, "the unbuffered connection must be aborted"
+    assert consumer.unregistered is True
+
+
+def test_consumer_sink_idle_timeout_survives_unregister_race():
+    # The TTFB and body-idle deadlines now share one teardown (`_fail_stalled`),
+    # so the deliberate `unregisterProducer` swallow has to hold on the NEW path
+    # too: a consumer that closed first must still get the accurate stall error
+    # and the unbuffered connection must still be aborted rather than leaked.
+    clock = Clock()
+    consumer = FakeConsumer(reject_unregister=True)
+    finished = defer.Deferred()
+    errors = {}
+    finished.addErrback(lambda f: errors.__setitem__("err", f) or None)
+
+    sink = _idle_sink(clock, consumer, finished)
+    transport = FakeTransport()
+    sink.makeConnection(transport)
+    sink.dataReceived(b"X")  # arm the body-idle deadline
+
+    clock.advance(5.1)  # then silence; must not raise out of the timer
+
+    assert "err" in errors
+    assert errors["err"].check(_TimeoutError), "the stall error must survive the race"
+    assert transport.stopped is True, "the connection must still be aborted"
+
+
+def test_consumer_sink_body_idle_is_suspended_while_the_consumer_pauses():
+    # THE reason a naive idle timer was rejected: a slow Element client pauses the
+    # producer, and no bytes arrive for a long time through NO fault of
+    # file-service. Suspending the deadline while paused is what makes it safe —
+    # the clock only runs when the consumer is ready and file-service is silent.
+    clock = Clock()
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+    outcome = {}
+    finished.addCallbacks(
+        lambda n: outcome.__setitem__("written", n),
+        lambda f: outcome.__setitem__("err", f),
+    )
+
+    sink = _idle_sink(clock, consumer, finished)
+    transport = FakeTransport()
+    sink.makeConnection(transport)
+    sink.dataReceived(b"X")
+
+    sink.pauseProducing()  # slow client: downstream backpressure
+    assert transport.paused == 1, "the pause must still reach the body transport"
+    clock.advance(1000)  # a very slow client indeed
+    assert not finished.called, (
+        "a paused consumer must NOT be mistaken for a file-service stall"
+    )
+    assert transport.stopped is False
+
+    sink.resumeProducing()  # client caught up; the clock starts again
+    assert transport.resumed == 1, "the resume must still reach the body transport"
+    sink.dataReceived(b"Y")
+    sink.connectionLost(None)
+
+    assert "err" not in outcome
+    assert outcome["written"] == 2
+
+
+def test_consumer_sink_body_idle_resumes_and_still_catches_a_stall():
+    # The other half of suspension: once the consumer resumes, the deadline must
+    # be re-armed. A timer that suspended and never came back would silently
+    # restore the original unbounded hang for any stream that paused even once.
+    clock = Clock()
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+    errors = {}
+    finished.addErrback(lambda f: errors.__setitem__("err", f) or None)
+
+    sink = _idle_sink(clock, consumer, finished)
+    sink.makeConnection(FakeTransport())
+    sink.dataReceived(b"X")
+    sink.pauseProducing()
+    clock.advance(1000)
+    assert not finished.called
+
+    sink.resumeProducing()  # ready for more, and file-service says nothing
+    clock.advance(5.1)
+
+    assert "err" in errors
+    assert errors["err"].check(_TimeoutError)
+
+
+def test_consumer_sink_body_idle_is_reset_by_every_chunk():
+    # A healthy-but-slow-ish stream that keeps delivering inside the window must
+    # never trip. Only a gap LONGER than the window is a stall, so each chunk has
+    # to restart the clock rather than letting the first timer run to term.
+    clock = Clock()
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+    outcome = {}
+    finished.addCallbacks(
+        lambda n: outcome.__setitem__("written", n),
+        lambda f: outcome.__setitem__("err", f),
+    )
+
+    sink = _idle_sink(clock, consumer, finished)
+    sink.makeConnection(FakeTransport())
+
+    # Four chunks, each 4s after the last: 16s of wall clock, never 5s idle.
+    for _ in range(4):
+        sink.dataReceived(b"AB")
+        clock.advance(4.0)
+    assert not finished.called, "chunks inside the window must reset the deadline"
+
+    clock.advance(1.5)  # now the gap since the last chunk exceeds 5s
+    assert "err" in outcome
+    assert outcome["err"].check(_TimeoutError)
+
+
+def test_consumer_sink_clean_close_leaves_no_pending_deadline():
+    # Teardown discipline: neither deadline may outlive the stream as a pending
+    # IDelayedCall. A leaked timer fires against a finished stream (harmless only
+    # because `_fail_stalled` re-checks `finished.called`) and pins the sink, the
+    # consumer and the response in memory until it does.
+    clock = Clock()
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+
+    sink = _idle_sink(clock, consumer, finished)
+    sink.makeConnection(FakeTransport())
+    sink.dataReceived(b"ABC")
+    assert clock.getDelayedCalls(), "the body-idle deadline should be armed"
+
+    sink.connectionLost(None)  # clean close
+
+    assert finished.called
+    assert clock.getDelayedCalls() == [], "connectionLost must cancel both deadlines"
+
+
+def test_consumer_sink_stop_producing_tears_down_and_cancels_deadlines():
+    # A client disconnect reaches us as HTTPChannel.stopProducing() -> ours (that
+    # is the ONLY external escape from a stalled stream, and it only exists
+    # because we register a producer). It must abort the upstream connection and
+    # leave no timer behind. It must NOT resolve `finished` itself —
+    # connectionLost stays the single place this stream's result is decided.
+    clock = Clock()
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+
+    sink = _idle_sink(clock, consumer, finished)
+    transport = FakeTransport()
+    sink.makeConnection(transport)
+    sink.dataReceived(b"X")
+
+    sink.stopProducing()
+
+    assert transport.stopped is True, "the upstream connection must be aborted"
+    assert clock.getDelayedCalls() == [], "no deadline may survive the teardown"
+    assert not finished.called, "connectionLost decides the result, not stopProducing"
+
+    sink.connectionLost(Failure(ConnectionDone()))
+    assert finished.called
+
+
+def test_fetch_content_stream_idle_deadline_wired_through_responder(monkeypatch):
+    # End-to-end: fetch() must thread the stall budget into BOTH deadlines, not
+    # just TTFB. A content stream that delivers one byte and then goes silent has
+    # to fail through the real fetch() -> Responder -> sink wiring.
+    prov = _make_provider()
+    content = FakeResponse(200, stall_body=True)
+
+    def fake_get(url, **kw):
+        if "by-reference" in url:
+            return _aval(_meta({"id": "doc-9"}))
+        return _aval(content)
+
+    monkeypatch.setattr(mod.treq, "get", fake_get)
+
+    responder = _run(prov.fetch("local_content/x", FakeFileInfo("MEDIAID")))
+    consumer = FakeConsumer()
+    errors = {}
+    d = responder.write_to_consumer(consumer)
+    d.addErrback(lambda f: errors.__setitem__("err", f) or None)
+
+    # One byte: this is what used to disarm every deadline the module had.
+    content.delivered_to.dataReceived(b"X")
+    assert not errors
+
+    prov.reactor.advance(prov.timeout_s + 1)  # then silence
+
+    assert "err" in errors, "a one-byte-then-silent stream must not hang forever"
+    assert errors["err"].check(_TimeoutError)
+    assert content.transport.stopped is True
+
+
+# --- store_file: OFF-REACTOR cache-file reads ------------------------------
+#
+# treq streams the upload through twisted's stock `FileBodyProducer`, whose
+# `_writeloop` calls `inputFile.read()` ON THE REACTOR THREAD. A blocked reactor
+# cannot run `callLater`, so the store's own size-scaled `addTimeout` deadline
+# could not fire either — the guard meant to bound a wedged media-store read is
+# disarmed by exactly the thing it guards. The mainline synapse-s3-storage-provider
+# makes no such trade-off: its store_file hands the whole boto3 upload (file read
+# included) to a threadpool. These pin the adaptation that closes the gap here,
+# and pin that it does NOT cost the backpressure the base class provides.
+
+
+class _RecordingThreadBridge:
+    """Stand-in for `_read_in_thread`: records each dispatch, runs it inline."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, reactor, fn):
+        self.calls += 1
+        return defer.execute(fn)
+
+
+class _RecordingThreadPool:
+    """Stand-in for the reactor thread pool that DEFERS the work it is handed.
+
+    Deferring is the point: it is what distinguishes "dispatched to the pool"
+    from "run inline on the calling (reactor) thread".
+    """
+
+    def __init__(self):
+        self.queued = []
+
+    def callInThread(self, fn, *args, **kwargs):
+        self.queued.append(lambda: fn(*args, **kwargs))
+
+    def run(self):
+        while self.queued:
+            self.queued.pop(0)()
+
+
+def test_threaded_body_producer_reads_off_reactor_and_preserves_the_bytes(monkeypatch):
+    # Every chunk read must go through the off-reactor seam, and the body treq
+    # ends up sending must be byte-identical to the file.
+    coop, pump = _sync_cooperator()
+    bridge = _RecordingThreadBridge()
+    monkeypatch.setattr(mod, "_read_in_thread", bridge)
+
+    payload = b"0123456789" * 7  # 70 bytes
+    producer = mod._ThreadedFileBodyProducer(
+        io.BytesIO(payload),
+        reactor=object(),  # no getThreadPool -> the EOF close falls back inline
+        length=len(payload),
+        cooperator=coop,
+        read_size=16,
+    )
+    collector = _BodyCollector()
+    done = producer.startProducing(collector)
+    pump()
+
+    assert done.called
+    assert collector.value == payload, "the streamed body must be verbatim"
+    # 70 bytes at 16 per read = 5 full reads, then one more that returns b"" (EOF).
+    assert bridge.calls == 6, (
+        "every read must be dispatched off-reactor; got %d" % bridge.calls
+    )
+    # The declared length is the one we were given (fstat'd off-reactor), not a
+    # reactor-side seek/tell probe.
+    assert producer.length == len(payload)
+
+
+def test_threaded_body_producer_still_honours_pause_and_resume(monkeypatch):
+    # Moving the reads into the thread pool must not cost backpressure. The
+    # mechanism is the base class's untouched CooperativeTask, so a paused
+    # producer must read NOTHING — not even one chunk ahead into memory.
+    coop, pump = _sync_cooperator()
+    bridge = _RecordingThreadBridge()
+    monkeypatch.setattr(mod, "_read_in_thread", bridge)
+
+    payload = b"ABCDEFGH"
+    producer = mod._ThreadedFileBodyProducer(
+        io.BytesIO(payload),
+        reactor=object(),
+        length=len(payload),
+        cooperator=coop,
+        read_size=4,
+    )
+    collector = _BodyCollector()
+    done = producer.startProducing(collector)
+
+    producer.pauseProducing()  # slow consumer
+    pump()
+    assert collector.value == b"", "a paused producer must not write"
+    assert bridge.calls == 0, "a paused producer must not even read"
+    assert not done.called
+
+    producer.resumeProducing()
+    pump()
+    assert done.called
+    assert collector.value == payload
+
+
+def test_threaded_body_producer_stop_closes_the_handle_off_the_reactor(monkeypatch):
+    # The base class closes the handle INLINE and BEFORE stopping the task.
+    # io.BufferedReader.close() acquires the object's buffer lock, so closing
+    # while a chunk read is still in flight in the pool blocks the caller until
+    # that read returns — on the reactor thread that is the very stall the
+    # threaded reads exist to prevent, merely relocated into teardown.
+    coop, _pump = _sync_cooperator()
+    monkeypatch.setattr(mod, "_read_in_thread", _RecordingThreadBridge())
+    pool = _RecordingThreadPool()
+    reactor = types.SimpleNamespace(getThreadPool=lambda: pool)
+
+    handle = io.BytesIO(b"AB")
+    producer = mod._ThreadedFileBodyProducer(
+        handle, reactor, length=2, cooperator=coop, read_size=2
+    )
+    producer.startProducing(_BodyCollector())
+
+    producer.stopProducing()
+
+    assert handle.closed is False, (
+        "the handle must NOT be closed on the calling (reactor) thread"
+    )
+    assert pool.queued, "the close must be dispatched to the reactor thread pool"
+    pool.run()
+    assert handle.closed is True, "and must actually happen once the pool runs it"
+
+    # Stopping an already-stopped task raises TaskFinished; the override must
+    # swallow it exactly as the base class does, or a cancelled upload's teardown
+    # would blow up instead of releasing the handle.
+    producer.stopProducing()
+
+
+def test_read_in_thread_dispatches_to_the_reactor_thread_pool(monkeypatch):
+    # The seam every cache-file read passes through must really hand the call to
+    # the reactor's thread pool. If it ever degraded to running inline, the
+    # producer above would silently be back to reading on the reactor thread and
+    # every test that substitutes the seam would still pass.
+    seen = {}
+
+    def fake_defer_to_thread_pool(reactor, pool, fn):
+        seen["reactor"], seen["pool"], seen["fn"] = reactor, pool, fn
+        return defer.succeed(b"chunk")
+
+    monkeypatch.setattr(mod.threads, "deferToThreadPool", fake_defer_to_thread_pool)
+
+    pool = object()
+    reactor = types.SimpleNamespace(getThreadPool=lambda: pool)
+
+    def read():
+        return b"x"
+
+    result = _result_of(mod._read_in_thread(reactor, read))
+
+    assert seen.get("reactor") is reactor
+    assert seen.get("pool") is pool, "the reactor's own thread pool must be used"
+    assert seen.get("fn") is read
+    assert result == b"chunk"
+
+
+def test_store_body_serialises_through_real_treq_with_the_threaded_producer(monkeypatch):
+    """The threaded producer must survive treq's REAL `files` handling.
+
+    `_convert_files` adapts whatever it is handed with `IBodyProducer(...)`: a
+    bare file handle becomes twisted's stock, reactor-reading `FileBodyProducer`,
+    whereas an object that already provides `IBodyProducer` is passed through
+    untouched. Everything else in this suite substitutes the read seam, so this
+    is the one place that proves the swap actually works against the library —
+    that treq keeps our producer, keeps the same part filename and content type
+    as when it got a bare handle, and still frames the body with an EXACT
+    declared length (a wrong length here corrupts every upload).
+
+    The body is serialised inside the fake `post`, which is where the real one
+    reads it — the cache handle is closed only after the post Deferred fires.
+    """
+    prov = _make_provider()
+    payload = b"MEDIABYTES" * 9  # 90 bytes: many reads at the tiny read_size below
+    captured = {}
+
+    def fake_post(url, files=None, data=None, **kw):
+        coop, pump = _sync_cooperator()
+        fields = list(_convert_params(data)) + list(_convert_files(files))
+        _name, (filename, content_type, producer) = [
+            f for f in fields if f[0] == "file"
+        ][0]
+        captured["producer"] = producer
+        captured["passthrough"] = producer is files["file"][1]
+        captured["part"] = (filename, content_type)
+
+        # Only the SCHEDULING is replaced (see `_sync_cooperator`): treq's own
+        # serialiser produces every byte. The producer was built with the global
+        # cooperator, which needs a running reactor.
+        producer._cooperate = coop.cooperate
+        multipart = MultiPartProducer(fields, boundary=b"BOUNDARY", cooperator=coop)
+        collector = _BodyCollector()
+        done = multipart.startProducing(collector)
+        pump()
+        captured["done"] = done.called
+        captured["body"] = collector.value
+        captured["declared_length"] = multipart.length
+        return _aval(_drainable(201))
+
+    monkeypatch.setattr(mod.treq, "post", fake_post)
+    monkeypatch.setattr(mod, "_open_stream", lambda p: _RealBytesFile(payload))
+    monkeypatch.setattr(
+        mod.os, "fstat", lambda fd: types.SimpleNamespace(st_size=len(payload))
+    )
+    # Run the "thread pool" inline so the synchronous cooperator can drive it.
+    monkeypatch.setattr(mod, "_read_in_thread", lambda reactor, fn: defer.execute(fn))
+
+    _run(prov.store_file("local_content/aa/bb/MEDIAID", FakeFileInfo("MEDIAID")))
+
+    assert captured["passthrough"], (
+        "treq must pass our IBodyProducer through, not adapt the handle into its "
+        "own reactor-reading FileBodyProducer"
+    )
+    assert isinstance(captured["producer"], mod._ThreadedFileBodyProducer)
+    # Unchanged from when a bare handle was passed: treq derives both from the
+    # 2-tuple's filename.
+    assert captured["part"] == ("MEDIAID", "application/octet-stream")
+
+    assert captured["done"], "treq's serialiser must run the producer to completion"
+    assert payload in captured["body"], "the file bytes must reach the wire verbatim"
+    assert captured["declared_length"] == len(captured["body"]), (
+        "the declared multipart Content-Length must equal the bytes produced"
+    )
+
+
+def test_consumer_sink_no_idle_deadline_before_the_first_byte():
+    # The two deadlines are strictly sequential: TTFB owns the stream until the
+    # first byte, the body-idle deadline from then on. A pause/resume before any
+    # data must therefore leave exactly ONE timer armed (the TTFB one), not arm a
+    # second one racing it for the same condition.
+    clock = Clock()
+    consumer = FakeConsumer()
+    finished = defer.Deferred()
+
+    sink = _idle_sink(clock, consumer, finished)
+    sink.makeConnection(FakeTransport())
+    assert len(clock.getDelayedCalls()) == 1  # TTFB only
+
+    sink.pauseProducing()
+    sink.resumeProducing()
+    assert len(clock.getDelayedCalls()) == 1, (
+        "no body-idle deadline may be armed before the first byte"
+    )
+
+    sink.dataReceived(b"X")  # now TTFB gives way to the body-idle deadline
+    assert len(clock.getDelayedCalls()) == 1
