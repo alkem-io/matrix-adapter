@@ -71,11 +71,7 @@ paths:
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: '#/components/schemas/dto.CheckRoomHTTPResponse'
-                  - additionalProperties:
-                      type: string
-                    type: object
+                $ref: '#/components/schemas/dto.CheckRoomHTTPResponse'
           description: OK
         "400":
           content:
@@ -155,6 +151,7 @@ paths:
           description: Internal Server Error
       security:
         - apiKeyAuth: []
+      summary: handleDMRequest processes DM request webhooks from Synapse.
   /health/live:
     get:
       operationId: app.go:76:40

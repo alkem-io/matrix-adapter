@@ -53,6 +53,8 @@ const (
 
 	// TopicHierarchySetParent is the topic for setting space hierarchy parent.
 	TopicHierarchySetParent = dto.TopicHierarchySetParent
+	// TopicHierarchySetChildren is the topic for declarative, parent-keyed hierarchy convergence.
+	TopicHierarchySetChildren = dto.TopicHierarchySetChildren
 
 	// TopicSpaceMemberBatchAdd is the topic for batch adding space members.
 	TopicSpaceMemberBatchAdd = dto.TopicSpaceMemberBatchAdd

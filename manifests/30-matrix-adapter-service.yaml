@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: alkemio-matrix-adapter-service
+  namespace: default
+  labels:
+    app: alkemio-matrix-adapter
+spec:
+  selector:
+    app: alkemio-matrix-adapter
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8280
+      targetPort: 8280

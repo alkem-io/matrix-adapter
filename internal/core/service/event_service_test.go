@@ -103,6 +103,74 @@ func TestHandleMessage_WithThreadID(t *testing.T) {
 	}
 }
 
+// publishedAttachment runs HandleMessage with a single attachment and returns
+// the published ReceivedAttachment.
+func publishedAttachment(t *testing.T, att domain.Attachment) dto.ReceivedAttachment {
+	t.Helper()
+	queue := &testutil.MockQueuePort{}
+	svc := newEventService(queue)
+
+	err := svc.HandleMessage(domain.Message{
+		ID:          "$ev:example.com",
+		RoomID:      "!room:example.com",
+		SenderID:    uuid.New(),
+		Timestamp:   time.Now(),
+		Attachments: []domain.Attachment{att},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	payload, ok := queue.PublishedPayload.(dto.MessageReceivedPayload)
+	if !ok {
+		t.Fatalf("expected MessageReceivedPayload, got %T", queue.PublishedPayload)
+	}
+	if len(payload.Message.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(payload.Message.Attachments))
+	}
+	return payload.Message.Attachments[0]
+}
+
+// T010 — an inbound media event that echoes our own outbound media carries
+// io.alkemio.document_id, so both DocumentID and MediaID are surfaced.
+func TestHandleMessage_AttachmentEcho(t *testing.T) {
+	w, h := 1920, 1080
+	got := publishedAttachment(t, domain.Attachment{
+		DocumentID:  "doc-abc",
+		MediaID:     "media123",
+		DisplayName: "photo.jpg",
+		MimeType:    "image/jpeg",
+		Size:        12345,
+		Width:       &w,
+		Height:      &h,
+	})
+	if got.DocumentID == nil || *got.DocumentID != "doc-abc" {
+		t.Errorf("expected DocumentID 'doc-abc', got %v", got.DocumentID)
+	}
+	if got.MediaID == nil || *got.MediaID != "media123" {
+		t.Errorf("expected MediaID 'media123', got %v", got.MediaID)
+	}
+	if got.Width == nil || *got.Width != 1920 || got.Height == nil || *got.Height != 1080 {
+		t.Errorf("expected dims 1920x1080, got w=%v h=%v", got.Width, got.Height)
+	}
+}
+
+// T010 — an Element-origin media event has no io.alkemio.document_id, so only
+// MediaID is set (the server's re-home key); DocumentID is nil.
+func TestHandleMessage_AttachmentElementOrigin(t *testing.T) {
+	got := publishedAttachment(t, domain.Attachment{
+		MediaID:     "xyz789",
+		DisplayName: "element.png",
+		MimeType:    "image/png",
+		Size:        42,
+	})
+	if got.DocumentID != nil {
+		t.Errorf("expected nil DocumentID, got %v", *got.DocumentID)
+	}
+	if got.MediaID == nil || *got.MediaID != "xyz789" {
+		t.Errorf("expected MediaID 'xyz789', got %v", got.MediaID)
+	}
+}
+
 func TestHandleMessage_QueueError(t *testing.T) {
 	queue := &testutil.MockQueuePort{PublishError: context.DeadlineExceeded}
 	svc := newEventService(queue)

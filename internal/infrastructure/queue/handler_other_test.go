@@ -36,8 +36,9 @@ func otherNewMatrixPort() *testMockMatrixPort {
 func newTestSpaceHandler(matrix *testMockMatrixPort) *SpaceHandler {
 	idMapper := otherNewIDMapper()
 	logger := &testMockLogger{}
-	svc := service.NewSpaceService(matrix, logger, idMapper)
-	return NewSpaceHandler(svc, matrix, idMapper)
+	cfg := testHierarchyConfig()
+	svc := service.NewSpaceService(matrix, logger, idMapper, cfg)
+	return NewSpaceHandler(svc, matrix, idMapper, cfg)
 }
 
 // --- HandleCreateSpace ---

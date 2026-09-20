@@ -4,11 +4,14 @@ package matrix
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
@@ -767,15 +770,21 @@ func TestGetRoomMessages_Error(t *testing.T) {
 // --------------------------------------------------------------------------
 
 func TestGetEventContext_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	sa, err := NewSynapseAdmin("http://homeserver.test", "test-token")
+	if err != nil {
+		t.Fatalf("NewSynapseAdmin: %v", err)
+	}
+	sa.client.Client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
 		if !strings.Contains(r.URL.Path, "/context/") {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		if got := r.URL.Query().Get("limit"); got != "0" {
+			t.Errorf("expected context limit=0, got %q", got)
+		}
+		body, marshalErr := json.Marshal(map[string]interface{}{
 			"event": map[string]interface{}{
 				"type":             "m.room.message",
 				"event_id":         "$evt1:hs",
@@ -789,10 +798,16 @@ func TestGetEventContext_Success(t *testing.T) {
 			"events_after":  []interface{}{},
 			"state":         []interface{}{},
 		})
-	}))
-	defer srv.Close()
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(string(body))),
+		}, nil
+	})}
 
-	sa := newTestSynapseAdmin(t, srv)
 	resp, err := sa.GetEventContext(context.Background(), "!room1:hs", "$evt1:hs")
 	if err != nil {
 		t.Fatalf("GetEventContext: %v", err)
@@ -982,6 +997,214 @@ func TestGetRelations_Success(t *testing.T) {
 	}
 	if events[0].ID != "$reaction1:hs" {
 		t.Errorf("expected event_id=$reaction1:hs, got %s", events[0].ID)
+	}
+}
+
+// GetRelations follows next_batch and accumulates every page. Simulates a thread
+// whose first page is all sticker replies (newest-first) and whose second page
+// carries an older message reply: without pagination the message reply would be
+// dropped. Also asserts the empty event-type filter omits the type path segment.
+func TestGetRelations_Paginates(t *testing.T) {
+	var gotFroms []string
+	var gotPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotFroms = append(gotFroms, r.URL.Query().Get("from"))
+		gotPaths = append(gotPaths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("from") == "" {
+			// Page 1: sticker replies + next_batch pointing at page 2.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"chunk": []map[string]interface{}{
+					{"type": "m.sticker", "event_id": "$s1:hs", "sender": "@a:hs", "origin_server_ts": 3000},
+					{"type": "m.sticker", "event_id": "$s2:hs", "sender": "@a:hs", "origin_server_ts": 2900},
+				},
+				"next_batch": "PAGE2",
+			})
+			return
+		}
+		// Page 2: an older message reply, no further next_batch.
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"chunk": []map[string]interface{}{
+				{"type": "m.room.message", "event_id": "$m1:hs", "sender": "@b:hs", "origin_server_ts": 1000},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	events, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{}, // empty type → all relation event types
+	)
+	if err != nil {
+		t.Fatalf("GetRelations: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected 3 accumulated relations across 2 pages, got %d", len(events))
+	}
+	if events[0].ID != "$s1:hs" || events[2].ID != "$m1:hs" {
+		t.Errorf("expected [stickers..., message], got %s .. %s", events[0].ID, events[2].ID)
+	}
+	if len(gotFroms) != 2 || gotFroms[0] != "" || gotFroms[1] != "PAGE2" {
+		t.Errorf("expected 2 requests with from=[\"\", \"PAGE2\"], got %v", gotFroms)
+	}
+	// Empty event-type must NOT add a trailing type segment after the relType.
+	if strings.HasSuffix(gotPaths[0], "/m.thread/") || strings.Contains(gotPaths[0], "/m.thread/m.") {
+		t.Errorf("expected no event-type path segment for empty type, got %s", gotPaths[0])
+	}
+}
+
+// A later-page failure returns BOTH the pages accumulated so far AND the error:
+// page 1 succeeds with a next_batch, page 2 returns 500 → GetRelations yields page
+// 1's relations together with a non-nil error, leaving the best-effort-vs-fail
+// choice to each caller.
+func TestGetRelations_LaterPageError_ReturnsPartial(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("from") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"chunk": []map[string]interface{}{
+					{"type": "m.room.message", "event_id": "$m1:hs", "sender": "@a:hs", "origin_server_ts": 3000},
+				},
+				"next_batch": "PAGE2",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"errcode": "M_UNKNOWN"})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	events, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	)
+	if err == nil {
+		t.Fatal("expected a non-nil error alongside the partial results on later-page failure")
+	}
+	if len(events) != 1 || events[0].ID != "$m1:hs" {
+		t.Fatalf("expected page 1's relation returned alongside the error, got %d events", len(events))
+	}
+}
+
+// Every page must carry an EXPLICIT limit. Left to the server's default, the
+// bound would be Synapse's /relations default of 5 per page — so the 20-page cap
+// would cover ~100 relations, not the thousands it implies, silently dropping
+// older thread replies on any busy thread.
+func TestGetRelations_SendsExplicitLimitOnEveryPage(t *testing.T) {
+	var gotLimits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotLimits = append(gotLimits, r.URL.Query().Get("limit"))
+		w.Header().Set("Content-Type", "application/json")
+		body := map[string]interface{}{"chunk": []interface{}{}}
+		if r.URL.Query().Get("from") == "" {
+			body["next_batch"] = "PAGE2"
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	if _, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	); err != nil {
+		t.Fatalf("GetRelations: %v", err)
+	}
+	if len(gotLimits) != 2 {
+		t.Fatalf("expected 2 pages, got %d", len(gotLimits))
+	}
+	want := strconv.Itoa(relationsPageLimit)
+	for i, got := range gotLimits {
+		if got != want {
+			t.Errorf("page %d: expected limit=%s, got %q (an unset limit falls back to the SERVER default)", i+1, want, got)
+		}
+	}
+}
+
+// Truncation must not be silent. When the homeserver still offers a next_batch
+// after maxRelationsPages, GetRelations returns the accumulated pages ALONGSIDE
+// ErrRelationsTruncated — the same (partial, err) contract as a transport
+// failure — so a caller can log it or propagate it instead of treating a
+// truncated set as complete.
+func TestGetRelations_PageCapReturnsTruncationError(t *testing.T) {
+	pages := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pages++
+		w.Header().Set("Content-Type", "application/json")
+		// Always offer another page: the homeserver has more than the cap allows.
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"chunk": []map[string]interface{}{
+				{"type": "m.room.message", "event_id": "$m:hs", "sender": "@a:hs", "origin_server_ts": 1000},
+			},
+			"next_batch": "MORE",
+		})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	events, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	)
+	if !errors.Is(err, ErrRelationsTruncated) {
+		t.Fatalf("expected ErrRelationsTruncated when the page cap is hit with more pages available, got %v", err)
+	}
+	if pages != maxRelationsPages {
+		t.Errorf("expected exactly %d pages fetched, got %d", maxRelationsPages, pages)
+	}
+	if len(events) != maxRelationsPages {
+		t.Errorf("expected the truncated set returned alongside the error, got %d events", len(events))
+	}
+}
+
+// A complete pagination (the last page carries no next_batch) must NOT report
+// truncation.
+func TestGetRelations_CompletePaginationIsNotTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body := map[string]interface{}{
+			"chunk": []map[string]interface{}{
+				{"type": "m.room.message", "event_id": "$m:hs", "sender": "@a:hs", "origin_server_ts": 1000},
+			},
+		}
+		if r.URL.Query().Get("from") == "" {
+			body["next_batch"] = "PAGE2"
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	events, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	)
+	if err != nil {
+		t.Fatalf("a fully-paginated fetch must not report an error, got %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 relations across 2 pages, got %d", len(events))
+	}
+}
+
+// A FIRST-page failure is a genuine error (nothing to show).
+func TestGetRelations_FirstPageError_Errors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"errcode": "M_UNKNOWN"})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	_, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$root:hs",
+		event.RelThread, event.Type{},
+	)
+	if err == nil {
+		t.Fatal("expected an error when the first page fails")
 	}
 }
 
@@ -1250,5 +1473,112 @@ func TestServerDown_ReturnsError(t *testing.T) {
 	_, err = sa.GetUser(context.Background(), "@alice:hs")
 	if err == nil {
 		t.Fatal("expected error when server is down")
+	}
+}
+
+// deadlineRecordingTransport records the deadline carried by every outbound
+// request context, then delegates to the real transport.
+type deadlineRecordingTransport struct {
+	inner     http.RoundTripper
+	deadlines []time.Time
+	hasNone   int
+}
+
+func (d *deadlineRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if dl, ok := req.Context().Deadline(); ok {
+		d.deadlines = append(d.deadlines, dl)
+	} else {
+		d.hasNone++
+	}
+	return d.inner.RoundTrip(req)
+}
+
+// GetRelations turns ONE admin round-trip into up to maxRelationsPages sequential
+// ones, on a client with no Client.Timeout, driven from the deadline-less
+// watermill context of a SEQUENTIAL room-ops consumer. Every page must therefore
+// run under one bounded, shared deadline — otherwise an unresponsive homeserver
+// stalls all room operations for page-count times an unbounded wait.
+func TestGetRelations_BoundsTheWholePageWalk(t *testing.T) {
+	var pages int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		next := "tok"
+		if pages >= 3 {
+			next = ""
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"chunk": []map[string]interface{}{}, "next_batch": next,
+		})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	rec := &deadlineRecordingTransport{inner: http.DefaultTransport}
+	sa.client.Client = &http.Client{Transport: rec}
+
+	// A caller with NO deadline — exactly what the watermill handlers pass.
+	before := time.Now()
+	if _, err := sa.GetRelations(
+		context.Background(), "!room1:hs", "$evt1:hs", event.RelThread, event.Type{},
+	); err != nil {
+		t.Fatalf("GetRelations: %v", err)
+	}
+	after := time.Now()
+
+	if pages != 3 {
+		t.Fatalf("expected 3 pages, got %d", pages)
+	}
+	if rec.hasNone != 0 {
+		t.Fatalf("%d of %d page requests ran with NO deadline; the page walk must be bounded",
+			rec.hasNone, pages)
+	}
+	if len(rec.deadlines) != pages {
+		t.Fatalf("recorded %d deadlines for %d pages", len(rec.deadlines), pages)
+	}
+	// One budget for the WHOLE walk, not one per page: every page shares the same
+	// deadline, and it is no further out than the budget allows.
+	for i, dl := range rec.deadlines {
+		if dl.After(after.Add(relationsFetchBudget)) {
+			t.Errorf("page %d deadline %v exceeds the whole-loop budget", i+1, relationsFetchBudget)
+		}
+		if dl.Before(before) {
+			t.Errorf("page %d deadline %v is already in the past", i+1, dl)
+		}
+		if !dl.Equal(rec.deadlines[0]) {
+			t.Errorf("page %d has its OWN deadline (%v vs %v); the budget must be shared "+
+				"across pages, or N pages get N times the budget", i+1, dl, rec.deadlines[0])
+		}
+	}
+}
+
+// A caller deadline SHORTER than the budget still wins — the budget is a ceiling,
+// never an extension.
+func TestGetRelations_CallerDeadlineIsNotExtended(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"chunk": []map[string]interface{}{}})
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	rec := &deadlineRecordingTransport{inner: http.DefaultTransport}
+	sa.client.Client = &http.Client{Transport: rec}
+
+	callerBudget := 250 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), callerBudget)
+	defer cancel()
+	ceiling := time.Now().Add(callerBudget)
+
+	if _, err := sa.GetRelations(
+		ctx, "!room1:hs", "$evt1:hs", event.RelThread, event.Type{},
+	); err != nil {
+		t.Fatalf("GetRelations: %v", err)
+	}
+	if len(rec.deadlines) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(rec.deadlines))
+	}
+	if rec.deadlines[0].After(ceiling) {
+		t.Errorf("the caller's %v deadline was extended to %v", callerBudget, rec.deadlines[0])
 	}
 }

@@ -3,6 +3,8 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +15,18 @@ import (
 	"github.com/alkem-io/matrix-adapter/internal/core/service"
 	"github.com/alkem-io/matrix-adapter/pkg/dto"
 )
+
+// maxAttachmentsPerMessage caps how many media refs a single send may carry.
+// The server is the authoritative validator; this is a defense-in-depth bound
+// so a malformed/hostile request can't fan out into an unbounded number of
+// Matrix events.
+const maxAttachmentsPerMessage = 10
+
+// fallbackAttachmentName is used as the media event body/filename when an
+// attachment carries no display_name (e.g. a clipboard-pasted image or an E2EE
+// document). A nameless attachment should still be delivered with a sensible
+// body rather than failing the whole send.
+const fallbackAttachmentName = "attachment"
 
 // RoomHandler handles queue messages related to room operations.
 type RoomHandler struct {
@@ -72,7 +86,35 @@ func convertMessageToDTO(msg domain.Message) dto.MessageDto {
 	for _, r := range msg.Reactions {
 		msgDTO.Reactions = append(msgDTO.Reactions, convertReactionToDTO(r))
 	}
+	// Convert attachments via the shared slice helper (single source of truth).
+	msgDTO.Attachments = service.AttachmentsToReceivedDTO(msg.Attachments)
 	return msgDTO
+}
+
+// convertAttachmentRefsToDomain converts inbound send attachment refs to domain attachments.
+func convertAttachmentRefsToDomain(refs []dto.AttachmentRef) []domain.Attachment {
+	if len(refs) == 0 {
+		return nil
+	}
+	attachments := make([]domain.Attachment, 0, len(refs))
+	for _, r := range refs {
+		// A missing/whitespace display_name would flow to buildMediaContent as
+		// body: "", producing a nameless attachment in Element. Default it here so
+		// every caller of the conversion benefits and the send still proceeds.
+		displayName := r.DisplayName
+		if strings.TrimSpace(displayName) == "" {
+			displayName = fallbackAttachmentName
+		}
+		attachments = append(attachments, domain.Attachment{
+			DocumentID:  r.DocumentID,
+			DisplayName: displayName,
+			MimeType:    r.MimeType,
+			Size:        r.Size,
+			Width:       r.Width,
+			Height:      r.Height,
+		})
+	}
+	return attachments
 }
 
 // convertMessagesToDTO converts a slice of domain.Message to []dto.MessageDto.
@@ -312,8 +354,33 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 	if errResp := RequireUUID(req.SenderActorID, "sender_actor_id"); errResp != nil {
 		return *errResp, nil
 	}
-	if errResp := RequireNonEmpty(req.Content, "content"); errResp != nil {
-		return *errResp, nil
+	// Content may be empty when the message carries only attachments.
+	if len(req.Attachments) == 0 {
+		if errResp := RequireNonEmpty(req.Content, "content"); errResp != nil {
+			return *errResp, nil
+		}
+	}
+
+	// Defense-in-depth: the server owns attachment validation, but validate every
+	// knowable document ref before resolving the room or emitting any Matrix
+	// events. This leaves only genuine infrastructure failures able to interrupt
+	// the text + media fan-out part-way through.
+	if len(req.Attachments) > maxAttachmentsPerMessage {
+		return NewInvalidParamError(fmt.Sprintf(
+			"too many attachments: %d (max %d)", len(req.Attachments), maxAttachmentsPerMessage)), nil
+	}
+	for i := range req.Attachments {
+		if req.Attachments[i].DocumentID == "" {
+			return NewInvalidParamError(fmt.Sprintf("attachment[%d] document_id is required", i)), nil
+		}
+		if _, err := uuid.Parse(req.Attachments[i].DocumentID); err != nil {
+			return NewInvalidParamError(fmt.Sprintf(
+				"attachment[%d] document_id must be a valid UUID", i)), nil
+		}
+		// An empty/whitespace display_name is NOT rejected: a legitimately nameless
+		// attachment (clipboard-pasted image, E2EE doc) must not fail the whole send.
+		// convertAttachmentRefsToDomain applies fallbackAttachmentName so the media
+		// event still gets a sensible body/filename.
 	}
 
 	// Resolve room alias to Matrix room ID
@@ -323,6 +390,7 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 	}
 
 	sender := domain.NewActor(req.SenderActorID.UUID())
+	attachments := convertAttachmentRefsToDomain(req.Attachments)
 
 	var eventID id.EventID
 	var err error
@@ -334,10 +402,11 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 			sender,
 			req.Content,
 			id.EventID(*req.ParentMessageID),
+			attachments,
 		)
 	} else {
 		// Send as regular message
-		eventID, err = h.service.SendMessage(ctx, roomID, sender, req.Content)
+		eventID, err = h.service.SendMessage(ctx, roomID, sender, req.Content, attachments)
 	}
 
 	if err != nil {

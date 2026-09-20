@@ -50,6 +50,11 @@ const (
 // TopicHierarchySetParent is the topic for setting space hierarchy parent commands.
 const TopicHierarchySetParent = "communication.hierarchy.set_parent"
 
+// TopicHierarchySetChildren is the topic for declarative, parent-keyed hierarchy
+// convergence commands — the only command in this registry that can remove an
+// m.space.child edge.
+const TopicHierarchySetChildren = "communication.hierarchy.set_children"
+
 // Space batch member command topics
 const (
 	TopicSpaceMemberBatchAdd    = "communication.space.member.batch.add"
@@ -180,6 +185,7 @@ var CommandRegistry = []CommandDef{
 
 	// Hierarchy commands
 	{Topic: TopicHierarchySetParent, RequestType: "SetParentRequest", ResponseType: "BaseResponse"},
+	{Topic: TopicHierarchySetChildren, RequestType: "SetChildrenRequest", ResponseType: "SetChildrenResponse"},
 
 	// Space batch membership commands
 	{Topic: TopicSpaceMemberBatchAdd, RequestType: "BatchAddSpaceMemberRequest", ResponseType: "BatchAddSpaceMemberResponse"},

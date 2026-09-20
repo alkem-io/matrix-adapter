@@ -1,0 +1,148 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  namespace: default
+  name: alkemio-matrix-adapter-deployment
+  labels:
+    app: alkemio-matrix-adapter
+    k8s-app: alkemio-matrix-adapter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alkemio-matrix-adapter
+  template:
+    metadata:
+      labels:
+        app: alkemio-matrix-adapter
+    spec:
+      containers:
+        - name: alkemio-matrix-adapter
+          image: rg.nl-ams.scw.cloud/alkemio/alkemio-matrix-adapter:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8280
+          env:
+            # RabbitMQ configuration
+            - name: RABBITMQ_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: alkemio-rabbitmq-cluster-default-user
+                  key: host
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: alkemio-rabbitmq-cluster-default-user
+                  key: username
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: alkemio-rabbitmq-cluster-default-user
+                  key: password
+            # Synapse configuration
+            - name: SYNAPSE_HOMESERVER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: alkemio-config
+                  key: SYNAPSE_HOMESERVER_NAME
+            - name: SYNAPSE_SERVER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: alkemio-config
+                  key: SYNAPSE_SERVER_URL
+            - name: SYNAPSE_SERVER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: alkemio-config
+                  key: SYNAPSE_HOMESERVER_NAME
+            # Matrix tokens
+            - name: MATRIX_AS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: alkemio-secrets
+                  key: MATRIX_AS_TOKEN
+            - name: MATRIX_HS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: alkemio-secrets
+                  key: MATRIX_HS_TOKEN
+            # Logging configuration
+            - name: LOGGING_CONSOLE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: alkemio-config
+                  key: LOGGING_CONSOLE_ENABLED
+            - name: LOGGING_LEVEL_CONSOLE
+              value: "debug"
+            # Database configuration
+            - name: DATABASE_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: alkemio-config
+                  key: DATABASE_HOST
+            - name: DATABASE_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: alkemio-config
+                  key: DATABASE_PORT
+            - name: DATABASE_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: alkemio-config
+                  key: POSTGRES_USER
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                configMapKeyRef:
+                  name: alkemio-config
+                  key: POSTGRES_PASSWORD
+            - name: ACTOR_ID_MAPPER_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: alkemio-config
+                  key: ACTOR_ID_MAPPER_ENABLED
+            - name: DATABASE_NAME
+              value: "alkemio"
+          envFrom:
+            - secretRef:
+                name: alkemio-secrets
+            - configMapRef:
+                name: alkemio-config
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8280
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8280
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 5
+      affinity:
+        podAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: alkemio-rabbitmq-cluster
+                topologyKey: kubernetes.io/hostname
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: alkemio-server
+                topologyKey: kubernetes.io/hostname

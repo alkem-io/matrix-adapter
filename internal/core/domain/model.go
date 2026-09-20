@@ -76,8 +76,38 @@ type Message struct {
 	SenderMatrixID string // Matrix User ID
 	Content        string
 	Timestamp      time.Time
-	ThreadID       string     // Parent message ID for threads
-	Reactions      []Reaction // Reactions to this message
+	ThreadID       string       // Parent message ID for threads
+	Reactions      []Reaction   // Reactions to this message
+	Attachments    []Attachment // Media attachments on this message
+}
+
+// Attachment is a media reference carried on a message, in either direction.
+//
+//   - Outbound (web→Matrix): DocumentID is the file-service document whose bytes
+//     are uploaded to Synapse; MediaID is unset.
+//   - Inbound (Matrix→web): MediaID is the Synapse media id parsed from the
+//     event's mxc:// URL; DocumentID is set when the event carries an
+//     io.alkemio.document_id field, which marks an echo of our own outbound
+//     media. Inbound, that field is an UNAUTHENTICATED hint taken verbatim from
+//     user-writable event content — the consumer must authorize it (the Alkemio
+//     server gates on bucket membership + createdBy == sender). See
+//     extractAttachment for why the adapter cannot authenticate it itself.
+//
+// The adapter is stateless: it never resolves these refs to URLs or buckets.
+type Attachment struct {
+	DocumentID  string
+	MediaID     string
+	DisplayName string
+	MimeType    string
+	// Size is the caller-declared byte size. It is informational only: it is
+	// deliberately NOT used to build an outbound event's info.size (that uses the
+	// actual streamed byte count) and NOT used as the upload Content-Length (that
+	// uses the file-service response's own Content-Length) — see sendAttachment.
+	// Nothing validates it, so a mis-declared size can neither produce an event
+	// that lies about its blob length nor truncate/abort a blob at the homeserver.
+	Size   int64
+	Width  *int
+	Height *int
 }
 
 // Reaction represents a reaction event.

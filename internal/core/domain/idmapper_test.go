@@ -123,3 +123,21 @@ func TestNewActor(t *testing.T) {
 	assert.Empty(t, actor.DisplayName)
 	assert.Empty(t, actor.AvatarURL)
 }
+
+// LocalMediaID is the single place the mxc-homeserver comparison lives: a media
+// id is only usable as the Alkemio server's re-home key when it belongs to OUR
+// homeserver. Anything else must map to "" rather than to a bare media id that
+// could miss or collide against local media.
+func TestIDMapper_LocalMediaID(t *testing.T) {
+	mapper := NewIDMapper("example.com")
+
+	assert.Equal(t, "abc123", mapper.LocalMediaID("mxc://example.com/abc123"),
+		"our own homeserver's media id is surfaced")
+	assert.Empty(t, mapper.LocalMediaID("mxc://other.server/abc123"),
+		"a FOREIGN homeserver's media id must never be surfaced as a local one")
+	assert.Empty(t, mapper.LocalMediaID(""))
+	assert.Empty(t, mapper.LocalMediaID("https://example.com/abc123"),
+		"a non-mxc url carries no media id")
+	assert.Empty(t, mapper.LocalMediaID("mxc://example.com"),
+		"an mxc url with no media id part carries no media id")
+}

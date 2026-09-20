@@ -66,6 +66,8 @@ import type {
   RoomUpdatedEvent,
   SendMessageRequest,
   SendMessageResponse,
+  SetChildrenRequest,
+  SetChildrenResponse,
   SetParentRequest,
   SetRoomStateRequest,
   SetSpaceStateRequest,
@@ -83,6 +85,10 @@ export const Commands = {
   'communication.actor.sync': {
     request: {} as SyncActorRequest,
     response: {} as BaseResponse,
+  },
+  'communication.hierarchy.set_children': {
+    request: {} as SetChildrenRequest,
+    response: {} as SetChildrenResponse,
   },
   'communication.hierarchy.set_parent': {
     request: {} as SetParentRequest,

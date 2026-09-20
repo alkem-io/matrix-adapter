@@ -40,6 +40,7 @@ type intentAPI interface {
 	DeleteAlias(ctx context.Context, alias id.RoomAlias) (*mautrix.RespAliasDelete, error)
 
 	// --- Inherited from *mautrix.Client (not overridden by IntentAPI) ---
+	UploadMedia(ctx context.Context, req mautrix.ReqUploadMedia) (*mautrix.RespMediaUpload, error)
 	SendReceipt(ctx context.Context, roomID id.RoomID, eventID id.EventID, receiptType event.ReceiptType, content interface{}) error
 	SetReadMarkers(ctx context.Context, roomID id.RoomID, content interface{}) error
 	GetAccountData(ctx context.Context, name string, output interface{}) error

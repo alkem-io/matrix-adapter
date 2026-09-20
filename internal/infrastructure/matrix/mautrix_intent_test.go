@@ -2,9 +2,13 @@ package matrix
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -68,6 +72,12 @@ type mockIntentAPI struct {
 	whoamiResult           *mautrix.RespWhoami
 	whoamiErr              error
 	inviteUserErr          error
+	uploadBytesResult      *mautrix.RespMediaUpload
+	uploadBytesErr         error
+
+	// Optional per-call results for fan-out failure tests.
+	sendMessageEventResults []*mautrix.RespSendEvent
+	sendMessageEventErrs    []error
 
 	// Call tracking
 	ensureRegisteredCalled int
@@ -101,6 +111,9 @@ type mockIntentAPI struct {
 	lastLeaveRoomID            id.RoomID
 	lastRedactRoomID           id.RoomID
 	lastRedactEventID          id.EventID
+	redactEventIDs             []id.EventID
+	redactReasons              []string
+	redactEventErrs            map[id.EventID]error
 	lastDisplayName            string
 	lastMakeRequestMethod      string
 	lastMakeRequestURL         string
@@ -111,11 +124,73 @@ type mockIntentAPI struct {
 	lastSendMsgEventRoomID     id.RoomID
 	lastSendMsgEventType       event.Type
 	lastSendMsgEventContent    any
-	lastEnsureJoinedRoomID     id.RoomID
-	lastSetAccountDataName     string
-	lastSetAccountDataContent  interface{}
-	lastBuildClientURLParts    []any
-	buildClientURLResult       string
+	lastSendMsgEventExtra      []mautrix.ReqSendEvent
+	// lastSendMsgEventDeadline is the deadline carried by the context handed to
+	// SendMessageEvent, zero when it carries none. The AMQP/watermill message
+	// context has NO deadline, so on the media path a non-zero value here can
+	// only come from fanOutAttachments' whole-message budget.
+	lastSendMsgEventDeadline time.Time
+	// sendMsgEventTxns accumulates the transaction ID seen on each
+	// SendMessageEvent call (empty string when none was supplied), in call order.
+	sendMsgEventTxns []string
+	// sendMsgEventContents accumulates the content passed to each
+	// SendMessageEvent call, in call order (parallel to sendMsgEventTxns).
+	sendMsgEventContents      []any
+	lastEnsureJoinedRoomID    id.RoomID
+	lastSetAccountDataName    string
+	lastSetAccountDataContent interface{}
+	lastBuildClientURLParts   []any
+	buildClientURLResult      string
+
+	// Media
+	uploadBytesCalled   int
+	lastUploadBytesData []byte
+	lastUploadBytesType string
+	// lastUploadContentLength is the raw ReqUploadMedia.ContentLength field.
+	// It is NOT what goes on the wire — see lastUploadWireContentLength.
+	lastUploadContentLength int64
+	// lastUploadWireContentLength is the net/http request ContentLength mautrix
+	// would actually derive from this ReqUploadMedia (-1 = chunked, i.e. NO
+	// Content-Length header). Asserting the raw field instead lets a request that
+	// Synapse rejects ("Request must specify a Content-Length") pass vacuously.
+	lastUploadWireContentLength int64
+	// Which ReqUploadMedia branch the caller used. The project's hard
+	// requirement is that blob bytes STREAM (Content, an io.Reader) with
+	// constant memory and are never buffered whole (ContentBytes), so tests
+	// must be able to assert the branch — folding both into
+	// lastUploadBytesData alone would let a re-introduced io.ReadAll pass.
+	lastUploadContentWasReader bool
+	lastUploadUsedContentBytes bool
+}
+
+// mautrixWireContentLength reproduces mautrix v0.28.0's mapping from
+// ReqUploadMedia to the net/http request's ContentLength — the ONLY thing that
+// decides whether the upload carries a "Content-Length" header or goes out
+// chunked (which Synapse rejects outright).
+//
+// Client.UploadMedia builds FullRequest{RequestBytes: ContentBytes,
+// RequestBody: Content, RequestLength: ContentLength} and
+// FullRequest.compileRequest then:
+//   - checks RequestBytes FIRST and, when non-nil, sets reqLen = len(RequestBytes)
+//     (so an EMPTY non-nil slice yields a real 0);
+//   - otherwise, on the RequestBody branch, starts at reqLen = -1 and overrides it
+//     only when RequestLength > 0 — RequestLength == 0 just logs a warning, so the
+//     request goes out with NO Content-Length.
+//
+// TestUploadRequestWireLength_MautrixContract pins this model against the real
+// mautrix + net/http stack, so it cannot silently drift from the library.
+func mautrixWireContentLength(req mautrix.ReqUploadMedia) int64 {
+	switch {
+	case req.ContentBytes != nil:
+		return int64(len(req.ContentBytes))
+	case req.Content != nil:
+		if req.ContentLength > 0 {
+			return req.ContentLength
+		}
+		return -1
+	default:
+		return 0
+	}
 }
 
 var _ intentAPI = (*mockIntentAPI)(nil)
@@ -131,12 +206,28 @@ func (m *mockIntentAPI) EnsureJoined(_ context.Context, roomID id.RoomID, _ ...a
 	return m.ensureJoinedErr
 }
 
-func (m *mockIntentAPI) SendMessageEvent(_ context.Context, roomID id.RoomID, eventType event.Type, contentJSON any, _ ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {
+func (m *mockIntentAPI) SendMessageEvent(ctx context.Context, roomID id.RoomID, eventType event.Type, contentJSON any, extra ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {
+	callIndex := m.sendMessageEventCalled
 	m.sendMessageEventCalled++
+	m.lastSendMsgEventDeadline, _ = ctx.Deadline()
 	m.lastSendMsgEventRoomID = roomID
 	m.lastSendMsgEventType = eventType
 	m.lastSendMsgEventContent = contentJSON
-	return m.sendMessageEventResult, m.sendMessageEventErr
+	m.lastSendMsgEventExtra = extra
+	var txn string
+	if len(extra) > 0 {
+		txn = extra[0].TransactionID
+	}
+	m.sendMsgEventTxns = append(m.sendMsgEventTxns, txn)
+	m.sendMsgEventContents = append(m.sendMsgEventContents, contentJSON)
+	result, err := m.sendMessageEventResult, m.sendMessageEventErr
+	if callIndex < len(m.sendMessageEventResults) {
+		result = m.sendMessageEventResults[callIndex]
+	}
+	if callIndex < len(m.sendMessageEventErrs) {
+		err = m.sendMessageEventErrs[callIndex]
+	}
+	return result, err
 }
 
 func (m *mockIntentAPI) SendStateEvent(_ context.Context, roomID id.RoomID, eventType event.Type, stateKey string, contentJSON any, _ ...mautrix.ReqSendEvent) (*mautrix.RespSendEvent, error) {
@@ -170,10 +261,19 @@ func (m *mockIntentAPI) SendText(_ context.Context, roomID id.RoomID, text strin
 	return m.sendTextResult, m.sendTextErr
 }
 
-func (m *mockIntentAPI) RedactEvent(_ context.Context, roomID id.RoomID, eventID id.EventID, _ ...mautrix.ReqRedact) (*mautrix.RespSendEvent, error) {
+func (m *mockIntentAPI) RedactEvent(
+	_ context.Context, roomID id.RoomID, eventID id.EventID, extra ...mautrix.ReqRedact,
+) (*mautrix.RespSendEvent, error) {
 	m.redactEventCalled++
 	m.lastRedactRoomID = roomID
 	m.lastRedactEventID = eventID
+	m.redactEventIDs = append(m.redactEventIDs, eventID)
+	if len(extra) > 0 {
+		m.redactReasons = append(m.redactReasons, extra[0].Reason)
+	}
+	if err := m.redactEventErrs[eventID]; err != nil {
+		return m.redactEventResult, err
+	}
 	return m.redactEventResult, m.redactEventErr
 }
 
@@ -224,6 +324,64 @@ func (m *mockIntentAPI) CreateAlias(_ context.Context, alias id.RoomAlias, roomI
 func (m *mockIntentAPI) DeleteAlias(_ context.Context, _ id.RoomAlias) (*mautrix.RespAliasDelete, error) {
 	m.deleteAliasCalled++
 	return &mautrix.RespAliasDelete{}, m.deleteAliasErr
+}
+
+// UploadMedia drains req.Content into the mock's captured data. A read error
+// from the streaming reader (e.g. the oversize cap tripping) is surfaced so
+// sendAttachment can classify it. The branch actually taken is recorded so
+// tests can assert the bytes STREAMED rather than being buffered.
+//
+// It reproduces the two ways a bad upload actually fails in production, both
+// keyed off the WIRE length mautrix derives (mautrixWireContentLength), never
+// the raw ReqUploadMedia.ContentLength field:
+//   - a declared length that disagrees with the body → net/http's
+//     "http: ContentLength=%d with Body length %d";
+//   - no Content-Length at all (chunked) → Synapse's M_UNKNOWN 400.
+//
+// Asserting the raw field instead would let a request Synapse rejects outright
+// pass here vacuously.
+func (m *mockIntentAPI) UploadMedia(_ context.Context, req mautrix.ReqUploadMedia) (*mautrix.RespMediaUpload, error) {
+	m.uploadBytesCalled++
+	m.lastUploadBytesType = req.ContentType
+	m.lastUploadContentLength = req.ContentLength
+	wireLen := mautrixWireContentLength(req)
+	m.lastUploadWireContentLength = wireLen
+	m.lastUploadContentWasReader = req.Content != nil
+	m.lastUploadUsedContentBytes = req.ContentBytes != nil
+	// compileRequest prefers RequestBytes, so a non-nil ContentBytes is what goes
+	// on the wire even if Content is also set.
+	if req.ContentBytes == nil && req.Content != nil {
+		data, err := io.ReadAll(req.Content)
+		m.lastUploadBytesData = data
+		if err != nil {
+			return nil, err
+		}
+		// Mirror net/http's transfer-length contract, which is how a declared
+		// length that disagrees with the body actually surfaces in production:
+		// the transport fails the request with
+		// "http: ContentLength=%d with Body length %d" (and, when the body is
+		// SHORT, only after the homeserver has already stored the truncated
+		// prefix). Reproducing it here keeps "declared length must be the true
+		// length" an enforced contract instead of an untested comment.
+		if wireLen >= 0 && int64(len(data)) != wireLen {
+			return nil, fmt.Errorf("http: ContentLength=%d with Body length %d", wireLen, len(data))
+		}
+	} else {
+		m.lastUploadBytesData = req.ContentBytes
+	}
+	// A negative wire length means mautrix sends the upload CHUNKED with no
+	// Content-Length header, which Synapse refuses. Reproduce the real rejection
+	// rather than accepting an upload production would never have completed.
+	if wireLen < 0 {
+		return nil, fmt.Errorf("M_UNKNOWN (HTTP 400): Request must specify a Content-Length")
+	}
+	if m.uploadBytesErr != nil {
+		return nil, m.uploadBytesErr
+	}
+	if m.uploadBytesResult != nil {
+		return m.uploadBytesResult, nil
+	}
+	return &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/stub")}, nil
 }
 
 func (m *mockIntentAPI) SendReceipt(_ context.Context, _ id.RoomID, _ id.EventID, _ event.ReceiptType, _ interface{}) error {
@@ -364,12 +522,14 @@ func testActor(id uuid.UUID, displayName string) domain.Actor {
 	}
 }
 
-// intentTestIDMapper is a shared IDMapper for constructing Matrix IDs in intent tests.
-var intentTestIDMapper = domain.NewIDMapper("test.local")
+// testIDMapper is the package-wide test IDMapper. Its domain matches every
+// fixture mxc:// url and Matrix user id in these tests ("test.local"), so those
+// references count as LOCAL to our homeserver.
+var testIDMapper = domain.NewIDMapper("test.local")
 
 // expectedUserID returns the Matrix user ID for a test actor UUID.
 func expectedUserID(actorID uuid.UUID) id.UserID {
-	return intentTestIDMapper.UserID(actorID)
+	return testIDMapper.UserID(actorID)
 }
 
 // newMockAS creates a mockAppserviceAPI where both botIntent and any user intent
@@ -524,10 +684,11 @@ func TestSendMessage_Success(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	eventID, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello")
+	eventID, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil)
 	require.NoError(t, err)
 	assert.Equal(t, id.EventID("$msg1"), eventID)
 	assert.Equal(t, 1, intent.sendTextCalled)
+	assert.Equal(t, 0, intent.sendMessageEventCalled)
 	assert.Equal(t, id.RoomID("!room:test.local"), intent.lastSendTextRoomID)
 	assert.Equal(t, "Hello", intent.lastSendTextContent)
 }
@@ -541,7 +702,7 @@ func TestSendMessage_Error(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello")
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to send message")
 }
@@ -559,7 +720,7 @@ func TestSendReply_Success(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	eventID, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply text", "$thread-root")
+	eventID, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply text", "$thread-root", nil)
 	require.NoError(t, err)
 	assert.Equal(t, id.EventID("$reply1"), eventID)
 	assert.Equal(t, 1, intent.sendMessageEventCalled)
@@ -583,7 +744,7 @@ func TestSendReply_Error(t *testing.T) {
 	})
 	a := newFullTestAdapter(as, &mockAdminAPI{})
 
-	_, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply", "$thread")
+	_, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply", "$thread", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to send reply")
 }
@@ -1465,6 +1626,130 @@ func TestSetSpaceParent_Error(t *testing.T) {
 }
 
 // ============================================================================
+// GetSpaceParents
+// ============================================================================
+
+// spaceParentStateJSON builds one raw m.space.parent state event as the
+// Synapse admin API would return it, for GetSpaceParents fixtures.
+func spaceParentStateJSON(t *testing.T, stateKey string, via []string, canonical bool) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(map[string]interface{}{
+		"type":      "m.space.parent",
+		"state_key": stateKey,
+		"content": map[string]interface{}{
+			"via":       via,
+			"canonical": canonical,
+		},
+	})
+	require.NoError(t, err)
+	return raw
+}
+
+func TestGetSpaceParents_ReturnsCurrentCanonicalParent(t *testing.T) {
+	botIntent := &mockIntentAPI{}
+	as := newMockAS(botIntent, nil)
+	admin := &mockAdminAPI{
+		getRoomStateResult: []json.RawMessage{
+			spaceParentStateJSON(t, "!parent:test.local", []string{"test.local"}, true),
+		},
+	}
+	a := newFullTestAdapter(as, admin)
+
+	parents, err := a.GetSpaceParents(context.Background(), "!child:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, []id.RoomID{"!parent:test.local"}, parents)
+	// The read must never touch a client intent — it must issue no join.
+	assert.Equal(t, 0, botIntent.ensureJoinedCalled)
+	assert.Equal(t, 0, botIntent.sendStateEventCalled)
+}
+
+func TestGetSpaceParents_ReturnsEveryLiveParentForADualCanonicalChild(t *testing.T) {
+	// A child can carry more than one live m.space.parent pointer — a
+	// pre-existing dual-canonical-parent violation from before it was
+	// recategorised. Repair needs to see the whole set, not an arbitrary
+	// single member of it.
+	admin := &mockAdminAPI{
+		getRoomStateResult: []json.RawMessage{
+			spaceParentStateJSON(t, "!old-parent:test.local", []string{"test.local"}, true),
+			spaceParentStateJSON(t, "!new-parent:test.local", []string{"test.local"}, true),
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	parents, err := a.GetSpaceParents(context.Background(), "!child:test.local")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []id.RoomID{"!old-parent:test.local", "!new-parent:test.local"}, parents)
+}
+
+func TestGetSpaceParents_EmptyViaIsNotACurrentParent(t *testing.T) {
+	// Empty via is the MSC1772 removal marker (mirrors GetSpaceChildStateKeys'
+	// treatment of a removed m.space.child edge) — a stale, cleared pointer
+	// must not be reported as a live parent.
+	admin := &mockAdminAPI{
+		getRoomStateResult: []json.RawMessage{
+			spaceParentStateJSON(t, "!old-parent:test.local", []string{}, false),
+		},
+	}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	parents, err := a.GetSpaceParents(context.Background(), "!child:test.local")
+	require.NoError(t, err)
+	assert.Empty(t, parents)
+}
+
+func TestGetSpaceParents_NoParentSet(t *testing.T) {
+	admin := &mockAdminAPI{getRoomStateResult: []json.RawMessage{}}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	parents, err := a.GetSpaceParents(context.Background(), "!child:test.local")
+	require.NoError(t, err)
+	assert.Empty(t, parents)
+}
+
+func TestGetSpaceParents_StateError(t *testing.T) {
+	admin := &mockAdminAPI{getRoomStateErr: errors.New("state fetch failed")}
+	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
+
+	_, err := a.GetSpaceParents(context.Background(), "!child:test.local")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get room state for parent pointers")
+}
+
+// ============================================================================
+// ClearSpaceParent
+// ============================================================================
+
+func TestClearSpaceParent_Success(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$cleared1"},
+	}
+	admin := &mockAdminAPI{getRoomMembersResult: []string{"@bot:test.local"}}
+	a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
+
+	err := a.ClearSpaceParent(context.Background(), "!child:test.local", "!stale-parent:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, 1, botIntent.sendStateEventCalled)
+	assert.Equal(t, event.StateSpaceParent, botIntent.lastSendStateEventType)
+	assert.Equal(t, "!stale-parent:test.local", botIntent.lastSendStateEventStateKey)
+
+	content, ok := botIntent.lastSendStateEventContent.(*event.SpaceParentEventContent)
+	require.True(t, ok)
+	assert.Empty(t, content.Via)
+}
+
+func TestClearSpaceParent_Error(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		sendStateEventErr: errors.New("clear parent failed"),
+	}
+	admin := &mockAdminAPI{getRoomMembersResult: []string{"@bot:test.local"}}
+	a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
+
+	err := a.ClearSpaceParent(context.Background(), "!child:test.local", "!stale-parent:test.local")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to clear stale space parent pointer")
+}
+
+// ============================================================================
 // InviteToSpace
 // ============================================================================
 
@@ -2057,6 +2342,153 @@ func TestGetSpaceChildren_NoChildren(t *testing.T) {
 	children, err := a.GetSpaceChildren(context.Background(), "!space:test.local")
 	require.NoError(t, err)
 	assert.Empty(t, children)
+}
+
+// ============================================================================
+// GetSpaceChildStateKeys (uses intent.State — no per-child admin call)
+// ============================================================================
+
+func TestGetSpaceChildStateKeys_Success(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		stateResult: mautrix.RoomStateMap{
+			event.StateSpaceChild: {
+				"!live:test.local": &event.Event{
+					Content: event.Content{
+						Parsed: &event.SpaceChildEventContent{Via: []string{"test.local"}},
+					},
+				},
+				"!ghost:test.local": &event.Event{
+					// Empty via means this edge has already been removed (MSC1772) —
+					// GetSpaceChildStateKeys must ignore it, exactly like GetSpaceChildren.
+					Content: event.Content{
+						Parsed: &event.SpaceChildEventContent{Via: []string{}},
+					},
+				},
+			},
+		},
+	}
+	admin := &mockAdminAPI{}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, admin)
+
+	keys, err := a.GetSpaceChildStateKeys(context.Background(), "!space:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"!live:test.local"}, keys)
+	// No per-child admin lookup: unlike GetSpaceChildren, this call makes no
+	// is-space classification request.
+	assert.Equal(t, 0, admin.getStateEventContentCalled)
+}
+
+func TestGetSpaceChildStateKeys_StateError(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		stateErr: errors.New("state fetch failed"),
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	_, err := a.GetSpaceChildStateKeys(context.Background(), "!space:test.local")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get space state")
+}
+
+func TestGetSpaceChildStateKeys_NoChildren(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		stateResult: mautrix.RoomStateMap{},
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	keys, err := a.GetSpaceChildStateKeys(context.Background(), "!space:test.local")
+	require.NoError(t, err)
+	assert.Empty(t, keys)
+}
+
+// ============================================================================
+// RemoveSpaceChild
+// ============================================================================
+
+func TestRemoveSpaceChild_Success(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		sendStateEventResult: &mautrix.RespSendEvent{EventID: "$removed1"},
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	err := a.RemoveSpaceChild(context.Background(), "!space:test.local", "!child:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, 1, botIntent.sendStateEventCalled)
+	assert.Equal(t, event.StateSpaceChild, botIntent.lastSendStateEventType)
+	assert.Equal(t, "!child:test.local", botIntent.lastSendStateEventStateKey)
+
+	content, ok := botIntent.lastSendStateEventContent.(*event.SpaceChildEventContent)
+	require.True(t, ok)
+	assert.Empty(t, content.Via, "empty via is the MSC1772 removal marker")
+	assert.Empty(t, content.Order)
+	assert.False(t, content.Suggested)
+}
+
+func TestRemoveSpaceChild_Error(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		sendStateEventErr: errors.New("state event failed"),
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	err := a.RemoveSpaceChild(context.Background(), "!space:test.local", "!child:test.local")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to remove space child")
+}
+
+// ============================================================================
+// ResolveAlkemioID
+// ============================================================================
+
+func TestResolveAlkemioID_ResolvesFromAlkemioPatternedAlias(t *testing.T) {
+	alkemioID := uuid.New()
+	botIntent := &mockIntentAPI{
+		getAliasesResult: &mautrix.RespAliasList{
+			Aliases: []id.RoomAlias{id.RoomAlias("#" + alkemioID.String() + ":test.local")},
+		},
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	got, err := a.ResolveAlkemioID(context.Background(), "!child:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, alkemioID, got)
+}
+
+func TestResolveAlkemioID_GhostEdgeHasNoAliasReturnsNil(t *testing.T) {
+	// A deleted discussion's room has had its alias removed: GetAliases returns
+	// none, exactly the state a ghost child edge is left in. That is a
+	// confirmed answer, not a failure — nil error — because it is the only
+	// answer allowed to drive a prune.
+	botIntent := &mockIntentAPI{
+		getAliasesResult: &mautrix.RespAliasList{Aliases: []id.RoomAlias{}},
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	got, err := a.ResolveAlkemioID(context.Background(), "!ghost:test.local")
+	require.NoError(t, err)
+	assert.Equal(t, uuid.Nil, got)
+}
+
+// TestResolveAlkemioID_LookupErrorIsReportedNotFlattenedToNil pins the
+// distinction the prune path depends on: a failed alias lookup must not be
+// indistinguishable from a room confirmed to have no alias, or a transient
+// homeserver fault would present itself to the reconciler as proof that a
+// live child edge is a prunable ghost.
+func TestResolveAlkemioID_LookupErrorIsReportedNotFlattenedToNil(t *testing.T) {
+	botIntent := &mockIntentAPI{
+		getAliasesErr: errors.New("lookup failed"),
+	}
+	as := newMockAS(botIntent, nil)
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+
+	got, err := a.ResolveAlkemioID(context.Background(), "!child:test.local")
+	require.Error(t, err)
+	assert.Equal(t, uuid.Nil, got)
 }
 
 // ============================================================================

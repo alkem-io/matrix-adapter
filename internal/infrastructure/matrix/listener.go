@@ -3,7 +3,9 @@ package matrix
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -70,7 +72,10 @@ func (m *MautrixAdapter) processEvent(evt *event.Event) {
 	}
 
 	switch evt.Type {
-	case event.EventMessage:
+	case event.EventMessage, event.EventSticker:
+		// m.sticker is its own event type but mautrix treats it as equivalent to
+		// m.room.message (MessageEventContent with body/url/info). Route it through
+		// the same handler so an inbound sticker flows as image-like media.
 		m.handleMessageEvent(evt)
 	case event.EventReaction:
 		m.handleReactionEvent(evt)
@@ -94,8 +99,9 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 		return
 	}
 
-	// Parse content
-	content, ok := evt.Content.Raw["body"].(string)
+	// Parse content + attachment via the shared inbound-media helper, which
+	// applies the present-but-empty-body rule.
+	content, attachment, ok := extractInboundMessage(evt, m.idMapper)
 	if !ok {
 		m.logger.Warn("Failed to parse message body", "event_id", evt.ID)
 		return
@@ -109,25 +115,14 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 	}
 
 	// Extract thread ID from m.relates_to if present
-	var threadID string
-	if relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{}); ok {
-		// Check for thread relation (MSC3440)
-		if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
-			if eventID, ok := relatesTo["event_id"].(string); ok {
-				threadID = eventID
-			}
-		}
-		// Also check m.in_reply_to for legacy thread support
-		if threadID == "" {
-			if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
-				if eventID, ok := inReplyTo["event_id"].(string); ok {
-					threadID = eventID
-				}
-			}
-		}
+	threadID := extractThreadID(evt)
+
+	var attachments []domain.Attachment
+	if attachment != nil {
+		attachments = []domain.Attachment{*attachment}
 	}
 
-	go func(e *event.Event, c string, s uuid.UUID, tid string) {
+	go func(e *event.Event, c string, s uuid.UUID, tid string, atts []domain.Attachment) {
 		// Resolve Alkemio room ID from Matrix room ID (HTTP call - must be async)
 		alkemioRoomID := m.resolveOrReconcile(context.Background(), e.RoomID)
 		if alkemioRoomID == uuid.Nil {
@@ -137,17 +132,76 @@ func (m *MautrixAdapter) handleMessageEvent(evt *event.Event) {
 
 		if err := m.eventHandlers.OnMessage(
 			domain.Message{
-				ID:        e.ID.String(),
-				RoomID:    alkemioRoomID.String(),
-				SenderID:  s,
-				Content:   c,
-				Timestamp: time.UnixMilli(e.Timestamp),
-				ThreadID:  tid,
+				ID:          e.ID.String(),
+				RoomID:      alkemioRoomID.String(),
+				SenderID:    s,
+				Content:     c,
+				Timestamp:   time.UnixMilli(e.Timestamp),
+				ThreadID:    tid,
+				Attachments: atts,
 			},
 		); err != nil {
 			m.logger.Error("Error handling message", "error", err)
 		}
-	}(evt, content, senderUUID, threadID)
+	}(evt, content, senderUUID, threadID, attachments)
+}
+
+// extractThreadID reads the thread/reply parent event id from a message event,
+// used by BOTH the live-sync path (handleMessageEvent) and the read path
+// (parseMessageEvent) so the two can't diverge. It prefers the RAW m.relates_to,
+// which is present on live-sync events AND on Synapse-fetched read-path events —
+// the latter arrive with Content.Parsed == nil (the shared inbound helper reads
+// Content.Raw and, on its fallback, ALREADY-parsed content; it never triggers
+// ParseRaw, so it cannot populate Parsed as a side effect on the shared event —
+// see inboundBody), so reading Parsed alone would
+// silently drop thread linkage on real reads (F1). It falls back to the parsed
+// content's RelatesTo for parsed-only events (e.g. unit-constructed events with
+// no raw map). The explicit m.thread relation (MSC3440) wins over the legacy
+// m.in_reply_to fallback. Returns "" when the event carries no thread/reply.
+func extractThreadID(evt *event.Event) string {
+	if tid := threadIDFromRaw(evt); tid != "" {
+		return tid
+	}
+	return threadIDFromParsed(evt)
+}
+
+// threadIDFromRaw reads the thread/reply parent id from the raw m.relates_to.
+func threadIDFromRaw(evt *event.Event) string {
+	relatesTo, ok := evt.Content.Raw["m.relates_to"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	// An m.thread relation with a MISSING or EMPTY event_id names no parent, so it
+	// must fall through to the m.in_reply_to branch below rather than short-circuit
+	// with "". Returning the empty event_id here would skip that fallback — which
+	// the previous inline extractor reached — and silently lose thread linkage.
+	if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
+		if eventID, ok := relatesTo["event_id"].(string); ok && eventID != "" {
+			return eventID
+		}
+	}
+	if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
+		if eventID, ok := inReplyTo["event_id"].(string); ok {
+			return eventID
+		}
+	}
+	return ""
+}
+
+// threadIDFromParsed reads the thread/reply parent id from parsed content — the
+// fallback for events that arrive parsed-only (no raw map).
+func threadIDFromParsed(evt *event.Event) string {
+	content, ok := evt.Content.Parsed.(*event.MessageEventContent)
+	if !ok || content.RelatesTo == nil {
+		return ""
+	}
+	if content.RelatesTo.Type == event.RelThread && content.RelatesTo.EventID != "" {
+		return content.RelatesTo.EventID.String()
+	}
+	if content.RelatesTo.InReplyTo != nil {
+		return content.RelatesTo.InReplyTo.EventID.String()
+	}
+	return ""
 }
 
 // isMessageEdit checks if an event is a message edit (m.replace relation).
@@ -191,27 +245,13 @@ func (m *MautrixAdapter) handleMessageEditEvent(evt *event.Event) {
 		newContent, _ = evt.Content.Raw["body"].(string)
 	}
 
-	// Extract thread ID if present
-	// Check for explicit m.thread relation first (preferred), then fall back to m.in_reply_to
-	var threadID *id.EventID
-	if relatesTo != nil {
-		// Check for explicit thread relation first (MSC3440)
-		if relType, ok := relatesTo["rel_type"].(string); ok && relType == "m.thread" {
-			if threadEventID, ok := relatesTo["event_id"].(string); ok {
-				tid := id.EventID(threadEventID)
-				threadID = &tid
-			}
-		}
-		// Fallback to m.in_reply_to if no explicit thread relation
-		if threadID == nil {
-			if inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]interface{}); ok {
-				if threadEventID, ok := inReplyTo["event_id"].(string); ok {
-					tid := id.EventID(threadEventID)
-					threadID = &tid
-				}
-			}
-		}
-	}
+	// Extract thread ID via the shared *id.EventID helper (single source of truth
+	// for the m.thread → event_id / m.in_reply_to → event_id parse; returns nil when
+	// there is no thread/reply). Note this is distinct from originalEventID above
+	// (the m.replace target — the edited message id): for an m.replace event rel_type
+	// is "m.replace", so the m.thread branch never matches and this falls through to
+	// the m.in_reply_to fallback.
+	threadID := m.extractThreadIDFromMessage(evt)
 
 	go func(e *event.Event, sender uuid.UUID, origID, content string, tid *id.EventID) {
 		ctx := context.Background()
@@ -341,7 +381,9 @@ func (m *MautrixAdapter) processRedactedEvent(e *event.Event, s uuid.UUID, redac
 	switch originalEvt.Type {
 	case event.EventReaction:
 		m.handleReactionRedaction(e, s, redactedID, alkemioRoomID, originalEvt)
-	case event.EventMessage:
+	case event.EventMessage, event.EventSticker:
+		// A sticker is a message; redacting one preserves its thread linkage the
+		// same way a redacted m.room.message does (the default branch would drop it).
 		threadID := m.extractThreadIDFromMessage(originalEvt)
 		m.emitMessageRedaction(e, s, redactedID, alkemioRoomID, reason, threadID)
 	default:
@@ -371,26 +413,17 @@ func (m *MautrixAdapter) handleReactionRedaction(e *event.Event, s uuid.UUID, re
 	}
 }
 
-// extractThreadIDFromMessage extracts the thread ID from a message event if present.
-// Checks for explicit m.thread relation first (MSC3440), then falls back to m.in_reply_to.
+// extractThreadIDFromMessage extracts the thread ID from a message event if present,
+// as an *id.EventID (nil when the event carries no thread/reply). It uses the
+// same raw-preferring extractor as live sync and reads, because GetEvent responses
+// can carry m.relates_to only in Content.Raw.
 func (m *MautrixAdapter) extractThreadIDFromMessage(originalEvt *event.Event) *id.EventID {
-	content, ok := originalEvt.Content.Parsed.(*event.MessageEventContent)
-	if !ok {
+	tid := extractThreadID(originalEvt)
+	if tid == "" {
 		return nil
 	}
-	if content.RelatesTo == nil {
-		return nil
-	}
-	// Check for explicit thread relation first (MSC3440)
-	if content.RelatesTo.Type == event.RelThread && content.RelatesTo.EventID != "" {
-		eventID := content.RelatesTo.EventID
-		return &eventID
-	}
-	// Fallback to m.in_reply_to
-	if content.RelatesTo.InReplyTo != nil {
-		return &content.RelatesTo.InReplyTo.EventID
-	}
-	return nil
+	eventID := id.EventID(tid)
+	return &eventID
 }
 
 // emitMessageRedaction emits a message redacted event.
@@ -488,6 +521,39 @@ func (m *MautrixAdapter) resolveAlkemioRoomID(ctx context.Context, roomID id.Roo
 	}
 
 	return m.idMapper.AlkemioRoomID(alias)
+}
+
+// ResolveAlkemioID resolves a raw Matrix room or space id back to the Alkemio
+// UUID encoded in its alias. It repeats resolveAlkemioRoomID's alias lookup —
+// room and space aliases use the identical #uuid:domain pattern, so the same
+// resolution works for either, and the caller already knows from context (the
+// children_are_spaces flag on a hierarchy convergence request) which kind of
+// id it is asking about — but keeps apart the two outcomes
+// resolveAlkemioRoomID deliberately collapses, because this method's caller
+// uses the answer to decide whether to remove state:
+//
+//	(uuid.Nil, nil) — the room carries no Alkemio-patterned alias. A confirmed
+//	ghost: exactly the state a deleted discussion's child edge is left in, and
+//	the only answer that may drive a prune.
+//
+//	(uuid.Nil, err) — the alias read itself failed. The room's identity is
+//	unknown, not absent; reporting it as a ghost would let a transient
+//	homeserver fault masquerade as proof that a live edge is prunable.
+func (m *MautrixAdapter) ResolveAlkemioID(ctx context.Context, roomID id.RoomID) (uuid.UUID, error) {
+	aliases, err := m.GetRoomAliases(ctx, roomID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to read aliases for room %s: %w", roomID, err)
+	}
+	if len(aliases) == 0 {
+		return uuid.Nil, nil
+	}
+
+	alias := m.selectPreferredAlias(aliases)
+	if alias == "" {
+		return uuid.Nil, nil
+	}
+
+	return m.idMapper.AlkemioRoomID(alias), nil
 }
 
 // resolveOrReconcile tries to resolve the Alkemio room ID from the room alias.
@@ -799,6 +865,306 @@ func (m *MautrixAdapter) isSpaceRoom(ctx context.Context, roomID id.RoomID) (boo
 	}
 	roomType, _ := content["type"].(string)
 	return roomType == "m.space", nil
+}
+
+// Media m.room.message msgtypes carrying an attachment (mxc:// URL + file info).
+// Shared by the inbound path (mediaMsgTypes) and the outbound MIME→msgtype
+// mapping (mediaMsgType in mautrix.go) so the two never drift.
+const (
+	msgTypeImage = "m.image"
+	msgTypeVideo = "m.video"
+	msgTypeAudio = "m.audio"
+	msgTypeFile  = "m.file"
+)
+
+// mediaMsgTypes is the set of m.room.message msgtypes that carry a media
+// attachment (an mxc:// URL + file info).
+var mediaMsgTypes = map[string]struct{}{
+	msgTypeImage: {},
+	msgTypeFile:  {},
+	msgTypeVideo: {},
+	msgTypeAudio: {},
+}
+
+// extractAttachment surfaces a raw media reference from a message event, or nil
+// if the event is not a media message (or carries neither an mxc URL nor a
+// document id). It reads the event's raw content:
+//   - url(mxc, OUR homeserver only) → MediaID (the Synapse media id; the
+//     server's re-home key)
+//   - info → mimetype/size/w/h
+//   - io.alkemio.document_id → DocumentID (an UNAUTHENTICATED hint, see below)
+//
+// The mxc URL must be hosted on OUR homeserver (idMapper.LocalMediaID). This is
+// NOT federation support — this deployment's homeserver is not federated and a
+// foreign mxc cannot legitimately arrive. It is input validation: event content
+// is user-controlled, so a local member can put a foreign-looking mxc in an
+// event, and MediaID is a BARE media id that the Alkemio server resolves by
+// externalReference against media its OWN Synapse stored. Surfacing a foreign
+// media id would either miss (attachment silently lost) or COLLIDE with an
+// unrelated local media id and resolve to the WRONG document. A foreign (or
+// unparseable) url therefore surfaces no MediaID at all, exactly like a non-mxc
+// url.
+//
+// io.alkemio.document_id is an UNAUTHENTICATED HINT, and the adapter says so
+// rather than pretending otherwise. It marks an echo of our own outbound media
+// (the server routes DocumentID-present events down the coalesce path instead of
+// re-homing), but nothing here can authenticate it:
+//
+//   - Any member of the room can stamp the field on an event they send.
+//   - The adapter CANNOT tell its own sends from a human's. It impersonates
+//     actor X *as* X — IDMapper.UserID(actorID) is @<actor-uuid>:<homeserver>,
+//     the very same MXID that actor gets when they log into Element via OIDC
+//     (which is why the appservice UUID namespace is registered NON-exclusive,
+//     see the registration in mautrix.go). There is no separate ghost identity
+//     to match against, and Synapse gives an appservice no "you sent this"
+//     marker on the /transactions push. So a sender-shape test would be true for
+//     every message from every user — which is exactly what the previous
+//     isOwnAppserviceUser gate was, and why it was removed rather than tightened.
+//
+// The AUTHORITY is the Alkemio server, which is where the ownership facts live:
+// its outbound/echo branch requires the named document to be in the message's
+// room bucket AND createdBy == the message sender
+// (message.attachment.service.ts, coalesceOutboundEcho / the read-path resolve).
+// A forged breadcrumb dies there. The adapter's job is to surface what the event
+// says, labelled honestly — not to advertise a guarantee it cannot keep.
+//
+// An m.sticker (event.EventSticker) is handled as image media: it carries the
+// same url+info shape as an m.image but has NO msgtype field, so the
+// mediaMsgTypes gate is bypassed for stickers. A sticker with no info.mimetype
+// leaves att.MimeType empty — the adapter does not guess (a sticker may be
+// webp/gif/Lottie, not PNG); the true content-type is resolved downstream at
+// re-home, where file-service stores the actual blob content-type.
+//
+// The adapter never resolves these refs — it only surfaces them.
+func extractAttachment(evt *event.Event, idMapper *domain.IDMapper) *domain.Attachment {
+	raw := evt.Content.Raw
+	if raw == nil {
+		return nil
+	}
+	isSticker := evt.Type == event.EventSticker
+	if !isSticker {
+		msgtype, _ := raw["msgtype"].(string)
+		if _, ok := mediaMsgTypes[msgtype]; !ok {
+			return nil
+		}
+	}
+
+	att := &domain.Attachment{DisplayName: attachmentDisplayName(raw)}
+
+	// url (mxc://<our homeserver>/<media_id>) → MediaID. A foreign-homeserver or
+	// unparseable url yields "" (see LocalMediaID) and surfaces no MediaID.
+	if urlStr, ok := raw["url"].(string); ok {
+		att.MediaID = idMapper.LocalMediaID(urlStr)
+	}
+
+	applyMediaInfo(att, raw)
+
+	// io.alkemio.document_id → DocumentID, surfaced verbatim for EVERY sender (it
+	// is a hint, not a credential — see the doc comment). Our own outbound media
+	// already lives in file-service as document D, and the server routes echoes
+	// (DocumentID present) to the *coalesce* path — stamp externalReference=media_id
+	// onto D and drop the provider's staging twin — which needs BOTH refs, so
+	// MediaID stays populated alongside DocumentID. The server distinguishes echo
+	// (DocumentID present → coalesce) from Element-origin (DocumentID absent →
+	// re-home) by DocumentID, never by MediaID, so surfacing both is unambiguous;
+	// it then authorizes the DocumentID against bucket + createdBy before acting.
+	if docID, ok := raw["io.alkemio.document_id"].(string); ok && docID != "" {
+		att.DocumentID = docID
+	}
+
+	// A media msgtype with neither a parseable mxc URL nor a surfaced document id
+	// carries no reference the server can act on — drop it rather than emit a
+	// dead attachment record.
+	if att.MediaID == "" && att.DocumentID == "" {
+		return nil
+	}
+
+	return att
+}
+
+// attachmentDisplayName resolves a media event's display name. MSC2530: modern
+// media events carry the filename in a dedicated top-level `filename` field and
+// use `body` for a human caption. Prefer `filename`; fall back to `body` for
+// legacy media where the body IS the filename.
+//
+// The fallback is gated on `filename` being ABSENT, not on it being empty.
+// Presence is what distinguishes the two event shapes: a string `filename`
+// declares the event MSC2530-shaped, which makes `body` a human CAPTION. Falling
+// back to it because the declared filename happened to be "" would hand the
+// server a caption ("look at this sunset") to use as a FILENAME. An empty
+// display name is the honest answer for a degenerate `filename: ""` and is
+// already a supported outcome here (a media event whose body is absent or
+// non-string yields one too), so the server's own naming fallback handles it.
+//
+// The predicate stays a type assertion, so a non-string `filename` (null, a
+// number) reads as absent and keeps the legacy body fallback — only a media
+// event that actually declares a string filename opts into caption semantics.
+//
+// This resolves the DISPLAY NAME only. Content is a separate concern and always
+// carries the event body verbatim (see extractInboundMessage): whether a body
+// that equals the filename is "really" a caption is the renderer's inference to
+// make, never a fact this adapter may destroy.
+func attachmentDisplayName(raw map[string]interface{}) string {
+	if filename, ok := raw["filename"].(string); ok {
+		return filename
+	}
+	if body, ok := raw["body"].(string); ok {
+		return body
+	}
+	return ""
+}
+
+// applyMediaInfo copies the media event's info block (mime/size/dimensions) onto
+// the attachment. A missing or malformed info block leaves the fields zeroed.
+func applyMediaInfo(att *domain.Attachment, raw map[string]interface{}) {
+	info, ok := raw["info"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	if mime, ok := info["mimetype"].(string); ok {
+		att.MimeType = mime
+	}
+	// info.size is asserted by the SENDING CLIENT, so it is attacker-controlled.
+	// It travels to the Alkemio server's IMessageAttachment.size, a GraphQL Int —
+	// 32-bit — so an out-of-range value would break the server's whole response
+	// rather than just this attachment. Clamp it to "unknown" (0) at the boundary,
+	// exactly like the dimensions below.
+	if size, ok := rawInt64(info["size"]); ok && size <= math.MaxInt32 {
+		att.Size = size
+	}
+	att.Width = rawPixelPtr(info["w"])
+	att.Height = rawPixelPtr(info["h"])
+}
+
+// extractInboundMessage computes the inbound message Content and optional media
+// attachment for an m.room.message event. It is the single source of truth
+// shared by the live-sync path (handleMessageEvent) and the read path
+// (parseMessageEvent), so the two can't diverge (F10).
+//
+// ok is false only when the event carries neither a present body nor an
+// attachment — the caller then drops the event. A present-but-empty body ("")
+// IS forwarded (ok=true, empty Content): only a genuinely absent/non-string
+// body with no attachment is dropped (F3/F4).
+//
+// A media event's body is ALWAYS surfaced as Content, exactly as it was before
+// attachments existed. An earlier revision dropped it when it equalled the
+// resolved display name (the MSC2530 "body == filename means no caption" rule),
+// which BLANKED the message for any consumer reading Content without the new
+// attachments array — on the previous behaviour that consumer saw the
+// filename/caption. Both facts now travel in the same payload: Content carries
+// the body verbatim, and attachments[i].DisplayName carries the resolved
+// filename, so a consumer that reads attachments can apply MSC2530 itself
+// (Content == DisplayName ⇒ no caption ⇒ render the attachment only). That is a
+// rendering decision, and it belongs to the renderer, not to this adapter —
+// destroying one of the two strings here is the only choice that cannot be
+// undone downstream.
+//
+// A sticker's body is ALWAYS alt-text describing the image, never message text:
+// it feeds only the attachment DisplayName, so Content is forced empty. A normal
+// sticker (url present) → attachment + empty Content. A url-less sticker (e.g.
+// E2EE content.file, or a non-parseable url) has no extractable media and no
+// surface-able Content, so it returns ok=false. That ok=false is what drops it on
+// the LIVE-SYNC path (handleMessageEvent, which has no isBlankMessage guard). On
+// the read/scan paths parseMessageEvent discards ok, so the url-less sticker
+// becomes a blank (empty-content, no-attachment) Message instead — which
+// isBlankMessage then excludes from timeline/scan results.
+func extractInboundMessage(
+	evt *event.Event, idMapper *domain.IDMapper,
+) (content string, attachment *domain.Attachment, ok bool) {
+	body, bodyPresent := inboundBody(evt)
+	attachment = extractAttachment(evt, idMapper)
+
+	if !bodyPresent && attachment == nil {
+		return "", nil, false
+	}
+
+	if evt.Type == event.EventSticker {
+		// A sticker is media; its body is alt-text, never Content. With no
+		// extractable attachment (url-less/E2EE), there is nothing to surface.
+		if attachment == nil {
+			return "", nil, false
+		}
+		return "", attachment, true
+	}
+
+	return body, attachment, true
+}
+
+// inboundBody returns the message body and whether a body is present. A body is
+// present when the raw event carries a "body" string (even the empty string — a
+// present-but-empty body is forwarded), or when ALREADY-parsed content yields a
+// non-empty body (covers events that arrive parsed but without a raw map, e.g.
+// in unit tests). This mirrors develop's `, ok` semantics.
+//
+// The parsed fallback reads evt.Content.Parsed DIRECTLY and deliberately does
+// NOT go through parseEventContent, whose ParseRaw fallback would populate
+// Content.Parsed as a side effect. The event is shared with the caller (and with
+// extractThreadID, whose contract says this helper never triggers ParseRaw), so
+// this read stays observation-only.
+func inboundBody(evt *event.Event) (string, bool) {
+	if evt.Content.Raw != nil {
+		if b, ok := evt.Content.Raw["body"].(string); ok {
+			return b, true
+		}
+	}
+	if c, ok := evt.Content.Parsed.(*event.MessageEventContent); ok && c.Body != "" {
+		return c.Body, true
+	}
+	return "", false
+}
+
+// rawInt64 coerces a JSON-decoded numeric value (float64 from encoding/json, or
+// an int produced by in-process construction) to an int64. It only carries
+// sizes/dimensions, which are non-negative: a NaN/Inf, negative, or int64-range-
+// overflowing float (e.g. a hostile info.size of 1e30) is rejected as (0, false)
+// rather than surfacing an implementation-defined garbage/negative int64. The
+// upper bound is `>=` because float64(math.MaxInt64) rounds UP to 2^63, so exactly
+// 2^63 would otherwise pass and int64(2^63) wraps to MinInt64.
+func rawInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n >= float64(math.MaxInt64) {
+			return 0, false
+		}
+		return int64(n), true
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case json.Number:
+		// Int64 already errors on out-of-range values; keep returning false there.
+		i, err := n.Int64()
+		return i, err == nil
+	default:
+		return 0, false
+	}
+}
+
+// rawPixelPtr returns a pointer to v as a pixel dimension (info.w / info.h), or
+// nil when v is not a usable dimension.
+//
+// info.w/info.h are asserted by the SENDING CLIENT — any member of the room can
+// put anything there — and they flow verbatim through dto.ReceivedAttachment
+// into the Alkemio server's IMessageAttachment.width/height, which are GraphQL
+// `Int`: THIRTY-TWO bit. rawInt64's int64 bound is therefore not enough; a value
+// above MaxInt32 breaks the server's response for the whole query. Two rules:
+//
+//   - > math.MaxInt32 → nil. Out of the wire type's range.
+//   - <= 0 → nil. No image is zero or negative pixels wide; a non-positive
+//     dimension is what an unmeasured source reports, and the server already
+//     treats non-positive dims as ABSENT — so say "absent" here rather than
+//     shipping a 0 it will discard anyway. (rawInt64 already rejects negatives,
+//     NaN/Inf and int64 overflow; this narrows to the pixel domain.)
+//
+// int is 64-bit on every platform this builds for, so the conversion below is
+// exact once the MaxInt32 bound has been applied.
+func rawPixelPtr(v any) *int {
+	i, ok := rawInt64(v)
+	if !ok || i <= 0 || i > math.MaxInt32 {
+		return nil
+	}
+	x := int(i)
+	return &x
 }
 
 // getRoomNameAndTopic fetches the room name and topic from state events.

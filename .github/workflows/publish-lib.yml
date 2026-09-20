@@ -20,26 +20,33 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://registry.npmjs.org' || '' }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
       - name: Generate Library
-        run: make generate
+        # Only the TypeScript artifacts are needed to publish the library:
+        # generate-go runs tygo for lib/src/dto/generated.ts, generate-events
+        # produces commands.ts and the event-type enum. The full `generate`
+        # target also runs `openapi`, which shells out to apispec — a tool this
+        # job does not install (CI gets it from the shared go-ci workflow), so
+        # invoking it here fails with "apispec: No such file or directory".
+        # openapi.yaml is not part of the published package.
+        run: make generate-go generate-events
 
       - name: Install Dependencies
         working-directory: lib
@@ -48,6 +55,10 @@ jobs:
       - name: Build
         working-directory: lib
         run: pnpm build
+
+      - name: Typecheck (native TS7)
+        working-directory: lib
+        run: pnpm run typecheck:native
 
       - name: Set Version (Tag - npmjs)
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}

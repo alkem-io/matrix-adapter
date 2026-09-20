@@ -4,11 +4,13 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
 
+	"github.com/alkem-io/matrix-adapter/internal/config"
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter/pkg/dto"
@@ -20,6 +22,22 @@ import (
 
 const testDomain = "matrix.test.local"
 const testOtherDomain = "matrix.example.com"
+
+// testHierarchyConfig returns a config with hierarchy write budgets fast enough
+// that pacing never meaningfully slows a test down, while still exercising the
+// real rate-limiter/budget code paths (as opposed to a zero-value config, whose
+// clamped 1/s default would make any test issuing several writes slow).
+func testHierarchyConfig() *config.Config {
+	cfg := &config.Config{}
+	cfg.Hierarchy.StateEventsPerSecond = 1000
+	cfg.Hierarchy.ParentPointerEventsPerSecond = 1000
+	cfg.Hierarchy.ParentPointerBudgetPerCall = 5
+	// Long enough that HandleSetChildren's own deadline (see
+	// config.Hierarchy.SetChildrenTimeoutSeconds) never fires mid-test; tests
+	// that specifically exercise deadline behavior set their own short value.
+	cfg.Hierarchy.SetChildrenTimeoutSeconds = 30
+	return cfg
+}
 
 // ============================================================================
 // Mock Logger
@@ -100,7 +118,8 @@ type testMockMatrixPort struct {
 	sendReplyErr    error
 
 	// RedactEvent
-	redactEventErr error
+	redactEventErr    error
+	redactEventCalled int
 
 	// SendReaction
 	sendReactionResult id.EventID
@@ -167,6 +186,15 @@ type testMockMatrixPort struct {
 	inviteToSpaceErr       error
 	kickFromSpaceErr       error
 
+	// Hierarchy convergence (communication.hierarchy.set_children)
+	getSpaceChildStateKeysResult []string
+	getSpaceChildStateKeysErr    error
+	removeSpaceChildErr          error
+	resolveAlkemioIDResults      map[id.RoomID]uuid.UUID
+	resolveAlkemioIDErrs         map[id.RoomID]error
+	getSpaceParentResults        map[id.RoomID]id.RoomID
+	getSpaceParentErr            error
+
 	// Read receipt operations
 	sendReadReceiptErr       error
 	getBatchUnreadCountsRes  map[id.RoomID]int
@@ -185,14 +213,16 @@ type testMockMatrixPort struct {
 	capturedCreateRoomMembers     []domain.Actor
 
 	// SendMessage
-	capturedSendMessageRoomID  id.RoomID
-	capturedSendMessageSender  domain.Actor
-	capturedSendMessageContent string
+	capturedSendMessageRoomID      id.RoomID
+	capturedSendMessageSender      domain.Actor
+	capturedSendMessageContent     string
+	capturedSendMessageAttachments []domain.Attachment
 
 	// SendReply
-	capturedSendReplyRoomID  id.RoomID
-	capturedSendReplyContent string
-	capturedSendReplyThread  id.EventID
+	capturedSendReplyRoomID      id.RoomID
+	capturedSendReplyContent     string
+	capturedSendReplyThread      id.EventID
+	capturedSendReplyAttachments []domain.Attachment
 
 	// UpdateRoomState
 	capturedUpdateRoomStateRoomID   id.RoomID
@@ -247,6 +277,10 @@ type testMockMatrixPort struct {
 
 	capturedSetSpaceParentChildID  id.RoomID
 	capturedSetSpaceParentParentID id.RoomID
+
+	capturedRemoveSpaceChildSpaceID   id.RoomID
+	capturedRemoveSpaceChildStateKeys []string
+	setSpaceParentCallCount           int
 
 	capturedInviteToSpaceRoomID id.RoomID
 	capturedInviteToSpaceActor  domain.Actor
@@ -366,21 +400,24 @@ func (m *testMockMatrixPort) KickUser(_ context.Context, roomID id.RoomID, userI
 	return m.kickUserErr
 }
 
-func (m *testMockMatrixPort) SendMessage(_ context.Context, roomID id.RoomID, sender domain.Actor, content string) (id.EventID, error) {
+func (m *testMockMatrixPort) SendMessage(_ context.Context, roomID id.RoomID, sender domain.Actor, content string, attachments []domain.Attachment) (id.EventID, error) {
 	m.capturedSendMessageRoomID = roomID
 	m.capturedSendMessageSender = sender
 	m.capturedSendMessageContent = content
+	m.capturedSendMessageAttachments = attachments
 	return m.sendMessageResult, m.sendMessageErr
 }
 
-func (m *testMockMatrixPort) SendReply(_ context.Context, roomID id.RoomID, _ domain.Actor, content string, threadID id.EventID) (id.EventID, error) {
+func (m *testMockMatrixPort) SendReply(_ context.Context, roomID id.RoomID, _ domain.Actor, content string, threadID id.EventID, attachments []domain.Attachment) (id.EventID, error) {
 	m.capturedSendReplyRoomID = roomID
 	m.capturedSendReplyContent = content
 	m.capturedSendReplyThread = threadID
+	m.capturedSendReplyAttachments = attachments
 	return m.sendReplyResult, m.sendReplyErr
 }
 
 func (m *testMockMatrixPort) RedactEvent(_ context.Context, roomID id.RoomID, _ domain.Actor, eventID id.EventID, _ string) error {
+	m.redactEventCalled++
 	m.capturedRedactEventRoomID = roomID
 	m.capturedRedactEventID = eventID
 	return m.redactEventErr
@@ -461,16 +498,54 @@ func (m *testMockMatrixPort) GetSpaceChildren(_ context.Context, _ id.RoomID) ([
 	return m.getSpaceChildrenResult, m.getSpaceChildrenErr
 }
 
+func (m *testMockMatrixPort) GetSpaceChildStateKeys(_ context.Context, _ id.RoomID) ([]string, error) {
+	return m.getSpaceChildStateKeysResult, m.getSpaceChildStateKeysErr
+}
+
 func (m *testMockMatrixPort) AddSpaceChild(_ context.Context, spaceID id.RoomID, childID id.RoomID, _ string, _ bool) error {
 	m.capturedAddSpaceChildSpaceID = spaceID
 	m.capturedAddSpaceChildChildID = childID
 	return m.addSpaceChildErr
 }
 
+func (m *testMockMatrixPort) RemoveSpaceChild(_ context.Context, spaceID id.RoomID, childStateKey string) error {
+	m.capturedRemoveSpaceChildSpaceID = spaceID
+	m.capturedRemoveSpaceChildStateKeys = append(m.capturedRemoveSpaceChildStateKeys, childStateKey)
+	return m.removeSpaceChildErr
+}
+
 func (m *testMockMatrixPort) SetSpaceParent(_ context.Context, childID id.RoomID, parentID id.RoomID) error {
 	m.capturedSetSpaceParentChildID = childID
 	m.capturedSetSpaceParentParentID = parentID
+	m.setSpaceParentCallCount++
 	return m.setSpaceParentErr
+}
+
+func (m *testMockMatrixPort) ClearSpaceParent(_ context.Context, _ id.RoomID, _ id.RoomID) error {
+	return nil
+}
+
+func (m *testMockMatrixPort) GetSpaceParents(_ context.Context, childID id.RoomID) ([]id.RoomID, error) {
+	if m.getSpaceParentErr != nil {
+		return nil, m.getSpaceParentErr
+	}
+	if m.getSpaceParentResults == nil {
+		return nil, nil
+	}
+	if parent, ok := m.getSpaceParentResults[childID]; ok && parent != "" {
+		return []id.RoomID{parent}, nil
+	}
+	return nil, nil
+}
+
+func (m *testMockMatrixPort) ResolveAlkemioID(_ context.Context, roomID id.RoomID) (uuid.UUID, error) {
+	if err, ok := m.resolveAlkemioIDErrs[roomID]; ok {
+		return uuid.Nil, err
+	}
+	if m.resolveAlkemioIDResults == nil {
+		return uuid.Nil, nil
+	}
+	return m.resolveAlkemioIDResults[roomID], nil
 }
 
 func (m *testMockMatrixPort) InviteToSpace(_ context.Context, roomID id.RoomID, invitee domain.Actor) error {
@@ -581,19 +656,41 @@ func assertSuccess(t *testing.T, result interface{}) {
 }
 
 // assertErrorCode checks that the result is an error response with the given code.
-func assertErrorCode(t *testing.T, result interface{}, expectedCode dto.ErrorCode) {
+// assertErrorMessageContains asserts on the error MESSAGE, not just its code.
+// Several distinct validation failures share dto.ErrCodeInvalidParam, so a test
+// naming a specific invariant must pin the message or it cannot fail when the
+// request is rejected for an unrelated reason.
+func assertErrorMessageContains(t *testing.T, result interface{}, want string) {
+	t.Helper()
+	base := asBaseResponse(t, result)
+	if base.Error == nil {
+		t.Fatalf("expected error to be non-nil")
+	}
+	if !strings.Contains(base.Error.Message, want) {
+		t.Errorf("expected error message to contain %q, got %q", want, base.Error.Message)
+	}
+}
+
+// asBaseResponse coerces a handler result to dto.BaseResponse.
+func asBaseResponse(t *testing.T, result interface{}) dto.BaseResponse {
 	t.Helper()
 	base, ok := result.(dto.BaseResponse)
-	if !ok {
-		// Try JSON round-trip
-		data, err := json.Marshal(result)
-		if err != nil {
-			t.Fatalf("failed to marshal result: %v", err)
-		}
-		if err := json.Unmarshal(data, &base); err != nil {
-			t.Fatalf("failed to unmarshal base response: %v", err)
-		}
+	if ok {
+		return base
 	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("failed to marshal result: %v", err)
+	}
+	if err := json.Unmarshal(data, &base); err != nil {
+		t.Fatalf("failed to unmarshal base response: %v", err)
+	}
+	return base
+}
+
+func assertErrorCode(t *testing.T, result interface{}, expectedCode dto.ErrorCode) {
+	t.Helper()
+	base := asBaseResponse(t, result)
 	if base.Success {
 		t.Fatalf("expected success=false, got true")
 	}
