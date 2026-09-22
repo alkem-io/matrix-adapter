@@ -130,12 +130,12 @@ func (m *mockExtendedMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.U
 	return m.kickUserErr
 }
 
-func (m *mockExtendedMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (id.EventID, error) {
-	return m.sendMessageResult, m.sendMessageErr
+func (m *mockExtendedMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (*domain.Message, error) {
+	return &domain.Message{ID: string(m.sendMessageResult)}, m.sendMessageErr
 }
 
-func (m *mockExtendedMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID, _ []domain.Attachment) (id.EventID, error) {
-	return m.sendReplyResult, m.sendReplyErr
+func (m *mockExtendedMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID, _ []domain.Attachment) (*domain.Message, error) {
+	return &domain.Message{ID: string(m.sendReplyResult)}, m.sendReplyErr
 }
 
 func (m *mockExtendedMatrixPort) RedactEvent(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {
@@ -895,8 +895,8 @@ func TestSendMessage_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if eventID != "$msg1:test.local" {
-		t.Errorf("expected event ID '$msg1:test.local', got '%s'", eventID)
+	if eventID.ID != "$msg1:test.local" {
+		t.Errorf("expected event ID '$msg1:test.local', got '%s'", eventID.ID)
 	}
 }
 
@@ -926,8 +926,8 @@ func TestSendReply_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if eventID != "$reply1:test.local" {
-		t.Errorf("expected event ID '$reply1:test.local', got '%s'", eventID)
+	if eventID.ID != "$reply1:test.local" {
+		t.Errorf("expected event ID '$reply1:test.local', got '%s'", eventID.ID)
 	}
 }
 

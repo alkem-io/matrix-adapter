@@ -726,133 +726,11 @@ func (m *MautrixAdapter) markRoomAsReadForUsers(
 	)
 }
 
-// SendMessage sends a message to a room. A non-empty text body is sent as a
-// single m.text event; each attachment is sent as its own media event
-// (m.image/m.file/...). Returns the primary event ID (the text event if there
-// is text, otherwise the first media event).
+// SendMessage publishes exactly one text or media event.
 func (m *MautrixAdapter) SendMessage(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment,
-) (id.EventID, error) {
-	userID, err := m.EnsureUser(ctx, senderID)
-	if err != nil {
-		return "", err
-	}
-	intent := m.as.Intent(userID)
-
-	var primaryEventID id.EventID
-	if content != "" {
-		resp, err := intent.SendText(ctx, roomID, content)
-		if err != nil {
-			return "", fmt.Errorf("failed to send message: %w", err)
-		}
-		primaryEventID = resp.EventID
-	}
-
-	return m.fanOutAttachments(ctx, intent, userID, roomID, attachments, "", primaryEventID)
-}
-
-// fanOutAttachments sends each attachment as its own independent media event.
-// There is no atomicity across the fan-out — Matrix/Element have none either:
-// each attachment is its own event/message, exactly like an Element multi-image
-// send. primaryEventID is the text event's id (empty for an attachment-only
-// message, in which case the first attachment becomes the primary); it is
-// returned resolved.
-//
-// Partial-success behaviour: if an attachment fails AFTER something has already
-// been delivered to the room (the text event, or an earlier attachment —
-// primaryEventID != ""), we log a warning and return the delivered primary with
-// a nil error. Collapsing that to a total failure would make the sender's
-// already-visible text vanish and a server retry duplicate it. Only when nothing
-// has been delivered yet (primaryEventID == "" — a text-less message whose FIRST
-// attachment fails) do we return the error. Either way we stop on first failure
-// (later attachments are not attempted), matching an Element send where a later
-// image fails but the message stays.
-//
-// The whole fan-out (all N<=10 attachments) is fetched, uploaded, and sent
-// SEQUENTIALLY within this single send's HandleSendMessage queue-handler
-// invocation, on purpose: sequential order preserves the attachments' visible
-// order in the room (events are ordered by send). Parallelizing the uploads
-// would still require an ordered send afterward for marginal gain on a bounded
-// (<=10) attachment list.
-//
-// Because it IS sequential — and processMessage runs the room-ops consumer's
-// messages one at a time in a single goroutine — the fan-out gets ONE overall
-// deadline (messageFanOutTimeout) shared by every attachment. Per-attachment
-// deadlines alone would let a stalling file-service hold the consumer for
-// N x the per-attachment ceiling and stall ALL room messaging behind it. On
-// budget exhaustion the current attachment fails like any other failure and the
-// partial-success rule above applies: degrade to partial delivery rather than
-// block the consumer.
-func (m *MautrixAdapter) fanOutAttachments(
-	ctx context.Context, intent intentAPI, senderUserID id.UserID, roomID id.RoomID,
-	attachments []domain.Attachment, threadID, primaryEventID id.EventID,
-) (id.EventID, error) {
-	if len(attachments) == 0 {
-		return primaryEventID, nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, messageFanOutTimeout(m.cfg.MaxAttachmentBytes()))
-	defer cancel()
-
-	for i := range attachments {
-		eventID, err := m.sendAttachment(ctx, intent, roomID, attachments[i], threadID)
-		if err != nil {
-			if primaryEventID == "" {
-				return "", fmt.Errorf("attachment %d of %d failed: %w", i+1, len(attachments), err)
-			}
-			// This send is still reported as a SUCCESS (the primary was delivered),
-			// so this warning is the only trace a dropped attachment leaves. It must
-			// carry everything needed to find the message and the lost document.
-			m.logger.Warn("Attachment fan-out partial failure; primary already delivered",
-				"room_id", roomID,
-				"sender_user_id", senderUserID,
-				"primary_event_id", primaryEventID,
-				"thread_id", threadID,
-				"document_id", attachments[i].DocumentID,
-				"attachment", i+1,
-				"total", len(attachments),
-				"error", err)
-			return primaryEventID, nil
-		}
-		if primaryEventID == "" {
-			primaryEventID = eventID
-		}
-	}
-	return primaryEventID, nil
-}
-
-// messageFanOutBudgetSlots is how many per-attachment ceilings the WHOLE
-// message's fan-out may consume, however many attachments it carries.
-//
-// mediaStreamTimeout already sizes one attachment's ceiling for a max-size blob
-// moving at the assumed floor throughput (fileServiceMinThroughputBytesPerSec),
-// which is orders of magnitude slower than the real in-cluster link — so a
-// healthy multi-attachment send never approaches even one slot. The slots exist
-// only to bound how long a STALLING backend can occupy the sequential room-ops
-// consumer: at the default 50 MiB cap this caps a send at ~3.7 minutes instead
-// of the ~18 minutes an unbudgeted 10-attachment fan-out would allow.
-const messageFanOutBudgetSlots = 2
-
-// messageFanOutTimeout is the single wall-clock budget shared by every
-// attachment in one message's fan-out.
-//
-// It deliberately EXCEEDS the caller's patience, and that is not an oversight.
-// SendMessage is served over a synchronous AMQP RPC whose caller (the Alkemio
-// server's communication.adapter) waits COMMUNICATIONS_MATRIX_CONNECTION_TIMEOUT
-// — 30 s by default — while one legitimate 50 MiB attachment is allowed ~110 s at
-// the assumed floor throughput. Shrinking this to 30 s would abandon large
-// attachments that are simply slow, which is the worse failure.
-//
-// What happens when the caller gives up first (verified against the server, not
-// assumed): the AMQP request is not cancelled, so the adapter completes the send;
-// the server neither retries nor writes a message row on send, so there is no
-// duplicate Matrix event and no orphan record; staged attachment documents stay
-// temporary and are either swept or pinned by the later echo. The cost is a
-// user-visible error for a send that may have landed, and a manual re-send that
-// can then duplicate. That is a deployment-tuning matter (raise the server
-// timeout, or keep the byte cap small enough that sends stay under it — see the
-// README), not something the adapter can fix by shortening its own budget.
-func messageFanOutTimeout(maxBytes int64) time.Duration {
-	return messageFanOutBudgetSlots * mediaStreamTimeout(maxBytes)
+) (*domain.Message, error) {
+	return m.SendReply(ctx, roomID, senderID, content, "", attachments)
 }
 
 // ============================================================================
@@ -993,162 +871,78 @@ func (m *MautrixAdapter) setOrRedactState(
 // Message & Reaction Operations
 // ============================================================================
 
-// SendReply sends a reply to a message. A non-empty text body is sent as a
-// single threaded m.text event; each attachment is sent as its own threaded
-// media event. Returns the primary event ID (the text event if there is text,
-// otherwise the first media event).
+// SendReply publishes one event, optionally as a reply, and returns its content.
 func (m *MautrixAdapter) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
 	attachments []domain.Attachment,
-) (id.EventID, error) {
+) (*domain.Message, error) {
+	if len(attachments) > 1 || (content == "") == (len(attachments) == 0) {
+		return nil, fmt.Errorf("send requires either text or one attachment")
+	}
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	intent := m.as.Intent(userID)
-
-	var primaryEventID id.EventID
-	if content != "" {
-		msgContent := event.MessageEventContent{
-			MsgType:   event.MsgText,
-			Body:      content,
-			RelatesTo: threadRelation(threadID),
+	var message *domain.Message
+	if len(attachments) == 1 {
+		message, err = m.sendAttachment(ctx, intent, roomID, attachments[0], threadID)
+	} else {
+		var response *mautrix.RespSendEvent
+		if threadID == "" {
+			response, err = intent.SendText(ctx, roomID, content)
+		} else {
+			response, err = intent.SendMessageEvent(ctx, roomID, event.EventMessage, &event.MessageEventContent{
+				MsgType: event.MsgText, Body: content, RelatesTo: threadRelation(threadID),
+			})
 		}
-
-		resp, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, &msgContent)
-		if err != nil {
-			return "", fmt.Errorf("failed to send reply: %w", err)
+		if err == nil {
+			message = &domain.Message{ID: response.EventID.String(), Content: content}
 		}
-		primaryEventID = resp.EventID
 	}
-
-	return m.fanOutAttachments(ctx, intent, userID, roomID, attachments, threadID, primaryEventID)
-}
-
-// ============================================================================
-// Media (byte bridge) — stateless: fetch from file-service, push to Synapse
-// ============================================================================
-
-var errAttachmentTooLarge = errors.New("attachment exceeds max size")
-
-// countingCapReader streams from r, tracking bytes read and failing once more
-// than max bytes have been read so an oversized document fails the upload
-// instead of being buffered. count() is the exact number of bytes streamed.
-//
-// An oversize document is rejected up front from the authoritative
-// Content-Length (before streaming). This is the mid-stream BACKSTOP for a
-// file-service response whose declared length is smaller than the bytes it
-// actually serves: those extra bytes are caught here rather than streamed on
-// unbounded. Whatever reached Synapse before the trip is unreferenced by any
-// event and is reclaimed by Synapse media retention — an accepted bounded cost
-// of streaming, not worth a pre-buffering pass.
-//
-// The counter is atomic because net/http reads the request body on its
-// writeLoop goroutine: when the peer rejects the upload on headers alone (an
-// ingress client_max_body_size, or Synapse's max_upload_size, both of which
-// read Content-Length first) roundTrip returns to sendAttachment while
-// writeLoop is STILL calling Read here. sendAttachment then reads count() for
-// the error classification and for info.size — a plain int64 would be a data
-// race and would make the same 413 classify non-deterministically.
-type countingCapReader struct {
-	r   io.Reader
-	max int64
-	n   atomic.Int64
-}
-
-func (c *countingCapReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	if c.n.Add(int64(n)) > c.max {
-		return n, errAttachmentTooLarge
+	if err != nil {
+		return nil, err
 	}
-	return n, err
+	message.RoomID = roomID.String()
+	message.SenderID = senderID.ID
+	message.SenderMatrixID = userID.String()
+	message.ThreadID = threadID.String()
+	message.Timestamp = time.Now()
+	return message, nil
 }
 
-// count returns the bytes streamed so far. Safe to call while the transport's
-// writeLoop is still reading (see the type comment).
-func (c *countingCapReader) count() int64 { return c.n.Load() }
-
-// sendAttachment fetches a document's bytes from file-service, uploads them to
-// the homeserver, and sends a media event carrying the mxc URL, file info, and
-// the io.alkemio.document_id breadcrumb. When threadID is non-empty the event
-// is threaded under it.
+// sendAttachment streams the stored rendition to Synapse as the sender.
 func (m *MautrixAdapter) sendAttachment(
-	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment,
-	threadID id.EventID,
-) (id.EventID, error) {
-	// The streamed fetch+upload (openDocumentFetch → UploadMedia, including the
-	// resp.Body reads UploadMedia drives) is bounded by a size-proportional
-	// wall-clock deadline: the AMQP/watermill message context carries NO deadline,
-	// and processMessage runs messages SEQUENTIALLY in one goroutine, so a mid-body
-	// stall from file-service would otherwise wedge the entire room-ops consumer.
-	// On deadline the fetch request context cancels, unblocking any parked body
-	// read, and the deferred resp.Body.Close() cleans up.
-	maxBytes := m.cfg.MaxAttachmentBytes()
-	mediaCtx, cancel := context.WithTimeout(ctx, mediaStreamTimeout(maxBytes))
-	defer cancel()
-
-	resp, err := m.openDocumentFetch(mediaCtx, att.DocumentID)
+	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, threadID id.EventID,
+) (*domain.Message, error) {
+	response, err := m.openDocumentFetch(ctx, att.DocumentID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Use the most specific media type available. The server-declared att.MimeType
-	// is authoritative when specific; fall back to the file-service response
-	// Content-Type when att is generic/empty (some object stores serve
-	// application/octet-stream regardless of the real type). The FULL resolved type
-	// (with any params such as "; charset=utf-8") drives the upload Content-Type so
-	// charset survives for text; the BARE type (params stripped) drives the event
-	// msgtype and info.mimetype, which are conventionally unparameterized.
-	contentType := resolveMediaMime(resp.Header.Get("Content-Type"), att.MimeType)
-
-	// Synapse's media upload REQUIRES a Content-Length; a chunked / unknown-length
-	// (ContentLength: -1) upload is rejected with
-	// "M_UNKNOWN (HTTP 400): Request must specify a Content-Length". Give it the
-	// length WITHOUT buffering the blob: file-service serves /content with a
-	// Content-Length on every content path, so resp.ContentLength is the SINGLE
-	// authoritative wire length and resp.Body STREAMS straight to the homeserver
-	// (constant memory — never the whole blob in RAM).
-	//
-	// att.Size is deliberately NOT a fallback. It is caller-declared and never
-	// validated (see domain.Attachment.Size), so declaring it as the wire length
-	// either aborts the upload mid-request ("http: ContentLength=N with Body
-	// length M") or, when it under-declares, leaves a SILENTLY TRUNCATED blob
-	// stored at Synapse. It also bypasses nothing else here: the cap below is
-	// applied to this one resolved length, so there is exactly one code path.
-	//
-	// -1 means the header was absent (0 is a genuine, and perfectly uploadable,
-	// zero-byte document — uploadRequest handles the mautrix branch that actually
-	// emits "Content-Length: 0" for it). Absent is not a normal condition — fail
-	// loudly naming the real cause rather than guessing or buffering.
-	if resp.ContentLength < 0 {
-		return "", fmt.Errorf("file-service response for document %s carried no Content-Length; refusing to buffer the blob to derive one", att.DocumentID)
+	defer func() { _ = response.Body.Close() }()
+	// Synapse requires a known Content-Length; file-service supplies it. Go's
+	// HTTP transport bounds the body to that length, without buffering the file.
+	size := response.ContentLength
+	if size < 0 {
+		return nil, fmt.Errorf("file-service response for document %s carried no Content-Length", att.DocumentID)
 	}
-	uploadLen := resp.ContentLength
-	if uploadLen > maxBytes {
-		return "", attachmentTooLargeError(att.DocumentID, maxBytes)
+	if size > m.cfg.MaxAttachmentBytes() {
+		return nil, attachmentTooLargeError(att.DocumentID, m.cfg.MaxAttachmentBytes())
 	}
-	// countingCapReader is the mid-stream backstop should the body outrun its
-	// declared length; mediaCtx bounds the body reads.
-	reader := &countingCapReader{r: resp.Body, max: maxBytes}
-	// Upload via the SENDER ghost intent (not the appservice bot), so the media
-	// blob is owned by the acting user's account — attributing quota/retention
-	// correctly and avoiding a single-account purge stripping every bridged blob.
-	up, err := intent.UploadMedia(mediaCtx, uploadRequest(reader, uploadLen, contentType))
+	contentType := resolveMediaMime(response.Header.Get("Content-Type"), att.MimeType)
+	uploaded, err := intent.UploadMedia(ctx, uploadRequest(response.Body, size, contentType))
 	if err != nil {
-		if errors.Is(err, errAttachmentTooLarge) || reader.count() > maxBytes {
-			return "", attachmentTooLargeError(att.DocumentID, maxBytes)
-		}
-		return "", fmt.Errorf("failed to upload media: %w", err)
+		return nil, fmt.Errorf("failed to upload media: %w", err)
 	}
-	// info.size is the bytes actually streamed, never the caller-declared att.Size.
-	// The bare type (params stripped) is used for info.mimetype and msgtype.
-	content := buildMediaContent(att, up.ContentURI, baseType(contentType), reader.count(), threadID)
+	content := buildMediaContent(att, uploaded.ContentURI, baseType(contentType), size, threadID)
 	sent, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content)
 	if err != nil {
-		return "", fmt.Errorf("failed to send media event: %w", err)
+		return nil, fmt.Errorf("failed to send media event: %w", err)
 	}
-	return sent.EventID, nil
+	att.MediaID = uploaded.ContentURI.FileID
+	att.MimeType = baseType(contentType)
+	att.Size = size
+	return &domain.Message{ID: sent.EventID.String(), Content: att.DisplayName, Attachments: []domain.Attachment{att}}, nil
 }
 
 // uploadRequest builds the ReqUploadMedia for a body of exactly uploadLen bytes.
@@ -1188,45 +982,8 @@ func attachmentTooLargeError(documentID string, maxBytes int64) error {
 	return fmt.Errorf("document %s exceeds max attachment size of %d bytes", documentID, maxBytes)
 }
 
-// fileServiceFetchTimeout bounds connection establishment and the wait for
-// file-service response headers. The streamed response body is additionally
-// bounded by mediaStreamTimeout (a size-proportional wall-clock deadline applied
-// via the fetch context in sendAttachment), so a mid-body stall cannot hang the
-// send indefinitely.
-const fileServiceFetchTimeout = 60 * time.Second
-
-// Streamed media (fetch from file-service → upload to Synapse) is bounded by a
-// size-proportional deadline: a stalled body must not wedge the single
-// sequential watermill consumer. fileServiceFetchTimeout is the floor (covers
-// connect + header wait); large bodies get proportional extra time at an assumed
-// minimum throughput.
-const fileServiceMinThroughputBytesPerSec = 1 << 20 // 1 MiB/s
-
-// CEILING THIS BUDGET CANNOT CROSS: the upload leg runs on the appservice's
-// SHARED http.Client, which mautrix-go builds with Timeout: 180 * time.Second
-// (appservice.SetHomeserverURL, v0.28.0) — a WHOLE-request timeout that includes
-// the streamed body, and http.Client.Timeout always wins over a longer context
-// deadline. Every intent, ghost and bot shares that one client, and ReqUploadMedia
-// has no per-request client override (unlike ReqSync), so there is no way to
-// exempt just the upload without swapping the shared client out.
-//
-// At the 50 MiB default this never binds: the budget is ~110 s. It starts to bind
-// past roughly 120 MiB of FILE_SERVICE_MAX_ATTACHMENT_BYTES, and past roughly
-// 180 MiB no attachment can complete at the assumed floor throughput whatever
-// this function returns. Raising the cap that far is therefore a change to the
-// upload client, not just to the knob — see the README's Media Attachments note.
-func mediaStreamTimeout(maxBytes int64) time.Duration {
-	secs := maxBytes / fileServiceMinThroughputBytesPerSec
-	// Clamp the size-proportional part to a sane ceiling: an absurd config (e.g. a
-	// petabyte FILE_SERVICE_MAX_ATTACHMENT_BYTES) would otherwise overflow int64
-	// nanoseconds in the Duration multiply, wrap negative, and make every send fail
-	// on a negative context deadline.
-	const maxStreamSeconds = 3600 // 1h ceiling
-	if secs > maxStreamSeconds {
-		secs = maxStreamSeconds
-	}
-	return fileServiceFetchTimeout + time.Duration(secs)*time.Second
-}
+// One send uses its queue request's context for the complete transfer.
+const fileServiceFetchTimeout = 25 * time.Second
 
 func newFileServiceHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
 	return &http.Client{Transport: &http.Transport{

@@ -4,14 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
-	"math"
 	"net"
 	"net/http"
-	"sync"
 	"testing"
-	"testing/iotest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -31,68 +27,35 @@ const (
 	docID3 = "33333333-3333-4333-8333-333333333333"
 )
 
-// A multi-attachment send is a fan-out of independent events, exactly like an
-// Element multi-image send. When something has ALREADY been delivered (here the
-// text event), a later attachment failure is a PARTIAL success: the delivered
-// primary is returned with a nil error (no rollback), so the sender's text does
-// not vanish and a server retry does not duplicate it. Matrix/Element provide no
-// cross-event atomicity, so the adapter must not reinvent it.
-func TestSendMessage_AttachmentFailure_WithText_ReturnsPrimaryNoError(t *testing.T) {
-	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
-		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
-	})
-	intent := &mockIntentAPI{
-		sendTextResult:    &mautrix.RespSendEvent{EventID: "$text"},
-		uploadBytesResult: &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/media")},
-		sendMessageEventResults: []*mautrix.RespSendEvent{
-			{EventID: "$attachment-1"},
-			nil,
-		},
-		sendMessageEventErrs: []error{nil, assert.AnError},
+func TestSendMessage_RejectsAggregateBeforePublishing(t *testing.T) {
+	for _, content := range []string{"", "text"} {
+		intent := &mockIntentAPI{}
+		a := newMediaTestAdapter(t, "", intent)
+		attachments := []domain.Attachment{{DocumentID: docID1}, {DocumentID: docID2}}
+		if content != "" {
+			attachments = attachments[:1]
+		}
+		message, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), content, attachments)
+		require.ErrorContains(t, err, "either text or one attachment")
+		require.Nil(t, message)
+		assert.Zero(t, intent.sendMessageEventCalled)
+		assert.Zero(t, intent.uploadBytesCalled)
 	}
-	a := newMediaTestAdapter(t, fileServiceURL, intent)
-
-	eventID, err := a.SendMessage(
-		context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "files",
-		[]domain.Attachment{
-			{DocumentID: docID1, DisplayName: "one.png", MimeType: "image/png"},
-			{DocumentID: docID2, DisplayName: "two.png", MimeType: "image/png"},
-			{DocumentID: docID3, DisplayName: "three.png", MimeType: "image/png"},
-		},
-	)
-
-	require.NoError(t, err, "partial failure with an already-delivered primary must not surface an error")
-	assert.Equal(t, id.EventID("$text"), eventID, "the already-delivered text event is returned as the primary")
-	assert.Equal(t, 2, intent.sendMessageEventCalled, "the third attachment must not be attempted (stop on first failure)")
-	assert.Empty(t, intent.redactEventIDs, "prior events are NOT rolled back (Element parity)")
 }
 
-// A text-less message whose FIRST attachment fails has delivered nothing, so the
-// error IS surfaced (primaryEventID == "") — the caller must retry the whole
-// send.
-func TestSendMessage_FirstAttachmentFailure_NoText_ReturnsError(t *testing.T) {
-	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
+func TestSendMessage_MediaPublicationFailureIsReturned(t *testing.T) {
+	url := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
 		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
 	})
 	intent := &mockIntentAPI{
-		uploadBytesResult:       &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/media")},
-		sendMessageEventResults: []*mautrix.RespSendEvent{nil},
-		sendMessageEventErrs:    []error{assert.AnError},
+		uploadBytesResult:   &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/media")},
+		sendMessageEventErr: assert.AnError,
 	}
-	a := newMediaTestAdapter(t, fileServiceURL, intent)
-
-	eventID, err := a.SendMessage(
-		context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
-		[]domain.Attachment{
-			{DocumentID: docID1, DisplayName: "one.png", MimeType: "image/png"},
-			{DocumentID: docID2, DisplayName: "two.png", MimeType: "image/png"},
-		},
-	)
-
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "attachment 1 of 2 failed")
-	assert.Empty(t, eventID, "nothing delivered, so no primary event id")
-	assert.Equal(t, 1, intent.sendMessageEventCalled, "the second attachment must not be attempted")
+	a := newMediaTestAdapter(t, url, intent)
+	message, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "", []domain.Attachment{{DocumentID: docID1}})
+	require.ErrorIs(t, err, assert.AnError)
+	require.Nil(t, message)
+	assert.Equal(t, 1, intent.sendMessageEventCalled)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -175,7 +138,11 @@ func TestSendMessage_WithImageAttachment(t *testing.T) {
 		}},
 	)
 	require.NoError(t, err)
-	assert.Equal(t, id.EventID("$media1"), eventID)
+	assert.Equal(t, "$media1", eventID.ID)
+	assert.Equal(t, "photo.jpg", eventID.Content)
+	require.Len(t, eventID.Attachments, 1)
+	assert.Equal(t, "abc123", eventID.Attachments[0].MediaID)
+	assert.Equal(t, int64(9), eventID.Attachments[0].Size)
 
 	// file-service was hit on the internal content endpoint.
 	assert.Equal(t, "/internal/file/"+docID1+"/content", gotPath)
@@ -230,43 +197,6 @@ func TestSendMessage_AttachmentUploadedBySenderNotBot(t *testing.T) {
 	assert.Equal(t, 0, botIntent.uploadBytesCalled, "the appservice bot must NOT upload the media")
 }
 
-// Text + attachment → 1 m.text event + 1 media event; the returned event ID is
-// the text event.
-func TestSendMessage_TextPlusAttachment(t *testing.T) {
-	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
-		return fileServiceResponse(http.StatusOK, "application/pdf", []byte("PDF")), nil
-	})
-
-	intent := &mockIntentAPI{
-		sendTextResult:         &mautrix.RespSendEvent{EventID: "$text1"},
-		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/file9")},
-		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$media1"},
-	}
-	a := newMediaTestAdapter(t, fileServiceURL, intent)
-
-	eventID, err := a.SendMessage(
-		context.Background(),
-		"!room:test.local",
-		testActor(testActorID, "Alice"),
-		"see attached",
-		[]domain.Attachment{{
-			DocumentID:  docID1,
-			DisplayName: "report.pdf",
-			MimeType:    "application/pdf",
-			Size:        3,
-		}},
-	)
-	require.NoError(t, err)
-	assert.Equal(t, id.EventID("$text1"), eventID, "primary event is the text event")
-	assert.Equal(t, 1, intent.sendTextCalled)
-	require.Equal(t, 1, intent.sendMessageEventCalled)
-
-	content, ok := intent.lastSendMsgEventContent.(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "m.file", content["msgtype"], "non-image MIME maps to m.file")
-	assert.Equal(t, docID1, content["io.alkemio.document_id"])
-}
-
 // A non-OK response from file-service surfaces as an error and no event is sent.
 func TestSendMessage_AttachmentFetchError(t *testing.T) {
 	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
@@ -318,11 +248,13 @@ func TestSendMessage_UsesSDKGeneratedTransactions(t *testing.T) {
 		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$media"},
 	}
 	a := newMediaTestAdapter(t, fileServiceURL, intent)
-	_, err := a.SendMessage(
+	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "caption", nil)
+	require.NoError(t, err)
+	_, err = a.SendMessage(
 		context.Background(),
 		"!room:test.local",
 		testActor(testActorID, "Alice"),
-		"caption",
+		"",
 		[]domain.Attachment{{DocumentID: docID1, DisplayName: "a.png", MimeType: "image/png"}},
 	)
 	require.NoError(t, err)
@@ -405,7 +337,7 @@ func (r *ctxBlockingReader) Close() error { return nil }
 
 // A mid-body stall from file-service must NOT hang the send forever (it would
 // wedge the single sequential watermill consumer). sendAttachment bounds the
-// fetch+upload with mediaStreamTimeout via the fetch context; a short parent
+// fetch+upload with the request context; a short parent
 // deadline is inherited (WithTimeout takes the EARLIER deadline), so the stalled
 // body read is cancelled quickly rather than blocking for the 60s+ floor.
 func TestSendAttachment_BodyStall_DeadlineCancels(t *testing.T) {
@@ -448,25 +380,6 @@ func TestSendAttachment_BodyStall_DeadlineCancels(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Equal(t, 0, intent.sendMessageEventCalled, "no media event on a deadline-cancelled fetch")
-}
-
-// mediaStreamTimeout is the floor (fileServiceFetchTimeout) for small payloads
-// and scales up proportionally with the per-attachment cap for large ones.
-func TestMediaStreamTimeout_ScalesWithSize(t *testing.T) {
-	assert.Equal(t, fileServiceFetchTimeout, mediaStreamTimeout(0), "zero-size stays at the floor")
-	assert.Equal(t, fileServiceFetchTimeout, mediaStreamTimeout(fileServiceMinThroughputBytesPerSec-1),
-		"below one throughput-second stays at the floor")
-
-	big := int64(100) * fileServiceMinThroughputBytesPerSec // 100 MiB
-	got := mediaStreamTimeout(big)
-	assert.Equal(t, fileServiceFetchTimeout+100*time.Second, got, "100 MiB adds 100s at 1 MiB/s")
-	assert.Greater(t, got, fileServiceFetchTimeout)
-
-	// Absurd config must not overflow int64-ns and wrap negative: the result is
-	// clamped to the floor + a 1h ceiling, and stays positive.
-	clamped := mediaStreamTimeout(math.MaxInt64)
-	assert.Equal(t, fileServiceFetchTimeout+3600*time.Second, clamped, "clamped to floor + 1h ceiling")
-	assert.Positive(t, clamped, "clamped duration must stay positive, never wrap negative")
 }
 
 // LOW(b) — info.size reflects the bytes actually uploaded, not the caller's
@@ -873,37 +786,6 @@ func TestSendMessage_ExtraSegmentBaseTypeRejected(t *testing.T) {
 	assert.Equal(t, "application/octet-stream", info["mimetype"])
 }
 
-// Each attachment in a multi-attachment send gets its own event with a distinct
-// body (filename) and io.alkemio.document_id.
-func TestSendMessage_MultiAttachment_DistinctPerEvent(t *testing.T) {
-	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
-		return fileServiceResponse(http.StatusOK, "image/png", []byte("PNG")), nil
-	})
-
-	intent := &mockIntentAPI{
-		uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/x")},
-		sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$x"},
-	}
-	a := newMediaTestAdapter(t, fileServiceURL, intent)
-
-	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
-		[]domain.Attachment{
-			{DocumentID: docID1, DisplayName: "first.png", MimeType: "image/png"},
-			{DocumentID: docID2, DisplayName: "second.png", MimeType: "image/png"},
-		})
-	require.NoError(t, err)
-
-	require.Len(t, intent.sendMsgEventContents, 2)
-	c0, ok := intent.sendMsgEventContents[0].(map[string]any)
-	require.True(t, ok)
-	c1, ok := intent.sendMsgEventContents[1].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "first.png", c0["body"])
-	assert.Equal(t, docID1, c0["io.alkemio.document_id"])
-	assert.Equal(t, "second.png", c1["body"])
-	assert.Equal(t, docID2, c1["io.alkemio.document_id"])
-}
-
 // A non-positive configured max attachment size falls back to the built-in
 // default rather than capping reads at zero.
 func TestMaxAttachmentBytes_NonPositiveFallsBackToDefault(t *testing.T) {
@@ -1187,47 +1069,6 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 		assert.Equal(t, 0, intent.sendMessageEventCalled)
 	})
 
-	// The mid-stream BACKSTOP: the declared length is inside the cap, so the
-	// up-front check passes and the upload starts — but the body actually serves
-	// more than the cap, so countingCapReader must trip DURING the stream and the
-	// failure must classify as too-large (not a generic upload failure).
-	t.Run("body outruns its declared length: cap trips mid-stream", func(t *testing.T) {
-		const capBytes = 10
-		body := make([]byte, 200) // 20x the cap
-		fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
-			header := make(http.Header)
-			header.Set("Content-Type", "application/octet-stream")
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     header,
-				// One byte per Read, so how FAR the stream got is observable:
-				// countingCapReader must abort it just past the cap. Without that
-				// backstop the whole 200-byte body is drained — in production,
-				// streamed on to Synapse — despite the cap.
-				Body:          io.NopCloser(iotest.OneByteReader(bytes.NewReader(body))),
-				ContentLength: 8, // in-cap declaration; the body lies and serves 200
-			}, nil
-		})
-
-		intent := &mockIntentAPI{
-			uploadBytesResult:      &mautrix.RespMediaUpload{ContentURI: id.MustParseContentURI("mxc://test.local/s")},
-			sendMessageEventResult: &mautrix.RespSendEvent{EventID: "$never"},
-		}
-		a := newMediaTestAdapter(t, fileServiceURL, intent)
-		a.cfg.FileService.MaxAttachmentBytes = capBytes // above the declaration, below the body
-
-		_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
-			[]domain.Attachment{{DocumentID: docID1, DisplayName: "liar.bin", MimeType: "application/octet-stream"}})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "exceeds max attachment size",
-			"the mid-stream cap trip must classify as too-large")
-		assert.Equal(t, 1, intent.uploadBytesCalled,
-			"the upload DID start (in-cap declaration) — this is the mid-stream backstop, not the pre-check")
-		assert.LessOrEqual(t, len(intent.lastUploadBytesData), capBytes+1,
-			"streaming must stop AT the cap, not drain the whole oversized body")
-		assert.Equal(t, 0, intent.sendMessageEventCalled, "no media event when the cap is exceeded")
-	})
-
 	// The declared length is authoritative, so a body SHORTER than it is a broken
 	// file-service response. It must fail observably (net/http rejects the
 	// mismatch) rather than hanging the sequential consumer, and send no event.
@@ -1264,100 +1105,4 @@ func TestSendAttachment_StreamsWithinCapAndRejectsOversize(t *testing.T) {
 			"the declared/served mismatch must surface, not be silently truncated")
 		assert.Equal(t, 0, intent.sendMessageEventCalled, "no media event for a truncated blob")
 	})
-}
-
-// unboundedBody yields one byte per Read until stop is closed, keeping the
-// upload's body read in flight while the caller inspects the byte counter.
-type unboundedBody struct{ stop <-chan struct{} }
-
-func (b *unboundedBody) Read(p []byte) (int, error) {
-	select {
-	case <-b.stop:
-		return 0, io.EOF
-	default:
-	}
-	if len(p) == 0 {
-		return 0, nil
-	}
-	p[0] = 'x'
-	return 1, nil
-}
-
-func (b *unboundedBody) Close() error { return nil }
-
-// signalFirstRead closes signal once the wrapped reader has been read at least
-// once, so a test can wait until the body read is genuinely in flight.
-type signalFirstRead struct {
-	r      io.Reader
-	once   sync.Once
-	signal chan struct{}
-}
-
-func (s *signalFirstRead) Read(p []byte) (int, error) {
-	n, err := s.r.Read(p)
-	s.once.Do(func() { close(s.signal) })
-	return n, err
-}
-
-// earlyRejectIntent models a peer that rejects the upload from the DECLARED
-// Content-Length alone, without draining the body — an ingress
-// client_max_body_size, or Synapse's max_upload_size, both of which read the
-// header first. net/http's roundTrip then returns to sendAttachment while
-// writeLoop is STILL calling Read on the streaming body, so the byte counter is
-// written on one goroutine and read on another with nothing synchronising them.
-type earlyRejectIntent struct {
-	*mockIntentAPI
-	readerDone chan struct{}
-}
-
-func (e *earlyRejectIntent) UploadMedia(_ context.Context, req mautrix.ReqUploadMedia) (*mautrix.RespMediaUpload, error) {
-	// Keep reading the body concurrently, as writeLoop would, and return early.
-	streaming := make(chan struct{})
-	go func() {
-		defer close(e.readerDone)
-		_, _ = io.Copy(io.Discard, &signalFirstRead{r: req.Content, signal: streaming})
-	}()
-	// Return only once that read is genuinely in flight (and it keeps running
-	// afterwards), so the caller's counter access is concurrent with the
-	// reader's BY CONSTRUCTION rather than by scheduling luck — otherwise the
-	// race detector misses the unsynchronised counter most runs.
-	<-streaming
-	return nil, errors.New("M_TOO_LARGE (HTTP 413): Upload request body is too large")
-}
-
-// Run under -race: sendAttachment's post-upload counter reads (the too-large
-// classification and info.size) happen while the transport may still be
-// streaming the body, so countingCapReader's counter must be race-free. A plain
-// int64 field trips the race detector here and, worse, makes the SAME 413
-// classify non-deterministically as "too large" or "failed to upload".
-func TestSendAttachment_CounterSafeWhenUploadReturnsMidStream(t *testing.T) {
-	stop := make(chan struct{})
-	fileServiceURL := stubFileService(t, func(_ *http.Request) (*http.Response, error) {
-		header := make(http.Header)
-		header.Set("Content-Type", "application/octet-stream")
-		return &http.Response{
-			StatusCode:    http.StatusOK,
-			Header:        header,
-			Body:          &unboundedBody{stop: stop},
-			ContentLength: 1 << 20, // declared in-cap, so the upload starts
-		}, nil
-	})
-
-	intent := &earlyRejectIntent{mockIntentAPI: &mockIntentAPI{}, readerDone: make(chan struct{})}
-	a := newMediaTestAdapterWithIntent(t, fileServiceURL, intent)
-	// Cap well above anything the body can reach before the test stops it, so the
-	// reader keeps running (and keeps writing the counter) past UploadMedia's
-	// return instead of self-terminating on the cap.
-	a.cfg.FileService.MaxAttachmentBytes = 1 << 30
-
-	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "",
-		[]domain.Attachment{{DocumentID: docID1, DisplayName: "x.bin", MimeType: "application/octet-stream"}})
-
-	close(stop)
-	<-intent.readerDone // no goroutine outlives the test
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to upload media",
-		"a 413 with the counter below the cap classifies as an upload failure, deterministically")
-	assert.Equal(t, 0, intent.sendMessageEventCalled)
 }

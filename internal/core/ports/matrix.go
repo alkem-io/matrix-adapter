@@ -51,14 +51,12 @@ type MatrixPort interface {
 	// KickUser removes a user from a room with the specified reason.
 	KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error
 
-	// SendMessage sends a text message and/or media attachments to a room on
-	// behalf of a user. Text (if any) is one m.text event; each attachment is
-	// its own media event.
-	SendMessage(ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment) (id.EventID, error)
-	// SendReply sends a threaded reply (text and/or media attachments) to an existing message.
+	// SendMessage publishes one text or media event and returns its content.
+	SendMessage(ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment) (*domain.Message, error)
+	// SendReply sends one text or media reply to an existing message.
 	SendReply(
 		ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID, attachments []domain.Attachment,
-	) (id.EventID, error)
+	) (*domain.Message, error)
 	// RedactEvent deletes an event from a room.
 	RedactEvent(ctx context.Context, roomID id.RoomID, actorID domain.Actor, eventID id.EventID, reason string) error
 	// SendReaction adds an emoji reaction to an event.
