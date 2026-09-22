@@ -44,7 +44,7 @@ The service is configured via environment variables or a `config.yaml` file. The
 | `MATRIX_BOT_DISPLAY_NAME` | Display name for the bot user in Matrix | `Alkemio` |
 | `SYNAPSE_SERVER_SHARED_SECRET` | Synapse `registration_shared_secret` for auto-promoting bot to server admin | - |
 | `FILE_SERVICE_URL` | Optional internal file-service base URL; required only when sending outbound media attachments (`GET {url}/internal/file/{id}/content`). When set it is validated at startup and must be an absolute `http(s)` URL with a host — a malformed value fails the boot rather than silently dropping every attachment | - |
-| `FILE_SERVICE_MAX_ATTACHMENT_BYTES` | Per-attachment byte cap for outbound media. Must parse as an integer — a malformed value fails the boot. A non-positive value falls back to the default. See the note under [Media Attachments](#media-attachments) before raising it much past ~120 MiB | `52428800` (50 MiB) |
+| `FILE_SERVICE_MAX_ATTACHMENT_BYTES` | Per-attachment byte cap for outbound media. Must parse as an integer — a malformed value fails the boot. A non-positive value falls back to the default. Transfers must also complete within the operation budget described under [Media Attachments](#media-attachments) | `52428800` (50 MiB) |
 | `RABBITMQ_URL` | Full AMQP Connection URL | - |
 | `RABBITMQ_HOST` | RabbitMQ Host (if URL not set) | - |
 | `RABBITMQ_PORT` | RabbitMQ Port (if URL not set) | `5672` |
