@@ -3,6 +3,7 @@ package matrix
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -61,8 +62,8 @@ func TestUploadRequestWireLength_MautrixContract(t *testing.T) {
 	// The body reader must be the opaque type production actually passes. net/http
 	// special-cases *bytes.Reader / *strings.Reader / *bytes.Buffer and derives a
 	// length from them, which would mask the very mapping this test exists to pin.
-	opaque := func(s string) *countingCapReader {
-		return &countingCapReader{r: strings.NewReader(s), max: 1 << 20}
+	opaque := func(s string) io.Reader {
+		return io.NopCloser(strings.NewReader(s))
 	}
 
 	t.Run("uploadRequest(0) sends a real Content-Length: 0", func(t *testing.T) {

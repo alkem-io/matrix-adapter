@@ -200,18 +200,7 @@ func loadFileServiceEnv(cfg *Config) error {
 	return validateFileServiceURL(cfg.FileService.URL)
 }
 
-// validateFileServiceURL fails FAST on a malformed file-service base URL.
-//
-// Without this, a typo ("file-service:4003", "htp://…", a stray trailing
-// newline) boots green and only surfaces on the first outbound attachment — the
-// worst place for it, because a media failure there is swallowed into a
-// partial-fan-out "success" (see fanOutAttachments), so the operator sees a
-// working service quietly dropping every attachment.
-//
-// An EMPTY value stays valid: outbound media is optional (see the
-// FILE_SERVICE_URL row in README.md), and sendAttachment already fails that case
-// with an explicit "file-service URL not configured (set FILE_SERVICE_URL)".
-// What must not boot is a value that LOOKS configured but cannot be used.
+// validateFileServiceURL rejects a configured but unusable internal URL.
 func validateFileServiceURL(raw string) error {
 	if raw == "" {
 		return nil

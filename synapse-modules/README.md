@@ -138,68 +138,24 @@ AppService 'alkemio-matrix-adapter' not found! Check registration.yaml is loaded
 
 ## Alkemio File-Service Media Storage Provider
 
-[`alkemio_fileservice_provider.py`](./alkemio_fileservice_provider.py) is a Synapse media
-[`StorageProvider`](https://element-hq.github.io/synapse/latest/media_repository.html)
-(`FileServiceStorageProvider`) that makes the Alkemio file-service the sole durable
-store for Matrix media. Synapse's own local media store is kept as an ephemeral
-**cache** (an `emptyDir`); durability lives in the file-service.
+`alkemio_fileservice_provider.py` stores local original media in file-service.
+Keep Synapse's existing media volume. This feature introduces no volume cutover
+or media purger.
 
-It is a thin, **stateless** byte bridge between Synapse's media byte I/O and the
-file-service — it holds no durable state of its own (the `media_id ↔ document`
-mapping lives on the file-service document's opaque `externalReference`):
-
-- **`store_file`** → `POST /internal/file` (multipart) into the reserved
-  `matrix_media` bucket, verbatim (`skipImageProcessing=true`), with
-  `externalReference = media_id`. Only local user uploads are routed;
-  thumbnails / url-cache / remote media stay local-cache-only.
-- **`fetch`** → `GET /internal/file/by-reference?ref=<media_id>` (global lookup,
-  no bucket id — the server may have re-homed the document into a conversation
-  bucket), then streams `GET /internal/file/{id}/content` back through a
-  `Responder`. A cache miss in file-service returns `None`.
-
-Reads are streamed with real backpressure (the response-body transport is
-registered as a producer with the media consumer) and bounded by **per-request
-timeouts only**: `timeout_s` covers connect + response headers and the metadata
-body read, while the streamed content body is bounded by a **time-to-first-byte**
-deadline — after the first byte, legitimate slow-client backpressure governs and
-no further deadline is imposed. The keep-alive drain of a reply we have already
-decided to discard is **not** bounded by `timeout_s`: it uses the fixed
-`DRAIN_TIMEOUT_S` (2 s) module constant, deliberately far tighter, because it is
-a courtesy that must never add request-timeout-sized latency to a miss or to an
-already-durable `201` store. Any miss or failure (404, non-200, transport error,
-timeout, malformed body) returns `None`, which Synapse treats as a cache miss, so
-the Element media read path degrades rather than hanging.
-
-Redirects are **not specially handled**. file-service is an in-cluster internal
-service with no proxy in front and it never redirects on these endpoints, so a
-3xx cannot legitimately occur. (For the record, treq *follows* redirects by
-default — `allow_redirects=True`, wrapping the agent in twisted's
-`RedirectAgent`. Earlier comments in the module claimed the opposite; they were
-wrong. If file-service ever gains a redirecting front door, this is the
-assumption to revisit.)
-
-A streamed content body that ends short of its declared `Content-Length` is
-reported as an **error**, never as a completed media stream. Note the residual
-Synapse-side exposure documented on `_ConsumerSink`: Synapse's
-`ensure_media_is_in_local_cache` writes provider bytes straight to the **final**
-cache path with no temp file, no rename and no cleanup, and its later
-completeness gate is `os.path.exists` alone — so a failed fetch leaves a partial
-(or zero-byte) file behind that a subsequent request treats as complete. The
-provider deliberately does not delete it (the path is only reachable via a
-private attribute of a Synapse-internal consumer, and unlinking races a
-concurrent re-fetch); it fails loudly instead.
-
-There is deliberately **no circuit breaker** and no cross-request state: this
-follows the standard Synapse storage-provider model (per-request timeouts +
-return-`None`-on-miss, like the mainline `s3_storage_provider`), and a stateful
-breaker cannot meaningfully model a `fetch` whose duration is a minutes-long body
-stream.
+- `store_file` streams standard treq multipart into the reserved `matrix_media`
+  bucket with `externalReference=media_id` and `skipImageProcessing=true`.
+  It awaits HTTP 201. The provider row stays in this bucket; conversation copies
+  reference the same content-addressed bytes.
+- `fetch` looks up the reference in that bucket explicitly. A 404 returns `None`;
+  other failures propagate. Synapse's `SimpleHttpClient.get_file` downloads into
+  a temporary disk file with `max_upload_size`, then the stock `FileResponder`
+  serves and closes it. Failures close it too. This is disk spooling, not direct
+  network-to-network streaming.
+- Thumbnails, URL-cache entries and remote media use Synapse's existing storage.
 
 ### Deployment
 
-The module is deployed into `/data/modules` (alongside `alkemio_room_control.py`)
-and discovered via `PYTHONPATH=/data/modules`. Enable it under
-`media_storage_providers` in `homeserver.yaml`:
+Place the module on `PYTHONPATH=/data/modules` and configure:
 
 ```yaml
 media_storage_providers:
@@ -210,36 +166,21 @@ media_storage_providers:
     config:
       file_service_url: "http://file-service:4003"
       matrix_media_bucket_id: "<reserved matrix_media bucket uuid>"
-      # optional tuning (seconds, must be finite and > 0):
-      #   timeout_s        default 10 — connect + headers, metadata body read,
-      #                    and the content stream's time-to-first-byte
-      #   store_timeout_s  default 30 — FLOOR for the multipart upload; scaled up
-      #                    by file size at an assumed 1 MB/s
-      # The keep-alive drain is NOT tunable: it is bounded by the fixed
-      # DRAIN_TIMEOUT_S (2 s) constant in the module.
-      # No other keys are read; unknown keys are ignored.
+      store_timeout_s: 30  # optional multipart request timeout
 ```
 
-It depends on `treq` / `twisted` (already present in Synapse) and the Synapse
-`media` APIs (`StorageProvider`, `Responder`).
+Reads use Synapse's normal HTTP deadlines. The old custom transport timeout,
+producer and thread-pool settings are retired. Dependencies are treq, Twisted
+and Synapse's media APIs, already available in the pinned Synapse image.
 
-### Tests
+### Verification
 
-The provider ships with a companion unit-test suite,
-[`test_alkemio_fileservice_provider.py`](./test_alkemio_fileservice_provider.py),
-which imports this canonical module directly. It runs in CI (the
-`python-modules` job in [`ci-test.yml`](../.github/workflows/ci-test.yml)) and
-locally:
+`make test-python` exercises routing, scoped lookup, byte-preserving upload,
+error propagation and file cleanup with mocked HTTP and import-only Synapse
+shims. It does not establish live wire compatibility.
 
-```bash
-pip install -r synapse-modules/requirements-dev.txt
-make test-python
-```
-
-It is hermetic — no live file-service, no reactor, no network, and **no Synapse
-install**: [`conftest.py`](./conftest.py) registers minimal `sys.modules`
-stand-ins for the four Synapse symbols the provider imports at load time, but
-only when Synapse is genuinely absent (inside the `matrixdotorg/synapse` image
-the real package is used). `twisted` and `treq` are the real libraries, so the
-protocols, producers and multipart serialisation are exercised against actual
-library behaviour.
+A separate local check on Synapse v1.132.0 on 2026-09-22 used real treq multipart,
+SimpleHttpClient and FileResponder against file-service. Empty, 1 MiB binary and
+PNG originals retained identical SHA256 hashes through store and fetch, and the
+responder files closed. Real Element and Alkemio browser verification remains a
+separate release requirement.

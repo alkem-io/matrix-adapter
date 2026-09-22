@@ -28,19 +28,9 @@ type AttachmentRef struct {
 	Height      *int   `json:"height,omitempty"`
 }
 
-// ReceivedAttachment is a raw media reference surfaced on an inbound message.
-// MediaID is the Synapse media id, used by the server as the re-home key.
-//
-// DocumentID is set when the event carries io.alkemio.document_id, which marks
-// an echo of our own outbound media. It is an UNAUTHENTICATED HINT: the field is
-// part of user-writable event content, and the adapter cannot tell its own sends
-// from a human's (it impersonates actor X as X — the same MXID the human gets
-// from OIDC), so it surfaces the field verbatim for every sender. The consumer
-// MUST authorize it before acting on it — the Alkemio server does, requiring the
-// named document to sit in the message's room bucket with createdBy == the
-// message sender.
-//
-// The adapter never resolves either ref — the server re-homes and resolves URLs.
+// ReceivedAttachment is the media reference from a sent or received Matrix event.
+// DocumentID is a user-writable hint. The server checks the conversation bucket,
+// document policy and content hash against the provider row before reusing it.
 type ReceivedAttachment struct {
 	DocumentID  *string `json:"document_id,omitempty"`
 	MediaID     *string `json:"media_id,omitempty"`
@@ -58,13 +48,16 @@ type SendMessageRequest struct {
 	SenderActorID   AlkemioActorID  `json:"sender_actor_id"`
 	Content         string          `json:"content"`                     // Markdown supported (may be empty if only attachments)
 	ParentMessageID *MessageID      `json:"parent_message_id,omitempty"` // For threads
-	Attachments     []AttachmentRef `json:"attachments,omitempty"`       // Media doc refs (<=10)
+	TimeoutMS       int64           `json:"timeout_ms,omitempty"`        // Operation budget, shorter than the caller RPC wait.
+	Attachments     []AttachmentRef `json:"attachments,omitempty"`       // One media doc ref; mutually exclusive with content
 }
 
 // SendMessageResponse returns the message ID and timestamp.
 type SendMessageResponse struct {
 	BaseResponse `tstype:",extends"`
-	MessageID    MessageID `json:"message_id"`
+	MessageID    MessageID            `json:"message_id"`
+	Content      string               `json:"content"`
+	Attachments  []ReceivedAttachment `json:"attachments,omitempty"`
 	// Timestamp is the approximate creation time (Unix milliseconds).
 	// Note: This is set locally when the adapter receives confirmation from Matrix,
 	// not the exact server timestamp. The difference should be negligible (<100ms)
