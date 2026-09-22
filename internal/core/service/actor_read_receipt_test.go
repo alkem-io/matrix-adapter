@@ -103,11 +103,11 @@ func (m *arMockMatrixPort) DeleteAlias(_ context.Context, _ string) error { retu
 func (m *arMockMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
 	return nil
 }
-func (m *arMockMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (id.EventID, error) {
-	return "", nil
+func (m *arMockMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (*domain.Message, error) {
+	return nil, nil
 }
-func (m *arMockMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID, _ []domain.Attachment) (id.EventID, error) {
-	return "", nil
+func (m *arMockMatrixPort) SendReply(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ id.EventID, _ []domain.Attachment) (*domain.Message, error) {
+	return nil, nil
 }
 func (m *arMockMatrixPort) RedactEvent(_ context.Context, _ id.RoomID, _ domain.Actor, _ id.EventID, _ string) error {
 	return nil

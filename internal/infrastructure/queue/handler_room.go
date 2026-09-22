@@ -16,11 +16,8 @@ import (
 	"github.com/alkem-io/matrix-adapter/pkg/dto"
 )
 
-// maxAttachmentsPerMessage caps how many media refs a single send may carry.
-// The server is the authoritative validator; this is a defense-in-depth bound
-// so a malformed/hostile request can't fan out into an unbounded number of
-// Matrix events.
-const maxAttachmentsPerMessage = 10
+// Each send corresponds to one Matrix event.
+const maxAttachmentsPerMessage = 1
 
 // fallbackAttachmentName is used as the media event body/filename when an
 // attachment carries no display_name (e.g. a clipboard-pasted image or an E2EE
@@ -354,25 +351,17 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 	if errResp := RequireUUID(req.SenderActorID, "sender_actor_id"); errResp != nil {
 		return *errResp, nil
 	}
-	// Content may be empty when the message carries only attachments.
-	if len(req.Attachments) == 0 {
-		if errResp := RequireNonEmpty(req.Content, "content"); errResp != nil {
-			return *errResp, nil
-		}
+	if len(req.Attachments) > 1 || (req.Content == "") == (len(req.Attachments) == 0) {
+		return NewInvalidParamError("send requires either text or one attachment"), nil
 	}
+	timeout := 25 * time.Second
+	if req.TimeoutMS > 0 {
+		timeout = time.Duration(req.TimeoutMS) * time.Millisecond
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	// Defense-in-depth: the server owns attachment validation, but validate every
-	// knowable document ref before resolving the room or emitting any Matrix
-	// events. This leaves only genuine infrastructure failures able to interrupt
-	// the text + media fan-out part-way through.
-	if len(req.Attachments) > maxAttachmentsPerMessage {
-		return NewInvalidParamError(fmt.Sprintf(
-			"too many attachments: %d (max %d)", len(req.Attachments), maxAttachmentsPerMessage)), nil
-	}
 	for i := range req.Attachments {
-		if req.Attachments[i].DocumentID == "" {
-			return NewInvalidParamError(fmt.Sprintf("attachment[%d] document_id is required", i)), nil
-		}
 		if _, err := uuid.Parse(req.Attachments[i].DocumentID); err != nil {
 			return NewInvalidParamError(fmt.Sprintf(
 				"attachment[%d] document_id must be a valid UUID", i)), nil
@@ -392,11 +381,11 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 	sender := domain.NewActor(req.SenderActorID.UUID())
 	attachments := convertAttachmentRefsToDomain(req.Attachments)
 
-	var eventID id.EventID
+	var message *domain.Message
 	var err error
 	if req.ParentMessageID != nil && *req.ParentMessageID != "" {
 		// Send as reply/thread
-		eventID, err = h.service.SendReply(
+		message, err = h.service.SendReply(
 			ctx,
 			roomID,
 			sender,
@@ -406,7 +395,7 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 		)
 	} else {
 		// Send as regular message
-		eventID, err = h.service.SendMessage(ctx, roomID, sender, req.Content, attachments)
+		message, err = h.service.SendMessage(ctx, roomID, sender, req.Content, attachments)
 	}
 
 	if err != nil {
@@ -415,8 +404,10 @@ func (h *RoomHandler) HandleSendMessage(ctx context.Context, payload []byte) (in
 
 	return dto.SendMessageResponse{
 		BaseResponse: dto.NewSuccessResponse(),
-		MessageID:    dto.MessageID(eventID.String()),
-		Timestamp:    time.Now().UnixMilli(),
+		Content:      message.Content,
+		Attachments:  service.AttachmentsToReceivedDTO(message.Attachments),
+		MessageID:    dto.MessageID(message.ID),
+		Timestamp:    message.Timestamp.UnixMilli(),
 	}, nil
 }
 

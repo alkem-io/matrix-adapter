@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
@@ -400,20 +401,20 @@ func (m *testMockMatrixPort) KickUser(_ context.Context, roomID id.RoomID, userI
 	return m.kickUserErr
 }
 
-func (m *testMockMatrixPort) SendMessage(_ context.Context, roomID id.RoomID, sender domain.Actor, content string, attachments []domain.Attachment) (id.EventID, error) {
+func (m *testMockMatrixPort) SendMessage(_ context.Context, roomID id.RoomID, sender domain.Actor, content string, attachments []domain.Attachment) (*domain.Message, error) {
 	m.capturedSendMessageRoomID = roomID
 	m.capturedSendMessageSender = sender
 	m.capturedSendMessageContent = content
 	m.capturedSendMessageAttachments = attachments
-	return m.sendMessageResult, m.sendMessageErr
+	return &domain.Message{ID: string(m.sendMessageResult), Content: content, Attachments: attachments, Timestamp: time.Now()}, m.sendMessageErr
 }
 
-func (m *testMockMatrixPort) SendReply(_ context.Context, roomID id.RoomID, _ domain.Actor, content string, threadID id.EventID, attachments []domain.Attachment) (id.EventID, error) {
+func (m *testMockMatrixPort) SendReply(_ context.Context, roomID id.RoomID, _ domain.Actor, content string, threadID id.EventID, attachments []domain.Attachment) (*domain.Message, error) {
 	m.capturedSendReplyRoomID = roomID
 	m.capturedSendReplyContent = content
 	m.capturedSendReplyThread = threadID
 	m.capturedSendReplyAttachments = attachments
-	return m.sendReplyResult, m.sendReplyErr
+	return &domain.Message{ID: string(m.sendReplyResult), Content: content, Attachments: attachments, Timestamp: time.Now()}, m.sendReplyErr
 }
 
 func (m *testMockMatrixPort) RedactEvent(_ context.Context, roomID id.RoomID, _ domain.Actor, eventID id.EventID, _ string) error {

@@ -370,7 +370,7 @@ func (s *RoomService) extractAlkemioRoomIDs(ctx context.Context, rooms []id.Room
 // SendMessage sends a text message and/or media attachments to a room.
 func (s *RoomService) SendMessage(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment,
-) (id.EventID, error) {
+) (*domain.Message, error) {
 	return s.matrix.SendMessage(ctx, roomID, senderID, content, attachments)
 }
 
@@ -378,7 +378,7 @@ func (s *RoomService) SendMessage(
 func (s *RoomService) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
 	attachments []domain.Attachment,
-) (id.EventID, error) {
+) (*domain.Message, error) {
 	return s.matrix.SendReply(ctx, roomID, senderID, content, threadID, attachments)
 }
 

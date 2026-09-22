@@ -760,17 +760,9 @@ export interface AttachmentRef {
   height?: number /* int */;
 }
 /**
- * ReceivedAttachment is a raw media reference surfaced on an inbound message.
- * MediaID is the Synapse media id, used by the server as the re-home key.
- * DocumentID is set when the event carries io.alkemio.document_id, which marks
- * an echo of our own outbound media. It is an UNAUTHENTICATED HINT: the field is
- * part of user-writable event content, and the adapter cannot tell its own sends
- * from a human's (it impersonates actor X as X — the same MXID the human gets
- * from OIDC), so it surfaces the field verbatim for every sender. The consumer
- * MUST authorize it before acting on it — the Alkemio server does, requiring the
- * named document to sit in the message's room bucket with createdBy == the
- * message sender.
- * The adapter never resolves either ref — the server re-homes and resolves URLs.
+ * ReceivedAttachment is the media reference from a sent or received Matrix event.
+ * DocumentID is a user-writable hint. The server checks the conversation bucket,
+ * document policy and content hash against the provider row before reusing it.
  */
 export interface ReceivedAttachment {
   document_id?: string;
@@ -790,13 +782,16 @@ export interface SendMessageRequest {
   sender_actor_id: AlkemioActorID;
   content: string; // Markdown supported (may be empty if only attachments)
   parent_message_id?: MessageID; // For threads
-  attachments?: AttachmentRef[]; // Media doc refs (<=10)
+  timeout_ms?: number /* int64 */; // Operation budget, shorter than the caller RPC wait.
+  attachments?: AttachmentRef[]; // One media doc ref; mutually exclusive with content
 }
 /**
  * SendMessageResponse returns the message ID and timestamp.
  */
 export interface SendMessageResponse extends BaseResponse {
   message_id: MessageID;
+  content: string;
+  attachments?: ReceivedAttachment[];
   /**
    * Timestamp is the approximate creation time (Unix milliseconds).
    * Note: This is set locally when the adapter receives confirmation from Matrix,
