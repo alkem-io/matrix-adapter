@@ -686,7 +686,7 @@ func TestSendMessage_Success(t *testing.T) {
 
 	eventID, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil)
 	require.NoError(t, err)
-	assert.Equal(t, id.EventID("$msg1"), eventID)
+	assert.Equal(t, "$msg1", eventID.ID)
 	assert.Equal(t, 1, intent.sendTextCalled)
 	assert.Equal(t, 0, intent.sendMessageEventCalled)
 	assert.Equal(t, id.RoomID("!room:test.local"), intent.lastSendTextRoomID)
@@ -704,7 +704,7 @@ func TestSendMessage_Error(t *testing.T) {
 
 	_, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "Hello", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to send message")
+	assert.ErrorIs(t, err, intent.sendTextErr)
 }
 
 // ============================================================================
@@ -722,7 +722,7 @@ func TestSendReply_Success(t *testing.T) {
 
 	eventID, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply text", "$thread-root", nil)
 	require.NoError(t, err)
-	assert.Equal(t, id.EventID("$reply1"), eventID)
+	assert.Equal(t, "$reply1", eventID.ID)
 	assert.Equal(t, 1, intent.sendMessageEventCalled)
 	assert.Equal(t, id.RoomID("!room:test.local"), intent.lastSendMsgEventRoomID)
 	assert.Equal(t, event.EventMessage, intent.lastSendMsgEventType)
@@ -746,7 +746,7 @@ func TestSendReply_Error(t *testing.T) {
 
 	_, err := a.SendReply(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), "reply", "$thread", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to send reply")
+	assert.ErrorIs(t, err, intent.sendMessageEventErr)
 }
 
 // ============================================================================
