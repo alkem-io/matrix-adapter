@@ -37,8 +37,9 @@ func newTestSpaceHandler(matrix *testMockMatrixPort) *SpaceHandler {
 	idMapper := otherNewIDMapper()
 	logger := &testMockLogger{}
 	cfg := testHierarchyConfig()
-	svc := service.NewSpaceService(matrix, logger, idMapper, cfg)
-	return NewSpaceHandler(svc, matrix, idMapper, cfg)
+	governance := service.NewGovernanceService(matrix, logger, idMapper)
+	svc := service.NewSpaceService(matrix, logger, idMapper, governance, cfg)
+	return NewSpaceHandler(svc, governance, matrix, idMapper, cfg)
 }
 
 // --- HandleCreateSpace ---
@@ -934,7 +935,7 @@ func TestHandleGetSpaceState_MatrixError(t *testing.T) {
 func newTestActorHandler(matrix *testMockMatrixPort) *ActorHandler {
 	logger := &testMockLogger{}
 	svc := service.NewActorService(matrix, logger)
-	return NewActorHandler(svc)
+	return NewActorHandler(svc, service.NewDeviceService(&testMockMatrixPort{}, logger))
 }
 
 func TestHandleSyncActor_Success(t *testing.T) {

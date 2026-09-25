@@ -45,6 +45,7 @@ type MautrixAdapter struct {
 	server         *http.Server // our own HTTP server wrapping as.Router
 	gateOpen       atomic.Bool  // when false, transactions are ack'd and dropped
 	queuePort      ports.QueuePort
+	now            func() time.Time // injectable clock (nil means time.Now)
 }
 
 // NewMautrixAdapter creates a new instance of MautrixAdapter.
@@ -87,37 +88,7 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 	// This ensures bot follows the same ID pattern as all other actors
 	botLocalpart := cfg.Matrix.BotActorID
 
-	// Build registration
-	registration := &appservice.Registration{
-		ID:              "alkemio-matrix-adapter",
-		URL:             "http://localhost:8280",
-		AppToken:        cfg.Matrix.AppServiceToken,
-		ServerToken:     cfg.Matrix.HomeserverToken,
-		SenderLocalpart: botLocalpart,
-		EphemeralEvents: true, // Enable receiving ephemeral events (m.receipt for read receipts)
-		Namespaces: appservice.Namespaces{
-			UserIDs: []appservice.Namespace{
-				{
-					// Bot user - exclusive, only AS can control (security: prevents impersonation)
-					Exclusive: true,
-					Regex:     fmt.Sprintf("@%s:.*", botLocalpart),
-				},
-				{
-					// Regular UUID users - NOT exclusive so they can login via OIDC/Element
-					// Events received via room alias registration instead
-					Exclusive: false,
-					Regex:     "@[0-9a-fA-F-]{36}:.*",
-				},
-			},
-			RoomAliases: []appservice.Namespace{
-				{
-					// Room aliases - exclusive, AS receives all events for these rooms
-					Exclusive: true,
-					Regex:     "#[0-9a-fA-F-]{36}:.*",
-				},
-			},
-		},
-	}
+	registration := buildRegistration(botLocalpart, cfg.Matrix.AppServiceToken, cfg.Matrix.HomeserverToken)
 
 	// Create AppService using CreateFull to ensure StateStore is set from the start
 	as, err := appservice.CreateFull(
@@ -166,6 +137,48 @@ func NewMautrixAdapter(cfg *config.Config, logger ports.Logger) (*MautrixAdapter
 		admin:          admin,
 		botDisplayName: cfg.Matrix.BotDisplayName,
 	}, nil
+}
+
+// buildRegistration builds the in-process AppService registration. It must
+// mirror registration.yaml — the canonical file PR #55's workflow syncs
+// downstream — including the thread-room alias namespace #t_<uuid> (A-3).
+func buildRegistration(botLocalpart, asToken, hsToken string) *appservice.Registration {
+	return &appservice.Registration{
+		ID:              "alkemio-matrix-adapter",
+		URL:             "http://localhost:8280",
+		AppToken:        asToken,
+		ServerToken:     hsToken,
+		SenderLocalpart: botLocalpart,
+		EphemeralEvents: true, // Enable receiving ephemeral events (m.receipt for read receipts)
+		Namespaces: appservice.Namespaces{
+			UserIDs: []appservice.Namespace{
+				{
+					// Bot user - exclusive, only AS can control (security: prevents impersonation)
+					Exclusive: true,
+					Regex:     fmt.Sprintf("@%s:.*", botLocalpart),
+				},
+				{
+					// Regular UUID users - NOT exclusive so they can login via OIDC/Element
+					// Events received via room alias registration instead
+					Exclusive: false,
+					Regex:     "@[0-9a-fA-F-]{36}:.*",
+				},
+			},
+			RoomAliases: []appservice.Namespace{
+				{
+					// Room aliases - exclusive, AS receives all events for these rooms
+					Exclusive: true,
+					Regex:     "#[0-9a-fA-F-]{36}:.*",
+				},
+				{
+					// Thread-room aliases #t_<uuid> - the cutover-stable naming
+					// convention (target-alignment A-3), written beside #<uuid>
+					Exclusive: true,
+					Regex:     "#t_[0-9a-fA-F-]{36}:.*",
+				},
+			},
+		},
+	}
 }
 
 // safePrefix returns the first n characters of s, or all of s if shorter.
@@ -364,55 +377,6 @@ func (m *MautrixAdapter) ensureBotAdmin(ctx context.Context) {
 	} else {
 		m.logger.Info("Bot promoted to server admin", "bot_mxid", m.as.BotMXID())
 	}
-}
-
-// findGhostIntentInRoom finds the ghost user with the highest power level in a room.
-// Returns their intent and PL, or nil if no ghost users are found.
-func (m *MautrixAdapter) findGhostIntentInRoom(ctx context.Context, roomID id.RoomID) (intentAPI, float64) {
-	members, err := m.admin.GetRoomMembers(ctx, roomID)
-	if err != nil {
-		return nil, -1
-	}
-
-	// Get power levels to find the most privileged ghost
-	powerLevels := make(map[string]float64)
-	var usersDefault float64
-	if content, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.power_levels"); err == nil && content != nil {
-		if users, ok := content["users"].(map[string]interface{}); ok {
-			for uid, pl := range users {
-				if v, ok := pl.(float64); ok {
-					powerLevels[uid] = v
-				}
-			}
-		}
-		if d, ok := content["users_default"].(float64); ok {
-			usersDefault = d
-		}
-	}
-
-	botMXID := m.as.BotMXID().String()
-	var bestIntent intentAPI
-	bestPL := float64(-1)
-
-	for _, member := range members {
-		if member == botMXID {
-			continue
-		}
-		userID := id.UserID(member)
-		if m.idMapper.AlkemioActorID(userID) == uuid.Nil {
-			continue
-		}
-		pl, ok := powerLevels[member]
-		if !ok {
-			pl = usersDefault
-		}
-		if pl > bestPL {
-			bestPL = pl
-			bestIntent = m.as.Intent(userID)
-		}
-	}
-
-	return bestIntent, bestPL
 }
 
 // waitForSynapse retries connecting to Synapse until it responds or context is cancelled.
@@ -637,12 +601,11 @@ func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id
 	return userID, nil
 }
 
-// InviteUser invites a user to a room and auto-joins them.
 // InviteUser joins a ghost user directly to a room (no invite event).
 // Since all users are appservice ghosts, we skip the invite and join directly
 // to avoid triggering invite notifications in Element for invisible rooms.
 func (m *MautrixAdapter) InviteUser(
-	ctx context.Context, roomID id.RoomID, _ domain.Actor, inviteeID domain.Actor,
+	ctx context.Context, roomID id.RoomID, inviteeID domain.Actor,
 ) error {
 	inviteeUserID, err := m.EnsureUser(ctx, inviteeID)
 	if err != nil {
@@ -664,9 +627,7 @@ func (m *MautrixAdapter) InviteUser(
 		m.markRoomAsReadForUsers(ctx, roomID, []id.UserID{inviteeUserID}, latestEventID)
 	}
 
-	// If bot is still in the room (e.g. room created without initial members),
-	// leave now that a real member has joined.
-	m.leaveBotIfNotNeeded(ctx, roomID)
+	// The bot stays in the room — it administers every governed room.
 
 	return nil
 }
@@ -799,7 +760,10 @@ func (m *MautrixAdapter) GetRoomMembers(ctx context.Context, roomID id.RoomID) (
 func (m *MautrixAdapter) UpdateRoomState(
 	ctx context.Context, roomID id.RoomID, _ domain.Actor, name, topic, avatarURL, joinRule *string,
 ) error {
-	intent := m.getIntentForRoom(ctx, roomID)
+	intent, err := m.botIntentForGoverned(ctx, roomID)
+	if err != nil {
+		return err
+	}
 
 	if name != nil {
 		if err := m.setOrRedactState(ctx, intent, roomID, event.StateRoomName, *name); err != nil {
@@ -1473,10 +1437,12 @@ func (m *MautrixAdapter) SetRoomDirectoryVisibility(ctx context.Context, roomID 
 
 // SetCustomState sets custom io.alkemio.* state events on a room.
 // Only event types with the "io.alkemio." prefix are allowed.
-// Uses BotIntent if bot is in the room, otherwise finds a ghost user.
+// Every governed write acts as the bot (governed-operations-authority §1).
 func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, state map[string]map[string]interface{}) error {
-	// Try bot first; if it fails (not in room), find a ghost user
-	intent := m.getIntentForRoom(ctx, roomID)
+	intent, err := m.botIntentForGoverned(ctx, roomID)
+	if err != nil {
+		return err
+	}
 
 	for eventType, content := range state {
 		if !strings.HasPrefix(eventType, "io.alkemio.") {
@@ -1491,62 +1457,6 @@ func (m *MautrixAdapter) SetCustomState(ctx context.Context, roomID id.RoomID, s
 		}
 	}
 	return nil
-}
-
-// getIntentForRoom returns an intent that has access to a room with at least
-// the given power level. Tries BotIntent first (for spaces where bot is a member),
-// then falls back to finding a joined ghost user with sufficient PL.
-// If no suitable intent is found, admin-joins the bot (PL 100 as room creator).
-func (m *MautrixAdapter) getIntentForRoom(ctx context.Context, roomID id.RoomID, minPL ...float64) intentAPI {
-	requiredPL := float64(50) // default: state events require PL 50
-	if len(minPL) > 0 {
-		requiredPL = minPL[0]
-	}
-	botIntent := m.as.BotIntent()
-
-	// Check if bot is in the room via admin API
-	members, err := m.admin.GetRoomMembers(ctx, roomID)
-	if err == nil {
-		botMXID := m.as.BotMXID().String()
-		for _, member := range members {
-			if member == botMXID {
-				m.logger.Debug("getIntentForRoom: using bot (member of room)", "room_id", roomID)
-				return botIntent
-			}
-		}
-	}
-
-	// Bot not in room — find a ghost user with sufficient PL
-	intent, pl := m.findGhostIntentInRoom(ctx, roomID)
-	if intent != nil && pl >= requiredPL {
-		m.logger.Debug("getIntentForRoom: using ghost user", "room_id", roomID, "power_level", pl)
-		return intent
-	}
-
-	// No ghost with sufficient PL — admin-join the bot (PL 100 as room creator).
-	// The bot will leave once a real member is added (via leaveBotIfNotNeeded).
-	if intent != nil {
-		m.logger.Debug("getIntentForRoom: ghost PL too low, admin-joining bot",
-			"room_id", roomID, "ghost_pl", pl)
-	} else {
-		m.logger.Debug("getIntentForRoom: no ghost user found, admin-joining bot",
-			"room_id", roomID)
-	}
-	if err := m.admin.JoinRoom(ctx, roomID, m.as.BotMXID()); err != nil {
-		m.logger.Debug("getIntentForRoom: admin join failed",
-			"room_id", roomID, "error", err)
-	} else {
-		// Sync the StateStore so EnsureJoined (called by SendStateEvent, etc.)
-		// sees the bot as already joined and doesn't create a duplicate join event.
-		if err := m.as.SetMembership(ctx, roomID, m.as.BotMXID(), event.MembershipJoin); err != nil {
-			m.logger.Error("getIntentForRoom: failed to sync StateStore after admin join — risk of duplicate join",
-				"room_id", roomID, "error", err)
-			if intent != nil {
-				return intent // fall back to ghost to avoid duplicate-join risk
-			}
-		}
-	}
-	return botIntent
 }
 
 // GetCustomState retrieves io.alkemio.* state events from a room.
@@ -1565,19 +1475,42 @@ func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
 	return nil
 }
 
-// KickUser kicks a user from a room.
+// KickUser kicks a user from a room as the bot. Kicking a user who has
+// already left is a success (no-op) — removal is idempotent.
 func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
-	intent := m.getIntentForRoom(ctx, roomID)
-	_, err := intent.KickUser(
+	intent, err := m.botIntentForGoverned(ctx, roomID)
+	if err != nil {
+		return err
+	}
+	_, err = intent.KickUser(
 		ctx, roomID, &mautrix.ReqKickUser{
 			UserID: userID,
 			Reason: reason,
 		},
 	)
 	if err != nil {
+		if left, checkErr := m.hasLeftRoom(ctx, roomID, userID); checkErr == nil && left {
+			m.logger.Debug("KickUser: target already left, treating as no-op",
+				"room_id", roomID, "user_id", userID)
+			return nil
+		}
 		return fmt.Errorf("failed to kick user %s from room %s: %w", userID, roomID, err)
 	}
 	return nil
+}
+
+// hasLeftRoom reports whether the user is currently NOT a joined member of the room.
+func (m *MautrixAdapter) hasLeftRoom(ctx context.Context, roomID id.RoomID, userID id.UserID) (bool, error) {
+	members, err := m.admin.GetRoomMemberIDs(ctx, roomID)
+	if err != nil {
+		return false, err
+	}
+	for _, member := range members {
+		if member == userID {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // GetRoomMessages retrieves all messages from a room, including their reactions.
@@ -2014,24 +1947,23 @@ func (m *MautrixAdapter) GetThreadMessages(
 	return messages, nil
 }
 
-// CreateRoomWithAlias creates a new room with a specific alias based on Alkemio room ID.
+// CreateRoomWithAlias creates a governed room (contract room-governance-ladder §2.1):
+// the create request carries the ladder as PowerLevelOverride, the atomic
+// #<uuid> alias (RoomAliasName), and the initial state (join rules, history
+// visibility, guest access forbidden, io.alkemio.entity + custom state); after
+// creation the #t_<uuid> alias is added (best-effort, divergence on failure),
+// the canonical alias is cleared for direct rooms, and io.alkemio.governance
+// is written last. The bot never leaves.
 func (m *MautrixAdapter) CreateRoomWithAlias(
-	ctx context.Context,
-	alkemioRoomID uuid.UUID,
-	roomType string,
-	name, topic, avatarURL, joinRule string,
-	customState map[string]map[string]interface{},
-	initialMembers []domain.Actor,
+	ctx context.Context, params domain.CreateRoomParams,
 ) (id.RoomID, error) {
-	// Use IDMapper for consistent alias construction
-	// Use bot intent for creating rooms
 	intent := m.as.BotIntent()
 
 	// Ensure all members exist in Matrix (register ghost users).
 	// Members are joined individually after room creation to avoid
 	// Synapse's per-room invite rate limit (default burst_count: 10).
-	memberUserIDs := make([]id.UserID, 0, len(initialMembers))
-	for _, member := range initialMembers {
+	memberUserIDs := make([]id.UserID, 0, len(params.InitialMembers))
+	for _, member := range params.InitialMembers {
 		userID, err := m.EnsureUser(ctx, member)
 		if err != nil {
 			return "", fmt.Errorf("failed to ensure member %s: %w", member.ID, err)
@@ -2039,99 +1971,181 @@ func (m *MautrixAdapter) CreateRoomWithAlias(
 		memberUserIDs = append(memberUserIDs, userID)
 	}
 
-	// Determine preset based on room type
-	preset := "public_chat"
-	isDirect := false
-	if roomType == "direct" {
+	isDirect := params.RoomType == "direct"
+	class := ClassConversation
+	if params.ParentContextID != nil {
+		class = ClassThread
+	}
+	preset := "private_chat"
+	if isDirect {
 		preset = "trusted_private_chat"
-		isDirect = true
 	}
 
-	// When an explicit joinRule is provided for non-direct rooms,
-	// use private_chat preset and let the join_rules state event control visibility
-	if joinRule != "" && !isDirect {
-		preset = "private_chat"
+	joinRule, allowRoomID, membershipMode := m.resolveCreateMode(ctx, params)
+
+	historyVisibility := "shared"
+	if params.WorldReadable && !isDirect {
+		historyVisibility = "world_readable"
 	}
 
 	req := &mautrix.ReqCreateRoom{
-		Name:     name,
-		Topic:    topic,
-		Preset:   preset,
-		IsDirect: isDirect,
-		PowerLevelOverride: &event.PowerLevelsEventContent{
-			UsersDefault: 50,
-		},
+		Name:               params.Name,
+		Topic:              params.Topic,
+		Preset:             preset,
+		IsDirect:           isDirect,
+		RoomAliasName:      m.idMapper.RoomAliasLocalpart(params.AlkemioRoomID), // atomic alias
+		PowerLevelOverride: BuildLadder(class, m.as.BotMXID(), LadderOptions{}),
 	}
-
-	// Add join rule state event if provided (following CreateSpace pattern)
-	if joinRule != "" {
-		joinRuleContent := &event.JoinRulesEventContent{
-			JoinRule: event.JoinRule(joinRule),
-		}
-		req.InitialState = append(req.InitialState, &event.Event{
-			Type:    event.StateJoinRules,
-			Content: event.Content{Parsed: joinRuleContent},
-		})
-	}
-
-	// Add avatar state event if provided
-	if avatarURL != "" {
-		avatarContent := &event.RoomAvatarEventContent{
-			URL: id.ContentURIString(avatarURL),
-		}
-		req.InitialState = append(req.InitialState, &event.Event{
-			Type:    event.StateRoomAvatar,
-			Content: event.Content{Parsed: avatarContent},
-		})
-	}
-
-	// Add custom io.alkemio.* state events (must be set before members join,
-	// so visibility filtering is active from the start).
-	for eventType, content := range customState {
-		if strings.HasPrefix(eventType, "io.alkemio.") {
-			req.InitialState = append(req.InitialState, &event.Event{
-				Type:    event.Type{Type: eventType, Class: event.StateEventType},
-				Content: event.Content{Parsed: content},
-			})
-		}
-	}
+	req.InitialState = m.buildGovernedInitialState(
+		params.AlkemioRoomID.String(), params.ParentContextID,
+		joinRule, allowRoomID, historyVisibility, params.AvatarURL, params.CustomState,
+	)
 
 	resp, err := intent.CreateRoom(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("failed to create room with alias: %w", err)
 	}
 
-	// Set alias via the shared helper (not via RoomAliasName in create request,
-	// which auto-sets canonical alias and breaks DM member-name display).
-	fullAlias := m.idMapper.RoomAlias(alkemioRoomID)
-	if err := m.SetRoomAlias(ctx, resp.RoomID, fullAlias); err != nil {
-		return "", fmt.Errorf("failed to set alias on room %s (%s): %w", resp.RoomID, fullAlias, err)
-	}
-
-	m.registerDirectRoomParticipants(ctx, resp.RoomID, isDirect, memberUserIDs)
-
-	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, memberUserIDs)
-
-	// Bot leaves only if other members are present — an empty room becomes
-	// unreachable if the last member leaves (Synapse loses server tracking).
-	if joinedCount > 0 {
-		if _, err := intent.LeaveRoom(ctx, resp.RoomID); err != nil {
-			m.logger.Warn("Failed to leave room after creation",
-				"room_id", resp.RoomID, "error", err)
-		}
-	} else {
-		m.logger.Info("Bot staying in room (no other members joined yet)",
-			"room_id", resp.RoomID)
-	}
+	m.finishGovernedRoomCreation(ctx, resp.RoomID, params.AlkemioRoomID, isDirect, membershipMode, memberUserIDs)
 
 	m.logger.Info(
 		"Room created",
 		"room_id", resp.RoomID,
-		"alias", fullAlias,
-		"alkemio_room_id", alkemioRoomID,
+		"alias", m.idMapper.RoomAlias(params.AlkemioRoomID),
+		"alkemio_room_id", params.AlkemioRoomID,
+		"class", class,
+		"join_rule", joinRule,
 	)
 
 	return resp.RoomID, nil
+}
+
+// resolveCreateMode caps the declared membership mode by capability:
+// restricted only when the parent space room resolves (contract §2.5);
+// conversation rooms and unresolvable parents stay platform-driven.
+func (m *MautrixAdapter) resolveCreateMode(
+	ctx context.Context, params domain.CreateRoomParams,
+) (string, id.RoomID, string) {
+	if params.JoinRule != string(dto.JoinRuleRestricted) || params.ParentContextID == nil {
+		return "invite", "", domain.MembershipModePlatform
+	}
+	parentRoomID, err := m.ResolveAlias(ctx, m.idMapper.SpaceAlias(*params.ParentContextID))
+	if err != nil {
+		domain.LogDivergence(m.logger, "", params.AlkemioRoomID.String(), domain.DivergenceMarker,
+			"declared restricted but parent space room does not resolve; staying platform-driven")
+		return "invite", "", domain.MembershipModePlatform
+	}
+	return "restricted", parentRoomID, domain.MembershipModeSpace
+}
+
+// finishGovernedRoomCreation performs the post-create steps of a governed
+// room: the best-effort #t_ alias, canonical-alias clearing for direct rooms,
+// m.direct bookkeeping, member auto-join, and the governance marker last.
+func (m *MautrixAdapter) finishGovernedRoomCreation(
+	ctx context.Context, roomID id.RoomID, alkemioRoomID uuid.UUID,
+	isDirect bool, membershipMode string, memberUserIDs []id.UserID,
+) {
+	// Second alias #t_<uuid> — best-effort; the registration namespace may not
+	// have rolled out yet, in which case repair applies it later (spec edge case).
+	threadAlias := m.idMapper.ThreadRoomAlias(alkemioRoomID)
+	if err := m.SetRoomAlias(ctx, roomID, threadAlias); err != nil {
+		domain.LogDivergence(m.logger, roomID.String(), alkemioRoomID.String(),
+			domain.DivergenceAlias, "failed to create #t_ alias: "+err.Error())
+	}
+
+	// RoomAliasName auto-sets the canonical alias; clear it for direct rooms
+	// so clients show the counterpart's name (cosmetic).
+	if isDirect {
+		if _, err := m.as.BotIntent().SendStateEvent(ctx, roomID, event.StateCanonicalAlias, "",
+			&event.CanonicalAliasEventContent{}); err != nil {
+			m.logger.Warn("Failed to clear canonical alias on direct room",
+				"room_id", roomID, "error", err)
+		}
+	}
+
+	m.registerDirectRoomParticipants(ctx, roomID, isDirect, memberUserIDs)
+
+	m.autoJoinAndMarkRead(ctx, roomID, memberUserIDs)
+
+	// Governance marker last — its presence marks the room as fully governed.
+	roomVersion, err := m.GetRoomVersion(ctx, roomID)
+	if err != nil {
+		m.logger.Warn("Failed to read room version for governance marker",
+			"room_id", roomID, "error", err)
+	}
+	if err := m.SetGovernanceState(ctx, roomID, nil, &domain.GovernanceMarker{
+		LadderVersion:  LadderVersion,
+		MembershipMode: membershipMode,
+		AppliedAt:      m.clock().UnixMilli(),
+		RoomVersion:    roomVersion,
+	}); err != nil {
+		m.logger.Warn("Failed to write governance marker", "room_id", roomID, "error", err)
+	}
+}
+
+// buildGovernedInitialState assembles the initial state of a governed room:
+// join rules, history visibility, guest access forbidden, the identity marker
+// (synthesized when the server did not send one) and the custom io.alkemio.* state.
+func (m *MautrixAdapter) buildGovernedInitialState(
+	entityID string, parentContextID *uuid.UUID,
+	joinRule string, allowRoomID id.RoomID, historyVisibility, avatarURL string,
+	customState map[string]map[string]interface{},
+) []*event.Event {
+	var initialState []*event.Event
+
+	joinRules := &event.JoinRulesEventContent{JoinRule: event.JoinRule(joinRule)}
+	if joinRule == "restricted" && allowRoomID != "" {
+		joinRules.Allow = []event.JoinRuleAllow{{
+			RoomID: allowRoomID,
+			Type:   event.JoinRuleAllowRoomMembership,
+		}}
+	}
+	initialState = append(initialState,
+		&event.Event{Type: event.StateJoinRules, Content: event.Content{Parsed: joinRules}},
+		&event.Event{Type: event.StateHistoryVisibility, Content: event.Content{
+			Parsed: &event.HistoryVisibilityEventContent{HistoryVisibility: event.HistoryVisibility(historyVisibility)}}},
+		&event.Event{Type: event.StateGuestAccess, Content: event.Content{
+			Parsed: &event.GuestAccessEventContent{GuestAccess: event.GuestAccessForbidden}}},
+	)
+
+	if avatarURL != "" {
+		initialState = append(initialState, &event.Event{
+			Type:    event.StateRoomAvatar,
+			Content: event.Content{Parsed: &event.RoomAvatarEventContent{URL: id.ContentURIString(avatarURL)}},
+		})
+	}
+
+	// Custom io.alkemio.* state from the server (must be initial state so
+	// visibility filtering is active before members join).
+	hasEntityMarker := false
+	for eventType, content := range customState {
+		if !strings.HasPrefix(eventType, "io.alkemio.") {
+			continue
+		}
+		if eventType == StateAlkemioEntity.Type {
+			hasEntityMarker = true
+		}
+		initialState = append(initialState, &event.Event{
+			Type:    event.Type{Type: eventType, Class: event.StateEventType},
+			Content: event.Content{Parsed: content},
+		})
+	}
+	// An old server sends no identity marker — synthesize it so governance
+	// holds regardless of the server wave (data-model E3).
+	if !hasEntityMarker {
+		var parentID *string
+		if parentContextID != nil {
+			parent := parentContextID.String()
+			parentID = &parent
+		}
+		initialState = append(initialState, &event.Event{
+			Type: StateAlkemioEntity,
+			Content: event.Content{Parsed: &domain.EntityMarker{
+				EntityID: entityID, EntityType: "thread", ParentID: parentID,
+			}},
+		})
+	}
+	return initialState
 }
 
 // autoJoinAndMarkRead auto-joins invited members and marks the room as read for them.
@@ -2157,44 +2171,6 @@ func (m *MautrixAdapter) autoJoinAndMarkRead(ctx context.Context, roomID id.Room
 		}
 	}
 	return len(joinedUsers)
-}
-
-// leaveBotIfNotNeeded checks if the bot is in a non-space room and leaves
-// if at least one ghost user is also present. This ensures the bot doesn't
-// appear as a member in rooms visible to users.
-func (m *MautrixAdapter) leaveBotIfNotNeeded(ctx context.Context, roomID id.RoomID) {
-	if isSpace, _ := m.isSpaceRoom(ctx, roomID); isSpace {
-		return // Bot stays in spaces
-	}
-
-	members, err := m.admin.GetRoomMembers(ctx, roomID)
-	if err != nil {
-		return
-	}
-
-	botMXID := m.as.BotMXID().String()
-	botIsMember := false
-	ghostCount := 0
-
-	for _, member := range members {
-		if member == botMXID {
-			botIsMember = true
-			continue
-		}
-		if m.idMapper.AlkemioActorID(id.UserID(member)) != uuid.Nil {
-			ghostCount++
-		}
-	}
-
-	if botIsMember && ghostCount > 0 {
-		intent := m.as.BotIntent()
-		if _, err := intent.LeaveRoom(ctx, roomID); err != nil {
-			m.logger.Warn("Failed to leave room after member added",
-				"room_id", roomID, "error", err)
-		} else {
-			m.logger.Debug("Bot left room after member joined", "room_id", roomID)
-		}
-	}
 }
 
 // FindExistingDirectRoom finds an existing direct room between two users.
@@ -2355,8 +2331,10 @@ func (m *MautrixAdapter) SetQueuePort(queuePort ports.QueuePort) {
 }
 
 // ReconcileRoom completes setup for a room created via Element's check flow.
-// Uses the creator's intent (PL 100 as room creator) for all state operations
-// since the bot cannot admin-join invite-only rooms.
+// The bot is established first (EnsureBotAdmin promotes it via make_room_admin
+// using the Element creator's power), then every governed write — ladder,
+// markers, aliases — runs as the bot; the creator's 100 is dropped by the
+// wholesale ladder rewrite (contract governed-operations-authority §1).
 func (m *MautrixAdapter) ReconcileRoom(
 	ctx context.Context, roomID id.RoomID, alkemioRoomID uuid.UUID, creatorUserID id.UserID,
 ) error {
@@ -2366,8 +2344,6 @@ func (m *MautrixAdapter) ReconcileRoom(
 	if m.queuePort == nil {
 		return fmt.Errorf("reconcile: queue port not configured")
 	}
-
-	creatorIntent := m.as.Intent(creatorUserID)
 
 	// 1. Get room info from server
 	roomInfoReq := dto.GetRoomInfoRequest{
@@ -2384,12 +2360,60 @@ func (m *MautrixAdapter) ReconcileRoom(
 		return fmt.Errorf("reconcile: failed to parse room info: %w", err)
 	}
 
-	// 2. EnsureUser + EnsureJoined for each member
-	memberUserIDs := make([]id.UserID, 0, len(roomInfo.Members))
-	for _, member := range roomInfo.Members {
+	// 2. Establish the bot: joined (via a ghost invite when needed) at power 100
+	// (make_room_admin uses the Element creator's 100).
+	presence, err := m.EnsureBotAdmin(ctx, roomID)
+	if err != nil {
+		return fmt.Errorf("reconcile: ensure bot admin failed: %w", err)
+	}
+	if presence.UnresolvedReason != "" {
+		return fmt.Errorf("reconcile: bot could not be established in %s: %s", roomID, presence.UnresolvedReason)
+	}
+	botIntent := m.as.BotIntent()
+
+	// 3. EnsureUser + bot invite + EnsureJoined for each member
+	memberUserIDs, err := m.reconcileJoinMembers(ctx, roomID, roomInfo.Members, creatorUserID, botIntent)
+	if err != nil {
+		return err
+	}
+
+	// 4. Set m.direct account data for DMs
+	if roomInfo.IsDirect {
+		m.registerDirectRoomParticipants(ctx, roomID, true, memberUserIDs)
+	}
+
+	// 5. Apply the ladder as the bot — the wholesale rewrite drops the
+	// creator's 100 by omission and caps every member at timeline power.
+	class := ClassConversation
+	if roomInfo.EntityType == "thread" && roomInfo.ParentContextID != "" {
+		class = ClassThread
+	}
+	if _, err := m.ApplyLadder(ctx, roomID, class, LadderOptions{}, false); err != nil {
+		return fmt.Errorf("reconcile: apply ladder failed: %w", err)
+	}
+
+	// 6-8. Markers and aliases as the bot (defaults for old-server replies).
+	if err := m.reconcileFinishGovernance(ctx, roomID, alkemioRoomID, roomInfo); err != nil {
+		return err
+	}
+
+	m.logger.Info("Room reconciliation complete",
+		"room_id", roomID, "alkemio_room_id", alkemioRoomID,
+		"members", len(memberUserIDs), "is_direct", roomInfo.IsDirect)
+	return nil
+}
+
+// reconcileJoinMembers ensures every server-listed member exists, is invited
+// by the bot (except the creator), and is joined.
+func (m *MautrixAdapter) reconcileJoinMembers(
+	ctx context.Context, roomID id.RoomID, members []dto.RoomInfoMember,
+	creatorUserID id.UserID, botIntent intentAPI,
+) ([]id.UserID, error) {
+	memberUserIDs := make([]id.UserID, 0, len(members))
+	for _, member := range members {
 		actorUUID, err := uuid.Parse(member.ActorID)
 		if err != nil {
-			return fmt.Errorf("reconcile: invalid actor ID %q: %w", member.ActorID, err)
+			return nil, fmt.Errorf("reconcile: invalid actor ID %q: %w", member.ActorID, err)
 		}
 
 		actor := domain.Actor{
@@ -2398,47 +2422,65 @@ func (m *MautrixAdapter) ReconcileRoom(
 		}
 		userID, err := m.EnsureUser(ctx, actor)
 		if err != nil {
-			return fmt.Errorf("reconcile: EnsureUser failed for %s: %w", member.ActorID, err)
+			return nil, fmt.Errorf("reconcile: EnsureUser failed for %s: %w", member.ActorID, err)
 		}
 
 		if userID != creatorUserID {
-			if _, err := creatorIntent.InviteUser(ctx, roomID, &mautrix.ReqInviteUser{UserID: userID}); err != nil {
+			if _, err := botIntent.InviteUser(ctx, roomID, &mautrix.ReqInviteUser{UserID: userID}); err != nil {
 				m.logger.Warn("reconcile: invite failed, will attempt EnsureJoined anyway",
 					"user_id", userID, "room_id", roomID, "error", err)
 			}
 		}
 		memberIntent := m.as.Intent(userID)
 		if err := memberIntent.EnsureJoined(ctx, roomID); err != nil {
-			return fmt.Errorf("reconcile: EnsureJoined failed for %s: %w", userID, err)
+			return nil, fmt.Errorf("reconcile: EnsureJoined failed for %s: %w", userID, err)
 		}
 		memberUserIDs = append(memberUserIDs, userID)
 	}
+	return memberUserIDs, nil
+}
 
-	// 3. Set m.direct account data for DMs
-	if roomInfo.IsDirect {
-		m.registerDirectRoomParticipants(ctx, roomID, true, memberUserIDs)
+// reconcileFinishGovernance writes the identity marker (with old-server
+// defaults), both aliases and the governance marker, all as the bot.
+func (m *MautrixAdapter) reconcileFinishGovernance(
+	ctx context.Context, roomID id.RoomID, alkemioRoomID uuid.UUID, roomInfo dto.GetRoomInfoResponse,
+) error {
+	var parentID *string
+	if roomInfo.ParentContextID != "" {
+		parent := roomInfo.ParentContextID
+		parentID = &parent
+	}
+	entityType := roomInfo.EntityType
+	if entityType == "" {
+		entityType = "thread"
+	}
+	entity := &domain.EntityMarker{
+		EntityID:   alkemioRoomID.String(),
+		EntityType: entityType,
+		ParentID:   parentID,
 	}
 
-	// 4. Set power levels via creator intent (creator has PL 100 as room creator)
-	plContent := &event.PowerLevelsEventContent{
-		Users: map[id.UserID]int{
-			creatorUserID: 50,
-		},
-		UsersDefault: 50,
-	}
-	if _, err := creatorIntent.SendStateEvent(ctx, roomID, event.StatePowerLevels, "", plContent); err != nil {
-		return fmt.Errorf("reconcile: set power levels failed: %w", err)
-	}
-
-	// 5. Set alias via creator intent
 	alias := m.idMapper.RoomAlias(alkemioRoomID)
 	if err := m.SetRoomAlias(ctx, roomID, alias); err != nil {
 		return fmt.Errorf("reconcile: set alias failed: %w", err)
 	}
+	if err := m.SetRoomAlias(ctx, roomID, m.idMapper.ThreadRoomAlias(alkemioRoomID)); err != nil {
+		domain.LogDivergence(m.logger, roomID.String(), alkemioRoomID.String(),
+			domain.DivergenceAlias, "failed to create #t_ alias during reconcile: "+err.Error())
+	}
 
-	m.logger.Info("Room reconciliation complete",
-		"room_id", roomID, "alkemio_room_id", alkemioRoomID,
-		"members", len(memberUserIDs), "is_direct", roomInfo.IsDirect)
+	roomVersion, err := m.GetRoomVersion(ctx, roomID)
+	if err != nil {
+		m.logger.Warn("reconcile: failed to read room version", "room_id", roomID, "error", err)
+	}
+	if err := m.SetGovernanceState(ctx, roomID, entity, &domain.GovernanceMarker{
+		LadderVersion:  LadderVersion,
+		MembershipMode: domain.MembershipModePlatform,
+		AppliedAt:      m.clock().UnixMilli(),
+		RoomVersion:    roomVersion,
+	}); err != nil {
+		return fmt.Errorf("reconcile: set governance state failed: %w", err)
+	}
 	return nil
 }
 
@@ -2477,24 +2519,19 @@ func (m *MautrixAdapter) getRoomCreator(ctx context.Context, roomID id.RoomID) (
 // Space Operations (MSC1772)
 // ============================================================================
 
-// CreateSpace creates a Matrix Space room with the given parameters.
+// CreateSpace creates a governed Matrix Space room: the ladder as
+// PowerLevelOverride, io.alkemio.entity, guest access forbidden and shared
+// history as initial state, and io.alkemio.governance (membershipMode
+// "projected") written after creation. (contract room-governance-ladder §1)
 func (m *MautrixAdapter) CreateSpace(
-	ctx context.Context,
-	alkemioContextID uuid.UUID,
-	name, topic, avatarURL string,
-	joinRule string,
-	initialMembers []domain.Actor,
+	ctx context.Context, params domain.CreateSpaceParams,
 ) (id.RoomID, error) {
-	// Use IDMapper for consistent alias construction
-	aliasLocalpart := m.idMapper.SpaceAliasLocalpart(alkemioContextID)
+	aliasLocalpart := m.idMapper.SpaceAliasLocalpart(params.AlkemioContextID)
 
 	intent := m.as.BotIntent()
 
-	// Ensure all members exist in Matrix (register ghost users).
-	// Members are joined individually after creation to avoid
-	// Synapse's per-room invite rate limit (default burst_count: 10).
-	memberUserIDs := make([]id.UserID, 0, len(initialMembers))
-	for _, member := range initialMembers {
+	memberUserIDs := make([]id.UserID, 0, len(params.InitialMembers))
+	for _, member := range params.InitialMembers {
 		userID, err := m.EnsureUser(ctx, member)
 		if err != nil {
 			m.logger.Warn("Failed to ensure member for space", "member_id", member.ID, "error", err)
@@ -2503,58 +2540,68 @@ func (m *MautrixAdapter) CreateSpace(
 		memberUserIDs = append(memberUserIDs, userID)
 	}
 
-	// Map join rule to Matrix preset
 	preset := "private_chat"
-	if joinRule == "public" {
+	if params.JoinRule == "public" {
 		preset = "public_chat"
 	}
 
-	// Create room with space type
 	req := &mautrix.ReqCreateRoom{
-		Name:          name,
-		Topic:         topic,
+		Name:          params.Name,
+		Topic:         params.Topic,
 		Preset:        preset,
 		RoomAliasName: aliasLocalpart,
 		CreationContent: map[string]interface{}{
 			"type": "m.space",
 		},
-		PowerLevelOverride: &event.PowerLevelsEventContent{
-			UsersDefault: 50,
-		},
+		PowerLevelOverride: BuildLadder(ClassSpace, m.as.BotMXID(), LadderOptions{}),
 	}
 
-	// Set initial state events
 	initialState := make([]*event.Event, 0)
-
-	// Add join rule state event
-	if joinRule != "" {
-		joinRuleContent := &event.JoinRulesEventContent{
-			JoinRule: event.JoinRule(joinRule),
+	if params.JoinRule != "" {
+		initialState = append(initialState, &event.Event{
+			Type:    event.StateJoinRules,
+			Content: event.Content{Parsed: &event.JoinRulesEventContent{JoinRule: event.JoinRule(params.JoinRule)}},
+		})
+	}
+	initialState = append(initialState,
+		&event.Event{Type: event.StateHistoryVisibility, Content: event.Content{
+			Parsed: &event.HistoryVisibilityEventContent{HistoryVisibility: event.HistoryVisibilityShared}}},
+		&event.Event{Type: event.StateGuestAccess, Content: event.Content{
+			Parsed: &event.GuestAccessEventContent{GuestAccess: event.GuestAccessForbidden}}},
+	)
+	if params.AvatarURL != "" {
+		initialState = append(initialState, &event.Event{
+			Type:    event.StateRoomAvatar,
+			Content: event.Content{Parsed: &event.RoomAvatarEventContent{URL: id.ContentURIString(params.AvatarURL)}},
+		})
+	}
+	hasEntityMarker := false
+	for eventType, content := range params.CustomState {
+		if !strings.HasPrefix(eventType, "io.alkemio.") {
+			continue
 		}
-		initialState = append(
-			initialState, &event.Event{
-				Type:    event.StateJoinRules,
-				Content: event.Content{Parsed: joinRuleContent},
-			},
-		)
-	}
-
-	// Add avatar state event if provided
-	if avatarURL != "" {
-		avatarContent := &event.RoomAvatarEventContent{
-			URL: id.ContentURIString(avatarURL),
+		if eventType == StateAlkemioEntity.Type {
+			hasEntityMarker = true
 		}
-		initialState = append(
-			initialState, &event.Event{
-				Type:    event.StateRoomAvatar,
-				Content: event.Content{Parsed: avatarContent},
-			},
-		)
+		initialState = append(initialState, &event.Event{
+			Type:    event.Type{Type: eventType, Class: event.StateEventType},
+			Content: event.Content{Parsed: content},
+		})
 	}
-
-	if len(initialState) > 0 {
-		req.InitialState = initialState
+	if !hasEntityMarker {
+		var parentID *string
+		if params.ParentContextID != nil {
+			parent := params.ParentContextID.String()
+			parentID = &parent
+		}
+		initialState = append(initialState, &event.Event{
+			Type: StateAlkemioEntity,
+			Content: event.Content{Parsed: &domain.EntityMarker{
+				EntityID: params.AlkemioContextID.String(), EntityType: "space", ParentID: parentID,
+			}},
+		})
 	}
+	req.InitialState = initialState
 
 	resp, err := intent.CreateRoom(ctx, req)
 	if err != nil {
@@ -2563,11 +2610,25 @@ func (m *MautrixAdapter) CreateSpace(
 
 	joinedCount := m.autoJoinAndMarkRead(ctx, resp.RoomID, memberUserIDs)
 
+	roomVersion, err := m.GetRoomVersion(ctx, resp.RoomID)
+	if err != nil {
+		m.logger.Warn("Failed to read room version for governance marker",
+			"room_id", resp.RoomID, "error", err)
+	}
+	if err := m.SetGovernanceState(ctx, resp.RoomID, nil, &domain.GovernanceMarker{
+		LadderVersion:  LadderVersion,
+		MembershipMode: domain.MembershipModeProjected,
+		AppliedAt:      m.clock().UnixMilli(),
+		RoomVersion:    roomVersion,
+	}); err != nil {
+		m.logger.Warn("Failed to write governance marker", "room_id", resp.RoomID, "error", err)
+	}
+
 	m.logger.Info(
 		"Space created",
 		"room_id", resp.RoomID,
-		"alias", m.idMapper.SpaceAlias(alkemioContextID),
-		"alkemio_context_id", alkemioContextID,
+		"alias", m.idMapper.SpaceAlias(params.AlkemioContextID),
+		"alkemio_context_id", params.AlkemioContextID,
 		"members_joined", joinedCount,
 	)
 
@@ -2768,15 +2829,17 @@ func (m *MautrixAdapter) RemoveSpaceChild(ctx context.Context, spaceID id.RoomID
 
 // SetSpaceParent sets the parent space for a room or subspace (m.space.parent state event).
 func (m *MautrixAdapter) SetSpaceParent(ctx context.Context, childID id.RoomID, parentID id.RoomID) error {
-	intent := m.getIntentForRoom(ctx, childID)
+	intent, err := m.botIntentForGoverned(ctx, childID)
+	if err != nil {
+		return err
+	}
 
 	content := &event.SpaceParentEventContent{
 		Via:       []string{m.as.HomeserverDomain()},
 		Canonical: true,
 	}
 
-	_, err := intent.SendStateEvent(ctx, childID, event.StateSpaceParent, string(parentID), content)
-	if err != nil {
+	if _, err = intent.SendStateEvent(ctx, childID, event.StateSpaceParent, string(parentID), content); err != nil {
 		return fmt.Errorf("failed to set space parent: %w", err)
 	}
 
@@ -2790,9 +2853,12 @@ func (m *MautrixAdapter) SetSpaceParent(ctx context.Context, childID id.RoomID, 
 // the pointer between them, and it leaves any other live parent pointer on
 // the child untouched.
 func (m *MautrixAdapter) ClearSpaceParent(ctx context.Context, childID id.RoomID, staleParentID id.RoomID) error {
-	intent := m.getIntentForRoom(ctx, childID)
+	intent, err := m.botIntentForGoverned(ctx, childID)
+	if err != nil {
+		return err
+	}
 
-	_, err := intent.SendStateEvent(ctx, childID, event.StateSpaceParent, string(staleParentID), &event.SpaceParentEventContent{})
+	_, err = intent.SendStateEvent(ctx, childID, event.StateSpaceParent, string(staleParentID), &event.SpaceParentEventContent{})
 	if err != nil {
 		return fmt.Errorf("failed to clear stale space parent pointer: %w", err)
 	}

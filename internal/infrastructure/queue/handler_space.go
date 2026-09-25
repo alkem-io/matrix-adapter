@@ -17,9 +17,10 @@ import (
 
 // SpaceHandler handles queue messages related to space operations.
 type SpaceHandler struct {
-	service  *service.SpaceService
-	matrix   ports.MatrixPort
-	resolver *AliasResolver
+	service    *service.SpaceService
+	governance *service.GovernanceService
+	matrix     ports.MatrixPort
+	resolver   *AliasResolver
 
 	// setChildrenTimeout bounds one HandleSetChildren call's own execution —
 	// see config.Hierarchy.SetChildrenTimeoutSeconds. Set once at
@@ -30,9 +31,10 @@ type SpaceHandler struct {
 }
 
 // NewSpaceHandler creates a new instance of SpaceHandler.
-func NewSpaceHandler(service *service.SpaceService, matrix ports.MatrixPort, idMapper *domain.IDMapper, cfg *config.Config) *SpaceHandler {
+func NewSpaceHandler(service *service.SpaceService, governance *service.GovernanceService, matrix ports.MatrixPort, idMapper *domain.IDMapper, cfg *config.Config) *SpaceHandler {
 	return &SpaceHandler{
 		service:            service,
+		governance:         governance,
 		matrix:             matrix,
 		resolver:           NewAliasResolver(matrix, idMapper),
 		setChildrenTimeout: time.Duration(cfg.Hierarchy.SetChildrenTimeoutSeconds * float64(time.Second)),
@@ -581,5 +583,70 @@ func (h *SpaceHandler) HandleGetSpaceState(ctx context.Context, payload []byte) 
 		BaseResponse:     dto.NewSuccessResponse(),
 		AlkemioContextID: req.AlkemioContextID,
 		State:            state,
+	}, nil
+}
+
+// ============================================================================
+// Governance Repair & Cascading Revocation
+// ============================================================================
+
+// HandleRepairSpaceGovernance handles communication.space.governance.repair.
+func (h *SpaceHandler) HandleRepairSpaceGovernance(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.RepairSpaceGovernanceRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+	if errResp := RequireUUID(req.AlkemioContextID, "alkemio_context_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	elevated := make([]uuid.UUID, 0, len(req.ElevatedActorIDs))
+	for _, actorID := range req.ElevatedActorIDs {
+		if actorID.UUID() != uuid.Nil {
+			elevated = append(elevated, actorID.UUID())
+		}
+	}
+
+	outcome := h.governance.RepairSpace(ctx, service.RepairSpaceParams{
+		AlkemioContextID: req.AlkemioContextID.UUID(),
+		CustomState:      req.CustomState,
+		ElevatedActorIDs: elevated,
+		DryRun:           req.DryRun,
+	})
+	return convertRepairOutcome(outcome), nil
+}
+
+// HandleRevokeSpaceMember handles communication.space.member.revoke: kick the
+// actor from each space room AND every child room of that space, with
+// per-context results (contract membership-revocation §3).
+func (h *SpaceHandler) HandleRevokeSpaceMember(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.RevokeSpaceMemberRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+	if errResp := RequireUUID(req.ActorID, "actor_id"); errResp != nil {
+		return *errResp, nil
+	}
+	if len(req.AlkemioContextIDs) == 0 {
+		return NewInvalidParamError("alkemio_context_ids must not be empty"), nil
+	}
+
+	contextIDs := make([]uuid.UUID, 0, len(req.AlkemioContextIDs))
+	for _, contextID := range req.AlkemioContextIDs {
+		if contextID.UUID() != uuid.Nil {
+			contextIDs = append(contextIDs, contextID.UUID())
+		}
+	}
+
+	result := h.service.RevokeMember(ctx, req.ActorID.UUID(), contextIDs, req.Reason)
+
+	results := make(map[string]dto.BaseResponse, len(result.Results))
+	for contextID, err := range result.Results {
+		results[contextID] = MapToBatchResult(err)
+	}
+	return dto.RevokeSpaceMemberResponse{
+		BaseResponse:     dto.NewSuccessResponse(),
+		Results:          results,
+		ChildRoomsKicked: result.ChildRoomsKicked,
 	}, nil
 }

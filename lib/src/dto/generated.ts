@@ -13,6 +13,23 @@ export interface SyncActorRequest {
   display_name: string;
   avatar_url?: string;
 }
+/**
+ * RevokeActorDevicesRequest deletes ALL of an actor's Matrix devices,
+ * invalidating their access and refresh tokens. Idempotent: an actor with
+ * zero devices is a success with deleted_count 0.
+ * Topic: communication.actor.devices.revoke
+ */
+export interface RevokeActorDevicesRequest {
+  actor_id: AlkemioActorID;
+  reason?: string;
+}
+/**
+ * RevokeActorDevicesResponse reports the devices deleted for the actor.
+ */
+export interface RevokeActorDevicesResponse extends BaseResponse {
+  deleted_count: number /* int */;
+  device_ids?: string[];
+}
 
 //////////
 // source: batch.go
@@ -227,6 +244,22 @@ export const TopicSpaceStateSet = "communication.space.state.set";
  * Custom state API topics (io.alkemio.* state events)
  */
 export const TopicSpaceStateGet = "communication.space.state.get";
+/**
+ * TopicRoomGovernanceRepair is the topic for report-first room governance repair commands.
+ */
+export const TopicRoomGovernanceRepair = "communication.room.governance.repair";
+/**
+ * TopicSpaceGovernanceRepair is the topic for report-first space governance repair commands.
+ */
+export const TopicSpaceGovernanceRepair = "communication.space.governance.repair";
+/**
+ * TopicSpaceMemberRevoke is the topic for revoking an actor from a space room and its child rooms.
+ */
+export const TopicSpaceMemberRevoke = "communication.space.member.revoke";
+/**
+ * TopicActorDevicesRevoke is the topic for deleting all of an actor's Matrix devices.
+ */
+export const TopicActorDevicesRevoke = "communication.actor.devices.revoke";
 /**
  * TopicRoomDMRequested is the topic for DM room request events (outbound to Server).
  */
@@ -532,6 +565,97 @@ export interface SpaceUpdatedEvent {
   avatar_url?: string;
   topic?: string;
   timestamp: number /* int64 */;
+}
+
+//////////
+// source: governance.go
+
+/**
+ * RoomVisibility declares the history-visibility class of a governed room.
+ */
+export type RoomVisibility = string;
+/**
+ * RoomVisibilityShared maps to m.room.history_visibility "shared".
+ */
+export const RoomVisibilityShared: RoomVisibility = "shared";
+/**
+ * RoomVisibilityWorldReadable maps to m.room.history_visibility "world_readable" (rooms under public spaces).
+ */
+export const RoomVisibilityWorldReadable: RoomVisibility = "world_readable";
+/**
+ * RepairRoomGovernanceRequest asks the adapter to converge one room to the
+ * governance ladder: power levels, join rules, history visibility, guest
+ * access, identity/governance markers, aliases and bot presence.
+ * Topic: communication.room.governance.repair
+ */
+export interface RepairRoomGovernanceRequest {
+  alkemio_room_id: AlkemioRoomID;
+  join_rule: JoinRule;
+  parent_context_id?: AlkemioContextID;
+  custom_state?: { [key: string]: { [key: string]: any}};
+  visibility: RoomVisibility;
+  is_direct: boolean;
+  dry_run: boolean;
+}
+/**
+ * RepairSpaceGovernanceRequest asks the adapter to converge one space room to
+ * the governance ladder, recomputing the elevated (PL 75) entries.
+ * Topic: communication.space.governance.repair
+ */
+export interface RepairSpaceGovernanceRequest {
+  alkemio_context_id: AlkemioContextID;
+  custom_state?: { [key: string]: { [key: string]: any}};
+  elevated_actor_ids: AlkemioActorID[];
+  dry_run: boolean;
+}
+/**
+ * RepairIssue names one room or entity a repair run could not converge.
+ */
+export interface RepairIssue {
+  id: string;
+  reason: string;
+}
+/**
+ * RepairFailure names one room or entity a repair run failed on.
+ */
+export interface RepairFailure {
+  id: string;
+  error: string;
+}
+/**
+ * RepairReport is the counted outcome of a repair run. Counts derive from
+ * actual writes; a dry run computes everything and writes nothing.
+ */
+export interface RepairReport extends BaseResponse {
+  scanned: number /* int */;
+  repaired: number /* int */;
+  unresolved?: RepairIssue[];
+  failed?: RepairFailure[];
+  skipped_pre_version?: string[];
+  dry_run: boolean;
+  writes: number /* int */;
+  budget_remaining: number /* int */;
+}
+/**
+ * RevokeSpaceMemberRequest kicks an actor from the space rooms named by the
+ * context ids AND from every child room of each of those spaces.
+ * Topic: communication.space.member.revoke
+ */
+export interface RevokeSpaceMemberRequest {
+  actor_id: AlkemioActorID;
+  alkemio_context_ids: AlkemioContextID[];
+  reason?: string;
+}
+/**
+ * RevokeSpaceMemberResponse returns per-context results plus the number of
+ * child rooms the actor was kicked from.
+ */
+export interface RevokeSpaceMemberResponse extends BaseResponse {
+  /**
+   * Results maps AlkemioContextID (string) to the per-space outcome.
+   */
+  results?: { [key: string]: BaseResponse};
+  child_rooms_kicked: number /* int */;
 }
 
 //////////
@@ -1146,12 +1270,31 @@ export interface GetRoomInfoRequest {
 }
 /**
  * GetRoomInfoResponse is the RabbitMQ payload returned from server with room details.
+ * The governance fields (entity_type, parent_context_id, join_rule, visibility)
+ * are optional: an old server omits them and the adapter falls back to
+ * thread / platform-driven / shared defaults.
  */
 export interface GetRoomInfoResponse {
   alkemio_room_id: string;
   type: string;
   is_direct: boolean;
   members: RoomInfoMember[];
+  /**
+   * EntityType is "thread" for every conversation-backed room ("space" is never served here).
+   */
+  entity_type?: string;
+  /**
+   * ParentContextID is the owning space id when the room is space-anchored.
+   */
+  parent_context_id?: string;
+  /**
+   * JoinRule is the membership mode Alkemio declares ("restricted" or "invite").
+   */
+  join_rule?: string;
+  /**
+   * Visibility is "world_readable" when the owning space is public, else "shared".
+   */
+  visibility?: string;
 }
 /**
  * RoomInfoMember represents a member in the server-side room info response.

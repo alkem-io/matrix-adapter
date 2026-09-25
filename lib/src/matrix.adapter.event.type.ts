@@ -1,5 +1,6 @@
 export enum MatrixAdapterEventType {
 
+  COMMUNICATION_ACTOR_DEVICES_REVOKE = 'communication.actor.devices.revoke',
   COMMUNICATION_ACTOR_SYNC = 'communication.actor.sync',
   COMMUNICATION_HIERARCHY_SET_CHILDREN = 'communication.hierarchy.set_children',
   COMMUNICATION_HIERARCHY_SET_PARENT = 'communication.hierarchy.set_parent',
@@ -24,6 +25,7 @@ export enum MatrixAdapterEventType {
   COMMUNICATION_ROOM_DM_REQUESTED = 'communication.room.dm.requested',
   COMMUNICATION_ROOM_GET = 'communication.room.get',
   COMMUNICATION_ROOM_GET_AS_USER = 'communication.room.get.as_user',
+  COMMUNICATION_ROOM_GOVERNANCE_REPAIR = 'communication.room.governance.repair',
   COMMUNICATION_ROOM_INFO = 'communication.room.info',
   COMMUNICATION_ROOM_LAST_MESSAGE_GET = 'communication.room.last_message.get',
   COMMUNICATION_ROOM_LIST = 'communication.room.list',
@@ -41,9 +43,11 @@ export enum MatrixAdapterEventType {
   COMMUNICATION_SPACE_CREATE = 'communication.space.create',
   COMMUNICATION_SPACE_DELETE = 'communication.space.delete',
   COMMUNICATION_SPACE_GET = 'communication.space.get',
+  COMMUNICATION_SPACE_GOVERNANCE_REPAIR = 'communication.space.governance.repair',
   COMMUNICATION_SPACE_LIST = 'communication.space.list',
   COMMUNICATION_SPACE_MEMBER_BATCH_ADD = 'communication.space.member.batch.add',
   COMMUNICATION_SPACE_MEMBER_BATCH_REMOVE = 'communication.space.member.batch.remove',
+  COMMUNICATION_SPACE_MEMBER_REVOKE = 'communication.space.member.revoke',
   COMMUNICATION_SPACE_STATE_GET = 'communication.space.state.get',
   COMMUNICATION_SPACE_STATE_SET = 'communication.space.state.set',
   COMMUNICATION_SPACE_UPDATE = 'communication.space.update',

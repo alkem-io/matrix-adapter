@@ -110,4 +110,14 @@ const (
 	TopicRoomStateGet  = dto.TopicRoomStateGet
 	TopicSpaceStateSet = dto.TopicSpaceStateSet
 	TopicSpaceStateGet = dto.TopicSpaceStateGet
+
+	// Governance & Revocation Topics
+	// TopicRoomGovernanceRepair is the topic for report-first room governance repair.
+	TopicRoomGovernanceRepair = dto.TopicRoomGovernanceRepair
+	// TopicSpaceGovernanceRepair is the topic for report-first space governance repair.
+	TopicSpaceGovernanceRepair = dto.TopicSpaceGovernanceRepair
+	// TopicSpaceMemberRevoke is the topic for cascading space-membership revocation.
+	TopicSpaceMemberRevoke = dto.TopicSpaceMemberRevoke
+	// TopicActorDevicesRevoke is the topic for deleting all of an actor's devices.
+	TopicActorDevicesRevoke = dto.TopicActorDevicesRevoke
 )

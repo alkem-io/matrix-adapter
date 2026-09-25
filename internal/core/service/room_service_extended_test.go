@@ -169,8 +169,8 @@ func (m *mockExtendedMatrixPort) SetCustomState(_ context.Context, _ id.RoomID, 
 	return nil
 }
 
-func (m *mockExtendedMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, _ string, _, _, _, _ string, customState map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
-	m.createRoomCustomState = customState
+func (m *mockExtendedMatrixPort) CreateRoomWithAlias(_ context.Context, params domain.CreateRoomParams) (id.RoomID, error) {
+	m.createRoomCustomState = params.CustomState
 	if m.createRoomErr != nil {
 		return "", m.createRoomErr
 	}
@@ -193,7 +193,7 @@ func (m *mockExtendedMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (
 	return "@bot:test.local", nil
 }
 func (m *mockExtendedMatrixPort) SetUserProfile(_ context.Context, _ domain.Actor) error { return nil }
-func (m *mockExtendedMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor, _ domain.Actor) error {
+func (m *mockExtendedMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor) error {
 	return nil
 }
 func (m *mockExtendedMatrixPort) GetCustomState(_ context.Context, _ id.RoomID, _ []string) (map[string]map[string]interface{}, error) {
@@ -214,7 +214,7 @@ func (m *mockExtendedMatrixPort) GetReaction(_ context.Context, _ id.RoomID, _ i
 func (m *mockExtendedMatrixPort) GetThreadMessages(_ context.Context, _ id.RoomID, _ id.EventID) ([]domain.Message, error) {
 	return nil, nil
 }
-func (m *mockExtendedMatrixPort) CreateSpace(_ context.Context, _ uuid.UUID, _, _, _ string, _ string, _ []domain.Actor) (id.RoomID, error) {
+func (m *mockExtendedMatrixPort) CreateSpace(_ context.Context, _ domain.CreateSpaceParams) (id.RoomID, error) {
 	return "", nil
 }
 func (m *mockExtendedMatrixPort) GetSpaceDetails(_ context.Context, _ id.RoomID) (*domain.Space, error) {
@@ -271,7 +271,7 @@ func (m *mockExtendedMatrixPort) GetBatchUnreadCounts(_ context.Context, _ domai
 var testIDMapper = domain.NewIDMapper("test.local")
 
 func newTestService(matrix *mockExtendedMatrixPort) *RoomService {
-	return NewRoomService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"))
+	return NewRoomService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), NewGovernanceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local")))
 }
 
 // ============================================================================
@@ -287,7 +287,7 @@ func TestCreateRoom_Idempotent_AliasExists(t *testing.T) {
 	svc := newTestService(matrix)
 
 	err := svc.CreateRoomWithAlkemioID(context.Background(), uuid.New(),
-		"community", "Name", "", "", "", nil, nil, nil)
+		"community", "Name", "", "", "", nil, nil, nil, nil)
 
 	if err != nil {
 		t.Fatalf("expected idempotent success, got: %v", err)
@@ -303,7 +303,7 @@ func TestCreateRoom_AliasCheckNonNotFoundError(t *testing.T) {
 	svc := newTestService(matrix)
 
 	err := svc.CreateRoomWithAlkemioID(context.Background(), uuid.New(),
-		"community", "Name", "", "", "", nil, nil, nil)
+		"community", "Name", "", "", "", nil, nil, nil, nil)
 
 	if err == nil {
 		t.Fatal("expected error for non-not-found resolve alias failure")
@@ -324,7 +324,7 @@ func TestCreateRoom_DM_ExistingRoomFound(t *testing.T) {
 	svc := newTestService(matrix)
 
 	err := svc.CreateRoomWithAlkemioID(context.Background(), uuid.New(),
-		"direct", "", "", "", "", nil, nil, []domain.Actor{actor1, actor2})
+		"direct", "", "", "", "", nil, nil, nil, []domain.Actor{actor1, actor2})
 
 	if err != nil {
 		t.Fatalf("expected success when existing DM found, got: %v", err)
@@ -349,7 +349,7 @@ func TestCreateRoom_DM_AliasSetFailure_NonFatal(t *testing.T) {
 	svc := newTestService(matrix)
 
 	err := svc.CreateRoomWithAlkemioID(context.Background(), uuid.New(),
-		"direct", "", "", "", "", nil, nil, []domain.Actor{actor1, actor2})
+		"direct", "", "", "", "", nil, nil, nil, []domain.Actor{actor1, actor2})
 
 	// Alias set failure is non-fatal; method should return nil
 	if err != nil {
@@ -367,7 +367,7 @@ func TestCreateRoom_CreateRoomError(t *testing.T) {
 	svc := newTestService(matrix)
 
 	err := svc.CreateRoomWithAlkemioID(context.Background(), uuid.New(),
-		"community", "Name", "", "", "", nil, nil, nil)
+		"community", "Name", "", "", "", nil, nil, nil, nil)
 
 	if err == nil {
 		t.Fatal("expected error when CreateRoomWithAlias fails")
@@ -384,7 +384,7 @@ func TestCreateRoom_IsPublic_SetsDirectoryVisibility(t *testing.T) {
 
 	isPublic := true
 	err := svc.CreateRoomWithAlkemioID(context.Background(), uuid.New(),
-		"community", "Name", "", "", "", &isPublic, nil, nil)
+		"community", "Name", "", "", "", nil, &isPublic, nil, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -408,7 +408,7 @@ func TestCreateRoom_CustomState_Included(t *testing.T) {
 		"io.alkemio.visibility": {"hidden": true},
 	}
 	err := svc.CreateRoomWithAlkemioID(context.Background(), uuid.New(),
-		"community", "Name", "", "", "", nil, customState, nil)
+		"community", "Name", "", "", "", nil, nil, customState, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1038,5 +1038,92 @@ func TestGetMessage_Error(t *testing.T) {
 	_, err := svc.GetMessage(context.Background(), "!room:test.local", "$msg1")
 	if err == nil {
 		t.Fatal("expected error from GetMessage")
+	}
+}
+
+// --- Governance operations ---
+
+func (m *mockExtendedMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions, _ bool) (bool, error) {
+	return false, nil
+}
+
+func (m *mockExtendedMatrixPort) GetRoomGovernanceState(_ context.Context, _ id.RoomID) (*domain.RoomGovernanceState, error) {
+	return &domain.RoomGovernanceState{
+		JoinRule:          "invite",
+		HistoryVisibility: "shared",
+		GuestAccess:       "forbidden",
+	}, nil
+}
+
+func (m *mockExtendedMatrixPort) SetRoomAccessState(_ context.Context, _ id.RoomID, _ domain.RoomAccessState) error {
+	return nil
+}
+
+func (m *mockExtendedMatrixPort) EnsureDirectRoomMarked(_ context.Context, _ id.RoomID) error {
+	return nil
+}
+
+func (m *mockExtendedMatrixPort) EnsureBotAdmin(_ context.Context, _ id.RoomID) (domain.BotPresence, error) {
+	return domain.BotPresence{Joined: true, PowerOK: true}, nil
+}
+
+func (m *mockExtendedMatrixPort) GetRoomVersion(_ context.Context, _ id.RoomID) (string, error) {
+	return "10", nil
+}
+
+func (m *mockExtendedMatrixPort) SetGovernanceState(_ context.Context, _ id.RoomID, _ *domain.EntityMarker, _ *domain.GovernanceMarker) error {
+	return nil
+}
+
+func (m *mockExtendedMatrixPort) RevokeActorDevices(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockExtendedMatrixPort) SweepDevices(_ context.Context, _ time.Duration, _ bool) (domain.SweepReport, error) {
+	return domain.SweepReport{}, nil
+}
+
+// ============================================================================
+// Create idempotency re-applies the ladder
+// ============================================================================
+
+// idempotencyMockPort tracks the governance calls a repair-on-retry performs.
+type idempotencyMockPort struct {
+	*mockExtendedMatrixPort
+	applyLadderCalls int
+}
+
+func (m *idempotencyMockPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions, _ bool) (bool, error) {
+	m.applyLadderCalls++
+	return false, nil
+}
+
+func (m *idempotencyMockPort) EnsureBotAdmin(_ context.Context, _ id.RoomID) (domain.BotPresence, error) {
+	return domain.BotPresence{Joined: true, PowerOK: true}, nil
+}
+
+func TestCreateRoom_Existing_RepairsLadder(t *testing.T) {
+	roomID := uuid.New()
+	mapper := domain.NewIDMapper("test.local")
+	inner := &mockExtendedMatrixPort{
+		resolveAliasFunc: func(_ context.Context, _ string) (id.RoomID, error) {
+			return "!existing:test.local", nil
+		},
+	}
+	matrix := &idempotencyMockPort{mockExtendedMatrixPort: inner}
+	governance := NewGovernanceService(matrix, &testutil.MockLogger{}, mapper)
+	governance.sleep = func(time.Duration) {}
+	svc := NewRoomService(matrix, &testutil.MockLogger{}, mapper, governance)
+
+	err := svc.CreateRoomWithAlkemioID(context.Background(), roomID,
+		"community", "Name", "", "", "", nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("retried create must succeed, got: %v", err)
+	}
+	if matrix.createRoomCustomState != nil {
+		t.Error("no second room may be created")
+	}
+	if matrix.applyLadderCalls == 0 {
+		t.Error("a retried create must converge the existing room (repair, not blind return)")
 	}
 }

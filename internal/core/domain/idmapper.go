@@ -54,6 +54,13 @@ func (m *IDMapper) SpaceAliasLocalpart(alkemioContextID uuid.UUID) string {
 	return alkemioContextID.String()
 }
 
+// ThreadRoomAlias constructs the cutover-stable thread-room alias
+// (target-alignment A-3), written BESIDE the canonical #<uuid> alias.
+// Format: #t_<uuid>:<domain>
+func (m *IDMapper) ThreadRoomAlias(alkemioRoomID uuid.UUID) string {
+	return fmt.Sprintf("#t_%s:%s", alkemioRoomID.String(), m.homeserverDomain)
+}
+
 // ============================================================================
 // Backward Mapping (Matrix → Alkemio)
 // ============================================================================

@@ -802,3 +802,34 @@ func TestResolveMediaMime(t *testing.T) {
 		})
 	}
 }
+
+// TestRegistration_Namespaces pins the registration shape the PR #55 workflow
+// syncs downstream: the bot user is exclusive, UUID users are non-exclusive
+// (SSO/Element login), and BOTH room-alias namespaces exist (#<uuid>, #t_<uuid>).
+func TestRegistration_Namespaces(t *testing.T) {
+	reg := buildRegistration("00000000-0000-0000-0000-000000000000", "as-tok", "hs-tok")
+
+	if reg.ID != "alkemio-matrix-adapter" {
+		t.Errorf("registration id = %q", reg.ID)
+	}
+	if len(reg.Namespaces.UserIDs) != 2 {
+		t.Fatalf("user namespaces = %d, want 2", len(reg.Namespaces.UserIDs))
+	}
+	if !reg.Namespaces.UserIDs[0].Exclusive {
+		t.Error("bot user namespace must be exclusive")
+	}
+	if reg.Namespaces.UserIDs[1].Exclusive {
+		t.Error("UUID user namespace must be non-exclusive (SSO/Element login)")
+	}
+	if len(reg.Namespaces.RoomAliases) != 2 {
+		t.Fatalf("alias namespaces = %d, want 2 (#<uuid> and #t_<uuid>)", len(reg.Namespaces.RoomAliases))
+	}
+	uuidAlias := reg.Namespaces.RoomAliases[0]
+	threadAlias := reg.Namespaces.RoomAliases[1]
+	if !uuidAlias.Exclusive || !threadAlias.Exclusive {
+		t.Error("both alias namespaces must be exclusive")
+	}
+	if threadAlias.Regex != "#t_[0-9a-fA-F-]{36}:.*" {
+		t.Errorf("thread alias regex = %q", threadAlias.Regex)
+	}
+}

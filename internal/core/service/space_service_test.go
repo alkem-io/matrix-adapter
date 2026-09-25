@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"maunium.net/go/mautrix/id"
@@ -30,10 +31,11 @@ type mockSpaceMatrixPort struct {
 	resolveAliasErr     error
 
 	// CreateSpace captures
-	createSpaceCalled   bool
-	createSpaceRoomID   id.RoomID
-	createSpaceErr      error
-	createSpaceJoinRule string
+	createSpaceCalled      bool
+	createSpaceRoomID      id.RoomID
+	createSpaceErr         error
+	createSpaceJoinRule    string
+	createSpaceCustomState map[string]map[string]interface{}
 
 	// GetSpaceDetails
 	getSpaceDetailsResult *domain.Space
@@ -58,6 +60,8 @@ type mockSpaceMatrixPort struct {
 	// KickFromSpace
 	kickFromSpaceCalled int
 	kickFromSpaceErr    error
+	kickUserRooms       []id.RoomID
+	kickUserErr         error
 
 	// GetAllJoinedRooms
 	getAllJoinedRoomsResult []id.RoomID
@@ -140,9 +144,10 @@ func (m *mockSpaceMatrixPort) ResolveAlias(_ context.Context, alias string) (id.
 	return "", domain.NewSpaceNotFoundError(alias)
 }
 
-func (m *mockSpaceMatrixPort) CreateSpace(_ context.Context, _ uuid.UUID, _, _, _ string, joinRule string, _ []domain.Actor) (id.RoomID, error) {
+func (m *mockSpaceMatrixPort) CreateSpace(_ context.Context, params domain.CreateSpaceParams) (id.RoomID, error) {
 	m.createSpaceCalled = true
-	m.createSpaceJoinRule = joinRule
+	m.createSpaceJoinRule = params.JoinRule
+	m.createSpaceCustomState = params.CustomState
 	if m.createSpaceErr != nil {
 		return "", m.createSpaceErr
 	}
@@ -283,10 +288,10 @@ func (m *mockSpaceMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (id.
 	return "@bot:test.local", nil
 }
 func (m *mockSpaceMatrixPort) SetUserProfile(_ context.Context, _ domain.Actor) error { return nil }
-func (m *mockSpaceMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, _, _, _, _, _ string, _ map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
+func (m *mockSpaceMatrixPort) CreateRoomWithAlias(_ context.Context, _ domain.CreateRoomParams) (id.RoomID, error) {
 	return "", nil
 }
-func (m *mockSpaceMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor, _ domain.Actor) error {
+func (m *mockSpaceMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor) error {
 	return nil
 }
 func (m *mockSpaceMatrixPort) GetRoomDetails(_ context.Context, _ id.RoomID) (*domain.Room, error) {
@@ -301,8 +306,9 @@ func (m *mockSpaceMatrixPort) UpdateRoomState(_ context.Context, _ id.RoomID, _ 
 func (m *mockSpaceMatrixPort) GetCustomState(_ context.Context, _ id.RoomID, _ []string) (map[string]map[string]interface{}, error) {
 	return nil, nil
 }
-func (m *mockSpaceMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
-	return nil
+func (m *mockSpaceMatrixPort) KickUser(_ context.Context, roomID id.RoomID, _ id.UserID, _ string) error {
+	m.kickUserRooms = append(m.kickUserRooms, roomID)
+	return m.kickUserErr
 }
 func (m *mockSpaceMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (*domain.Message, error) {
 	return nil, nil
@@ -375,7 +381,7 @@ func fastHierarchyConfig() *config.Config {
 }
 
 func newSpaceService(matrix *mockSpaceMatrixPort) *SpaceService {
-	return NewSpaceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), fastHierarchyConfig())
+	return NewSpaceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), NewGovernanceService(matrix, &testutil.MockLogger{}, domain.NewIDMapper("test.local")), fastHierarchyConfig())
 }
 
 func mustAlias(contextID uuid.UUID) string {
@@ -507,8 +513,14 @@ func TestCreateSpace_WithCustomState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
-	if !matrix.setCustomStateCalled {
-		t.Error("expected SetCustomState to be called when customState is provided")
+	// Custom state now travels as initial state inside the create request
+	// (visibility filtering active before members join), never as a
+	// post-create SetCustomState call.
+	if matrix.createSpaceCustomState == nil {
+		t.Error("expected custom state to be passed into CreateSpace params")
+	}
+	if matrix.setCustomStateCalled {
+		t.Error("custom state must not be written post-create")
 	}
 }
 
@@ -858,7 +870,7 @@ func TestListSpaces_Success(t *testing.T) {
 		},
 		detailsByRoom: detailsByRoom,
 	}
-	svc := NewSpaceService(wrapper, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), fastHierarchyConfig())
+	svc := NewSpaceService(wrapper, &testutil.MockLogger{}, domain.NewIDMapper("test.local"), NewGovernanceService(wrapper, &testutil.MockLogger{}, domain.NewIDMapper("test.local")), fastHierarchyConfig())
 
 	contextIDs, cursor, err := svc.ListSpaces(context.Background(), "")
 	if err != nil {
@@ -1200,4 +1212,108 @@ func searchSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// --- Governance operations ---
+
+func (m *mockSpaceMatrixPort) ApplyLadder(_ context.Context, _ id.RoomID, _ domain.RoomClass, _ domain.LadderOptions, _ bool) (bool, error) {
+	return false, nil
+}
+
+func (m *mockSpaceMatrixPort) GetRoomGovernanceState(_ context.Context, _ id.RoomID) (*domain.RoomGovernanceState, error) {
+	return &domain.RoomGovernanceState{
+		JoinRule:          "invite",
+		HistoryVisibility: "shared",
+		GuestAccess:       "forbidden",
+	}, nil
+}
+
+func (m *mockSpaceMatrixPort) SetRoomAccessState(_ context.Context, _ id.RoomID, _ domain.RoomAccessState) error {
+	return nil
+}
+
+func (m *mockSpaceMatrixPort) EnsureDirectRoomMarked(_ context.Context, _ id.RoomID) error {
+	return nil
+}
+
+func (m *mockSpaceMatrixPort) EnsureBotAdmin(_ context.Context, _ id.RoomID) (domain.BotPresence, error) {
+	return domain.BotPresence{Joined: true, PowerOK: true}, nil
+}
+
+func (m *mockSpaceMatrixPort) GetRoomVersion(_ context.Context, _ id.RoomID) (string, error) {
+	return "10", nil
+}
+
+func (m *mockSpaceMatrixPort) SetGovernanceState(_ context.Context, _ id.RoomID, _ *domain.EntityMarker, _ *domain.GovernanceMarker) error {
+	return nil
+}
+
+func (m *mockSpaceMatrixPort) RevokeActorDevices(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockSpaceMatrixPort) SweepDevices(_ context.Context, _ time.Duration, _ bool) (domain.SweepReport, error) {
+	return domain.SweepReport{}, nil
+}
+
+// ============================================================================
+// Cascading revocation (contract membership-revocation)
+// ============================================================================
+
+func TestRevokeSpaceMember_KicksSpaceAndChildRooms(t *testing.T) {
+	spaceID := uuid.New()
+	actorID := uuid.New()
+	mapper := domain.NewIDMapper("test.local")
+	matrix := &mockSpaceMatrixPort{
+		resolveAliasResults: map[string]id.RoomID{
+			mapper.SpaceAlias(spaceID): "!space:test.local",
+		},
+		getSpaceChildrenResult: []domain.SpaceChild{
+			{ChildID: "!updates:test.local", IsSpace: false},
+			{ChildID: "!comments:test.local", IsSpace: false},
+			{ChildID: "!subspace:test.local", IsSpace: true}, // separate grant — untouched
+		},
+	}
+	svc := newSpaceService(matrix)
+
+	result := svc.RevokeMember(context.Background(), actorID, []uuid.UUID{spaceID}, "membership revoked")
+
+	if err := result.Results[spaceID.String()]; err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if matrix.kickFromSpaceCalled != 1 {
+		t.Errorf("space-room kicks = %d, want 1", matrix.kickFromSpaceCalled)
+	}
+	if result.ChildRoomsKicked != 2 {
+		t.Errorf("child_rooms_kicked = %d, want 2 (rooms only, never child spaces)", result.ChildRoomsKicked)
+	}
+	for _, roomID := range matrix.kickUserRooms {
+		if roomID == "!subspace:test.local" {
+			t.Error("child SPACES are separate grants and must not be kicked from")
+		}
+	}
+}
+
+func TestRevokeSpaceMember_ChildFailure_Reported(t *testing.T) {
+	spaceID := uuid.New()
+	mapper := domain.NewIDMapper("test.local")
+	matrix := &mockSpaceMatrixPort{
+		resolveAliasResults: map[string]id.RoomID{
+			mapper.SpaceAlias(spaceID): "!space:test.local",
+		},
+		getSpaceChildrenResult: []domain.SpaceChild{
+			{ChildID: "!updates:test.local", IsSpace: false},
+		},
+		kickUserErr: errors.New("M_LIMIT_EXCEEDED"),
+	}
+	svc := newSpaceService(matrix)
+
+	result := svc.RevokeMember(context.Background(), uuid.New(), []uuid.UUID{spaceID}, "revoked")
+
+	if err := result.Results[spaceID.String()]; err == nil {
+		t.Fatal("a failed child kick must surface in the per-context result, never silently")
+	}
+	if result.ChildRoomsKicked != 0 {
+		t.Errorf("child_rooms_kicked = %d, want 0", result.ChildRoomsKicked)
+	}
 }

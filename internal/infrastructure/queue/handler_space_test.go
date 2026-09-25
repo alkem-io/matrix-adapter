@@ -233,8 +233,9 @@ func TestHandleSetChildren_DeadlineExceededIsReportedDistinctlyFromWriteFailure(
 
 	cfg := testHierarchyConfig()
 	cfg.Hierarchy.SetChildrenTimeoutSeconds = -1 // already-expired deadline, deterministically
-	svc := service.NewSpaceService(matrix, &testMockLogger{}, idMapper, cfg)
-	handler := NewSpaceHandler(svc, matrix, idMapper, cfg)
+	governance := service.NewGovernanceService(matrix, &testMockLogger{}, idMapper)
+	svc := service.NewSpaceService(matrix, &testMockLogger{}, idMapper, governance, cfg)
+	handler := NewSpaceHandler(svc, governance, matrix, idMapper, cfg)
 
 	payload := mustMarshal(t, dto.SetChildrenRequest{
 		ParentContextID:        dto.AlkemioContextID(parentContextID),

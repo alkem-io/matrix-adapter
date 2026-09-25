@@ -256,6 +256,30 @@ type testMockMatrixPort struct {
 	capturedInviteUserRoomID  id.RoomID
 	capturedInviteUserInvitee domain.Actor
 
+	// Governance operations
+	capturedCreateRoomParentContextID *uuid.UUID
+	capturedCreateSpaceCustomState    map[string]map[string]interface{}
+	applyLadderCalls                  []applyLadderCall
+	applyLadderChanged                bool
+	applyLadderErr                    error
+	ensureBotAdminCalls               []id.RoomID
+	ensureBotAdminResult              domain.BotPresence
+	ensureBotAdminErr                 error
+	getRoomVersionResult              string
+	getRoomVersionErr                 error
+	setGovernanceStateCalls           []setGovernanceStateCall
+	setGovernanceStateErr             error
+	revokeActorDevicesCalls           []uuid.UUID
+	revokeActorDevicesResult          []string
+	revokeActorDevicesErr             error
+	sweepDevicesCalls                 []sweepDevicesCall
+	sweepDevicesResult                domain.SweepReport
+	sweepDevicesErr                   error
+	getRoomGovernanceStateResult      *domain.RoomGovernanceState
+	getRoomGovernanceStateErr         error
+	setRoomAccessStateCalls           []id.RoomID
+	setRoomAccessStateErr             error
+
 	// EnsureUser
 	capturedEnsureUserActor domain.Actor
 
@@ -323,17 +347,18 @@ func (m *testMockMatrixPort) SetUserProfile(_ context.Context, actor domain.Acto
 	return m.setProfileErr
 }
 
-func (m *testMockMatrixPort) CreateRoomWithAlias(_ context.Context, alkemioRoomID uuid.UUID, roomType, name, _, _, joinRule string, customState map[string]map[string]interface{}, members []domain.Actor) (id.RoomID, error) {
-	m.capturedCreateRoomAlkemioID = alkemioRoomID
-	m.capturedCreateRoomType = roomType
-	m.capturedCreateRoomName = name
-	m.capturedCreateRoomJoinRule = joinRule
-	m.capturedCreateRoomCustomState = customState
-	m.capturedCreateRoomMembers = members
+func (m *testMockMatrixPort) CreateRoomWithAlias(_ context.Context, params domain.CreateRoomParams) (id.RoomID, error) {
+	m.capturedCreateRoomAlkemioID = params.AlkemioRoomID
+	m.capturedCreateRoomType = params.RoomType
+	m.capturedCreateRoomName = params.Name
+	m.capturedCreateRoomJoinRule = params.JoinRule
+	m.capturedCreateRoomCustomState = params.CustomState
+	m.capturedCreateRoomMembers = params.InitialMembers
+	m.capturedCreateRoomParentContextID = params.ParentContextID
 	return m.createRoomResult, m.createRoomErr
 }
 
-func (m *testMockMatrixPort) InviteUser(_ context.Context, roomID id.RoomID, _ domain.Actor, invitee domain.Actor) error {
+func (m *testMockMatrixPort) InviteUser(_ context.Context, roomID id.RoomID, invitee domain.Actor) error {
 	m.capturedInviteUserRoomID = roomID
 	m.capturedInviteUserInvitee = invitee
 	return m.inviteUserErr
@@ -471,11 +496,12 @@ func (m *testMockMatrixPort) GetAllJoinedRooms(_ context.Context) ([]id.RoomID, 
 	return m.getAllJoinedRoomsResult, m.getAllJoinedRoomsErr
 }
 
-func (m *testMockMatrixPort) CreateSpace(_ context.Context, alkemioContextID uuid.UUID, name, _, _ string, joinRule string, members []domain.Actor) (id.RoomID, error) {
-	m.capturedCreateSpaceAlkemioID = alkemioContextID
-	m.capturedCreateSpaceName = name
-	m.capturedCreateSpaceJoinRule = joinRule
-	m.capturedCreateSpaceMembers = members
+func (m *testMockMatrixPort) CreateSpace(_ context.Context, params domain.CreateSpaceParams) (id.RoomID, error) {
+	m.capturedCreateSpaceAlkemioID = params.AlkemioContextID
+	m.capturedCreateSpaceName = params.Name
+	m.capturedCreateSpaceJoinRule = params.JoinRule
+	m.capturedCreateSpaceMembers = params.InitialMembers
+	m.capturedCreateSpaceCustomState = params.CustomState
 	return m.createSpaceResult, m.createSpaceErr
 }
 
@@ -580,6 +606,74 @@ func (m *testMockMatrixPort) GetBatchUnreadCounts(_ context.Context, actor domai
 	m.capturedBatchUnreadCountsActor = actor
 	m.capturedBatchUnreadCountsRoomIDs = roomIDs
 	return m.getBatchUnreadCountsRes, m.getBatchUnreadCountsErrs
+}
+
+// --- Governance operations ---
+
+type applyLadderCall struct {
+	RoomID id.RoomID
+	Class  domain.RoomClass
+	Opts   domain.LadderOptions
+}
+
+type setGovernanceStateCall struct {
+	RoomID     id.RoomID
+	Entity     *domain.EntityMarker
+	Governance *domain.GovernanceMarker
+}
+
+type sweepDevicesCall struct {
+	Idle   time.Duration
+	DryRun bool
+}
+
+func (m *testMockMatrixPort) ApplyLadder(_ context.Context, roomID id.RoomID, class domain.RoomClass, opts domain.LadderOptions, _ bool) (bool, error) {
+	m.applyLadderCalls = append(m.applyLadderCalls, applyLadderCall{RoomID: roomID, Class: class, Opts: opts})
+	return m.applyLadderChanged, m.applyLadderErr
+}
+
+func (m *testMockMatrixPort) EnsureBotAdmin(_ context.Context, roomID id.RoomID) (domain.BotPresence, error) {
+	m.ensureBotAdminCalls = append(m.ensureBotAdminCalls, roomID)
+	return m.ensureBotAdminResult, m.ensureBotAdminErr
+}
+
+func (m *testMockMatrixPort) GetRoomVersion(_ context.Context, _ id.RoomID) (string, error) {
+	if m.getRoomVersionResult == "" && m.getRoomVersionErr == nil {
+		return "10", nil
+	}
+	return m.getRoomVersionResult, m.getRoomVersionErr
+}
+
+func (m *testMockMatrixPort) SetGovernanceState(_ context.Context, roomID id.RoomID, entity *domain.EntityMarker, governance *domain.GovernanceMarker) error {
+	m.setGovernanceStateCalls = append(m.setGovernanceStateCalls, setGovernanceStateCall{RoomID: roomID, Entity: entity, Governance: governance})
+	return m.setGovernanceStateErr
+}
+
+func (m *testMockMatrixPort) RevokeActorDevices(_ context.Context, actorID uuid.UUID) ([]string, error) {
+	m.revokeActorDevicesCalls = append(m.revokeActorDevicesCalls, actorID)
+	return m.revokeActorDevicesResult, m.revokeActorDevicesErr
+}
+
+func (m *testMockMatrixPort) GetRoomGovernanceState(_ context.Context, _ id.RoomID) (*domain.RoomGovernanceState, error) {
+	if m.getRoomGovernanceStateResult != nil {
+		return m.getRoomGovernanceStateResult, m.getRoomGovernanceStateErr
+	}
+	return &domain.RoomGovernanceState{JoinRule: "invite", HistoryVisibility: "shared", GuestAccess: "forbidden"}, m.getRoomGovernanceStateErr
+}
+
+func (m *testMockMatrixPort) SetRoomAccessState(_ context.Context, roomID id.RoomID, access domain.RoomAccessState) error {
+	m.setRoomAccessStateCalls = append(m.setRoomAccessStateCalls, roomID)
+	_ = access
+	return m.setRoomAccessStateErr
+}
+
+func (m *testMockMatrixPort) EnsureDirectRoomMarked(_ context.Context, _ id.RoomID) error {
+	return nil
+}
+
+func (m *testMockMatrixPort) SweepDevices(_ context.Context, idle time.Duration, dryRun bool) (domain.SweepReport, error) {
+	m.sweepDevicesCalls = append(m.sweepDevicesCalls, sweepDevicesCall{Idle: idle, DryRun: dryRun})
+	return m.sweepDevicesResult, m.sweepDevicesErr
 }
 
 // ============================================================================

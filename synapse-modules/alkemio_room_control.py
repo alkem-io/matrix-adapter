@@ -25,19 +25,79 @@ All config values are automatically detected from the AppService with id 'alkemi
 - hs_token: AppService's hs_token
 """
 
+from __future__ import annotations
+
 import logging
 import uuid
 from typing import Optional
 
-from synapse.module_api import ModuleApi
-from synapse.module_api.errors import Codes, SynapseError
-from synapse.http.client import SimpleHttpClient
-from synapse.types import Requester
+try:  # Synapse is absent in the unit-test environment; the pure decision
+    # functions below must import without it.
+    from synapse.module_api import NOT_SPAM, ModuleApi
+    from synapse.module_api.errors import Codes, SynapseError
+    from synapse.http.client import SimpleHttpClient
+    from synapse.types import Requester
+
+    SYNAPSE_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised only by the unit tests
+    SYNAPSE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
 # Custom state event type for room visibility control
 ALKEMIO_VISIBILITY_EVENT = "io.alkemio.visibility"
+
+# Platform identity marker: its presence in current state makes a room governed
+ALKEMIO_ENTITY_EVENT = "io.alkemio.entity"
+
+# Prefix of every platform marker: writable only by the AppService bot, anywhere
+ALKEMIO_STATE_PREFIX = "io.alkemio."
+
+# Membership values an ordinary member may set on their own m.room.member state
+SELF_MEMBERSHIP_ALLOWED = ("join", "leave")
+
+
+# ============================================================================
+# Pure decision functions (contract governed-operations-authority §3).
+# No Synapse imports — unit-tested with the standard library.
+# True = allow, False = deny.
+# ============================================================================
+
+
+def evaluate_invite(inviter: str, invitee: str, is_governed: bool, bot: str) -> bool:
+    """Decide an invite: on governed rooms only the bot invites, with one
+    exception — anyone may invite the bot itself (repair rejoin)."""
+    if inviter == bot:
+        return True
+    if invitee == bot:
+        return True
+    return not is_governed
+
+
+def evaluate_event(
+    sender: str,
+    event_type: str,
+    state_key: Optional[str],
+    content: dict,
+    is_governed: bool,
+    bot: str,
+) -> bool:
+    """Decide an event: the bot is always allowed; io.alkemio.* state is
+    bot-only in EVERY room; on governed rooms every state event is denied
+    except a member's own join/leave; timeline events are always allowed."""
+    if sender == bot:
+        return True
+    if state_key is None:
+        # Timeline event (message, reaction, redaction, receipt): the power
+        # ladder governs these, not the module.
+        return True
+    if event_type.startswith(ALKEMIO_STATE_PREFIX):
+        return False
+    if not is_governed:
+        return True
+    if event_type == "m.room.member" and state_key == sender:
+        return content.get("membership") in SELF_MEMBERSHIP_ALLOWED
+    return False
 
 
 class AlkemioRoomControl:
@@ -67,10 +127,16 @@ class AlkemioRoomControl:
         self.adapter_url = detected.get("url", "http://localhost:8280")
         self.hs_token = detected.get("hs_token")
 
-        # Register third-party rules callback for room creation control
-        # This allows us to raise SynapseError with custom messages
+        # Register third-party rules callbacks: room creation control (existing)
+        # and governed-room event enforcement
         self.api.register_third_party_rules_callbacks(
             on_create_room=self.on_create_room,
+            check_event_allowed=self.check_event_allowed,
+        )
+
+        # Governed rooms: only the bot invites (exception: inviting the bot)
+        self.api.register_spam_checker_callbacks(
+            user_may_invite=self.user_may_invite,
         )
 
         # Monkey-patch SyncHandler to filter rooms based on io.alkemio.visibility
@@ -277,6 +343,56 @@ class AlkemioRoomControl:
                 "Service temporarily unavailable",
                 Codes.UNKNOWN,
             ) from e
+
+    @property
+    def bot_mxid(self) -> str:
+        """The AppService bot's full Matrix ID."""
+        return f"@{self.appservice_sender}:{self.homeserver_domain}"
+
+    async def _is_governed_room(self, room_id: str) -> bool:
+        """A room is governed iff io.alkemio.entity is in its current state."""
+        try:
+            state_storage = self.api._hs.get_storage_controllers().state
+            entity_event = await state_storage.get_current_state_event(
+                room_id, ALKEMIO_ENTITY_EVENT, ""
+            )
+            return entity_event is not None
+        except Exception as e:  # noqa: BLE001 - fail open for ungoverned rooms
+            logger.warning("Governance check failed for %s, treating as ungoverned: %s", room_id, e)
+            return False
+
+    async def user_may_invite(self, inviter: str, invitee: str, room_id: str):
+        """Spam-checker callback: deny invites on governed rooms from anyone
+        but the bot, except an invite whose invitee IS the bot (repair rejoin)."""
+        is_governed = await self._is_governed_room(room_id)
+        if evaluate_invite(inviter, invitee, is_governed, self.bot_mxid):
+            return NOT_SPAM
+        logger.info(
+            "Invite denied on governed room %s: %s -> %s", room_id, inviter, invitee
+        )
+        return Codes.FORBIDDEN
+
+    async def check_event_allowed(self, event, state_events):
+        """Third-party rules callback: enforce bot-only administration of
+        governed rooms. Timeline participation stays untouched; a member's own
+        join/leave stays allowed; io.alkemio.* state is bot-only everywhere."""
+        is_governed = (ALKEMIO_ENTITY_EVENT, "") in state_events
+        content = event.content if isinstance(event.content, dict) else dict(event.content)
+        allowed = evaluate_event(
+            event.sender,
+            event.type,
+            event.state_key if event.is_state() else None,
+            content,
+            is_governed,
+            self.bot_mxid,
+        )
+        if not allowed:
+            logger.info(
+                "State event denied on %s: sender=%s type=%s state_key=%s",
+                event.room_id, event.sender, event.type,
+                event.state_key if event.is_state() else None,
+            )
+        return allowed, None
 
     async def on_create_room(
         self,

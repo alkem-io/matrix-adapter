@@ -33,6 +33,7 @@ type mockAdminAPI struct {
 	getRoomStateResult         []json.RawMessage
 	getRoomStateErr            error
 	getStateEventContentResult map[string]interface{}
+	getStateEventContentQueue  []map[string]interface{} // consumed first, one per call
 	getStateEventContentErr    error
 	getStateEventContentCalled int
 	getCustomStateResult       map[string]map[string]interface{}
@@ -45,10 +46,21 @@ type mockAdminAPI struct {
 	getRelationsResult         []*event.Event
 	getRelationsErr            error
 	joinRoomErr                error
+	makeRoomAdminErr           error
+	getRoomVersionResult       string
+	getRoomVersionErr          error
+	listDevicesResult          []AdminDevice
+	listDevicesErr             error
+	deleteDevicesErr           error
+	listUsersResult            []AdminUser
+	listUsersNext              string
+	listUsersErr               error
 
 	// Call tracking
 	getRoomMessagesCalls  []getRoomMessagesCall
 	joinRoomCalls         []joinRoomCall
+	makeRoomAdminCalls    []joinRoomCall
+	deleteDevicesCalls    []deleteDevicesCall
 	getRelationsEventType event.Type // records the eventType filter of the last GetRelations call
 }
 
@@ -57,6 +69,11 @@ type getRoomMessagesCall struct {
 	From   string
 	Dir    string
 	Limit  int
+}
+
+type deleteDevicesCall struct {
+	UserID    id.UserID
+	DeviceIDs []string
 }
 
 type joinRoomCall struct {
@@ -86,6 +103,11 @@ func (m *mockAdminAPI) GetRoomState(_ context.Context, _ id.RoomID, _ string) ([
 
 func (m *mockAdminAPI) GetStateEventContent(_ context.Context, _ id.RoomID, _ string) (map[string]interface{}, error) {
 	m.getStateEventContentCalled++
+	if len(m.getStateEventContentQueue) > 0 {
+		result := m.getStateEventContentQueue[0]
+		m.getStateEventContentQueue = m.getStateEventContentQueue[1:]
+		return result, m.getStateEventContentErr
+	}
 	return m.getStateEventContentResult, m.getStateEventContentErr
 }
 
@@ -121,6 +143,30 @@ func (m *mockAdminAPI) GetRelations(_ context.Context, _ id.RoomID, _ id.EventID
 func (m *mockAdminAPI) JoinRoom(_ context.Context, roomID id.RoomID, userID id.UserID) error {
 	m.joinRoomCalls = append(m.joinRoomCalls, joinRoomCall{RoomID: roomID, UserID: userID})
 	return m.joinRoomErr
+}
+
+func (m *mockAdminAPI) MakeRoomAdmin(_ context.Context, roomID id.RoomID, userID id.UserID) error {
+	m.makeRoomAdminCalls = append(m.makeRoomAdminCalls, joinRoomCall{RoomID: roomID, UserID: userID})
+	return m.makeRoomAdminErr
+}
+
+func (m *mockAdminAPI) GetRoomVersion(_ context.Context, _ id.RoomID) (string, error) {
+	return m.getRoomVersionResult, m.getRoomVersionErr
+}
+
+func (m *mockAdminAPI) ListDevices(_ context.Context, _ id.UserID) ([]AdminDevice, error) {
+	return m.listDevicesResult, m.listDevicesErr
+}
+
+func (m *mockAdminAPI) DeleteDevices(_ context.Context, userID id.UserID, deviceIDs []string) error {
+	m.deleteDevicesCalls = append(m.deleteDevicesCalls, deleteDevicesCall{UserID: userID, DeviceIDs: deviceIDs})
+	return m.deleteDevicesErr
+}
+
+func (m *mockAdminAPI) ListUsers(_ context.Context, _ string, _ int) ([]AdminUser, string, error) {
+	next := m.listUsersNext
+	m.listUsersNext = "" // one-shot: the follow-up page is the last
+	return m.listUsersResult, next, m.listUsersErr
 }
 
 // ============================================================================
@@ -1508,64 +1554,186 @@ func TestGetReactionEventID_FoundInPartialChunk_IgnoresLaterPageError(t *testing
 }
 
 // ============================================================================
-// getIntentForRoom admin-join fallback (exercises admin.JoinRoom)
+// EnsureBotAdmin — ordered recovery (contract governed-operations-authority §4)
 // ============================================================================
 
-func TestAdminAPI_GetIntentForRoom_AdminJoinFallback(t *testing.T) {
-	// Scenario: bot is NOT a member and no ghost users exist.
-	// getIntentForRoom should admin-join the bot as a last resort.
-	botIntent := &mockIntentAPI{}
-	mock := &mockAdminAPI{
-		// GetRoomMembers returns members without the bot → bot not in room.
-		getRoomMembersResult: []string{"@other:test.local"},
+func newBotAdminTestAdapter(botIntent intentAPI, intents map[id.UserID]intentAPI, admin adminAPI) *MautrixAdapter {
+	if intents == nil {
+		intents = map[id.UserID]intentAPI{}
 	}
-	as := &mockAppserviceAPI{
-		botIntent:        botIntent,
-		intents:          map[id.UserID]intentAPI{},
-		botMXID:          "@bot:test.local",
-		homeserverDomain: "test.local",
-	}
-	a := &MautrixAdapter{
-		admin:    mock,
-		as:       as,
+	return &MautrixAdapter{
+		admin: admin,
+		as: &mockAppserviceAPI{
+			botIntent:        botIntent,
+			intents:          intents,
+			botMXID:          "@bot:test.local",
+			homeserverDomain: "test.local",
+		},
 		idMapper: domain.NewIDMapper("test.local"),
 		logger:   &adapterMockLogger{},
-	}
-	_ = a.getIntentForRoom(context.Background(), "!room:test.local")
-	if len(mock.joinRoomCalls) != 1 {
-		t.Fatalf("expected 1 admin JoinRoom call, got %d", len(mock.joinRoomCalls))
-	}
-	if mock.joinRoomCalls[0].RoomID != "!room:test.local" {
-		t.Errorf("expected room '!room:test.local', got %q", mock.joinRoomCalls[0].RoomID)
-	}
-	if mock.joinRoomCalls[0].UserID != "@bot:test.local" {
-		t.Errorf("expected user '@bot:test.local', got %q", mock.joinRoomCalls[0].UserID)
 	}
 }
 
-func TestAdminAPI_GetIntentForRoom_AdminJoinError(t *testing.T) {
-	// Scenario: admin-join fails — getIntentForRoom should still return bot intent
-	// without panicking.
+func botAt100() map[string]interface{} {
+	return map[string]interface{}{
+		"users": map[string]interface{}{"@bot:test.local": float64(100)},
+	}
+}
+
+func TestBotRejoin_Order(t *testing.T) {
+	t.Run("already joined and powered: no join, no promotion", botRejoinAlreadyJoined)
+	t.Run("not joined: direct join first, no ghost invite when it works", botRejoinDirectJoin)
+	t.Run("direct join fails: one impersonated ghost invite, then join", botRejoinGhostInvite)
+	t.Run("empty room: unresolved bot-unreachable, nothing promoted", botRejoinEmptyRoom)
+}
+
+func botRejoinAlreadyJoined(t *testing.T) {
+	{
+		botIntent := &mockIntentAPI{}
+		admin := &mockAdminAPI{
+			getRoomMemberIDsResult:     []id.UserID{"@bot:test.local"},
+			getStateEventContentResult: botAt100(),
+		}
+		a := newBotAdminTestAdapter(botIntent, nil, admin)
+
+		presence, err := a.EnsureBotAdmin(context.Background(), "!room:test.local")
+		if err != nil {
+			t.Fatalf("EnsureBotAdmin: %v", err)
+		}
+		if !presence.Joined || !presence.PowerOK || presence.UnresolvedReason != "" {
+			t.Errorf("presence = %+v, want joined+powered", presence)
+		}
+		if botIntent.ensureJoinedCalled != 0 {
+			t.Errorf("EnsureJoined called %d times, want 0 (already joined)", botIntent.ensureJoinedCalled)
+		}
+		if len(admin.makeRoomAdminCalls) != 0 {
+			t.Errorf("MakeRoomAdmin called %d times, want 0 (already at 100)", len(admin.makeRoomAdminCalls))
+		}
+	}
+}
+
+func botRejoinDirectJoin(t *testing.T) {
+	{
+		botIntent := &mockIntentAPI{}
+		ghost := id.UserID("@550e8400-e29b-41d4-a716-446655440000:test.local")
+		ghostIntent := &mockIntentAPI{}
+		admin := &mockAdminAPI{
+			getRoomMemberIDsResult:     []id.UserID{ghost},
+			getStateEventContentResult: botAt100(),
+		}
+		a := newBotAdminTestAdapter(botIntent, map[id.UserID]intentAPI{ghost: ghostIntent}, admin)
+
+		presence, err := a.EnsureBotAdmin(context.Background(), "!room:test.local")
+		if err != nil {
+			t.Fatalf("EnsureBotAdmin: %v", err)
+		}
+		if !presence.Joined || !presence.PowerOK {
+			t.Errorf("presence = %+v, want joined+powered", presence)
+		}
+		if botIntent.ensureJoinedCalled != 1 {
+			t.Errorf("EnsureJoined called %d times, want 1", botIntent.ensureJoinedCalled)
+		}
+		if ghostIntent.inviteUserCalled != 0 {
+			t.Errorf("ghost invite called %d times, want 0 (direct join worked)", ghostIntent.inviteUserCalled)
+		}
+	}
+}
+
+func botRejoinGhostInvite(t *testing.T) {
+	{
+		botIntent := &mockIntentAPI{
+			ensureJoinedErrQueue: []error{errors.New("M_FORBIDDEN: not invited")},
+		}
+		ghost := id.UserID("@550e8400-e29b-41d4-a716-446655440000:test.local")
+		ghostIntent := &mockIntentAPI{}
+		admin := &mockAdminAPI{
+			getRoomMemberIDsResult:     []id.UserID{ghost},
+			getStateEventContentResult: botAt100(),
+		}
+		a := newBotAdminTestAdapter(botIntent, map[id.UserID]intentAPI{ghost: ghostIntent}, admin)
+
+		presence, err := a.EnsureBotAdmin(context.Background(), "!room:test.local")
+		if err != nil {
+			t.Fatalf("EnsureBotAdmin: %v", err)
+		}
+		if !presence.Joined || !presence.PowerOK {
+			t.Errorf("presence = %+v, want joined+powered", presence)
+		}
+		if ghostIntent.inviteUserCalled != 1 {
+			t.Errorf("ghost invite called %d times, want exactly 1", ghostIntent.inviteUserCalled)
+		}
+		if botIntent.ensureJoinedCalled != 2 {
+			t.Errorf("EnsureJoined called %d times, want 2 (fail, then after invite)", botIntent.ensureJoinedCalled)
+		}
+	}
+}
+
+func botRejoinEmptyRoom(t *testing.T) {
+	{
+		botIntent := &mockIntentAPI{
+			ensureJoinedErr: errors.New("M_FORBIDDEN"),
+		}
+		admin := &mockAdminAPI{
+			getRoomMemberIDsResult: []id.UserID{},
+		}
+		a := newBotAdminTestAdapter(botIntent, nil, admin)
+
+		presence, err := a.EnsureBotAdmin(context.Background(), "!room:test.local")
+		if err != nil {
+			t.Fatalf("EnsureBotAdmin: %v", err)
+		}
+		if presence.Joined || presence.UnresolvedReason != "bot-unreachable" {
+			t.Errorf("presence = %+v, want unresolved bot-unreachable", presence)
+		}
+		if len(admin.makeRoomAdminCalls) != 0 {
+			t.Errorf("MakeRoomAdmin must not run when the bot cannot join")
+		}
+	}
+}
+
+func TestEnsureBotAdmin_MakeRoomAdmin_PromotesUnderpoweredBot(t *testing.T) {
 	botIntent := &mockIntentAPI{}
-	mock := &mockAdminAPI{
-		getRoomMembersResult: []string{},
-		joinRoomErr:          errors.New("forbidden"),
+	admin := &mockAdminAPI{
+		getRoomMemberIDsResult: []id.UserID{"@bot:test.local"},
+		getStateEventContentQueue: []map[string]interface{}{
+			{"users": map[string]interface{}{"@bot:test.local": float64(50)}}, // before promotion
+			botAt100(), // after make_room_admin
+		},
 	}
-	as := &mockAppserviceAPI{
-		botIntent:        botIntent,
-		intents:          map[id.UserID]intentAPI{},
-		botMXID:          "@bot:test.local",
-		homeserverDomain: "test.local",
+	a := newBotAdminTestAdapter(botIntent, nil, admin)
+
+	presence, err := a.EnsureBotAdmin(context.Background(), "!room:test.local")
+	if err != nil {
+		t.Fatalf("EnsureBotAdmin: %v", err)
 	}
-	a := &MautrixAdapter{
-		admin:    mock,
-		as:       as,
-		idMapper: domain.NewIDMapper("test.local"),
-		logger:   &adapterMockLogger{},
+	if len(admin.makeRoomAdminCalls) != 1 {
+		t.Fatalf("MakeRoomAdmin called %d times, want 1", len(admin.makeRoomAdminCalls))
 	}
-	intent := a.getIntentForRoom(context.Background(), "!room:test.local")
-	if intent == nil {
-		t.Fatal("expected non-nil intent even when admin join fails")
+	if admin.makeRoomAdminCalls[0].UserID != "@bot:test.local" {
+		t.Errorf("promoted %q, want the bot", admin.makeRoomAdminCalls[0].UserID)
+	}
+	if !presence.PowerOK {
+		t.Errorf("presence = %+v, want PowerOK after promotion", presence)
+	}
+}
+
+func TestEnsureBotAdmin_PromotionIneffective_Unresolved(t *testing.T) {
+	botIntent := &mockIntentAPI{}
+	admin := &mockAdminAPI{
+		getRoomMemberIDsResult: []id.UserID{"@bot:test.local"},
+		// Static 50 — promotion appears to succeed but power never reaches 100.
+		getStateEventContentResult: map[string]interface{}{
+			"users": map[string]interface{}{"@bot:test.local": float64(50)},
+		},
+	}
+	a := newBotAdminTestAdapter(botIntent, nil, admin)
+
+	presence, err := a.EnsureBotAdmin(context.Background(), "!room:test.local")
+	if err != nil {
+		t.Fatalf("EnsureBotAdmin: %v", err)
+	}
+	if presence.PowerOK || presence.UnresolvedReason != "bot-unreachable" {
+		t.Errorf("presence = %+v, want unresolved bot-unreachable", presence)
 	}
 }
 

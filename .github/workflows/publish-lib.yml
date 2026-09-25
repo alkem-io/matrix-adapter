@@ -38,6 +38,9 @@ jobs:
         with:
           version: 10
 
+      - name: Install apispec (make generate needs it for the openapi target)
+        run: go install github.com/antst/go-apispec/cmd/apispec@v0.4.16
+
       - name: Generate Library
         # Only the TypeScript artifacts are needed to publish the library:
         # generate-go runs tygo for lib/src/dto/generated.ts, generate-events
