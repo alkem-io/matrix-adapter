@@ -1497,13 +1497,24 @@ func TestHandleBatchRemoveMember_Success(t *testing.T) {
 		t.Errorf("expected 1 result, got %d", len(resp.Results))
 	}
 
-	// Verify the handler correctly parsed and forwarded DTO fields
-	if mock.capturedKickUserRoomID != "!room1:test" {
-		t.Errorf("expected kick room ID '!room1:test', got %q", mock.capturedKickUserRoomID)
+	// Removal must go through the removed member's own ghost leaving the
+	// room, never a kick: all room members share the same power level, so a
+	// kick attempted by another intent (bot or ghost) is rejected by Synapse.
+	if mock.kickUserCalled != 0 {
+		t.Errorf("expected KickUser never to be called, got %d calls", mock.kickUserCalled)
+	}
+	if mock.leaveRoomAsMemberCalled != 1 {
+		t.Fatalf("expected LeaveRoomAsMember to be called once, got %d calls", mock.leaveRoomAsMemberCalled)
+	}
+	if mock.capturedLeaveRoomAsMemberRoomID != "!room1:test" {
+		t.Errorf("expected leave room ID '!room1:test', got %q", mock.capturedLeaveRoomAsMemberRoomID)
 	}
 	expectedUserID := id.NewUserID(actorID.String(), testDomain)
-	if mock.capturedKickUserUserID != expectedUserID {
-		t.Errorf("expected kick user ID %q, got %q", expectedUserID, mock.capturedKickUserUserID)
+	if mock.capturedLeaveRoomAsMemberUserID != expectedUserID {
+		t.Errorf("expected leave user ID %q, got %q", expectedUserID, mock.capturedLeaveRoomAsMemberUserID)
+	}
+	if mock.capturedLeaveRoomAsMemberReason != "no longer relevant" {
+		t.Errorf("expected leave reason %q, got %q", "no longer relevant", mock.capturedLeaveRoomAsMemberReason)
 	}
 }
 

@@ -667,8 +667,11 @@ func (h *RoomHandler) HandleBatchRemoveMember(ctx context.Context, payload []byt
 			continue
 		}
 
-		// Kick user from room
-		err = h.matrix.KickUser(ctx, roomID, actorMatrixID, req.Reason)
+		// Make the removed member's own ghost leave the room. All members
+		// share the same power level, so a kick attempted by another intent
+		// (bot or ghost) is rejected by Synapse; leaving via the member's own
+		// identity always succeeds and requires no elevated power level.
+		err = h.matrix.LeaveRoomAsMember(ctx, roomID, actorMatrixID, req.Reason)
 		results[alkemioRoomID.String()] = MapToBatchResult(err)
 	}
 

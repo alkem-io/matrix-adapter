@@ -108,7 +108,12 @@ type testMockMatrixPort struct {
 	deleteAliasErr error
 
 	// KickUser
-	kickUserErr error
+	kickUserErr    error
+	kickUserCalled int
+
+	// LeaveRoomAsMember
+	leaveRoomAsMemberErr    error
+	leaveRoomAsMemberCalled int
 
 	// SendMessage
 	sendMessageResult id.EventID
@@ -242,6 +247,11 @@ type testMockMatrixPort struct {
 	// KickUser
 	capturedKickUserRoomID id.RoomID
 	capturedKickUserUserID id.UserID
+
+	// LeaveRoomAsMember
+	capturedLeaveRoomAsMemberRoomID id.RoomID
+	capturedLeaveRoomAsMemberUserID id.UserID
+	capturedLeaveRoomAsMemberReason string
 
 	// RedactEvent
 	capturedRedactEventRoomID id.RoomID
@@ -396,9 +406,18 @@ func (m *testMockMatrixPort) DeleteAlias(_ context.Context, _ string) error {
 }
 
 func (m *testMockMatrixPort) KickUser(_ context.Context, roomID id.RoomID, userID id.UserID, _ string) error {
+	m.kickUserCalled++
 	m.capturedKickUserRoomID = roomID
 	m.capturedKickUserUserID = userID
 	return m.kickUserErr
+}
+
+func (m *testMockMatrixPort) LeaveRoomAsMember(_ context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
+	m.leaveRoomAsMemberCalled++
+	m.capturedLeaveRoomAsMemberRoomID = roomID
+	m.capturedLeaveRoomAsMemberUserID = userID
+	m.capturedLeaveRoomAsMemberReason = reason
+	return m.leaveRoomAsMemberErr
 }
 
 func (m *testMockMatrixPort) SendMessage(_ context.Context, roomID id.RoomID, sender domain.Actor, content string, attachments []domain.Attachment) (*domain.Message, error) {

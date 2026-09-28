@@ -1580,6 +1580,19 @@ func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID 
 	return nil
 }
 
+// LeaveRoomAsMember makes userID's own ghost leave a room, instead of being
+// kicked by another intent. It never touches the bot's membership — no
+// admin-join, no getIntentForRoom fallback — since the user always has
+// standing to leave a room they already belong to.
+func (m *MautrixAdapter) LeaveRoomAsMember(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
+	intent := m.as.Intent(userID)
+	_, err := intent.LeaveRoom(ctx, roomID, &mautrix.ReqLeave{Reason: reason})
+	if err != nil {
+		return fmt.Errorf("failed to leave room %s as user %s: %w", roomID, userID, err)
+	}
+	return nil
+}
+
 // GetRoomMessages retrieves all messages from a room, including their reactions.
 func (m *MautrixAdapter) GetRoomMessages(ctx context.Context, roomID id.RoomID) ([]domain.Message, error) {
 	// Get messages using admin API — works regardless of bot membership

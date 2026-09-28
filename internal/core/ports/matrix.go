@@ -50,6 +50,12 @@ type MatrixPort interface {
 	DeleteAlias(ctx context.Context, alias string) error
 	// KickUser removes a user from a room with the specified reason.
 	KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error
+	// LeaveRoomAsMember makes a room member leave via their own Matrix ghost,
+	// rather than being kicked by another user. All room members share the
+	// same power level, so a kick attempted by a ghost or an admin-joined bot
+	// that is not the room's power-level holder is rejected by Synapse; a
+	// member always has the right to leave a room they belong to.
+	LeaveRoomAsMember(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error
 
 	// SendMessage publishes one text or media event and returns its content.
 	SendMessage(ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment) (*domain.Message, error)

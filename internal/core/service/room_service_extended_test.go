@@ -49,6 +49,10 @@ type mockExtendedMatrixPort struct {
 	kickUserCalled int
 	kickUserErr    error
 
+	// LeaveRoomAsMember
+	leaveRoomAsMemberCalled int
+	leaveRoomAsMemberErr    error
+
 	// SendMessage
 	sendMessageResult id.EventID
 	sendMessageErr    error
@@ -128,6 +132,11 @@ func (m *mockExtendedMatrixPort) DeleteAlias(_ context.Context, _ string) error 
 func (m *mockExtendedMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
 	m.kickUserCalled++
 	return m.kickUserErr
+}
+
+func (m *mockExtendedMatrixPort) LeaveRoomAsMember(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
+	m.leaveRoomAsMemberCalled++
+	return m.leaveRoomAsMemberErr
 }
 
 func (m *mockExtendedMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (*domain.Message, error) {
