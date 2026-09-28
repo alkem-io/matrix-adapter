@@ -27,7 +27,9 @@ type mockAdminAPI struct {
 	listRoomsResult            []AdminRoom
 	listRoomsErr               error
 	getRoomMembersResult       []string
+	getRoomMembersResults      [][]string // per-call results; falls back to getRoomMembersResult
 	getRoomMembersErr          error
+	getRoomMembersCalls        int
 	getRoomMemberIDsResult     []id.UserID
 	getRoomMemberIDsErr        error
 	getRoomStateResult         []json.RawMessage
@@ -73,6 +75,11 @@ func (m *mockAdminAPI) ListRooms(_ context.Context, _ int) ([]AdminRoom, error) 
 }
 
 func (m *mockAdminAPI) GetRoomMembers(_ context.Context, _ id.RoomID) ([]string, error) {
+	callIndex := m.getRoomMembersCalls
+	m.getRoomMembersCalls++
+	if callIndex < len(m.getRoomMembersResults) {
+		return m.getRoomMembersResults[callIndex], m.getRoomMembersErr
+	}
 	return m.getRoomMembersResult, m.getRoomMembersErr
 }
 

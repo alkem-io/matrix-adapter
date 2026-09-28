@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net"
 	"net/http"
@@ -1565,32 +1566,163 @@ func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
 	return nil
 }
 
-// KickUser kicks a user from a room.
+// KickUser removes a user from a room.
+//
+// Synapse accepts a kick only from a sender whose power level is at least the
+// room's kick level AND strictly above the target's, so the kick is sent by
+// an intent that outranks the target: the bot when it is joined or would be
+// once admin-joined (it holds PL 100 in rooms it created), otherwise a joined
+// ghost ranked above the target.
+//
+// Rooms reconciled from Element give every member, the creator included, the
+// same power level, so nobody can kick there. In that case a target that is
+// still joined, invited or knocking leaves the room through its own ghost; a
+// target with no such membership is already out of the room and nothing is
+// sent.
 func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
-	intent := m.getIntentForRoom(ctx, roomID)
-	_, err := intent.KickUser(
-		ctx, roomID, &mautrix.ReqKickUser{
-			UserID: userID,
-			Reason: reason,
-		},
-	)
+	intent, adminJoinedBot, err := m.getKickerIntent(ctx, roomID, userID)
 	if err != nil {
 		return fmt.Errorf("failed to kick user %s from room %s: %w", userID, roomID, err)
+	}
+	if intent != nil {
+		_, err = intent.KickUser(
+			ctx, roomID, &mautrix.ReqKickUser{
+				UserID: userID,
+				Reason: reason,
+			},
+		)
+		if adminJoinedBot {
+			// The bot joined only to act; don't leave it visible as a member.
+			m.leaveBotIfNotNeeded(ctx, roomID)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to kick user %s from room %s: %w", userID, roomID, err)
+		}
+		return nil
+	}
+	return m.leaveAsTarget(ctx, roomID, userID)
+}
+
+// getKickerIntent returns an intent whose power level lets it kick target, or
+// nil when no user can. adminJoined reports whether the bot was admin-joined
+// to act, so the caller can have it leave again.
+func (m *MautrixAdapter) getKickerIntent(ctx context.Context, roomID id.RoomID, target id.UserID) (intent intentAPI, adminJoined bool, err error) {
+	pls, err := m.admin.GetStateEventContent(ctx, roomID, "m.room.power_levels")
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to read power levels: %w", err)
+	}
+	members, err := m.admin.GetRoomMembers(ctx, roomID)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to read room members: %w", err)
+	}
+
+	required := math.Max(plNumber(pls, "kick", 50), userPowerLevel(pls, target)+1)
+	botMXID := m.as.BotMXID()
+	botCanKick := userPowerLevel(pls, botMXID) >= required
+
+	var bestGhost id.UserID
+	bestPL := math.Inf(-1)
+	for _, member := range members {
+		userID := id.UserID(member)
+		if userID == botMXID {
+			if botCanKick {
+				return m.as.BotIntent(), false, nil
+			}
+			continue
+		}
+		if userID == target || m.idMapper.AlkemioActorID(userID) == uuid.Nil {
+			continue
+		}
+		if pl := userPowerLevel(pls, userID); pl >= required && pl > bestPL {
+			bestGhost, bestPL = userID, pl
+		}
+	}
+	if bestGhost != "" {
+		return m.as.Intent(bestGhost), false, nil
+	}
+	if !botCanKick {
+		return nil, false, nil
+	}
+
+	if err := m.admin.JoinRoom(ctx, roomID, botMXID); err != nil {
+		return nil, false, fmt.Errorf("failed to admin-join bot: %w", err)
+	}
+	// Sync the StateStore so the bot's intent sees itself as joined and
+	// doesn't send a duplicate join event.
+	if err := m.as.SetMembership(ctx, roomID, botMXID, event.MembershipJoin); err != nil {
+		m.logger.Error("getKickerIntent: failed to sync StateStore after admin join",
+			"room_id", roomID, "error", err)
+	}
+	return m.as.BotIntent(), true, nil
+}
+
+// leaveAsTarget removes target from a room in which nobody outranks it, by
+// having target's own ghost leave. The operator's reason is not attached: it
+// would be recorded as the member's own statement.
+func (m *MautrixAdapter) leaveAsTarget(ctx context.Context, roomID id.RoomID, target id.UserID) error {
+	membership, err := m.getMembership(ctx, roomID, target)
+	if err != nil {
+		return fmt.Errorf("failed to remove user %s from room %s: %w", target, roomID, err)
+	}
+	switch membership {
+	case event.MembershipJoin, event.MembershipInvite, event.MembershipKnock:
+	default:
+		m.logger.Debug("KickUser: target has no membership to remove",
+			"room_id", roomID, "user_id", target, "membership", membership)
+		return nil
+	}
+
+	intent := m.as.Intent(target)
+	if err := intent.EnsureRegistered(ctx); err != nil {
+		return fmt.Errorf("failed to ensure user %s registered: %w", target, err)
+	}
+	if _, err := intent.LeaveRoom(ctx, roomID); err != nil {
+		return fmt.Errorf("failed to leave room %s as user %s: %w", roomID, target, err)
 	}
 	return nil
 }
 
-// LeaveRoomAsMember makes userID's own ghost leave a room, instead of being
-// kicked by another intent. It never touches the bot's membership — no
-// admin-join, no getIntentForRoom fallback — since the user always has
-// standing to leave a room they already belong to.
-func (m *MautrixAdapter) LeaveRoomAsMember(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
-	intent := m.as.Intent(userID)
-	_, err := intent.LeaveRoom(ctx, roomID, &mautrix.ReqLeave{Reason: reason})
+// getMembership returns userID's current membership in a room, or "" when
+// the room holds no m.room.member event for them.
+func (m *MautrixAdapter) getMembership(ctx context.Context, roomID id.RoomID, userID id.UserID) (event.Membership, error) {
+	events, err := m.admin.GetRoomState(ctx, roomID, "m.room.member")
 	if err != nil {
-		return fmt.Errorf("failed to leave room %s as user %s: %w", roomID, userID, err)
+		return "", fmt.Errorf("failed to read room memberships: %w", err)
 	}
-	return nil
+	for _, raw := range events {
+		var evt struct {
+			StateKey string `json:"state_key"`
+			Content  struct {
+				Membership event.Membership `json:"membership"`
+			} `json:"content"`
+		}
+		if err := json.Unmarshal(raw, &evt); err != nil {
+			continue
+		}
+		if evt.StateKey == userID.String() {
+			return evt.Content.Membership, nil
+		}
+	}
+	return "", nil
+}
+
+// userPowerLevel returns userID's level from m.room.power_levels content,
+// falling back to users_default (0 when absent, per the spec).
+func userPowerLevel(pls map[string]interface{}, userID id.UserID) float64 {
+	if users, ok := pls["users"].(map[string]interface{}); ok {
+		if pl, ok := users[userID.String()].(float64); ok {
+			return pl
+		}
+	}
+	return plNumber(pls, "users_default", 0)
+}
+
+// plNumber reads a numeric m.room.power_levels field, or def when absent.
+func plNumber(pls map[string]interface{}, key string, def float64) float64 {
+	if v, ok := pls[key].(float64); ok {
+		return v
+	}
+	return def
 }
 
 // GetRoomMessages retrieves all messages from a room, including their reactions.

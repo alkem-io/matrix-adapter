@@ -3,6 +3,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -1497,25 +1498,43 @@ func TestHandleBatchRemoveMember_Success(t *testing.T) {
 		t.Errorf("expected 1 result, got %d", len(resp.Results))
 	}
 
-	// Removal must go through the removed member's own ghost leaving the
-	// room, never a kick: all room members share the same power level, so a
-	// kick attempted by another intent (bot or ghost) is rejected by Synapse.
-	if mock.kickUserCalled != 0 {
-		t.Errorf("expected KickUser never to be called, got %d calls", mock.kickUserCalled)
-	}
-	if mock.leaveRoomAsMemberCalled != 1 {
-		t.Fatalf("expected LeaveRoomAsMember to be called once, got %d calls", mock.leaveRoomAsMemberCalled)
-	}
-	if mock.capturedLeaveRoomAsMemberRoomID != "!room1:test" {
-		t.Errorf("expected leave room ID '!room1:test', got %q", mock.capturedLeaveRoomAsMemberRoomID)
+	// Verify the handler correctly parsed and forwarded DTO fields
+	if mock.capturedKickUserRoomID != "!room1:test" {
+		t.Errorf("expected kick room ID '!room1:test', got %q", mock.capturedKickUserRoomID)
 	}
 	expectedUserID := id.NewUserID(actorID.String(), testDomain)
-	if mock.capturedLeaveRoomAsMemberUserID != expectedUserID {
-		t.Errorf("expected leave user ID %q, got %q", expectedUserID, mock.capturedLeaveRoomAsMemberUserID)
+	if mock.capturedKickUserUserID != expectedUserID {
+		t.Errorf("expected kick user ID %q, got %q", expectedUserID, mock.capturedKickUserUserID)
 	}
-	if mock.capturedLeaveRoomAsMemberReason != "no longer relevant" {
-		t.Errorf("expected leave reason %q, got %q", "no longer relevant", mock.capturedLeaveRoomAsMemberReason)
+}
+
+// A rejected removal must reach the server as a per-room failure, never as a
+// success: the server relies on it to detect a removal that did not happen.
+func TestHandleBatchRemoveMember_RemovalRejected(t *testing.T) {
+	roomID1 := uuid.New()
+	mock := &testMockMatrixPort{
+		resolveAliasResult: "!room1:test",
+		kickUserErr:        errors.New("failed to kick user: M_FORBIDDEN: not in room"),
 	}
+	h := testRoomHandler(mock)
+
+	payload := mustMarshal(t, dto.BatchRemoveMemberRequest{
+		ActorID:        dto.AlkemioActorID(uuid.New()),
+		AlkemioRoomIDs: []dto.AlkemioRoomID{dto.AlkemioRoomID(roomID1)},
+	})
+
+	result, err := h.HandleBatchRemoveMember(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertSuccess(t, result)
+
+	resp := result.(dto.BatchRemoveMemberResponse)
+	roomResult, ok := resp.Results[roomID1.String()]
+	if !ok {
+		t.Fatalf("expected a result for room %s, got %+v", roomID1, resp.Results)
+	}
+	assertErrorCode(t, roomResult, dto.ErrCodeNotAllowed)
 }
 
 func TestHandleBatchRemoveMember_InvalidJSON(t *testing.T) {

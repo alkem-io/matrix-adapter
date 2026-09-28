@@ -885,36 +885,243 @@ func TestDeleteAlias_Error(t *testing.T) {
 // KickUser
 // ============================================================================
 
-func TestKickUser_Success(t *testing.T) {
+// kickTestGhost is a third ghost for kick tests (testActorID/testActorID2 are the others).
+var kickTestGhost = uuid.MustParse("770e8400-e29b-41d4-a716-446655440002")
+
+// botCreatedRoomPLs mirrors a room the bot created: the bot holds PL 100 as
+// creator, every other member gets users_default 50.
+func botCreatedRoomPLs() map[string]interface{} {
+	return map[string]interface{}{
+		"users":         map[string]interface{}{"@bot:test.local": float64(100)},
+		"users_default": float64(50),
+		"kick":          float64(50),
+	}
+}
+
+// reconciledRoomPLs mirrors a room reconciled from Element: the ghost creator
+// is set to 50 like everybody else, so no user outranks another.
+func reconciledRoomPLs(creator id.UserID) map[string]interface{} {
+	return map[string]interface{}{
+		"users":         map[string]interface{}{creator.String(): float64(50)},
+		"users_default": float64(50),
+	}
+}
+
+func memberStateEvent(t *testing.T, userID id.UserID, membership event.Membership) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(map[string]interface{}{
+		"type":      "m.room.member",
+		"state_key": userID.String(),
+		"content":   map[string]interface{}{"membership": membership},
+	})
+	require.NoError(t, err)
+	return raw
+}
+
+func TestKickUser_BotJoinedAndOutranksTarget(t *testing.T) {
+	target := expectedUserID(testActorID)
 	botIntent := &mockIntentAPI{}
 	admin := &mockAdminAPI{
-		// Bot is a member of the room
-		getRoomMembersResult: []string{"@bot:test.local", "@user:test.local"},
+		getRoomMembersResult:       []string{"@bot:test.local", target.String()},
+		getStateEventContentResult: botCreatedRoomPLs(),
 	}
-	as := newMockAS(botIntent, nil)
-	a := newFullTestAdapter(as, admin)
+	a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
 
-	err := a.KickUser(context.Background(), "!room:test.local", "@baduser:test.local", "rule violation")
+	err := a.KickUser(context.Background(), "!room:test.local", target, "rule violation")
 	require.NoError(t, err)
 	assert.Equal(t, 1, botIntent.kickUserCalled)
 	assert.Equal(t, id.RoomID("!room:test.local"), botIntent.lastKickUserRoomID)
-	assert.Equal(t, id.UserID("@baduser:test.local"), botIntent.lastKickUserReq.UserID)
+	assert.Equal(t, target, botIntent.lastKickUserReq.UserID)
 	assert.Equal(t, "rule violation", botIntent.lastKickUserReq.Reason)
+	assert.Empty(t, admin.joinRoomCalls, "bot already joined — no admin-join")
 }
 
 func TestKickUser_Error(t *testing.T) {
-	botIntent := &mockIntentAPI{
-		kickUserErr: errors.New("kick failed"),
-	}
+	target := expectedUserID(testActorID)
+	botIntent := &mockIntentAPI{kickUserErr: errors.New("kick failed")}
 	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
+		getRoomMembersResult:       []string{"@bot:test.local", target.String()},
+		getStateEventContentResult: botCreatedRoomPLs(),
 	}
-	as := newMockAS(botIntent, nil)
-	a := newFullTestAdapter(as, admin)
+	a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
 
-	err := a.KickUser(context.Background(), "!room:test.local", "@user:test.local", "reason")
+	err := a.KickUser(context.Background(), "!room:test.local", target, "reason")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to kick user")
+}
+
+// A same-rank ghost cannot kick (Synapse needs sender PL > target PL). With
+// the bot gone from a room it created, it is admin-joined to kick, then
+// leaves again so it is not left visible as a member.
+func TestKickUser_SameRankGhostsOnly_AdminJoinsBotToKick(t *testing.T) {
+	ghostA := expectedUserID(testActorID)
+	target := expectedUserID(testActorID2)
+	botIntent := &mockIntentAPI{}
+	ghostIntent := &mockIntentAPI{}
+	targetIntent := &mockIntentAPI{}
+	admin := &mockAdminAPI{
+		getRoomMembersResults: [][]string{
+			{ghostA.String(), target.String()},   // kicker selection
+			{"@bot:test.local", ghostA.String()}, // leaveBotIfNotNeeded
+		},
+		getStateEventContentResult: botCreatedRoomPLs(),
+	}
+	as := newMockAS(botIntent, map[id.UserID]intentAPI{ghostA: ghostIntent, target: targetIntent})
+	a := newFullTestAdapter(as, admin)
+
+	err := a.KickUser(context.Background(), "!room:test.local", target, "room deleted")
+	require.NoError(t, err)
+	require.Len(t, admin.joinRoomCalls, 1)
+	assert.Equal(t, id.UserID("@bot:test.local"), admin.joinRoomCalls[0].UserID)
+	assert.Equal(t, 1, botIntent.kickUserCalled)
+	assert.Equal(t, target, botIntent.lastKickUserReq.UserID)
+	assert.Equal(t, 0, ghostIntent.kickUserCalled, "same-rank ghost must not be picked as kicker")
+	assert.Equal(t, 0, targetIntent.leaveRoomCalled)
+	assert.Equal(t, 1, botIntent.leaveRoomCalled, "admin-joined bot leaves after kicking")
+}
+
+func TestKickUser_AdminJoinedBotLeavesEvenWhenKickFails(t *testing.T) {
+	ghostA := expectedUserID(testActorID)
+	target := expectedUserID(testActorID2)
+	botIntent := &mockIntentAPI{kickUserErr: errors.New("kick failed")}
+	admin := &mockAdminAPI{
+		getRoomMembersResults: [][]string{
+			{ghostA.String(), target.String()},
+			{"@bot:test.local", ghostA.String(), target.String()},
+		},
+		getStateEventContentResult: botCreatedRoomPLs(),
+	}
+	as := newMockAS(botIntent, map[id.UserID]intentAPI{ghostA: &mockIntentAPI{}})
+	a := newFullTestAdapter(as, admin)
+
+	err := a.KickUser(context.Background(), "!room:test.local", target, "reason")
+	require.Error(t, err)
+	assert.Equal(t, 1, botIntent.leaveRoomCalled)
+}
+
+func TestKickUser_HigherRankedGhostKicks(t *testing.T) {
+	moderator := expectedUserID(testActorID)
+	target := expectedUserID(testActorID2)
+	botIntent := &mockIntentAPI{}
+	moderatorIntent := &mockIntentAPI{}
+	pls := botCreatedRoomPLs()
+	pls["users"].(map[string]interface{})[moderator.String()] = float64(100)
+	admin := &mockAdminAPI{
+		getRoomMembersResult:       []string{moderator.String(), target.String()},
+		getStateEventContentResult: pls,
+	}
+	as := newMockAS(botIntent, map[id.UserID]intentAPI{moderator: moderatorIntent})
+	a := newFullTestAdapter(as, admin)
+
+	err := a.KickUser(context.Background(), "!room:test.local", target, "reason")
+	require.NoError(t, err)
+	assert.Equal(t, 1, moderatorIntent.kickUserCalled)
+	assert.Equal(t, target, moderatorIntent.lastKickUserReq.UserID)
+	assert.Equal(t, 0, botIntent.kickUserCalled)
+	assert.Empty(t, admin.joinRoomCalls)
+}
+
+// In a reconciled room nobody outranks the target, so its own ghost leaves —
+// not the bot and not another member.
+func TestKickUser_NobodyOutranksTarget_TargetLeaves(t *testing.T) {
+	for _, membership := range []event.Membership{event.MembershipJoin, event.MembershipInvite, event.MembershipKnock} {
+		t.Run(string(membership), func(t *testing.T) {
+			creator := expectedUserID(testActorID)
+			other := expectedUserID(kickTestGhost)
+			target := expectedUserID(testActorID2)
+			botIntent := &mockIntentAPI{}
+			creatorIntent := &mockIntentAPI{}
+			otherIntent := &mockIntentAPI{}
+			targetIntent := &mockIntentAPI{}
+			admin := &mockAdminAPI{
+				getRoomMembersResult:       []string{creator.String(), other.String(), target.String()},
+				getStateEventContentResult: reconciledRoomPLs(creator),
+				getRoomStateResult: []json.RawMessage{
+					memberStateEvent(t, creator, event.MembershipJoin),
+					memberStateEvent(t, target, membership),
+				},
+			}
+			as := newMockAS(botIntent, map[id.UserID]intentAPI{
+				creator: creatorIntent, other: otherIntent, target: targetIntent,
+			})
+			a := newFullTestAdapter(as, admin)
+
+			err := a.KickUser(context.Background(), "!room:test.local", target, "removed")
+			require.NoError(t, err)
+			assert.Equal(t, 1, targetIntent.ensureRegisteredCalled)
+			assert.Equal(t, 1, targetIntent.leaveRoomCalled)
+			assert.Equal(t, id.RoomID("!room:test.local"), targetIntent.lastLeaveRoomID)
+			for _, other := range []*mockIntentAPI{botIntent, creatorIntent, otherIntent} {
+				assert.Equal(t, 0, other.kickUserCalled)
+				assert.Equal(t, 0, other.leaveRoomCalled)
+			}
+			assert.Empty(t, admin.joinRoomCalls, "bot cannot outrank anyone here — no admin-join")
+		})
+	}
+}
+
+func TestKickUser_NobodyOutranksTarget_NotInRoomIsNoop(t *testing.T) {
+	for name, state := range map[string]func(t *testing.T, target id.UserID) []json.RawMessage{
+		"never joined": func(_ *testing.T, _ id.UserID) []json.RawMessage { return nil },
+		"already left": func(t *testing.T, target id.UserID) []json.RawMessage {
+			return []json.RawMessage{memberStateEvent(t, target, event.MembershipLeave)}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			creator := expectedUserID(testActorID)
+			target := expectedUserID(testActorID2)
+			targetIntent := &mockIntentAPI{}
+			admin := &mockAdminAPI{
+				getRoomMembersResult:       []string{creator.String()},
+				getStateEventContentResult: reconciledRoomPLs(creator),
+				getRoomStateResult:         state(t, target),
+			}
+			as := newMockAS(&mockIntentAPI{}, map[id.UserID]intentAPI{target: targetIntent})
+			a := newFullTestAdapter(as, admin)
+
+			err := a.KickUser(context.Background(), "!room:test.local", target, "removed")
+			require.NoError(t, err)
+			assert.Equal(t, 0, targetIntent.leaveRoomCalled)
+		})
+	}
+}
+
+func TestKickUser_TargetLeaveError(t *testing.T) {
+	creator := expectedUserID(testActorID)
+	target := expectedUserID(testActorID2)
+	targetIntent := &mockIntentAPI{leaveRoomErr: errors.New("leave failed")}
+	admin := &mockAdminAPI{
+		getRoomMembersResult:       []string{creator.String(), target.String()},
+		getStateEventContentResult: reconciledRoomPLs(creator),
+		getRoomStateResult:         []json.RawMessage{memberStateEvent(t, target, event.MembershipJoin)},
+	}
+	as := newMockAS(&mockIntentAPI{}, map[id.UserID]intentAPI{creator: &mockIntentAPI{}, target: targetIntent})
+	a := newFullTestAdapter(as, admin)
+
+	err := a.KickUser(context.Background(), "!room:test.local", target, "removed")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to leave room")
+}
+
+func TestKickUser_ReadErrorsPropagate(t *testing.T) {
+	target := expectedUserID(testActorID)
+	for name, admin := range map[string]*mockAdminAPI{
+		"power levels": {getStateEventContentErr: errors.New("boom")},
+		"members":      {getStateEventContentResult: botCreatedRoomPLs(), getRoomMembersErr: errors.New("boom")},
+		"memberships": {
+			getStateEventContentResult: reconciledRoomPLs(expectedUserID(testActorID2)),
+			getRoomStateErr:            errors.New("boom"),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			botIntent := &mockIntentAPI{}
+			a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
+
+			err := a.KickUser(context.Background(), "!room:test.local", target, "reason")
+			require.Error(t, err)
+			assert.Equal(t, 0, botIntent.kickUserCalled)
+		})
+	}
 }
 
 // ============================================================================
@@ -1796,7 +2003,8 @@ func TestInviteToSpace_EnsureJoinedError(t *testing.T) {
 func TestKickFromSpace_Success(t *testing.T) {
 	botIntent := &mockIntentAPI{}
 	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
+		getRoomMembersResult:       []string{"@bot:test.local"},
+		getStateEventContentResult: botCreatedRoomPLs(),
 	}
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, admin)
@@ -1811,7 +2019,8 @@ func TestKickFromSpace_Error(t *testing.T) {
 		kickUserErr: errors.New("kick from space failed"),
 	}
 	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
+		getRoomMembersResult:       []string{"@bot:test.local"},
+		getStateEventContentResult: botCreatedRoomPLs(),
 	}
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, admin)

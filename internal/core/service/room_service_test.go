@@ -83,9 +83,6 @@ func (m *mockMatrixPort) DeleteAlias(_ context.Context, _ string) error { return
 func (m *mockMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
 	return nil
 }
-func (m *mockMatrixPort) LeaveRoomAsMember(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
-	return nil
-}
 func (m *mockMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (*domain.Message, error) {
 	return nil, nil
 }

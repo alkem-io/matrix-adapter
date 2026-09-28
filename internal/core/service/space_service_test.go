@@ -304,9 +304,6 @@ func (m *mockSpaceMatrixPort) GetCustomState(_ context.Context, _ id.RoomID, _ [
 func (m *mockSpaceMatrixPort) KickUser(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
 	return nil
 }
-func (m *mockSpaceMatrixPort) LeaveRoomAsMember(_ context.Context, _ id.RoomID, _ id.UserID, _ string) error {
-	return nil
-}
 func (m *mockSpaceMatrixPort) SendMessage(_ context.Context, _ id.RoomID, _ domain.Actor, _ string, _ []domain.Attachment) (*domain.Message, error) {
 	return nil, nil
 }
