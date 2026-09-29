@@ -963,7 +963,9 @@ func TestKickUser_Room_TargetLeaves(t *testing.T) {
 	}
 }
 
-func TestKickUser_Room_NotInRoomIsNoop(t *testing.T) {
+// A target with nothing to leave produces no leave event, so the removal is
+// reported as forbidden rather than as a success the server would wait on.
+func TestKickUser_Room_NotInRoomIsForbidden(t *testing.T) {
 	for name, state := range map[string]func(t *testing.T, target id.UserID) []json.RawMessage{
 		"never joined": func(_ *testing.T, _ id.UserID) []json.RawMessage { return nil },
 		"already left": func(t *testing.T, target id.UserID) []json.RawMessage {
@@ -979,7 +981,7 @@ func TestKickUser_Room_NotInRoomIsNoop(t *testing.T) {
 			a := newFullTestAdapter(as, admin)
 
 			err := a.KickUser(context.Background(), "!room:test.local", target, "removed")
-			require.NoError(t, err)
+			require.ErrorIs(t, err, domain.ErrForbidden)
 			assert.Equal(t, 0, targetIntent.leaveRoomCalled)
 			assert.Equal(t, 0, botIntent.kickUserCalled)
 		})

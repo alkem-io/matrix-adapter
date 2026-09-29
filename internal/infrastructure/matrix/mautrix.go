@@ -1595,9 +1595,13 @@ func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID 
 }
 
 // leaveAsTarget removes target from a room by having target's own ghost
-// leave. A target that is not joined, invited or knocking is already out of
-// the room, and nothing is sent. The operator's reason is not attached: it
-// would be recorded as the member's own statement.
+// leave. The operator's reason is not attached: it would be recorded as the
+// member's own statement.
+//
+// A target that is not joined, invited or knocking has nothing to leave, and
+// no leave event will follow. That is reported as a forbidden removal — the
+// same result the old kick returned — so a caller that waits for the leave
+// event learns it is not coming and can complete the removal itself.
 func (m *MautrixAdapter) leaveAsTarget(ctx context.Context, roomID id.RoomID, target id.UserID) error {
 	membership, err := m.getMembership(ctx, roomID, target)
 	if err != nil {
@@ -1606,9 +1610,8 @@ func (m *MautrixAdapter) leaveAsTarget(ctx context.Context, roomID id.RoomID, ta
 	switch membership {
 	case event.MembershipJoin, event.MembershipInvite, event.MembershipKnock:
 	default:
-		m.logger.Debug("KickUser: target has no membership to remove",
-			"room_id", roomID, "user_id", target, "membership", membership)
-		return nil
+		return fmt.Errorf("%w: user %s has no membership to remove in room %s (membership %q)",
+			domain.ErrForbidden, target, roomID, membership)
 	}
 
 	intent := m.as.Intent(target)
