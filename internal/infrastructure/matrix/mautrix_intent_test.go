@@ -1898,8 +1898,7 @@ func TestInviteToSpace_EnsureJoinedError(t *testing.T) {
 func TestKickFromSpace_Success(t *testing.T) {
 	botIntent := &mockIntentAPI{}
 	admin := &mockAdminAPI{
-		getRoomMembersResult:       []string{"@bot:test.local"},
-		getStateEventContentResult: spaceCreateContent,
+		getRoomMembersResult: []string{"@bot:test.local"},
 	}
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, admin)
@@ -1914,8 +1913,7 @@ func TestKickFromSpace_Error(t *testing.T) {
 		kickUserErr: errors.New("kick from space failed"),
 	}
 	admin := &mockAdminAPI{
-		getRoomMembersResult:       []string{"@bot:test.local"},
-		getStateEventContentResult: spaceCreateContent,
+		getRoomMembersResult: []string{"@bot:test.local"},
 	}
 	as := newMockAS(botIntent, nil)
 	a := newFullTestAdapter(as, admin)

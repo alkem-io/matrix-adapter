@@ -4,6 +4,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -1511,10 +1512,22 @@ func TestHandleBatchRemoveMember_Success(t *testing.T) {
 // A rejected removal must reach the server as a per-room failure, never as a
 // success: the server relies on it to detect a removal that did not happen.
 func TestHandleBatchRemoveMember_RemovalRejected(t *testing.T) {
+	for name, kickErr := range map[string]error{
+		"no membership to remove": fmt.Errorf("%w: user has no membership to remove", domain.ErrForbidden),
+		"kick rejected by Matrix": errors.New("failed to kick user: M_FORBIDDEN: not in room"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertRemovalRejected(t, kickErr)
+		})
+	}
+}
+
+func assertRemovalRejected(t *testing.T, kickErr error) {
+	t.Helper()
 	roomID1 := uuid.New()
 	mock := &testMockMatrixPort{
 		resolveAliasResult: "!room1:test",
-		kickUserErr:        errors.New("failed to kick user: M_FORBIDDEN: not in room"),
+		kickUserErr:        kickErr,
 	}
 	h := testRoomHandler(mock)
 

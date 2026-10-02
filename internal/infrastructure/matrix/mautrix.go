@@ -1580,9 +1580,14 @@ func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID 
 	if !isSpace {
 		return m.leaveAsTarget(ctx, roomID, userID)
 	}
+	return m.kickFromSpace(ctx, roomID, userID, reason)
+}
 
+// kickFromSpace kicks a user from a space, where the bot stays a member and
+// outranks every user.
+func (m *MautrixAdapter) kickFromSpace(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
 	intent := m.getIntentForRoom(ctx, roomID)
-	_, err = intent.KickUser(
+	_, err := intent.KickUser(
 		ctx, roomID, &mautrix.ReqKickUser{
 			UserID: userID,
 			Reason: reason,
@@ -2942,7 +2947,7 @@ func (m *MautrixAdapter) InviteToSpace(ctx context.Context, spaceID id.RoomID, i
 
 // KickFromSpace kicks a user from a space.
 func (m *MautrixAdapter) KickFromSpace(ctx context.Context, spaceID id.RoomID, userID id.UserID, reason string) error {
-	return m.KickUser(ctx, spaceID, userID, reason)
+	return m.kickFromSpace(ctx, spaceID, userID, reason)
 }
 
 // ============================================================================
