@@ -885,9 +885,6 @@ func TestDeleteAlias_Error(t *testing.T) {
 // KickUser
 // ============================================================================
 
-// spaceCreateContent is m.room.create content for a space.
-var spaceCreateContent = map[string]interface{}{"type": "m.space"}
-
 func memberStateEvent(t *testing.T, userID id.UserID, membership event.Membership) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]interface{}{
@@ -897,36 +894,6 @@ func memberStateEvent(t *testing.T, userID id.UserID, membership event.Membershi
 	})
 	require.NoError(t, err)
 	return raw
-}
-
-func TestKickUser_Space_BotKicks(t *testing.T) {
-	target := expectedUserID(testActorID)
-	botIntent := &mockIntentAPI{}
-	admin := &mockAdminAPI{
-		getRoomMembersResult:       []string{"@bot:test.local", target.String()},
-		getStateEventContentResult: spaceCreateContent,
-	}
-	a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
-
-	err := a.KickUser(context.Background(), "!space:test.local", target, "rule violation")
-	require.NoError(t, err)
-	assert.Equal(t, 1, botIntent.kickUserCalled)
-	assert.Equal(t, id.RoomID("!space:test.local"), botIntent.lastKickUserRoomID)
-	assert.Equal(t, target, botIntent.lastKickUserReq.UserID)
-	assert.Equal(t, "rule violation", botIntent.lastKickUserReq.Reason)
-}
-
-func TestKickUser_Space_Error(t *testing.T) {
-	botIntent := &mockIntentAPI{kickUserErr: errors.New("kick failed")}
-	admin := &mockAdminAPI{
-		getRoomMembersResult:       []string{"@bot:test.local"},
-		getStateEventContentResult: spaceCreateContent,
-	}
-	a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
-
-	err := a.KickUser(context.Background(), "!space:test.local", "@user:test.local", "reason")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to kick user")
 }
 
 // In a room nobody outranks the target, so its own ghost leaves: no kick by
@@ -1002,21 +969,17 @@ func TestKickUser_Room_LeaveError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to leave room")
 }
 
-func TestKickUser_ReadErrorsPropagate(t *testing.T) {
+func TestKickUser_MembershipReadErrorPropagates(t *testing.T) {
 	target := expectedUserID(testActorID)
-	for name, admin := range map[string]*mockAdminAPI{
-		"room type":   {getStateEventContentErr: errors.New("boom")},
-		"memberships": {getRoomStateErr: errors.New("boom")},
-	} {
-		t.Run(name, func(t *testing.T) {
-			botIntent := &mockIntentAPI{}
-			a := newFullTestAdapter(newMockAS(botIntent, nil), admin)
+	botIntent := &mockIntentAPI{}
+	targetIntent := &mockIntentAPI{}
+	admin := &mockAdminAPI{getRoomStateErr: errors.New("boom")}
+	a := newFullTestAdapter(newMockAS(botIntent, map[id.UserID]intentAPI{target: targetIntent}), admin)
 
-			err := a.KickUser(context.Background(), "!room:test.local", target, "reason")
-			require.Error(t, err)
-			assert.Equal(t, 0, botIntent.kickUserCalled)
-		})
-	}
+	err := a.KickUser(context.Background(), "!room:test.local", target, "reason")
+	require.Error(t, err)
+	assert.Equal(t, 0, botIntent.kickUserCalled)
+	assert.Equal(t, 0, targetIntent.leaveRoomCalled)
 }
 
 // ============================================================================

@@ -48,10 +48,9 @@ type MatrixPort interface {
 	ResolveAlias(ctx context.Context, alias string) (id.RoomID, error)
 	// DeleteAlias removes a room alias from the homeserver.
 	DeleteAlias(ctx context.Context, alias string) error
-	// KickUser removes a user from a room or space. In a space the bot kicks
-	// with the given reason; in a room the user's own ghost leaves and the
-	// reason is not recorded. A user with no membership left to remove is
-	// reported as domain.ErrForbidden.
+	// KickUser removes a user from a room (not a space; see KickFromSpace).
+	// The user's own ghost leaves, so the reason is not recorded. A user with
+	// no membership left to remove is reported as domain.ErrForbidden.
 	KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error
 
 	// SendMessage publishes one text or media event and returns its content.
