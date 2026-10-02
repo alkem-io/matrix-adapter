@@ -885,36 +885,101 @@ func TestDeleteAlias_Error(t *testing.T) {
 // KickUser
 // ============================================================================
 
-func TestKickUser_Success(t *testing.T) {
-	botIntent := &mockIntentAPI{}
-	admin := &mockAdminAPI{
-		// Bot is a member of the room
-		getRoomMembersResult: []string{"@bot:test.local", "@user:test.local"},
-	}
-	as := newMockAS(botIntent, nil)
-	a := newFullTestAdapter(as, admin)
-
-	err := a.KickUser(context.Background(), "!room:test.local", "@baduser:test.local", "rule violation")
+func memberStateEvent(t *testing.T, userID id.UserID, membership event.Membership) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(map[string]interface{}{
+		"type":      "m.room.member",
+		"state_key": userID.String(),
+		"content":   map[string]interface{}{"membership": membership},
+	})
 	require.NoError(t, err)
-	assert.Equal(t, 1, botIntent.kickUserCalled)
-	assert.Equal(t, id.RoomID("!room:test.local"), botIntent.lastKickUserRoomID)
-	assert.Equal(t, id.UserID("@baduser:test.local"), botIntent.lastKickUserReq.UserID)
-	assert.Equal(t, "rule violation", botIntent.lastKickUserReq.Reason)
+	return raw
 }
 
-func TestKickUser_Error(t *testing.T) {
-	botIntent := &mockIntentAPI{
-		kickUserErr: errors.New("kick failed"),
+// In a room nobody outranks the target, so its own ghost leaves: no kick by
+// anyone, and the bot is never brought back into the room.
+func TestKickUser_Room_TargetLeaves(t *testing.T) {
+	for _, membership := range []event.Membership{event.MembershipJoin, event.MembershipInvite, event.MembershipKnock} {
+		t.Run(string(membership), func(t *testing.T) {
+			other := expectedUserID(testActorID)
+			target := expectedUserID(testActorID2)
+			botIntent := &mockIntentAPI{}
+			otherIntent := &mockIntentAPI{}
+			targetIntent := &mockIntentAPI{}
+			admin := &mockAdminAPI{
+				getRoomMembersResult: []string{other.String(), target.String()},
+				getRoomStateResult: []json.RawMessage{
+					memberStateEvent(t, other, event.MembershipJoin),
+					memberStateEvent(t, target, membership),
+				},
+			}
+			as := newMockAS(botIntent, map[id.UserID]intentAPI{other: otherIntent, target: targetIntent})
+			a := newFullTestAdapter(as, admin)
+
+			err := a.KickUser(context.Background(), "!room:test.local", target, "removed")
+			require.NoError(t, err)
+			assert.Equal(t, 1, targetIntent.ensureRegisteredCalled)
+			assert.Equal(t, 1, targetIntent.leaveRoomCalled)
+			assert.Equal(t, id.RoomID("!room:test.local"), targetIntent.lastLeaveRoomID)
+			for _, intent := range []*mockIntentAPI{botIntent, otherIntent} {
+				assert.Equal(t, 0, intent.kickUserCalled)
+				assert.Equal(t, 0, intent.leaveRoomCalled)
+			}
+			assert.Empty(t, admin.joinRoomCalls, "the bot must not be brought back into the room")
+		})
 	}
+}
+
+// A target with nothing to leave produces no leave event, so the removal is
+// reported as forbidden rather than as a success the server would wait on.
+func TestKickUser_Room_NotInRoomIsForbidden(t *testing.T) {
+	for name, state := range map[string]func(t *testing.T, target id.UserID) []json.RawMessage{
+		"never joined": func(_ *testing.T, _ id.UserID) []json.RawMessage { return nil },
+		"already left": func(t *testing.T, target id.UserID) []json.RawMessage {
+			return []json.RawMessage{memberStateEvent(t, target, event.MembershipLeave)}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			target := expectedUserID(testActorID2)
+			botIntent := &mockIntentAPI{}
+			targetIntent := &mockIntentAPI{}
+			admin := &mockAdminAPI{getRoomStateResult: state(t, target)}
+			as := newMockAS(botIntent, map[id.UserID]intentAPI{target: targetIntent})
+			a := newFullTestAdapter(as, admin)
+
+			err := a.KickUser(context.Background(), "!room:test.local", target, "removed")
+			require.ErrorIs(t, err, domain.ErrForbidden)
+			assert.Equal(t, 0, targetIntent.leaveRoomCalled)
+			assert.Equal(t, 0, botIntent.kickUserCalled)
+		})
+	}
+}
+
+func TestKickUser_Room_LeaveError(t *testing.T) {
+	target := expectedUserID(testActorID2)
+	targetIntent := &mockIntentAPI{leaveRoomErr: errors.New("leave failed")}
 	admin := &mockAdminAPI{
-		getRoomMembersResult: []string{"@bot:test.local"},
+		getRoomStateResult: []json.RawMessage{memberStateEvent(t, target, event.MembershipJoin)},
 	}
-	as := newMockAS(botIntent, nil)
+	as := newMockAS(&mockIntentAPI{}, map[id.UserID]intentAPI{target: targetIntent})
 	a := newFullTestAdapter(as, admin)
 
-	err := a.KickUser(context.Background(), "!room:test.local", "@user:test.local", "reason")
+	err := a.KickUser(context.Background(), "!room:test.local", target, "removed")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to kick user")
+	assert.Contains(t, err.Error(), "failed to leave room")
+}
+
+func TestKickUser_MembershipReadErrorPropagates(t *testing.T) {
+	target := expectedUserID(testActorID)
+	botIntent := &mockIntentAPI{}
+	targetIntent := &mockIntentAPI{}
+	admin := &mockAdminAPI{getRoomStateErr: errors.New("boom")}
+	a := newFullTestAdapter(newMockAS(botIntent, map[id.UserID]intentAPI{target: targetIntent}), admin)
+
+	err := a.KickUser(context.Background(), "!room:test.local", target, "reason")
+	require.Error(t, err)
+	assert.Equal(t, 0, botIntent.kickUserCalled)
+	assert.Equal(t, 0, targetIntent.leaveRoomCalled)
 }
 
 // ============================================================================

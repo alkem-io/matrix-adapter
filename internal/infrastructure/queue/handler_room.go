@@ -667,7 +667,7 @@ func (h *RoomHandler) HandleBatchRemoveMember(ctx context.Context, payload []byt
 			continue
 		}
 
-		// Kick user from room
+		// Remove user from room
 		err = h.matrix.KickUser(ctx, roomID, actorMatrixID, req.Reason)
 		results[alkemioRoomID.String()] = MapToBatchResult(err)
 	}

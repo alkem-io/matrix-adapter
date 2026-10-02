@@ -3,6 +3,8 @@ package queue
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -1505,6 +1507,47 @@ func TestHandleBatchRemoveMember_Success(t *testing.T) {
 	if mock.capturedKickUserUserID != expectedUserID {
 		t.Errorf("expected kick user ID %q, got %q", expectedUserID, mock.capturedKickUserUserID)
 	}
+}
+
+// A rejected removal must reach the server as a per-room failure, never as a
+// success: the server relies on it to detect a removal that did not happen.
+func TestHandleBatchRemoveMember_RemovalRejected(t *testing.T) {
+	for name, kickErr := range map[string]error{
+		"no membership to remove": fmt.Errorf("%w: user has no membership to remove", domain.ErrForbidden),
+		"kick rejected by Matrix": errors.New("failed to kick user: M_FORBIDDEN: not in room"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertRemovalRejected(t, kickErr)
+		})
+	}
+}
+
+func assertRemovalRejected(t *testing.T, kickErr error) {
+	t.Helper()
+	roomID1 := uuid.New()
+	mock := &testMockMatrixPort{
+		resolveAliasResult: "!room1:test",
+		kickUserErr:        kickErr,
+	}
+	h := testRoomHandler(mock)
+
+	payload := mustMarshal(t, dto.BatchRemoveMemberRequest{
+		ActorID:        dto.AlkemioActorID(uuid.New()),
+		AlkemioRoomIDs: []dto.AlkemioRoomID{dto.AlkemioRoomID(roomID1)},
+	})
+
+	result, err := h.HandleBatchRemoveMember(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertSuccess(t, result)
+
+	resp := result.(dto.BatchRemoveMemberResponse)
+	roomResult, ok := resp.Results[roomID1.String()]
+	if !ok {
+		t.Fatalf("expected a result for room %s, got %+v", roomID1, resp.Results)
+	}
+	assertErrorCode(t, roomResult, dto.ErrCodeNotAllowed)
 }
 
 func TestHandleBatchRemoveMember_InvalidJSON(t *testing.T) {

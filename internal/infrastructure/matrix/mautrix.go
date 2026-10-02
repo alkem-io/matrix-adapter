@@ -1565,19 +1565,68 @@ func (m *MautrixAdapter) DeleteAlias(ctx context.Context, alias string) error {
 	return nil
 }
 
-// KickUser kicks a user from a room.
-func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error {
-	intent := m.getIntentForRoom(ctx, roomID)
-	_, err := intent.KickUser(
-		ctx, roomID, &mautrix.ReqKickUser{
-			UserID: userID,
-			Reason: reason,
-		},
-	)
+// KickUser removes a user from a room.
+//
+// The bot leaves rooms once members join, so users never see it, and every
+// member holds the same power level. Synapse only lets a sender kick a target
+// it strictly outranks, so nobody can kick in a room; the target's own ghost
+// leaves instead. Spaces keep the bot and are removed from by KickFromSpace.
+func (m *MautrixAdapter) KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, _ string) error {
+	return m.leaveAsTarget(ctx, roomID, userID)
+}
+
+// leaveAsTarget removes target from a room by having target's own ghost
+// leave. The operator's reason is not attached: it would be recorded as the
+// member's own statement.
+//
+// A target that is not joined, invited or knocking has nothing to leave, and
+// no leave event will follow. That is reported as a forbidden removal — the
+// same result the old kick returned — so a caller that waits for the leave
+// event learns it is not coming and can complete the removal itself.
+func (m *MautrixAdapter) leaveAsTarget(ctx context.Context, roomID id.RoomID, target id.UserID) error {
+	membership, err := m.getMembership(ctx, roomID, target)
 	if err != nil {
-		return fmt.Errorf("failed to kick user %s from room %s: %w", userID, roomID, err)
+		return fmt.Errorf("failed to remove user %s from room %s: %w", target, roomID, err)
+	}
+	switch membership {
+	case event.MembershipJoin, event.MembershipInvite, event.MembershipKnock:
+	default:
+		return fmt.Errorf("%w: user %s has no membership to remove in room %s (membership %q)",
+			domain.ErrForbidden, target, roomID, membership)
+	}
+
+	intent := m.as.Intent(target)
+	if err := intent.EnsureRegistered(ctx); err != nil {
+		return fmt.Errorf("failed to ensure user %s registered: %w", target, err)
+	}
+	if _, err := intent.LeaveRoom(ctx, roomID); err != nil {
+		return fmt.Errorf("failed to leave room %s as user %s: %w", roomID, target, err)
 	}
 	return nil
+}
+
+// getMembership returns userID's current membership in a room, or "" when
+// the room holds no m.room.member event for them.
+func (m *MautrixAdapter) getMembership(ctx context.Context, roomID id.RoomID, userID id.UserID) (event.Membership, error) {
+	events, err := m.admin.GetRoomState(ctx, roomID, "m.room.member")
+	if err != nil {
+		return "", fmt.Errorf("failed to read room memberships: %w", err)
+	}
+	for _, raw := range events {
+		var evt struct {
+			StateKey string `json:"state_key"`
+			Content  struct {
+				Membership event.Membership `json:"membership"`
+			} `json:"content"`
+		}
+		if err := json.Unmarshal(raw, &evt); err != nil {
+			continue
+		}
+		if evt.StateKey == userID.String() {
+			return evt.Content.Membership, nil
+		}
+	}
+	return "", nil
 }
 
 // GetRoomMessages retrieves all messages from a room, including their reactions.
@@ -2872,9 +2921,20 @@ func (m *MautrixAdapter) InviteToSpace(ctx context.Context, spaceID id.RoomID, i
 	return nil
 }
 
-// KickFromSpace kicks a user from a space.
+// KickFromSpace kicks a user from a space, where the bot stays a member and
+// outranks every user.
 func (m *MautrixAdapter) KickFromSpace(ctx context.Context, spaceID id.RoomID, userID id.UserID, reason string) error {
-	return m.KickUser(ctx, spaceID, userID, reason)
+	intent := m.getIntentForRoom(ctx, spaceID)
+	_, err := intent.KickUser(
+		ctx, spaceID, &mautrix.ReqKickUser{
+			UserID: userID,
+			Reason: reason,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to kick user %s from room %s: %w", userID, spaceID, err)
+	}
+	return nil
 }
 
 // ============================================================================
