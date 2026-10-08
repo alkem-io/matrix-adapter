@@ -10,7 +10,7 @@ info:
     transaction handling, room creation check endpoints, and health probes.
   version: 1.0.0
   contact:
-    name: Alkemio Foundation
+    name: Alkemio
     url: https://alkem.io
     email: info@alkem.io
   license:
