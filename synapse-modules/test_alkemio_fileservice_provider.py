@@ -26,9 +26,9 @@ def info(**overrides):
 
 
 @pytest.fixture
-def provider(tmp_path):
-    http = SimpleNamespace(get_json=AsyncMock(return_value={"id": "document123"}),
-                           get_file=AsyncMock())
+def provider(tmp_path, monkeypatch):
+    http = SimpleNamespace(request=AsyncMock(return_value=SimpleNamespace(code=200)))
+    monkeypatch.setattr(mod, "read_body_with_max_size", AsyncMock(return_value=0))
     hs = SimpleNamespace(
         get_reactor=lambda: None,
         get_simple_http_client=lambda: http,
@@ -51,7 +51,7 @@ def test_non_originals_do_not_touch_file_service(provider, flags, monkeypatch):
     run(provider.store_file("does-not-exist", info(**flags)))
     assert run(provider.fetch("unused", info(**flags))) is None
     post.assert_not_called()
-    provider.http.get_json.assert_not_called()
+    provider.http.request.assert_not_called()
 
 
 @pytest.mark.parametrize("body", [b"", b"file bytes\x00\xff"])
@@ -86,17 +86,17 @@ def test_store_rejection_is_not_success(provider, tmp_path, monkeypatch, status)
         run(provider.store_file("original", info()))
 
 
-def test_fetch_scoped_and_responder_owns_spool(provider):
-    async def download(url, spool, max_size):
-        assert url == "http://file-service:4003/internal/file/document123/content"
+def test_fetch_relocated_reference_and_responder_owns_spool(provider):
+    async def download(response, spool, max_size):
+        assert response.code == 200
         assert max_size == 50 * 1024 * 1024
         spool.write(b"unchanged content")
 
-    provider.http.get_file.side_effect = download
+    mod.read_body_with_max_size.side_effect = download
     responder = run(provider.fetch("unused", info()))
-    provider.http.get_json.assert_awaited_once_with(
-        "http://file-service:4003/internal/file/by-reference",
-        args={"ref": "media123", "bucketId": "reserved-bucket"},
+    assert responder is not None, "relocated media must remain retrievable"
+    provider.http.request.assert_awaited_once_with(
+        "GET", "http://file-service:4003/internal/file/by-reference/content?ref=media123"
     )
     with responder:
         assert responder.open_file.read() == b"unchanged content"
@@ -104,13 +104,12 @@ def test_fetch_scoped_and_responder_owns_spool(provider):
 
 
 def test_missing_reference_returns_miss(provider):
-    provider.http.get_json.side_effect = mod.HttpResponseException(404, "missing", b"")
+    provider.http.request.return_value = SimpleNamespace(code=404)
     assert run(provider.fetch("unused", info())) is None
-    provider.http.get_file.assert_not_called()
 
 
 def test_backend_failure_is_not_a_missing_reference(provider):
-    provider.http.get_json.side_effect = mod.HttpResponseException(503, "unavailable", b"")
+    provider.http.request.return_value = SimpleNamespace(code=503)
     with pytest.raises(mod.HttpResponseException):
         run(provider.fetch("unused", info()))
 
@@ -118,12 +117,12 @@ def test_backend_failure_is_not_a_missing_reference(provider):
 def test_failed_download_closes_partial_spool(provider):
     opened = []
 
-    async def download(url, spool, max_size):
+    async def download(response, spool, max_size):
         opened.append(spool)
         spool.write(b"partial")
         raise OSError("download interrupted")
 
-    provider.http.get_file.side_effect = download
+    mod.read_body_with_max_size.side_effect = download
     with pytest.raises(OSError, match="download interrupted"):
         run(provider.fetch("unused", info()))
     assert opened[0].closed
@@ -132,3 +131,50 @@ def test_failed_download_closes_partial_spool(provider):
 def test_config_requires_destination():
     with pytest.raises(ValueError, match="matrix_media_bucket_id"):
         mod.FileServiceStorageProvider.parse_config({"file_service_url": "http://files"})
+
+
+def test_deleted_reference_returns_miss_without_retry(provider, monkeypatch):
+    provider.http.request = AsyncMock(return_value=SimpleNamespace(code=404))
+    opened = []
+    temporary_file = mod.tempfile.TemporaryFile
+
+    def spool():
+        value = temporary_file()
+        opened.append(value)
+        return value
+
+    monkeypatch.setattr(mod.tempfile, "TemporaryFile", spool)
+    assert run(provider.fetch("unused", info())) is None
+    provider.http.request.assert_awaited_once_with(
+        "GET", "http://file-service:4003/internal/file/by-reference/content?ref=media123"
+    )
+    assert all(value.closed for value in opened)
+
+
+@pytest.mark.parametrize("status", [403, 500, 503])
+def test_content_http_failure_propagates_without_retry(provider, monkeypatch, status):
+    provider.http.request.return_value = SimpleNamespace(code=status)
+    opened = []
+    temporary_file = mod.tempfile.TemporaryFile
+
+    def spool():
+        value = temporary_file()
+        opened.append(value)
+        return value
+
+    monkeypatch.setattr(mod.tempfile, "TemporaryFile", spool)
+    with pytest.raises(mod.HttpResponseException) as raised:
+        run(provider.fetch("unused", info()))
+    assert raised.value.code == status
+    provider.http.request.assert_awaited_once()
+    mod.read_body_with_max_size.assert_not_called()
+    assert opened[0].closed
+
+
+def test_reference_is_encoded_as_one_query_value(provider):
+    responder = run(provider.fetch("unused", info(file_id="opaque+ref?&/")))
+    provider.http.request.assert_awaited_once_with(
+        "GET", "http://file-service:4003/internal/file/by-reference/content?ref=opaque%2Bref%3F%26%2F"
+    )
+    with responder:
+        pass

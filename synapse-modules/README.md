@@ -144,12 +144,13 @@ or media purger.
 
 - `store_file` streams standard treq multipart into the reserved `matrix_media`
   bucket with `externalReference=media_id` and `skipImageProcessing=true`.
-  It awaits HTTP 201. The provider row stays in this bucket; conversation copies
-  reference the same content-addressed bytes.
-- `fetch` looks up the reference in that bucket explicitly. A 404 returns `None`;
-  other failures propagate. Synapse's `SimpleHttpClient.get_file` downloads into
-  a temporary disk file with `max_upload_size`, then the stock `FileResponder`
-  serves and closes it. Failures close it too. This is disk spooling, not direct
+  It awaits HTTP 201. The provider creates a staged row; message-driven bucket
+  placement is handled outside this module.
+- `fetch` performs one GET to `/internal/file/by-reference/content?ref=<media_id>`.
+  It never resolves an Alkemio file ID or scopes reads to the staging bucket.
+  HTTP 404 returns `None`; other failures propagate. Synapse's bounded body
+  reader writes to a temporary disk file, then the stock `FileResponder` serves
+  and closes it. Errors close it too. This is bounded disk spooling, not direct
   network-to-network streaming.
 - Thumbnails, URL-cache entries and remote media use Synapse's existing storage.
 
@@ -175,7 +176,7 @@ and Synapse's media APIs, already available in the pinned Synapse image.
 
 ### Verification
 
-`make test-python` exercises routing, scoped lookup, byte-preserving upload,
+`make test-python` exercises routing, relocated-reference lookup, byte-preserving upload,
 error propagation and file cleanup with mocked HTTP and import-only Synapse
 shims. It does not establish live wire compatibility.
 

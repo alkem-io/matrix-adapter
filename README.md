@@ -43,7 +43,6 @@ The service is configured via environment variables or a `config.yaml` file. The
 | `MATRIX_BOT_ACTOR_ID` | Bot Actor ID (UUID), also used as Matrix localpart | `00000000-0000-0000-0000-000000000000` |
 | `MATRIX_BOT_DISPLAY_NAME` | Display name for the bot user in Matrix | `Alkemio` |
 | `SYNAPSE_SERVER_SHARED_SECRET` | Synapse `registration_shared_secret` for auto-promoting bot to server admin | - |
-| `FILE_SERVICE_URL` | Optional internal file-service base URL; required only when sending outbound media attachments (`GET {url}/internal/file/{id}/content`). When set it is validated at startup and must be an absolute `http(s)` URL with a host — a malformed value fails the boot rather than silently dropping every attachment | - |
 | `FILE_SERVICE_MAX_ATTACHMENT_BYTES` | Per-attachment byte cap for outbound media. Must parse as an integer — a malformed value fails the boot. A non-positive value falls back to the default. Transfers must also complete within the operation budget described under [Media Attachments](#media-attachments) | `52428800` (50 MiB) |
 | `RABBITMQ_URL` | Full AMQP Connection URL | - |
 | `RABBITMQ_HOST` | RabbitMQ Host (if URL not set) | - |
@@ -217,25 +216,54 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 
 ### Media Attachments
 
-`communication.message.send` publishes one event: either non-empty `content`
-or one entry in `attachments`. An aggregate is rejected before any publication.
-For media the adapter streams the file-service document to Synapse as the sender
-and publishes the native media event. The response includes its actual body and
-media reference. A web multi-selection is a sequence of separate sends.
+`communication.message.send` publishes either non-empty `content` or one
+`existing_media` reference. Media sends contain a local `media_id`, display name
+and actual MIME/size/dimensions; they publish as the sender without transferring
+bytes again or emitting a document-ID hint.
 
-`timeout_ms` is the operation budget, set below the caller's RPC wait; omission
-uses 25 seconds. One context covers room resolution, upload and publication.
-There is no automatic send retry after an uncertain acknowledgement.
+The separate raw `/internal/media/upload` bridge streams original bytes as the
+actor, with a required exact Content-Length and the existing attachment-size cap.
+Zero bytes use the SDK empty-body form. Failed uploads and uncertain sends are
+not replayed automatically. `timeout_ms` bounds message publication below the
+caller RPC wait; it defaults to 25 seconds.
 
-The byte transfer uses file-service's Content-Length, with the configured
-`FILE_SERVICE_MAX_ATTACHMENT_BYTES` cap, without whole-file RAM buffering.
-The zero-byte case uses the SDK's empty-body form to emit Content-Length: 0.
+Incoming events and history expose local media references plus event metadata.
+Old `io.alkemio.document_id` hints are ignored. The server handles shared bucket
+placement; the adapter does not move or delete stored files. Redacting an event
+does not delete shared media bytes.
 
-Inbound media is surfaced on `communication.message.received` and history as
-`ReceivedAttachment`: local `media_id`, event filename, MIME, size and dimensions.
-`document_id` is an untrusted hint. The server handles conversation authorization
-and copies references to stored bytes; the adapter does not move or delete files.
-Redacting an event does not delete shared media bytes.
+### Attachment normalization inventory
+
+The read-only operator command exports retained local-media events for an explicit
+Alkemio room inventory. Run the built adapter with its normal Matrix connection
+configuration and existing administrator appservice credentials:
+
+```bash
+matrix-adapter attachments-export --rooms room-list.json --output events.jsonl
+```
+
+`room-list.json` is an object with `schemaVersion: 1`, `scope` set to `fixture` or
+`supported-room-inventory`, and `roomIds` containing Alkemio room UUIDs. The command
+resolves their canonical aliases, verifies the observed alias mapping, and scans
+all history pages including thread replies. It does not start the service, join
+rooms, register users, reconcile rooms, or access a database. Missing aliases and
+history failures are recorded and make the command exit unsuccessfully.
+
+The command exclusively creates `events.jsonl` and `events.jsonl.coverage.json`
+with mode `0600`; existing output files are never overwritten. Events contain only
+room/event/media identifiers, actor ID, sanitized filename, optional thread root,
+and timestamp. Document hints are not exported. Tokens, message text and content hashes are not
+exported. The sidecar records requested/resolved rooms, mapping and pagination
+completion, counts, and safe failure or skipped-event codes. Redacted, encrypted
+or unmappable retained events remain explicit limitations even when pagination
+completes.
+
+`complete: true` certifies the requested scan, not a complete production inventory
+or permission to remove staging files. The server normalization tool must compare
+the exact current supported-room inventory and reject unsafe skipped markers.
+Keep a controlled operator window without concurrent historical changes between
+inventory and apply. Production normalization is a separate operator action;
+running this exporter never changes attachment storage.
 
 ## DM Room Creation Flow
 

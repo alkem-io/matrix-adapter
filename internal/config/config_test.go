@@ -30,7 +30,6 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("RABBITMQ_PORT", "")
 	t.Setenv("RABBITMQ_USER", "")
 	t.Setenv("RABBITMQ_PASSWORD", "")
-	t.Setenv("FILE_SERVICE_URL", "")
 	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "")
 
 	cfg, err := Load()
@@ -46,7 +45,6 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Empty(t, cfg.Matrix.HomeserverToken)
 	assert.Empty(t, cfg.Matrix.RegistrationSecret)
 	assert.Empty(t, cfg.RabbitMQ.URL)
-	assert.Empty(t, cfg.FileService.URL, "file-service is optional for text-only deployments")
 }
 
 func TestLoad_MatrixEnvOverrides(t *testing.T) {
@@ -85,18 +83,15 @@ func TestLoad_FileServiceEnvOverrides(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "")
 	t.Setenv("RABBITMQ_HOST", "")
 
-	t.Run("URL and max attachment bytes", func(t *testing.T) {
-		t.Setenv("FILE_SERVICE_URL", "http://file-service:4000")
+	t.Run("max attachment bytes", func(t *testing.T) {
 		t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "1048576")
 
 		cfg, err := Load()
 		require.NoError(t, err)
-		assert.Equal(t, "http://file-service:4000", cfg.FileService.URL)
 		assert.Equal(t, int64(1048576), cfg.FileService.MaxAttachmentBytes)
 	})
 
 	t.Run("invalid max attachment bytes fails config loading", func(t *testing.T) {
-		t.Setenv("FILE_SERVICE_URL", "http://file-service:4000")
 		t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "not-a-number")
 
 		cfg, err := Load()
@@ -294,56 +289,6 @@ rabbitmq:
 	assert.Equal(t, "amqp://env-rabbit:5672/", cfg.RabbitMQ.URL, "env var should override YAML")
 }
 
-// A malformed FILE_SERVICE_URL must fail at STARTUP. Deferring it to the first
-// outbound attachment is the worst place for it: a media failure there is
-// swallowed into a partial-fan-out "success", so a typo'd URL would present as a
-// healthy service that silently drops every attachment.
-func TestLoad_RejectsMalformedFileServiceURL(t *testing.T) {
-	cases := map[string]string{
-		"no scheme":          "file-service:4003",
-		"bare host":          "file-service",
-		"unsupported scheme": "ftp://file-service:4003",
-		"typo'd scheme":      "htp:/file-service:4003",
-		"scheme but no host": "http://",
-		"control character":  "http://file-service:4003\n",
-		"leading whitespace": " http://file-service:4003",
-		"non-absolute path":  "/internal/file",
-	}
-	for name, raw := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
-			t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "")
-			t.Setenv("FILE_SERVICE_URL", raw)
-
-			_, err := Load()
-			require.Error(t, err, "a malformed FILE_SERVICE_URL must not boot green")
-			assert.Contains(t, err.Error(), "FILE_SERVICE_URL",
-				"the error must name the offending setting")
-		})
-	}
-}
-
-// A well-formed URL loads, and an EMPTY one stays valid: outbound media is
-// optional and sendAttachment already reports the unconfigured case explicitly.
-func TestLoad_AcceptsValidOrAbsentFileServiceURL(t *testing.T) {
-	for name, raw := range map[string]string{
-		"http":      "http://file-service:4003",
-		"https":     "https://file-service.example.com",
-		"with path": "http://file-service:4003/base",
-		"absent":    "",
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
-			t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "")
-			t.Setenv("FILE_SERVICE_URL", raw)
-
-			cfg, err := Load()
-			require.NoError(t, err)
-			assert.Equal(t, raw, cfg.FileService.URL)
-		})
-	}
-}
-
 // TestLoad_HierarchyDefaults pins the hierarchy budgets an omitted config
 // section falls back to — in particular a positive set_children execution
 // deadline, so an absent key can never be the reason a convergence call
@@ -351,7 +296,6 @@ func TestLoad_AcceptsValidOrAbsentFileServiceURL(t *testing.T) {
 func TestLoad_HierarchyDefaults(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
 	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
-	t.Setenv("FILE_SERVICE_URL", "")                  // isolate from ambient env (now a startup validation)
 	t.Setenv("HIERARCHY_SET_CHILDREN_TIMEOUT_SECONDS", "")
 
 	cfg, err := Load()
@@ -376,7 +320,6 @@ func TestLoad_RejectsNonPositiveSetChildrenTimeout(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
 			t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
-			t.Setenv("FILE_SERVICE_URL", "")                  // isolate from ambient env (now a startup validation)
 			t.Setenv("HIERARCHY_SET_CHILDREN_TIMEOUT_SECONDS", value)
 
 			cfg, err := Load()
@@ -396,7 +339,6 @@ func TestLoad_RejectsNonPositiveSetChildrenTimeoutFromYAML(t *testing.T) {
 
 	t.Setenv("CONFIG_PATH", configFile)
 	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
-	t.Setenv("FILE_SERVICE_URL", "")                  // isolate from ambient env (now a startup validation)
 	t.Setenv("HIERARCHY_SET_CHILDREN_TIMEOUT_SECONDS", "")
 
 	cfg, err := Load()
@@ -412,7 +354,6 @@ func TestLoad_RejectsNonPositiveSetChildrenTimeoutFromYAML(t *testing.T) {
 func TestLoad_AcceptsPositiveSetChildrenTimeoutOverride(t *testing.T) {
 	t.Setenv("CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.yaml"))
 	t.Setenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES", "") // isolate from ambient env (now a parse error)
-	t.Setenv("FILE_SERVICE_URL", "")                  // isolate from ambient env (now a startup validation)
 	t.Setenv("HIERARCHY_SET_CHILDREN_TIMEOUT_SECONDS", "20.5")
 
 	cfg, err := Load()

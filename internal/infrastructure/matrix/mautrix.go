@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -879,6 +878,11 @@ func (m *MautrixAdapter) SendReply(
 	if len(attachments) > 1 || (content == "") == (len(attachments) == 0) {
 		return nil, fmt.Errorf("send requires either text or one attachment")
 	}
+	if len(attachments) == 1 {
+		if err := m.validateExistingMedia(attachments[0]); err != nil {
+			return nil, err
+		}
+	}
 	userID, err := m.EnsureUser(ctx, senderID)
 	if err != nil {
 		return nil, err
@@ -911,36 +915,22 @@ func (m *MautrixAdapter) SendReply(
 	return message, nil
 }
 
-// sendAttachment streams the stored rendition to Synapse as the sender.
+// sendAttachment publishes the existing Matrix reference without transferring bytes.
 func (m *MautrixAdapter) sendAttachment(
 	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, threadID id.EventID,
 ) (*domain.Message, error) {
-	response, err := m.openDocumentFetch(ctx, att.DocumentID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = response.Body.Close() }()
-	// Synapse requires a known Content-Length; file-service supplies it. Go's
-	// HTTP transport bounds the body to that length, without buffering the file.
-	size := response.ContentLength
-	if size < 0 {
-		return nil, fmt.Errorf("file-service response for document %s carried no Content-Length", att.DocumentID)
-	}
-	if size > m.cfg.MaxAttachmentBytes() {
-		return nil, attachmentTooLargeError(att.DocumentID, m.cfg.MaxAttachmentBytes())
-	}
-	contentType := resolveMediaMime(response.Header.Get("Content-Type"), att.MimeType)
-	uploaded, err := intent.UploadMedia(ctx, uploadRequest(response.Body, size, contentType))
-	if err != nil {
-		return nil, fmt.Errorf("failed to upload media: %w", err)
-	}
-	content := buildMediaContent(att, uploaded.ContentURI, baseType(contentType), size, threadID)
+	uri := id.ContentURI{Homeserver: m.idMapper.HomeserverDomain(), FileID: att.MediaID}
+	return publishMedia(ctx, intent, roomID, att, uri, baseType(att.MimeType), att.Size, threadID)
+}
+
+func publishMedia(ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, uri id.ContentURI, contentType string, size int64, threadID id.EventID) (*domain.Message, error) {
+	content := buildMediaContent(att, uri, contentType, size, threadID)
 	sent, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send media event: %w", err)
 	}
-	att.MediaID = uploaded.ContentURI.FileID
-	att.MimeType = baseType(contentType)
+	att.MediaID = uri.FileID
+	att.MimeType = contentType
 	att.Size = size
 	return &domain.Message{ID: sent.EventID.String(), Content: att.DisplayName, Attachments: []domain.Attachment{att}}, nil
 }
@@ -978,82 +968,7 @@ func uploadRequest(body io.Reader, uploadLen int64, contentType string) mautrix.
 	return mautrix.ReqUploadMedia{Content: body, ContentLength: uploadLen, ContentType: contentType}
 }
 
-func attachmentTooLargeError(documentID string, maxBytes int64) error {
-	return fmt.Errorf("document %s exceeds max attachment size of %d bytes", documentID, maxBytes)
-}
-
-// One send uses its queue request's context for the complete transfer.
-const fileServiceFetchTimeout = 25 * time.Second
-
-func newFileServiceHTTPClient(responseHeaderTimeout time.Duration) *http.Client {
-	return &http.Client{Transport: &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: fileServiceFetchTimeout, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: responseHeaderTimeout,
-		ExpectContinueTimeout: time.Second,
-		// Media blobs are already-compressed bytes, so transfer compression buys
-		// nothing — but it COSTS the upload length. With the default transport,
-		// Go advertises Accept-Encoding: gzip and, on a gzipped reply,
-		// transparently decompresses the body and sets resp.ContentLength = -1.
-		// That length is the only safe Content-Length for the Synapse upload
-		// (sendAttachment refuses to buffer to derive one), so keep it intact.
-		DisableCompression: true,
-	}}
-}
-
-// fileServiceHTTPClient bounds connection phases and header wait without a
-// Client.Timeout, which would also cap reading a large body while it is streamed
-// onward to Synapse.
-var fileServiceHTTPClient = newFileServiceHTTPClient(fileServiceFetchTimeout)
-
-// openDocumentFetch performs the GET against the file-service internal content
-// endpoint (GET {FILE_SERVICE_URL}/internal/file/{id}/content) and returns the
-// response with its headers available and the body unread so sendAttachment can
-// stream it directly to the homeserver.
-// A non-200 response is turned into an error here (and its body closed) so no
-// budget is reserved for a failed fetch. The caller MUST close resp.Body on the
-// success path. Connection setup and response-header wait are transport-bounded;
-// reading the success body is bounded by the request context.
-func (m *MautrixAdapter) openDocumentFetch(ctx context.Context, documentID string) (*http.Response, error) {
-	if m.cfg == nil || m.cfg.FileService.URL == "" {
-		return nil, fmt.Errorf("file-service URL not configured (set FILE_SERVICE_URL)")
-	}
-	baseURL := m.cfg.FileService.URL
-	// Defense-in-depth on the internal fetch path: document ids are UUIDs, so
-	// validate the shape and path-escape before interpolating into the URL.
-	if _, err := uuid.Parse(documentID); err != nil {
-		return nil, fmt.Errorf("invalid document id %q: %w", documentID, err)
-	}
-	endpoint := fmt.Sprintf("%s/internal/file/%s/content",
-		strings.TrimRight(baseURL, "/"), url.PathEscape(documentID))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build file-service request: %w", err)
-	}
-
-	resp, err := fileServiceHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch document %s from file-service: %w", documentID, err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		_ = resp.Body.Close()
-		return nil, fmt.Errorf("file-service returned status %d fetching document %s", resp.StatusCode, documentID)
-	}
-	return resp, nil
-}
-
-// buildMediaContent constructs the raw event content for a media message:
-// msgtype + body + url(mxc) + info, plus the io.alkemio.document_id breadcrumb
-// used for lookup-free read-translation of our own outbound media. A map is
-// used (rather than event.MessageEventContent) so custom fields can be set as
-// top-level event properties.
-// bareMimeType is the resolved media type with any parameters stripped
-// (see baseType) — Matrix info.mimetype and msgtype are conventionally bare.
+// buildMediaContent constructs the native Matrix msgtype, filename, mxc and info.
 func buildMediaContent(
 	att domain.Attachment, mxc id.ContentURI, bareMimeType string, size int64,
 	threadID id.EventID,
@@ -1069,14 +984,11 @@ func buildMediaContent(
 		info["h"] = *att.Height
 	}
 
-	// HandleSendMessage rejects empty document ids, and openDocumentFetch validates
-	// the UUID before the media content is built, so this breadcrumb is never blank.
 	content := map[string]any{
-		"msgtype":                mediaMsgType(bareMimeType),
-		"body":                   att.DisplayName,
-		"url":                    mxc.String(),
-		"info":                   info,
-		"io.alkemio.document_id": att.DocumentID,
+		"msgtype": mediaMsgType(bareMimeType),
+		"body":    att.DisplayName,
+		"url":     mxc.String(),
+		"info":    info,
 	}
 
 	if threadID != "" {
@@ -1099,74 +1011,6 @@ func threadRelation(threadID id.EventID) *event.RelatesTo {
 	}
 }
 
-// resolveMediaMime picks the most specific media type and returns it in
-// canonical form: a lowercased "type/subtype" with any meaningful parameters
-// (e.g. "; charset=utf-8") preserved. The server-declared att.MimeType is
-// authoritative for the base TYPE when specific; otherwise the file-service
-// response Content-Type is used. Empty, params-only, malformed, and
-// application/octet-stream values are treated as non-specific. The result drives
-// the upload Content-Type, the Matrix msgtype, and info.mimetype uniformly so
-// they never disagree — and because the type is lowercased, case-insensitive
-// inputs (e.g. "Image/JPEG") still classify correctly in mediaMsgType.
-//
-// One refinement when att is specific: if file-service reports the SAME base type
-// but WITH parameters att lacks (server declares "text/plain", file-service
-// serves "text/plain; charset=utf-8"), prefer the response so the charset
-// survives to the upload Content-Type. If the base types DIFFER, att still wins
-// (a genuine server override).
-func resolveMediaMime(responseContentType, attMimeType string) string {
-	att := normalizeMediaType(attMimeType)
-	resp := normalizeMediaType(responseContentType)
-	if isSpecificMediaType(att) {
-		// att carries no params (att == baseType(att)) but resp is the same base
-		// type with params → keep resp's fuller form so charset isn't dropped.
-		if isSpecificMediaType(resp) && baseType(resp) == baseType(att) && att == baseType(att) && resp != att {
-			return resp
-		}
-		return att
-	}
-	if isSpecificMediaType(resp) {
-		return resp
-	}
-	if att != "" {
-		return att
-	}
-	if resp != "" {
-		return resp
-	}
-	return "application/octet-stream"
-}
-
-// normalizeMediaType returns a lowercased, canonical "type/subtype[; params]"
-// for a Content-Type, or "" when there is no valid media type. Valid input is
-// canonicalized (preserving parameters such as charset). When only a PARAMETER
-// is malformed, the bare "type/subtype" is recovered and RE-PARSED with
-// mime.ParseMediaType so a malformed BASE type (bad token chars, whitespace,
-// extra segments, control characters) still collapses to "" rather than leaking
-// into the upload Content-Type header or the event's info.mimetype.
-func normalizeMediaType(contentType string) string {
-	if mediatype, params, err := mime.ParseMediaType(contentType); err == nil && validMediaType(mediatype) {
-		return mime.FormatMediaType(mediatype, params)
-	}
-	// Parse failed — possibly only a parameter was malformed. Recover the base
-	// (before the first ';') and re-validate it via ParseMediaType.
-	base := contentType
-	if i := strings.IndexByte(base, ';'); i >= 0 {
-		base = base[:i]
-	}
-	if mediatype, _, err := mime.ParseMediaType(base); err == nil && validMediaType(mediatype) {
-		return mediatype
-	}
-	return ""
-}
-
-// validMediaType reports whether t is "type/subtype" with a non-empty subtype
-// (mime.ParseMediaType accepts a bare type like "image" with no subtype).
-func validMediaType(t string) bool {
-	slash := strings.IndexByte(t, '/')
-	return slash > 0 && slash < len(t)-1
-}
-
 // baseType strips any parameters (e.g. "; charset=utf-8") from a media type,
 // returning the bare "type/subtype". Matrix FileInfo.mimetype and the event
 // msgtype are conventionally a bare type — a parameterized value can defeat a
@@ -1177,13 +1021,6 @@ func baseType(s string) string {
 		return strings.TrimSpace(s[:i])
 	}
 	return strings.TrimSpace(s)
-}
-
-// isSpecificMediaType reports whether a normalized media type is more specific
-// than application/octet-stream. normalized is "" or "type/subtype[; params]".
-func isSpecificMediaType(normalized string) bool {
-	base := baseType(normalized)
-	return base != "" && base != "application/octet-stream"
 }
 
 // mediaMsgType maps a MIME type to the appropriate Matrix message msgtype.
@@ -1253,7 +1090,7 @@ func (m *MautrixAdapter) SendReaction(
 //
 // It routes through parseMessageEvent — the same path as GetRoomMessages /
 // GetLastMessage / GetThreadMessages — so a media event returns its attachment
-// (mxc→MediaID, io.alkemio.document_id→DocumentID) consistently, rather than
+// (mxc→MediaID) consistently, rather than
 // just its body text.
 func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, eventID id.EventID) (
 	*domain.Message, error,
@@ -1265,7 +1102,7 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 
 	// parseMessageEvent is the SINGLE authority on "is there usable content or an
 	// attachment": it runs extractInboundMessage, which surfaces an attachment via
-	// BOTH the mxc url and the trusted io.alkemio.document_id breadcrumb and applies
+	// the local mxc URL and applies
 	// the msgtype rules. m.room.message and m.sticker are accepted (a sticker
 	// surfaces as image media with its attachment); a non-message event (reaction,
 	// redaction, ...) yields nil and errors. The server tracks message ids
@@ -1279,7 +1116,7 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 	// a bodyless/redacted event (an empty-content Message), but a present-but-non-
 	// string body with nothing usable is a malformed event, not a blank message.
 	// Deferring to parseMessageEvent here avoids replicating extractAttachment's
-	// media-detection (url + document_id + msgtype) in the malformed check.
+	// media-detection (url + msgtype) in the malformed check.
 	// isBlankMessage is the same "nothing renderable" test the scanning read paths
 	// use, so all read paths share one blank-message definition.
 	if isBlankMessage(msg) && malformedMessageBody(evt) {
@@ -1293,7 +1130,7 @@ func (m *MautrixAdapter) GetMessage(ctx context.Context, roomID id.RoomID, event
 // NOT malformed: a bodyless/redacted message event still resolves to an
 // empty-content Message.
 //
-// This is a PURE body check — it does NOT inspect url/mxc/msgtype/document_id.
+// This is a PURE body check — it does NOT inspect url/mxc/msgtype.
 // Whether the event nonetheless carries usable media is decided by parseMessageEvent
 // (the single source of truth); GetMessage only consults this once parseMessageEvent
 // has surfaced no content and no attachment.

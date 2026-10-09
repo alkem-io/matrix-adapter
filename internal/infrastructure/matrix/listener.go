@@ -523,6 +523,24 @@ func (m *MautrixAdapter) resolveAlkemioRoomID(ctx context.Context, roomID id.Roo
 	return m.idMapper.AlkemioRoomID(alias)
 }
 
+// AlkemioRoomIDFromAliases maps observed aliases without reconciliation or any
+// network access. Operator inventory rejects conflicting local UUID aliases
+// rather than certifying whichever alias happens to appear first.
+func AlkemioRoomIDFromAliases(aliases []string, mapper *domain.IDMapper) (uuid.UUID, error) {
+	var resolved uuid.UUID
+	for _, alias := range aliases {
+		candidate := mapper.AlkemioRoomID(alias)
+		if candidate == uuid.Nil {
+			continue
+		}
+		if resolved != uuid.Nil && candidate != resolved {
+			return uuid.Nil, fmt.Errorf("conflicting Alkemio room aliases")
+		}
+		resolved = candidate
+	}
+	return resolved, nil
+}
+
 // ResolveAlkemioID resolves a raw Matrix room or space id back to the Alkemio
 // UUID encoded in its alias. It repeats resolveAlkemioRoomID's alias lookup —
 // room and space aliases use the identical #uuid:domain pattern, so the same
@@ -886,56 +904,8 @@ var mediaMsgTypes = map[string]struct{}{
 	msgTypeAudio: {},
 }
 
-// extractAttachment surfaces a raw media reference from a message event, or nil
-// if the event is not a media message (or carries neither an mxc URL nor a
-// document id). It reads the event's raw content:
-//   - url(mxc, OUR homeserver only) → MediaID (the Synapse media id; the
-//     server's re-home key)
-//   - info → mimetype/size/w/h
-//   - io.alkemio.document_id → DocumentID (an UNAUTHENTICATED hint, see below)
-//
-// The mxc URL must be hosted on OUR homeserver (idMapper.LocalMediaID). This is
-// NOT federation support — this deployment's homeserver is not federated and a
-// foreign mxc cannot legitimately arrive. It is input validation: event content
-// is user-controlled, so a local member can put a foreign-looking mxc in an
-// event, and MediaID is a BARE media id that the Alkemio server resolves by
-// externalReference against media its OWN Synapse stored. Surfacing a foreign
-// media id would either miss (attachment silently lost) or COLLIDE with an
-// unrelated local media id and resolve to the WRONG document. A foreign (or
-// unparseable) url therefore surfaces no MediaID at all, exactly like a non-mxc
-// url.
-//
-// io.alkemio.document_id is an UNAUTHENTICATED HINT, and the adapter says so
-// rather than pretending otherwise. It marks an echo of our own outbound media
-// (the server routes DocumentID-present events down the coalesce path instead of
-// re-homing), but nothing here can authenticate it:
-//
-//   - Any member of the room can stamp the field on an event they send.
-//   - The adapter CANNOT tell its own sends from a human's. It impersonates
-//     actor X *as* X — IDMapper.UserID(actorID) is @<actor-uuid>:<homeserver>,
-//     the very same MXID that actor gets when they log into Element via OIDC
-//     (which is why the appservice UUID namespace is registered NON-exclusive,
-//     see the registration in mautrix.go). There is no separate ghost identity
-//     to match against, and Synapse gives an appservice no "you sent this"
-//     marker on the /transactions push. So a sender-shape test would be true for
-//     every message from every user — which is exactly what the previous
-//     isOwnAppserviceUser gate was, and why it was removed rather than tightened.
-//
-// The AUTHORITY is the Alkemio server, which is where the ownership facts live:
-// its outbound/echo branch requires the named document to be in the message's
-// room bucket AND createdBy == the message sender
-// (message.attachment.service.ts, coalesceOutboundEcho / the read-path resolve).
-// A forged breadcrumb dies there. The adapter's job is to surface what the event
-// says, labelled honestly — not to advertise a guarantee it cannot keep.
-//
-// An m.sticker (event.EventSticker) is handled as image media: it carries the
-// same url+info shape as an m.image but has NO msgtype field, so the
-// mediaMsgTypes gate is bypassed for stickers. A sticker with no info.mimetype
-// leaves att.MimeType empty — the adapter does not guess (a sticker may be
-// webp/gif/Lottie, not PNG); the true content-type is resolved downstream at
-// re-home, where file-service stores the actual blob content-type.
-//
-// The adapter never resolves these refs — it only surfaces them.
+// extractAttachment projects local mxc media and event metadata. Document hints
+// are ignored, including on old events; a foreign mxc never aliases local media.
 func extractAttachment(evt *event.Event, idMapper *domain.IDMapper) *domain.Attachment {
 	raw := evt.Content.Raw
 	if raw == nil {
@@ -959,27 +929,17 @@ func extractAttachment(evt *event.Event, idMapper *domain.IDMapper) *domain.Atta
 
 	applyMediaInfo(att, raw)
 
-	// io.alkemio.document_id → DocumentID, surfaced verbatim for EVERY sender (it
-	// is a hint, not a credential — see the doc comment). Our own outbound media
-	// already lives in file-service as document D, and the server routes echoes
-	// (DocumentID present) to the *coalesce* path — stamp externalReference=media_id
-	// onto D and drop the provider's staging twin — which needs BOTH refs, so
-	// MediaID stays populated alongside DocumentID. The server distinguishes echo
-	// (DocumentID present → coalesce) from Element-origin (DocumentID absent →
-	// re-home) by DocumentID, never by MediaID, so surfacing both is unambiguous;
-	// it then authorizes the DocumentID against bucket + createdBy before acting.
-	if docID, ok := raw["io.alkemio.document_id"].(string); ok && docID != "" {
-		att.DocumentID = docID
-	}
-
-	// A media msgtype with neither a parseable mxc URL nor a surfaced document id
-	// carries no reference the server can act on — drop it rather than emit a
-	// dead attachment record.
-	if att.MediaID == "" && att.DocumentID == "" {
+	if att.MediaID == "" {
 		return nil
 	}
 
 	return att
+}
+
+// AttachmentForExport shares live receipt filename/reference parsing with the
+// read-only operator exporter, without a storage lookup or placement.
+func AttachmentForExport(evt *event.Event, mapper *domain.IDMapper) *domain.Attachment {
+	return extractAttachment(evt, mapper)
 }
 
 // attachmentDisplayName resolves a media event's display name. MSC2530: modern
