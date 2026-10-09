@@ -1,5 +1,5 @@
 // Command fix-media-upload-openapi supplies the raw-body, 201-only contract
-// missed by go-apispec v0.4.25. Only this internal upload operation is replaced;
+// missed by go-apispec v0.4.25. Only this raw upload operation is replaced;
 // every other generated operation remains byte-for-byte unchanged.
 package main
 
@@ -49,7 +49,7 @@ func correctMediaUpload(input []byte) ([]byte, error) {
 	}
 	node := document.Content[0]
 	var key *yaml.Node
-	for _, name := range []string{"paths", "/internal/media/upload", "post"} {
+	for _, name := range []string{"paths", "/rest/messaging/media/upload", "post"} {
 		key = nil
 		if node.Kind != yaml.MappingNode {
 			return nil, fmt.Errorf("expected mapping containing %q", name)

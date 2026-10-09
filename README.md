@@ -221,8 +221,15 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 and actual MIME/size/dimensions; they publish as the sender without transferring
 bytes again or emitting a document-ID hint.
 
-The separate raw `/internal/media/upload` bridge streams original bytes as the
-actor, with a required exact Content-Length and the existing attachment-size cap.
+Browsers POST raw original bytes to
+`/api/private/rest/messaging/media/upload?filename=...`. The gateway strips the
+`/api/private` prefix and client identity headers, resolves the authenticated actor,
+and forwards to `/rest/messaging/media/upload`. The adapter accepts only the
+trusted `X-Alkemio-Actor-Id` UUID; absent, anonymous and guest identities are rejected.
+Uploads are room-neutral. Sending and placement apply current destination checks.
+
+The body streams directly to Synapse with a required exact Content-Length and the
+existing attachment-size cap; the adapter neither accumulates nor spools the file.
 Zero bytes use the SDK empty-body form. Failed uploads and uncertain sends are
 not replayed automatically. `timeout_ms` bounds message publication below the
 caller RPC wait; it defaults to 25 seconds.

@@ -6,7 +6,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net/url"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -18,12 +17,15 @@ import (
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 )
 
+// gatewayGuestActorID is the reserved guest identity emitted by the gateway resolver.
+const gatewayGuestActorID = "00000000-0000-0000-0000-000000000001"
+
 type mediaUploader interface {
 	UploadMedia(context.Context, domain.Actor, io.Reader, int64, string, string) (id.ContentURI, error)
 }
 
-// MediaUploadHandler accepts original attachment streams from the trusted server.
-// Network policy confines this internal endpoint; it is never a public ingress.
+// MediaUploadHandler accepts original streams through the authenticated gateway.
+// The gateway strips client actor headers and resolves the authenticated identity.
 type MediaUploadHandler struct {
 	uploader mediaUploader
 	maxBytes int64
@@ -34,9 +36,9 @@ func NewMediaUploadHandler(uploader mediaUploader, maxBytes int64) *MediaUploadH
 	return &MediaUploadHandler{uploader: uploader, maxBytes: maxBytes}
 }
 
-// RegisterRoutes adds the internal upload route to the existing appservice listener.
+// RegisterRoutes adds the gateway-routed upload to the appservice listener.
 func (h *MediaUploadHandler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /internal/media/upload", h.handleUpload)
+	mux.HandleFunc("POST /rest/messaging/media/upload", h.handleUpload)
 }
 
 // MediaUploadResult identifies a completed synchronous Synapse upload.
@@ -45,16 +47,16 @@ type MediaUploadResult struct {
 	MediaID    string `json:"mediaId"`
 }
 
-// handleUpload streams a original file to Synapse as the supplied actor.
+// handleUpload streams an original file to Synapse as the gateway-resolved actor.
 // The body is raw binary, not JSON. Content-Length is required (including zero),
-// Content-Type is the original MIME type, X-Alkemio-Actor-ID is an actor UUID,
-// and X-Alkemio-Display-Name is a UTF-8 filename percent-encoded once.
+// Content-Type is the original MIME type, X-Alkemio-Actor-Id is a trusted
+// non-guest actor UUID, and filename is an ordinary UTF-8 query parameter.
 // No event is published. Success is 201 only after synchronous provider storage;
 // failures use stable error categories and do not replay the stream.
 func (h *MediaUploadHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
-	actorID, err := uuid.Parse(r.Header.Get("X-Alkemio-Actor-ID"))
-	if err != nil || actorID == uuid.Nil {
-		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_actor"})
+	actorID, err := uuid.Parse(r.Header.Get("X-Alkemio-Actor-Id"))
+	if err != nil || actorID == uuid.Nil || actorID.String() == gatewayGuestActorID {
+		WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_actor"})
 		return
 	}
 	if r.ContentLength < 0 {
@@ -65,8 +67,8 @@ func (h *MediaUploadHandler) handleUpload(w http.ResponseWriter, r *http.Request
 		WriteJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "media_too_large"})
 		return
 	}
-	name, err := url.PathUnescape(r.Header.Get("X-Alkemio-Display-Name"))
-	if err != nil || strings.TrimSpace(name) == "" || !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+	name := r.URL.Query().Get("filename")
+	if strings.TrimSpace(name) == "" || !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_display_name"})
 		return
 	}

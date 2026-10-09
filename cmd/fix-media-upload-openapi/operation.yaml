@@ -1,23 +1,24 @@
 operationId: MediaUploadHandler.handleUpload
-summary: Upload a original attachment stream to Synapse without publishing an event.
+summary: Upload an original attachment stream to Synapse without publishing an event.
 description: |
-  Internal network-only endpoint for the trusted Alkemio server. The request body
+  Authenticated gateway route for room-neutral browser uploads. The gateway strips
+  client actor headers and forwards its resolved actor identity. The request body
   is original bytes, never JSON or multipart. Content-Type is required and
   must contain the original MIME type. Content-Length is exact and required,
   including for a zero-byte file. The stream is not retried. Success is 201 only
   after the synchronous Synapse media provider has stored the upload.
 parameters:
   - in: header
-    name: X-Alkemio-Actor-ID
+    name: X-Alkemio-Actor-Id
     required: true
-    description: Non-nil Alkemio actor UUID; the upload uses this sender's identity.
+    description: Gateway-resolved non-guest Alkemio actor UUID; never supplied by the browser.
     schema:
       type: string
       format: uuid
-  - in: header
-    name: X-Alkemio-Display-Name
+  - in: query
+    name: filename
     required: true
-    description: Nonempty UTF-8 filename, percent-encoded exactly once; controls are rejected.
+    description: Nonempty UTF-8 filename encoded as an ordinary query parameter; controls are rejected.
     schema:
       type: string
   - in: header
@@ -61,7 +62,18 @@ responses:
           properties:
             error:
               type: string
-              enum: [invalid_actor, invalid_display_name, invalid_content_type, invalid_media]
+              enum: [invalid_display_name, invalid_content_type, invalid_media]
+  "401":
+    description: Gateway actor identity is absent, invalid, anonymous or a guest.
+    content:
+      application/json:
+        schema:
+          type: object
+          required: [error]
+          properties:
+            error:
+              type: string
+              enum: [invalid_actor]
   "408":
     description: Upload was canceled.
     content:

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -23,10 +24,9 @@ func (f uploadFunc) UploadMedia(ctx context.Context, actor domain.Actor, body io
 }
 
 func mediaUploadRequest(body string) *http.Request {
-	r := httptest.NewRequest(http.MethodPost, "/internal/media/upload", strings.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/rest/messaging/media/upload?filename="+url.QueryEscape("résumé + photo.png"), strings.NewReader(body))
 	r.Header.Set("Content-Type", "image/png")
-	r.Header.Set("X-Alkemio-Actor-ID", "11111111-1111-4111-8111-111111111111")
-	r.Header.Set("X-Alkemio-Display-Name", url.PathEscape("résumé + photo.png"))
+	r.Header.Set("X-Alkemio-Actor-Id", "11111111-1111-4111-8111-111111111111")
 	return r
 }
 
@@ -63,13 +63,21 @@ func TestMediaUpload_RejectsInvalidInputBeforeUpload(t *testing.T) {
 		change func(*http.Request)
 		status int
 	}{
-		{"no actor", func(r *http.Request) { r.Header.Del("X-Alkemio-Actor-ID") }, 400},
-		{"nil actor", func(r *http.Request) { r.Header.Set("X-Alkemio-Actor-ID", uuid.Nil.String()) }, 400},
+		{"no actor", func(r *http.Request) { r.Header.Del("X-Alkemio-Actor-Id") }, 401},
+		{"nil actor", func(r *http.Request) { r.Header.Set("X-Alkemio-Actor-Id", uuid.Nil.String()) }, 401},
+		{"reserved guest actor", func(r *http.Request) { r.Header.Set("X-Alkemio-Actor-Id", "00000000-0000-0000-0000-000000000001") }, 401},
+		{"guest actor", func(r *http.Request) {
+			r.Header.Set("X-Alkemio-Actor-Id", "guest-11111111-1111-4111-8111-111111111111")
+		}, 401},
+		{"query actor is not identity", func(r *http.Request) {
+			r.Header.Del("X-Alkemio-Actor-Id")
+			r.URL.RawQuery += "&actorID=11111111-1111-4111-8111-111111111111"
+		}, 401},
 		{"unknown length", func(r *http.Request) { r.ContentLength = -1 }, 411},
 		{"too large", func(r *http.Request) { r.ContentLength = 101 }, 413},
-		{"invalid escape", func(r *http.Request) { r.Header.Set("X-Alkemio-Display-Name", "%ZZ") }, 400},
-		{"empty name", func(r *http.Request) { r.Header.Del("X-Alkemio-Display-Name") }, 400},
-		{"name control", func(r *http.Request) { r.Header.Set("X-Alkemio-Display-Name", "file%0Aname") }, 400},
+		{"invalid escape", func(r *http.Request) { r.URL.RawQuery = "filename=%ZZ" }, 400},
+		{"empty name", func(r *http.Request) { r.URL.RawQuery = "" }, 400},
+		{"name control", func(r *http.Request) { r.URL.RawQuery = "filename=file%0Aname" }, 400},
 		{"missing mime", func(r *http.Request) { r.Header.Del("Content-Type") }, 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,4 +116,63 @@ func TestMediaUpload_CancellationAndUpstreamFailureAreNotSuccess(t *testing.T) {
 		require.NotContains(t, w.Body.String(), "contentUri")
 		require.Equal(t, 1, calls)
 	}
+}
+
+func TestMediaUpload_ForwardsBeforeRequestEOF(t *testing.T) {
+	firstBytes := make(chan struct{})
+	upload := uploadFunc(func(_ context.Context, _ domain.Actor, reader io.Reader, size int64, _, _ string) (id.ContentURI, error) {
+		if size != 8 {
+			return id.ContentURI{}, io.ErrUnexpectedEOF
+		}
+		var first [4]byte
+		if _, err := io.ReadFull(reader, first[:]); err != nil {
+			return id.ContentURI{}, err
+		}
+		close(firstBytes)
+		if _, err := io.Copy(io.Discard, reader); err != nil {
+			return id.ContentURI{}, err
+		}
+		return id.MustParseContentURI("mxc://local.test/streamed"), nil
+	})
+	mux := http.NewServeMux()
+	NewMediaUploadHandler(upload, 100).RegisterRoutes(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	reader, writer := io.Pipe()
+	defer func() { _ = reader.Close(); _ = writer.Close() }()
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/rest/messaging/media/upload?filename=stream.bin", reader)
+	require.NoError(t, err)
+	request.ContentLength = 8
+	request.Header.Set("X-Alkemio-Actor-Id", "11111111-1111-4111-8111-111111111111")
+	request.Header.Set("Content-Type", "application/octet-stream")
+	finished := make(chan error, 1)
+	go func() {
+		response, err := server.Client().Do(request)
+		if err == nil {
+			if response.StatusCode != http.StatusCreated {
+				err = io.ErrUnexpectedEOF
+			}
+			_ = response.Body.Close()
+		}
+		finished <- err
+	}()
+	_, err = writer.Write([]byte("half"))
+	require.NoError(t, err)
+	select {
+	case <-firstBytes:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upload reader was not forwarded before request EOF")
+	}
+	_, err = writer.Write([]byte("rest"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	require.NoError(t, <-finished)
+}
+
+func TestMediaUpload_OldInternalRouteIsAbsent(t *testing.T) {
+	mux := http.NewServeMux()
+	NewMediaUploadHandler(nil, 100).RegisterRoutes(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/internal/media/upload", nil))
+	require.Equal(t, http.StatusNotFound, response.Code)
 }

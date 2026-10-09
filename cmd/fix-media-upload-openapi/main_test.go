@@ -17,7 +17,7 @@ paths:
     get:
       responses:
         "200": {description: preserved}
-  /internal/media/upload:
+  /rest/messaging/media/upload:
     post:
       operationId: MediaUploadHandler.handleUpload
       responses:
@@ -49,7 +49,7 @@ func TestCorrectMediaUpload_OnlyOperationAndStable(t *testing.T) {
 	if err := yaml.Unmarshal(result, &spec); err != nil {
 		t.Fatal(err)
 	}
-	operation := spec.Paths["/internal/media/upload"]["post"]
+	operation := spec.Paths["/rest/messaging/media/upload"]["post"]
 	if operation.RequestBody == nil || operation.Responses["201"] == nil || operation.Responses["200"] != nil {
 		t.Fatalf("wrong upload contract: %+v", operation)
 	}
@@ -87,7 +87,7 @@ func TestMediaUploadContract_ActualSuccessFieldsAndStatusSet(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(mediaUploadOperation), &operation); err != nil {
 		t.Fatal(err)
 	}
-	expected := []string{"201", "400", "408", "411", "413", "502", "504"}
+	expected := []string{"201", "400", "401", "408", "411", "413", "502", "504"}
 	if len(operation.Responses) != len(expected) {
 		t.Fatalf("unexpected status count: %v", operation.Responses)
 	}
