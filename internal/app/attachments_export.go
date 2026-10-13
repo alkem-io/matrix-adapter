@@ -60,6 +60,7 @@ type attachmentExportCoverage struct {
 	StartedAt        time.Time                `json:"startedAt"`
 	CompletedAt      time.Time                `json:"completedAt"`
 	Complete         bool                     `json:"complete"`
+	Failure          string                   `json:"failure,omitempty"`
 	Rooms            []attachmentRoomCoverage `json:"rooms"`
 }
 
@@ -110,6 +111,7 @@ func RunAttachmentsExport(ctx context.Context, cfg *config.Config, args []string
 	coverage.CompletedAt = time.Now().UTC()
 	if err := eventsFile.Sync(); err != nil {
 		coverage.Complete = false
+		coverage.Failure = "event_output_sync_failed"
 	}
 	if err := json.NewEncoder(coverageFile).Encode(coverage); err != nil {
 		return errors.New("cannot write attachment coverage report")

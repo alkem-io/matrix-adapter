@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: EUPL-1.2
 """Provider boundaries; real-byte roundtrips also run in the Synapse image."""
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from twisted.internet import defer
@@ -23,6 +23,15 @@ def info(**overrides):
     fields = dict(file_id="media123", server_name=None, thumbnail=None, url_cache=False)
     fields.update(overrides)
     return SimpleNamespace(**fields)
+
+
+def error_response(code):
+    transport = SimpleNamespace(abortConnection=Mock())
+    return SimpleNamespace(
+        code=code,
+        transport=transport,
+        deliverBody=Mock(side_effect=lambda protocol: protocol.makeConnection(transport)),
+    )
 
 
 @pytest.fixture
@@ -104,14 +113,19 @@ def test_fetch_relocated_reference_and_responder_owns_spool(provider):
 
 
 def test_missing_reference_returns_miss(provider):
-    provider.http.request.return_value = SimpleNamespace(code=404)
+    response = error_response(404)
+    provider.http.request.return_value = response
     assert run(provider.fetch("unused", info())) is None
+    response.deliverBody.assert_called_once()
+    response.transport.abortConnection.assert_called_once_with()
 
 
 def test_backend_failure_is_not_a_missing_reference(provider):
-    provider.http.request.return_value = SimpleNamespace(code=503)
+    response = error_response(503)
+    provider.http.request.return_value = response
     with pytest.raises(mod.HttpResponseException):
         run(provider.fetch("unused", info()))
+    response.transport.abortConnection.assert_called_once_with()
 
 
 def test_failed_download_closes_partial_spool(provider):
@@ -134,7 +148,8 @@ def test_config_requires_destination():
 
 
 def test_deleted_reference_returns_miss_without_retry(provider, monkeypatch):
-    provider.http.request = AsyncMock(return_value=SimpleNamespace(code=404))
+    response = error_response(404)
+    provider.http.request = AsyncMock(return_value=response)
     opened = []
     temporary_file = mod.tempfile.TemporaryFile
 
@@ -149,11 +164,13 @@ def test_deleted_reference_returns_miss_without_retry(provider, monkeypatch):
         "GET", "http://file-service:4003/internal/file/by-reference/content?ref=media123"
     )
     assert all(value.closed for value in opened)
+    response.transport.abortConnection.assert_called_once_with()
 
 
 @pytest.mark.parametrize("status", [403, 500, 503])
 def test_content_http_failure_propagates_without_retry(provider, monkeypatch, status):
-    provider.http.request.return_value = SimpleNamespace(code=status)
+    response = error_response(status)
+    provider.http.request.return_value = response
     opened = []
     temporary_file = mod.tempfile.TemporaryFile
 
@@ -169,6 +186,8 @@ def test_content_http_failure_propagates_without_retry(provider, monkeypatch, st
     provider.http.request.assert_awaited_once()
     mod.read_body_with_max_size.assert_not_called()
     assert opened[0].closed
+    response.deliverBody.assert_called_once()
+    response.transport.abortConnection.assert_called_once_with()
 
 
 def test_reference_is_encoded_as_one_query_value(provider):

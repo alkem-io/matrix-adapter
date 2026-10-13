@@ -13,6 +13,7 @@ import tempfile
 from urllib.parse import quote
 
 import treq
+from twisted.internet.protocol import Protocol
 from synapse.api.errors import HttpResponseException
 from synapse.http.client import read_body_with_max_size
 from synapse.logging.context import make_deferred_yieldable
@@ -93,10 +94,13 @@ class FileServiceStorageProvider(StorageProvider):
             response = await self.http.request(
                 "GET", f"{self.base_url}/internal/file/by-reference/content?ref={reference}"
             )
-            if response.code == 404:
-                spool.close()
-                return None
             if response.code > 299:
+                discarded = Protocol()
+                response.deliverBody(discarded)
+                discarded.transport.abortConnection()
+                if response.code == 404:
+                    spool.close()
+                    return None
                 raise HttpResponseException(response.code, "Content download failed", b"")
             await make_deferred_yieldable(timeout_deferred(
                 read_body_with_max_size(response, spool, self.max_size),
