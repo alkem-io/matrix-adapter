@@ -29,6 +29,7 @@ APISPEC_VERSION ?= v0.4.25
 openapi:
 	@echo "Generating OpenAPI spec..."
 	go run github.com/antst/go-apispec/cmd/apispec@$(APISPEC_VERSION) --dir . --output openapi.yaml --config apispec.yaml
+	$(GO) run ./cmd/fix-media-upload-openapi
 
 # Build the application
 .PHONY: build

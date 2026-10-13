@@ -130,12 +130,10 @@ func publishedAttachment(t *testing.T, att domain.Attachment) dto.ReceivedAttach
 	return payload.Message.Attachments[0]
 }
 
-// T010 — an inbound media event that echoes our own outbound media carries
-// io.alkemio.document_id, so both DocumentID and MediaID are surfaced.
+// Web and Element media use the same reference-only event projection.
 func TestHandleMessage_AttachmentEcho(t *testing.T) {
 	w, h := 1920, 1080
 	got := publishedAttachment(t, domain.Attachment{
-		DocumentID:  "doc-abc",
 		MediaID:     "media123",
 		DisplayName: "photo.jpg",
 		MimeType:    "image/jpeg",
@@ -143,9 +141,6 @@ func TestHandleMessage_AttachmentEcho(t *testing.T) {
 		Width:       &w,
 		Height:      &h,
 	})
-	if got.DocumentID == nil || *got.DocumentID != "doc-abc" {
-		t.Errorf("expected DocumentID 'doc-abc', got %v", got.DocumentID)
-	}
 	if got.MediaID == nil || *got.MediaID != "media123" {
 		t.Errorf("expected MediaID 'media123', got %v", got.MediaID)
 	}
@@ -154,8 +149,7 @@ func TestHandleMessage_AttachmentEcho(t *testing.T) {
 	}
 }
 
-// T010 — an Element-origin media event has no io.alkemio.document_id, so only
-// MediaID is set (the server's re-home key); DocumentID is nil.
+// Element media carries the local media reference.
 func TestHandleMessage_AttachmentElementOrigin(t *testing.T) {
 	got := publishedAttachment(t, domain.Attachment{
 		MediaID:     "xyz789",
@@ -163,9 +157,6 @@ func TestHandleMessage_AttachmentElementOrigin(t *testing.T) {
 		MimeType:    "image/png",
 		Size:        42,
 	})
-	if got.DocumentID != nil {
-		t.Errorf("expected nil DocumentID, got %v", *got.DocumentID)
-	}
 	if got.MediaID == nil || *got.MediaID != "xyz789" {
 		t.Errorf("expected MediaID 'xyz789', got %v", got.MediaID)
 	}

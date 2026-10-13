@@ -3,7 +3,6 @@ package config
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 	"strconv"
 
@@ -38,12 +37,8 @@ type Config struct {
 	} `yaml:"rabbitmq"`
 
 	FileService struct {
-		// URL is the internal base URL of the Alkemio file-service
-		// (cluster-only). Used to fetch document bytes for outbound media
-		// attachments, e.g. GET {URL}/internal/file/{id}/content.
-		URL string `yaml:"url"`
-		// MaxAttachmentBytes caps how many bytes are read from file-service for a
-		// single outbound attachment. <= 0 means use the built-in default (50 MiB).
+		// MaxAttachmentBytes caps a single raw media upload to Synapse.
+		// <= 0 means use the built-in default (50 MiB).
 		MaxAttachmentBytes int64 `yaml:"max_attachment_bytes"`
 	} `yaml:"file_service"`
 
@@ -83,11 +78,10 @@ type Config struct {
 	} `yaml:"hierarchy"`
 }
 
-// File-service attachment size defaults (applied when the corresponding config
+// Attachment size defaults (applied when the corresponding config
 // value is <= 0).
 const (
-	// DefaultMaxAttachmentBytes caps how many bytes are read from file-service for
-	// a single outbound attachment (50 MiB).
+	// DefaultMaxAttachmentBytes caps a single raw media upload (50 MiB).
 	DefaultMaxAttachmentBytes int64 = 50 * 1024 * 1024
 )
 
@@ -187,36 +181,12 @@ func loadEnvVars(cfg *Config) error {
 }
 
 func loadFileServiceEnv(cfg *Config) error {
-	if v := os.Getenv("FILE_SERVICE_URL"); v != "" {
-		cfg.FileService.URL = v
-	}
 	if v := os.Getenv("FILE_SERVICE_MAX_ATTACHMENT_BYTES"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
 			return fmt.Errorf("invalid FILE_SERVICE_MAX_ATTACHMENT_BYTES %q: %w", v, err)
 		}
 		cfg.FileService.MaxAttachmentBytes = n
-	}
-	return validateFileServiceURL(cfg.FileService.URL)
-}
-
-// validateFileServiceURL rejects a configured but unusable internal URL.
-func validateFileServiceURL(raw string) error {
-	if raw == "" {
-		return nil
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("invalid FILE_SERVICE_URL %q: %w", raw, err)
-	}
-	// The adapter builds "{URL}/internal/file/{id}/content" and hands it to
-	// http.NewRequest, which needs an absolute URL: a scheme AND a host.
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf(
-			"invalid FILE_SERVICE_URL %q: must be an absolute http(s) URL (e.g. http://file-service:4003)", raw)
-	}
-	if parsed.Host == "" {
-		return fmt.Errorf("invalid FILE_SERVICE_URL %q: missing host", raw)
 	}
 	return nil
 }

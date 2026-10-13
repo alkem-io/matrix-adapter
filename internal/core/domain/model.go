@@ -81,10 +81,8 @@ type Message struct {
 	Attachments    []Attachment // Media attachments on this message
 }
 
-// Attachment carries the document to send or the media reference from an event.
-// A received DocumentID is a user-writable hint, not an authorization grant.
+// Attachment carries a local Matrix media reference and event metadata.
 type Attachment struct {
-	DocumentID  string
 	MediaID     string
 	DisplayName string
 	MimeType    string

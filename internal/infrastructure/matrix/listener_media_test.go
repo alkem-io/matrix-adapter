@@ -73,22 +73,8 @@ func documentIDBreadcrumbEvent(sender id.UserID, docID string) *event.Event {
 	}
 }
 
-// The io.alkemio.document_id breadcrumb is an UNAUTHENTICATED hint and the
-// adapter must not pretend otherwise: it grants NO sender-based trust, so the
-// surfaced attachment is byte-for-byte the same whoever sent the event.
-//
-// This replaces a gate that tested "UUID localpart on our homeserver". That test
-// could never distinguish anything, because the adapter impersonates actor X AS
-// X: IDMapper.UserID(actorID) is exactly the MXID that actor gets when they log
-// into Element via OIDC (hence the deliberately NON-exclusive UUID namespace in
-// the appservice registration). The pair below pins that: `attacker` is a real
-// Alkemio user's production MXID — indistinguishable, by construction, from the
-// MXID the adapter itself sends as.
-//
-// Authorization is the Alkemio server's job (bucket membership + createdBy ==
-// message sender). This test exists to stop anyone re-introducing a
-// sender-shaped "trust gate" here and believing it does something.
-func TestParseMessageEvent_DocumentIDBreadcrumb_IsUnauthenticatedHint(t *testing.T) {
+// Old event document hints are ignored for every sender. Only local mxc metadata survives.
+func TestParseMessageEvent_DocumentIDBreadcrumb_IsIgnored(t *testing.T) {
 	a := newTestAdapter("test.local")
 
 	// The MXID the adapter itself sends as when bridging actor testActorID.
@@ -102,18 +88,12 @@ func TestParseMessageEvent_DocumentIDBreadcrumb_IsUnauthenticatedHint(t *testing
 	echo := a.parseMessageEvent(documentIDBreadcrumbEvent(adapterSends, "doc-real"), "!room:test.local")
 	require.NotNil(t, echo)
 	require.Len(t, echo.Attachments, 1)
-	assert.Equal(t, "doc-real", echo.Attachments[0].DocumentID)
 	assert.Equal(t, "mediaX", echo.Attachments[0].MediaID)
 
 	forged := a.parseMessageEvent(documentIDBreadcrumbEvent(attacker, "victim-doc-id"), "!room:test.local")
 	require.NotNil(t, forged)
 	require.Len(t, forged.Attachments, 1)
 
-	// The whole point: the adapter applied no sender-based privilege. It surfaced
-	// the forged breadcrumb exactly as it surfaced the echo — so nothing
-	// downstream may infer authority from the adapter having surfaced it.
-	assert.Equal(t, "victim-doc-id", forged.Attachments[0].DocumentID,
-		"the breadcrumb is passed through verbatim; the adapter does not (and cannot) vet it")
 	assert.Equal(t, "mediaX", forged.Attachments[0].MediaID)
 	assert.Equal(t, echo.Attachments[0].MimeType, forged.Attachments[0].MimeType)
 	assert.Equal(t, echo.Attachments[0].DisplayName, forged.Attachments[0].DisplayName)
@@ -128,7 +108,6 @@ func TestParseMessageEvent_DocumentIDBreadcrumb_NonUUIDSenderTreatedIdentically(
 		documentIDBreadcrumbEvent(id.UserID("@element:test.local"), "doc-x"), "!room:test.local")
 	require.NotNil(t, msg)
 	require.Len(t, msg.Attachments, 1)
-	assert.Equal(t, "doc-x", msg.Attachments[0].DocumentID)
 	assert.Equal(t, "mediaX", msg.Attachments[0].MediaID)
 }
 

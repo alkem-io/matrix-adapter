@@ -22,8 +22,7 @@ func mediaEvent(raw map[string]any) *event.Event {
 	return &event.Event{Content: event.Content{Raw: raw}}
 }
 
-// Inbound m.image carrying io.alkemio.document_id (our own outbound echo) →
-// both DocumentID and MediaID are surfaced.
+// Old hints do not change the local-reference projection.
 func TestExtractAttachment_ImageWithDocumentID(t *testing.T) {
 	att := extractAttachment(mediaEvent(map[string]any{
 		"msgtype": "m.image",
@@ -41,15 +40,8 @@ func TestExtractAttachment_ImageWithDocumentID(t *testing.T) {
 		t.Fatal("expected non-nil attachment")
 		return
 	}
-	// This is our own outbound echo (it carries io.alkemio.document_id). Both refs
-	// are surfaced: the server routes echoes by DocumentID presence to the coalesce
-	// path, which stamps externalReference=media_id on the doc and drops the staging
-	// twin — so it needs the MediaID too.
-	if att.DocumentID != "doc-abc" {
-		t.Errorf("expected DocumentID 'doc-abc', got %q", att.DocumentID)
-	}
 	if att.MediaID != "media123" {
-		t.Errorf("expected MediaID 'media123' surfaced alongside DocumentID, got %q", att.MediaID)
+		t.Errorf("expected MediaID 'media123' , got %q", att.MediaID)
 	}
 	if att.MimeType != "image/jpeg" {
 		t.Errorf("expected MimeType 'image/jpeg', got %q", att.MimeType)
@@ -69,7 +61,7 @@ func TestExtractAttachment_ImageWithDocumentID(t *testing.T) {
 }
 
 // Inbound m.image from Element on OUR homeserver (no io.alkemio.document_id) →
-// MediaID set, DocumentID empty (server will re-home by media_id).
+// MediaID set for shared placement by reference.
 func TestExtractAttachment_ImageWithoutDocumentID(t *testing.T) {
 	att := extractAttachment(mediaEvent(map[string]any{
 		"msgtype": "m.image",
@@ -86,9 +78,6 @@ func TestExtractAttachment_ImageWithoutDocumentID(t *testing.T) {
 	}
 	if att.MediaID != "xyz789" {
 		t.Errorf("expected MediaID 'xyz789', got %q", att.MediaID)
-	}
-	if att.DocumentID != "" {
-		t.Errorf("expected empty DocumentID, got %q", att.DocumentID)
 	}
 	if att.Width != nil || att.Height != nil {
 		t.Errorf("expected nil dims, got w=%v h=%v", att.Width, att.Height)
@@ -114,26 +103,16 @@ func TestExtractAttachment_ForeignHomeserverMediaNotSurfaced(t *testing.T) {
 	}
 }
 
-// A foreign-homeserver url on an ECHO of our own outbound media (trusted sender,
-// io.alkemio.document_id present) still surfaces the DocumentID — that ref is
-// ours and resolvable — but never the foreign media id, which would send the
-// coalesce path at the wrong (or a colliding) document.
-func TestExtractAttachment_ForeignHomeserverKeepsDocumentIDDropsMediaID(t *testing.T) {
+// A document hint must not rescue foreign media.
+func TestExtractAttachment_ForeignHomeserverIgnoresDocumentHint(t *testing.T) {
 	att := extractAttachment(mediaEvent(map[string]any{
 		"msgtype":                "m.image",
 		"body":                   "federated.png",
 		"url":                    "mxc://other.server/xyz789",
 		"io.alkemio.document_id": "doc-abc",
 	}), testIDMapper)
-	if att == nil {
-		t.Fatal("expected the document id to still be surfaced")
-		return
-	}
-	if att.MediaID != "" {
-		t.Errorf("foreign media id must not be surfaced, got %q", att.MediaID)
-	}
-	if att.DocumentID != "doc-abc" {
-		t.Errorf("expected DocumentID 'doc-abc', got %q", att.DocumentID)
+	if att != nil {
+		t.Fatal("foreign mxc must not resolve through a document hint")
 	}
 }
 

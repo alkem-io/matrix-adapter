@@ -89,6 +89,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// Check Room endpoint (synchronous room creation check)
 	checkRoomHandler := httpinfra.NewCheckRoomHandler(roomCheckService, cfg.Matrix.HomeserverToken, log)
 	checkRoomHandler.RegisterRoutes(router)
+	httpinfra.NewMediaUploadHandler(matrixAdapter, cfg.MaxAttachmentBytes()).RegisterRoutes(router)
 
 	// 7. Wire up Event Listeners (Matrix -> Queue)
 	matrixAdapter.SetEventHandlers(matrix.EventHandlers{

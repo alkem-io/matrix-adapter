@@ -36,6 +36,16 @@ components:
         - inviter
         - invitee
       type: object
+    http.MediaUploadResult:
+      properties:
+        contentUri:
+          type: string
+        mediaId:
+          type: string
+      required:
+        - contentUri
+        - mediaId
+      type: object
   securitySchemes:
     apiKeyAuth:
       in: header
@@ -172,3 +182,136 @@ paths:
               schema:
                 type: string
           description: OK
+  /rest/messaging/media/upload:
+    post:
+      operationId: MediaUploadHandler.handleUpload
+      summary: Upload an original attachment stream to Synapse without publishing an event.
+      description: |
+        Authenticated gateway route for room-neutral browser uploads. The gateway strips
+        client actor headers and forwards its resolved actor identity. The request body
+        is original bytes, never JSON or multipart. Content-Type is required and
+        must contain the original MIME type. Content-Length is exact and required,
+        including for a zero-byte file. The stream is not retried. Success is 201 only
+        after the synchronous Synapse media provider has stored the upload.
+      parameters:
+        - in: header
+          name: X-Alkemio-Actor-Id
+          required: true
+          description: Gateway-resolved non-guest Alkemio actor UUID; never supplied by the browser.
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: filename
+          required: true
+          description: Nonempty UTF-8 filename encoded as an ordinary query parameter; controls are rejected.
+          schema:
+            type: string
+        - in: header
+          name: Content-Length
+          required: true
+          description: Exact number of original bytes, including zero; bounded by MaxAttachmentBytes.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      requestBody:
+        required: true
+        description: Raw original bytes; Content-Type declares their MIME type.
+        content:
+          '*/*':
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Synapse upload completed, without publishing a message event.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [contentUri, mediaId]
+                properties:
+                  contentUri:
+                    type: string
+                    description: Local homeserver mxc URI of the completed upload.
+                  mediaId:
+                    type: string
+                    description: Media identifier embedded in contentUri.
+        "400":
+          description: Invalid request metadata or media.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [invalid_display_name, invalid_content_type, invalid_media]
+        "401":
+          description: Gateway actor identity is absent, invalid, anonymous or a guest.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [invalid_actor]
+        "408":
+          description: Upload was canceled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [upload_canceled]
+        "411":
+          description: Content-Length is required.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [length_required]
+        "413":
+          description: Media exceeds the upload byte limit.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [media_too_large]
+        "502":
+          description: Synapse rejected the upload or its upload request failed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [upstream_rejected, upstream_upload_failed]
+        "504":
+          description: Upload timed out.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    enum: [upload_timeout]
