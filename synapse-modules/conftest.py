@@ -14,6 +14,11 @@ except ImportError:
             super().__init__(msg)
             self.code = code
 
+    class SynapseError(Exception):
+        def __init__(self, code, msg):
+            super().__init__(msg)
+            self.code = code
+
     class FileResponder:
         def __init__(self, hs, open_file):
             self.open_file = open_file
@@ -27,7 +32,11 @@ except ImportError:
     modules = {
         "synapse": {},
         "synapse.api": {},
-        "synapse.api.errors": {"HttpResponseException": HttpResponseException},
+        "synapse.api.errors": {"HttpResponseException": HttpResponseException, "SynapseError": SynapseError},
+        "synapse.http": {},
+        "synapse.http.client": {"read_body_with_max_size": None},
+        "synapse.util": {},
+        "synapse.util.async_helpers": {"timeout_deferred": lambda value, timeout, reactor: value},
         "synapse.logging": {},
         "synapse.logging.context": {"make_deferred_yieldable": lambda value: value},
         "synapse.media": {},

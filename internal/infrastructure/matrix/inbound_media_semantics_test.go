@@ -519,12 +519,8 @@ func TestGetMessage_NonMxcUrlNonStringBody_ReturnsError(t *testing.T) {
 	assert.Nil(t, msg)
 }
 
-// Media can be surfaced via the trusted io.alkemio.document_id breadcrumb ALONE —
-// no parseable mxc url needed — when the sender is an own-appservice ghost. Such an
-// event with a non-string body is a valid attachment (parseMessageEvent surfaces
-// it), so GetMessage must return it, not error. This is the case a url-only
-// malformed check would have wrongly rejected.
-func TestGetMessage_DocumentIDMediaNonStringBody_ReturnsAttachment(t *testing.T) {
+// A document hint alone cannot recover a media event without a local mxc.
+func TestGetMessage_DocumentHintWithoutMXC_IsNotAttachment(t *testing.T) {
 	ghost := expectedUserID(testActorID) // @<uuid>:test.local — a trusted own-ghost sender
 	admin := &mockAdminAPI{
 		getEventResult: &event.Event{
@@ -537,7 +533,7 @@ func TestGetMessage_DocumentIDMediaNonStringBody_ReturnsAttachment(t *testing.T)
 					"msgtype":                "m.image",
 					"body":                   12345, // corrupt, non-string body
 					"io.alkemio.document_id": docID1,
-					// no url at all — the attachment is surfaced via document_id
+					// No url: the obsolete hint must not surface an attachment.
 				},
 			},
 		},
@@ -545,11 +541,8 @@ func TestGetMessage_DocumentIDMediaNonStringBody_ReturnsAttachment(t *testing.T)
 	a := newFullTestAdapter(newMockAS(&mockIntentAPI{}, nil), admin)
 
 	msg, err := a.GetMessage(context.Background(), "!room:test.local", "$doc")
-	require.NoError(t, err, "media surfaced via trusted document_id is valid regardless of body")
-	require.NotNil(t, msg)
-	require.Len(t, msg.Attachments, 1, "the document_id attachment must be surfaced")
-	assert.Equal(t, docID1, msg.Attachments[0].DocumentID)
-	assert.Empty(t, msg.Attachments[0].MediaID, "no mxc url → no MediaID")
+	require.Error(t, err, "a document hint cannot recover media without a local mxc")
+	require.Nil(t, msg)
 }
 
 // A non-media msgtype (m.text) with an mxc url and a non-string body carries no
