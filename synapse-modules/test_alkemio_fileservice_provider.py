@@ -42,7 +42,7 @@ def provider(tmp_path, monkeypatch):
         get_reactor=lambda: None,
         get_simple_http_client=lambda: http,
         config=SimpleNamespace(media=SimpleNamespace(
-            media_store_path=str(tmp_path), max_upload_size=1024)),
+            media_store_path=str(tmp_path), max_upload_size=50 * 1024 * 1024)),
     )
     config = mod.FileServiceStorageProvider.parse_config({
         "file_service_url": "http://file-service:4003/",
@@ -98,6 +98,7 @@ def test_store_rejection_is_not_success(provider, tmp_path, monkeypatch, status)
 def test_fetch_relocated_reference_and_responder_owns_spool(provider):
     async def download(response, spool, max_size):
         assert response.code == 200
+        assert max_size == 50 * 1024 * 1024 + 1
         spool.write(b"unchanged content")
 
     mod.read_body_with_max_size.side_effect = download
@@ -126,14 +127,14 @@ def synapse_read_body(body):
 
 
 def test_fetch_returns_an_original_of_exactly_the_upload_limit(provider):
-    limit = provider.max_size
+    limit = provider.max_size = 1024
     mod.read_body_with_max_size.side_effect = synapse_read_body(b"x" * limit)
     with run(provider.fetch("unused", info())) as responder:
         assert len(responder.open_file.read()) == limit
 
 
 def test_fetch_rejects_an_original_over_the_upload_limit(provider):
-    limit = provider.max_size
+    limit = provider.max_size = 1024
     mod.read_body_with_max_size.side_effect = synapse_read_body(b"x" * (limit + 1))
     with pytest.raises(BodyExceededMaxSize):
         run(provider.fetch("unused", info()))
