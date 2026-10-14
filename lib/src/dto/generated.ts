@@ -746,14 +746,12 @@ export interface MessageDto {
   attachments?: ReceivedAttachment[];
 }
 /**
- * AttachmentRef is a reference to a file-service document to be sent as a
- * Matrix media event. The adapter fetches the document bytes, uploads them to
- * the homeserver, and embeds the DocumentID as io.alkemio.document_id on the
- * outbound event.
+ * ExistingMediaRef publishes an already-uploaded local Matrix file without
+ * fetching a document or uploading bytes a second time.
  */
-export interface AttachmentRef {
-  document_id: string; // Alkemio file-service document id (conversation bucket)
-  display_name: string; // Filename / caption shown in clients
+export interface ExistingMediaRef {
+  media_id: string;
+  display_name: string;
   mime_type: string;
   size: number /* int64 */;
   width?: number /* int */;
@@ -761,11 +759,8 @@ export interface AttachmentRef {
 }
 /**
  * ReceivedAttachment is the media reference from a sent or received Matrix event.
- * DocumentID is a user-writable hint. The server checks the conversation bucket,
- * document policy and content hash against the provider row before reusing it.
  */
 export interface ReceivedAttachment {
-  document_id?: string;
   media_id?: string;
   display_name: string;
   mime_type: string;
@@ -783,7 +778,7 @@ export interface SendMessageRequest {
   content: string; // Markdown supported (may be empty if only attachments)
   parent_message_id?: MessageID; // For threads
   timeout_ms?: number /* int64 */; // Operation budget, shorter than the caller RPC wait.
-  attachments?: AttachmentRef[]; // One media doc ref; mutually exclusive with content
+  existing_media?: ExistingMediaRef; // Exclusive with content.
 }
 /**
  * SendMessageResponse returns the message ID and timestamp.

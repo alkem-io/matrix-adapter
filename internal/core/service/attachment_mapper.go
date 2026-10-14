@@ -5,8 +5,16 @@ import (
 	"github.com/alkem-io/matrix-adapter/pkg/dto"
 )
 
+// ExistingMediaToDomain maps an already-uploaded local Matrix reference.
+func ExistingMediaToDomain(media *dto.ExistingMediaRef) domain.Attachment {
+	return domain.Attachment{
+		MediaID: media.MediaID, DisplayName: media.DisplayName,
+		MimeType: media.MimeType, Size: media.Size, Width: media.Width, Height: media.Height,
+	}
+}
+
 // AttachmentToReceivedDTO maps a single inbound domain attachment to the wire
-// DTO, translating empty DocumentID/MediaID to nil pointers. This is the single
+// DTO, translating empty MediaID to nil pointers. This is the single
 // source of truth for the domain.Attachment -> dto.ReceivedAttachment mapping;
 // both the event publisher and the queue message handlers call it so a future
 // field addition only has to change one place.
@@ -17,10 +25,6 @@ func AttachmentToReceivedDTO(a domain.Attachment) dto.ReceivedAttachment {
 		Size:        a.Size,
 		Width:       a.Width,
 		Height:      a.Height,
-	}
-	if a.DocumentID != "" {
-		docID := a.DocumentID
-		ra.DocumentID = &docID
 	}
 	if a.MediaID != "" {
 		mediaID := a.MediaID
