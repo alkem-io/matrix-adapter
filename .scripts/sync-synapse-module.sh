@@ -21,6 +21,9 @@
 #         under `data:` properly). Each block is bounded by the NEXT data key
 #         (or EOF if it is the last one), so multiple module blocks can coexist
 #         in one ConfigMap in any order.
+#       → a Deployment beside that ConfigMap that pins the provider as
+#         `alkemio.io/media-provider-version: "sha256:<hex>"` gets the canonical
+#         provider's sha256, so the pin always matches the embedded provider.
 #
 # Module requirements:
 #   alkemio_room_control.py       REQUIRED in every target — it predates this
@@ -163,6 +166,34 @@ sync_embed() {
   fi
 }
 
+# embed mode: the Synapse Deployment beside the ConfigMap pins the provider it
+# runs as `alkemio.io/media-provider-version: "sha256:<hex>"`. The pin restarts
+# Synapse when the provider changes, and the downstream validator rejects a pin
+# that does not match the embedded provider, so it moves with every sync. Only
+# a sha256 pin is rewritten; any other value is left as the target wrote it.
+sync_provider_annotation() {
+  local dir="$1" digest dest
+  if command -v sha256sum > /dev/null; then
+    digest="$(sha256sum "$CANONICAL_FILESERVICE" | cut -d' ' -f1)"
+  else
+    digest="$(shasum -a 256 "$CANONICAL_FILESERVICE" | cut -d' ' -f1)"
+  fi
+  local pattern='alkemio\.io/media-provider-version: "sha256:[0-9a-f]\{64\}"'
+  for dest in "$dir"/*.yml; do
+    grep -q "$pattern" "$dest" || continue
+    local tmp
+    tmp="$(mktemp -p "$_WORKDIR")"
+    sed "s|$pattern|alkemio.io/media-provider-version: \"sha256:$digest\"|" "$dest" > "$tmp"
+    if cmp -s "$tmp" "$dest"; then
+      rm -f "$tmp"
+      echo "no change: $dest (media-provider-version)"
+    else
+      mv "$tmp" "$dest"
+      echo "updated: $dest (media-provider-version)"
+    fi
+  done
+}
+
 # --- dispatch --------------------------------------------------------------
 
 if [[ -f "$SERVER_MODULE" ]]; then
@@ -201,4 +232,5 @@ if [[ "${ALLOW_MISSING_FILESERVICE_PROVIDER:-0}" == 1 ]] &&
     "will NOT receive canonical media-provider changes." >&2
 else
   sync_embed "$DEST" "$CANONICAL_FILESERVICE" "alkemio_fileservice_provider.py"
+  sync_provider_annotation "$(dirname "$DEST")"
 fi
