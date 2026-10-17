@@ -54,7 +54,7 @@ components:
 info:
   contact:
     email: info@alkem.io
-    name: Alkemio Foundation
+    name: Alkemio
     url: https://alkem.io
   description: |
     Matrix Adapter service for the Alkemio platform. Bridges the Alkemio Server
