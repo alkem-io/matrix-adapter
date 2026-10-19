@@ -163,6 +163,60 @@ ALLOW_MISSING_FILESERVICE_PROVIDER=1 "$SYNC" "$TARGET" > /dev/null 2>&1
 check "ALLOW_MISSING_FILESERVICE_PROVIDER=1 downgrades it to a warning" "0" "$?"
 rm -rf "$TARGET"
 
+# --- 5. the Synapse provider-version annotation follows the synced provider --
+
+DEPLOYMENT_REL="$(dirname "$CONFMAP_REL")/11-synapse-deployment.yml"
+STALE_SHA="sha256:$(printf '%064d' 0)"
+sha256_of() { if command -v sha256sum > /dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+EXPECTED_SHA="sha256:$(sha256_of "$SCRIPT_DIR/../synapse-modules/alkemio_fileservice_provider.py")"
+annotation_in() { sed -n 's/.*alkemio.io\/media-provider-version: "\(.*\)"$/\1/p' "$1"; }
+
+TARGET="$(make_target "$FIXTURE_BOTH")"
+cat > "$TARGET/$DEPLOYMENT_REL" <<YAML
+spec:
+  template:
+    metadata:
+      annotations:
+        alkemio.io/media-provider-version: "$STALE_SHA"
+YAML
+"$SYNC" "$TARGET" > /dev/null
+check "annotation is the canonical provider's sha256" "$EXPECTED_SHA" "$(annotation_in "$TARGET/$DEPLOYMENT_REL")"
+BEFORE="$(mktemp)"
+cp "$TARGET/$DEPLOYMENT_REL" "$BEFORE"
+"$SYNC" "$TARGET" > /dev/null
+if cmp -s "$BEFORE" "$TARGET/$DEPLOYMENT_REL"; then
+  pass "annotation update is idempotent"
+else
+  fail "second run changed the deployment"
+fi
+rm -rf "$TARGET" "$BEFORE"
+
+# An annotation that is not a sha256 pin is not ours to rewrite.
+TARGET="$(make_target "$FIXTURE_BOTH")"
+cat > "$TARGET/$DEPLOYMENT_REL" <<'YAML'
+spec:
+  template:
+    metadata:
+      annotations:
+        alkemio.io/media-provider-version: "v0.8.21"
+YAML
+"$SYNC" "$TARGET" > /dev/null
+check "a non-sha256 annotation is left alone" "v0.8.21" "$(annotation_in "$TARGET/$DEPLOYMENT_REL")"
+rm -rf "$TARGET"
+
+# With the provider skipped by the explicit opt-out, its annotation is not touched.
+TARGET="$(make_target "$FIXTURE_NO_PROVIDER")"
+cat > "$TARGET/$DEPLOYMENT_REL" <<YAML
+spec:
+  template:
+    metadata:
+      annotations:
+        alkemio.io/media-provider-version: "$STALE_SHA"
+YAML
+ALLOW_MISSING_FILESERVICE_PROVIDER=1 "$SYNC" "$TARGET" > /dev/null 2>&1
+check "opt-out leaves the annotation alone" "$STALE_SHA" "$(annotation_in "$TARGET/$DEPLOYMENT_REL")"
+rm -rf "$TARGET"
+
 rm -f "$FIXTURE_BOTH" "$FIXTURE_LAST" "$FIXTURE_NO_PROVIDER"
 
 if [[ "$failures" -gt 0 ]]; then

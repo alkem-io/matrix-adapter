@@ -253,7 +253,9 @@ matrix-adapter attachments-export --rooms room-list.json --output events.jsonl
 `supported-room-inventory`, and `roomIds` containing Alkemio room UUIDs. The command
 resolves their canonical aliases, verifies the observed alias mapping, and scans
 all history pages including thread replies. It does not start the service, join
-rooms, register users, reconcile rooms, or access a database. Missing aliases and
+rooms, register users, reconcile rooms, or access a database. A room whose alias
+Synapse reports as not found was never created in Matrix: it is recorded as
+`room_absent` with no history and counts as covered. Other alias failures and
 history failures are recorded and make the command exit unsuccessfully.
 
 The command exclusively creates `events.jsonl` and `events.jsonl.coverage.json`

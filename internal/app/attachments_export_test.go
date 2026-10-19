@@ -26,6 +26,7 @@ const exportDocument = "44444444-4444-4444-8444-444444444444"
 type exportHTTPFixture struct {
 	aliases        []string
 	resolveError   bool
+	resolveStatus  int
 	unresolvedRoom string
 	rooms          []string
 	pages          map[string]string
@@ -41,6 +42,11 @@ func (f *exportHTTPFixture) serve(t *testing.T) *httptest.Server {
 		switch {
 		case strings.Contains(r.URL.Path, "/directory/room/"):
 			if f.resolveError || (f.unresolvedRoom != "" && strings.Contains(r.URL.Path, f.unresolvedRoom)) {
+				if f.resolveStatus == http.StatusServiceUnavailable {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = fmt.Fprint(w, `{"errcode":"M_UNKNOWN","error":"private-fixture-token private error text"}`)
+					return
+				}
 				w.WriteHeader(http.StatusNotFound)
 				_, _ = fmt.Fprint(w, `{"errcode":"M_NOT_FOUND","error":"private-fixture-token private error text"}`)
 				return
@@ -91,7 +97,7 @@ func runExportFixture(t *testing.T, fixture *exportHTTPFixture) (string, error) 
 
 func TestAttachmentsExport_RequestedRoomCoverageCannotHideUnresolvedRoom(t *testing.T) {
 	fixture := &exportHTTPFixture{
-		rooms: []string{exportRoom, exportOtherRoom}, unresolvedRoom: exportOtherRoom,
+		rooms: []string{exportRoom, exportOtherRoom}, unresolvedRoom: exportOtherRoom, resolveStatus: http.StatusServiceUnavailable,
 		aliases: []string{"#" + exportRoom + ":test.local"}, pages: map[string]string{"": `{"chunk":[]}`},
 	}
 	output, err := runExportFixture(t, fixture)
@@ -184,13 +190,33 @@ func TestAttachmentsExport_RootAndReplyPaginationPrivateOutput(t *testing.T) {
 	}
 }
 
+func TestAttachmentsExport_RoomAbsentFromMatrixIsCoveredWithoutHistory(t *testing.T) {
+	fixture := &exportHTTPFixture{
+		rooms: []string{exportRoom, exportOtherRoom}, unresolvedRoom: exportOtherRoom,
+		aliases: []string{"#" + exportRoom + ":test.local"}, pages: map[string]string{"": `{"chunk":[]}`},
+	}
+	output, err := runExportFixture(t, fixture)
+	require.NoError(t, err)
+	coverage := readExportCoverage(t, output)
+	assert.True(t, coverage.Complete)
+	assert.Equal(t, []string{exportRoom}, coverage.ResolvedRoomIDs)
+	require.Len(t, coverage.Rooms, 2)
+	absent := coverage.Rooms[1]
+	assert.Equal(t, "room_absent", absent.Failure)
+	assert.False(t, absent.MappingComplete)
+	assert.True(t, absent.PaginationComplete)
+	assert.Empty(t, absent.MatrixRoomID)
+	assert.Zero(t, absent.Pages)
+	assert.Zero(t, absent.AttachmentsExported)
+}
+
 func TestAttachmentsExport_IncompleteCoverageFailsWithoutReconciliation(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		fixture exportHTTPFixture
 		reason  string
 	}{
-		{name: "unresolved", fixture: exportHTTPFixture{resolveError: true}, reason: "alias_resolution_failed"},
+		{name: "unresolved", fixture: exportHTTPFixture{resolveError: true, resolveStatus: http.StatusServiceUnavailable}, reason: "alias_resolution_failed"},
 		{name: "conflicting aliases", fixture: exportHTTPFixture{aliases: []string{"#" + exportRoom + ":test.local", "#" + exportOtherRoom + ":test.local"}}, reason: "alias_mapping_failed"},
 		{name: "wrong mapping", fixture: exportHTTPFixture{aliases: []string{"#" + exportOtherRoom + ":test.local"}}, reason: "alias_mapping_mismatch"},
 		{name: "history failure", fixture: exportHTTPFixture{aliases: []string{"#" + exportRoom + ":test.local"}}, reason: "history_read_failed"},

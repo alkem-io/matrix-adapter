@@ -197,9 +197,15 @@ jobs:
             synapse-modules/alkemio_fileservice_provider.py
             registration.yaml (schema fields only; url / as_token / hs_token preserved)"
 
-          git push --force-with-lease \
-            "https://x-access-token:${PUSH_TOKEN}@github.com/${TARGET_REPO}.git" \
-            "${SYNC_BRANCH}"
+          # Pushing to a URL leaves no remote-tracking ref, so a bare
+          # --force-with-lease has nothing to compare and git rejects the push
+          # as "stale info" whenever the branch already exists (an open sync
+          # PR, or one closed without merge). Lease on the tip read just now;
+          # an empty value means the branch must not exist yet.
+          remote="https://x-access-token:${PUSH_TOKEN}@github.com/${TARGET_REPO}.git"
+          expected="$(git ls-remote --heads "$remote" "refs/heads/${SYNC_BRANCH}" | cut -f1)"
+          git push --force-with-lease="refs/heads/${SYNC_BRANCH}:${expected}" \
+            "$remote" "HEAD:refs/heads/${SYNC_BRANCH}"
 
       - name: Open or update pull request
         if: steps.sync.outputs.changed == 'true'
