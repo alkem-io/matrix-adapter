@@ -203,7 +203,8 @@ func (r *attachmentExportReader) exportRoom(ctx context.Context, room string, ou
 	coverage := attachmentRoomCoverage{RoomID: room, SkippedByReason: map[string]int{}}
 	roomID, failure := r.resolveRoom(ctx, uuid.MustParse(room))
 	if failure != "" {
-		coverage.Failure = failure
+		// An absent room has no history to scan, so its coverage is complete.
+		coverage.Failure, coverage.PaginationComplete = failure, failure == roomAbsent
 		return coverage
 	}
 	coverage.MatrixRoomID, coverage.MappingComplete = roomID.String(), true
@@ -251,10 +252,18 @@ func (r *attachmentExportReader) exportRoom(ctx context.Context, room string, ou
 	}
 }
 
+// roomAbsent marks a requested room whose alias Synapse reports as not found:
+// the room was never created in Matrix, so it holds no media to export. Any
+// other lookup error stays a failure and leaves the export incomplete.
+const roomAbsent = "room_absent"
+
 func (r *attachmentExportReader) resolveRoom(ctx context.Context, room uuid.UUID) (id.RoomID, string) {
 	requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	resolved, err := r.client.ResolveAlias(requestCtx, id.RoomAlias(r.mapper.RoomAlias(room)))
+	if errors.Is(err, mautrix.MNotFound) {
+		return "", roomAbsent
+	}
 	if err != nil || resolved == nil || resolved.RoomID == "" {
 		return "", "alias_resolution_failed"
 	}
