@@ -21,7 +21,6 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
-	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter/internal/infrastructure/imagemeta"
 )
 
@@ -67,7 +66,6 @@ type mediaUploader interface {
 // The gateway strips client actor headers and resolves the authenticated identity.
 type MediaUploadHandler struct {
 	uploader     mediaUploader
-	log          ports.Logger
 	maxBytes     int64
 	images       waitingBudget
 	imageBudget  int64
@@ -76,16 +74,15 @@ type MediaUploadHandler struct {
 }
 
 // NewMediaUploadHandler creates the byte-upload bridge without message publication.
-func NewMediaUploadHandler(uploader mediaUploader, maxBytes int64, log ports.Logger) *MediaUploadHandler {
-	return newMediaUploadHandler(uploader, maxBytes, imageMemoryBudget, imageBudgetWait, log)
+func NewMediaUploadHandler(uploader mediaUploader, maxBytes int64) *MediaUploadHandler {
+	return newMediaUploadHandler(uploader, maxBytes, imageMemoryBudget, imageBudgetWait)
 }
 
 func newMediaUploadHandler(
-	uploader mediaUploader, maxBytes, imageBudget int64, imageWait time.Duration, log ports.Logger,
+	uploader mediaUploader, maxBytes, imageBudget int64, imageWait time.Duration,
 ) *MediaUploadHandler {
 	return &MediaUploadHandler{
 		uploader:     uploader,
-		log:          log,
 		maxBytes:     maxBytes,
 		images:       waitingBudget{semaphore.NewWeighted(imageBudget), imageWait},
 		imageBudget:  imageBudget,
@@ -202,7 +199,6 @@ func (h *MediaUploadHandler) handleUpload(w http.ResponseWriter, r *http.Request
 	deadline := func(t time.Time) { _ = controller.SetReadDeadline(t) }
 	media, size, contentType, release, err := h.uploadBody(r.Context(), actorID, body, r.ContentLength, contentType, deadline)
 	if err != nil {
-		h.logRefusal(actorID, r.ContentLength, err)
 		writeMediaUploadError(w, err)
 		return
 	}
@@ -215,14 +211,6 @@ func (h *MediaUploadHandler) handleUpload(w http.ResponseWriter, r *http.Request
 		return
 	}
 	WriteJSON(w, http.StatusCreated, MediaUploadResult{ContentURI: uri.String(), MediaID: uri.FileID})
-}
-
-// logRefusal records who was refused as busy or cut off as too slow, so a
-// budget held by one sender is visible and attributable.
-func (h *MediaUploadHandler) logRefusal(actorID uuid.UUID, size int64, err error) {
-	if errors.Is(err, errImageBusy) || errors.Is(err, os.ErrDeadlineExceeded) {
-		h.log.Warn("Image upload refused", "actor_id", actorID.String(), "declared_bytes", size, "reason", err.Error())
-	}
 }
 
 // errImageBusy reports that an image could not get its share of the memory
