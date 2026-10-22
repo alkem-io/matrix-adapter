@@ -21,18 +21,24 @@ const docID1 = "11111111-1111-4111-8111-111111111111"
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func TestSendMessage_RejectsAggregateBeforePublishing(t *testing.T) {
-	for _, content := range []string{"", "text"} {
-		intent := &mockIntentAPI{}
-		a := newMediaTestAdapter(t, intent)
-		attachments := []domain.Attachment{{MediaID: "media1"}, {MediaID: "media2"}}
-		if content != "" {
-			attachments = attachments[:1]
-		}
-		message, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), content, attachments)
-		require.ErrorContains(t, err, "either text or one attachment")
-		require.Nil(t, message)
-		assert.Zero(t, intent.sendMessageEventCalled)
-		assert.Zero(t, intent.uploadBytesCalled)
+	for _, tc := range []struct {
+		name        string
+		content     string
+		attachments []domain.Attachment
+	}{
+		{name: "two attachments", attachments: []domain.Attachment{{MediaID: "media1"}, {MediaID: "media2"}}},
+		{name: "text and two attachments", content: "text", attachments: []domain.Attachment{{MediaID: "media1"}, {MediaID: "media2"}}},
+		{name: "neither text nor attachment"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			intent := &mockIntentAPI{}
+			a := newMediaTestAdapter(t, intent)
+			message, err := a.SendMessage(context.Background(), "!room:test.local", testActor(testActorID, "Alice"), tc.content, tc.attachments)
+			require.ErrorContains(t, err, "send requires text, one attachment, or both")
+			require.Nil(t, message)
+			assert.Zero(t, intent.sendMessageEventCalled)
+			assert.Zero(t, intent.uploadBytesCalled)
+		})
 	}
 }
 
@@ -91,6 +97,7 @@ func TestSendReply_ExistingMediaPreservesSenderThreadAndMetadata(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, tc.messageType, content["msgtype"])
 			assert.Equal(t, tc.filename, content["body"])
+			assert.NotContains(t, content, "filename", "an uncaptioned media event keeps its original shape")
 			assert.Equal(t, "mxc://test.local/already-uploaded", content["url"])
 			assert.NotContains(t, content, "io.alkemio.document_id")
 			info, ok := content["info"].(map[string]any)
@@ -116,6 +123,7 @@ func TestSendReply_ExistingMediaPreservesSenderThreadAndMetadata(t *testing.T) {
 			assert.Equal(t, "$thread-root", message.ThreadID)
 			assert.Equal(t, "!reply-room:test.local", message.RoomID)
 			assert.Equal(t, "$reply", message.ID)
+			assert.Equal(t, tc.filename, message.Content)
 			require.Len(t, message.Attachments, 1)
 			assert.Equal(t, "already-uploaded", message.Attachments[0].MediaID)
 			assert.Equal(t, expectedMIME, message.Attachments[0].MimeType)

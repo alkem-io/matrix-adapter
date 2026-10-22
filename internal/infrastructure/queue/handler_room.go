@@ -888,8 +888,8 @@ func (h *RoomHandler) validateSendAlternatives(req dto.SendMessageRequest) *dto.
 	if req.ExistingMedia != nil {
 		attachmentCount++
 	}
-	if attachmentCount > 1 || (req.Content == "") == (attachmentCount == 0) {
-		err := NewInvalidParamError("send requires either text or one attachment")
+	if attachmentCount > 1 || (req.Content == "" && attachmentCount == 0) {
+		err := NewInvalidParamError("send requires text, one attachment, or both")
 		return &err
 	}
 	return nil
