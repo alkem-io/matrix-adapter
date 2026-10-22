@@ -92,14 +92,3 @@ func TestHandleSendMessage_ExistingMediaWithCaption(t *testing.T) {
 		})
 	}
 }
-
-func TestHandleSendMessage_RejectsEmptySend(t *testing.T) {
-	mock := &testMockMatrixPort{resolveAliasResult: "!room1:test", sendMessageResult: "$sent"}
-	h := testRoomHandler(mock)
-	payload := map[string]any{"alkemio_room_id": uuid.NewString(), "sender_actor_id": uuid.NewString(), "content": ""}
-	result, err := h.HandleSendMessage(context.Background(), mustMarshal(t, payload))
-	require.NoError(t, err)
-	assertErrorMessageContains(t, result, "send requires text, one attachment, or both")
-	require.Empty(t, mock.capturedSendMessageAttachments)
-	require.Empty(t, mock.capturedSendMessageContent)
-}

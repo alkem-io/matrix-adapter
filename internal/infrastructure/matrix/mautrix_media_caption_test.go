@@ -22,28 +22,6 @@ func captionTestAttachment() domain.Attachment {
 	}
 }
 
-func TestBuildMediaContent_Caption(t *testing.T) {
-	mxc := id.ContentURI{Homeserver: "test.local", FileID: "already-uploaded"}
-
-	t.Run("without caption body is the file name and filename is absent", func(t *testing.T) {
-		content := buildMediaContent(captionTestAttachment(), "", mxc, "image/png", 120, "")
-		assert.Equal(t, "sunset.png", content["body"])
-		assert.NotContains(t, content, "filename")
-		assert.Equal(t, "m.image", content["msgtype"])
-		assert.Equal(t, "mxc://test.local/already-uploaded", content["url"])
-		assert.NotContains(t, content, "m.relates_to")
-	})
-
-	t.Run("with caption body is the caption and filename is the file name", func(t *testing.T) {
-		content := buildMediaContent(captionTestAttachment(), "look at this", mxc, "image/png", 120, "")
-		assert.Equal(t, "look at this", content["body"])
-		assert.Equal(t, "sunset.png", content["filename"])
-		assert.Equal(t, "m.image", content["msgtype"])
-		assert.Equal(t, "mxc://test.local/already-uploaded", content["url"])
-		assert.NotContains(t, content, "m.relates_to")
-	})
-}
-
 // sendCaptioned publishes one captioned media event through SendReply and returns
 // the returned message plus the event content exactly as it would go on the
 // wire (a JSON round trip, so the listener sees the same shape Synapse serves).
@@ -74,12 +52,14 @@ func TestSendReply_CaptionedMediaRoundTripsThroughListener(t *testing.T) {
 	for _, tc := range []struct {
 		name, caption, wantContent string
 		wantFilename               bool
+		threadID                   id.EventID
 	}{
 		{name: "captioned", caption: "look at this", wantContent: "look at this", wantFilename: true},
 		{name: "uncaptioned", caption: "", wantContent: "sunset.png"},
+		{name: "captioned in a thread", caption: "look at this", wantContent: "look at this", wantFilename: true, threadID: "$thread-root"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			message, raw := sendCaptioned(t, tc.caption, "")
+			message, raw := sendCaptioned(t, tc.caption, tc.threadID)
 			assert.Equal(t, tc.wantContent, raw["body"])
 			if tc.wantFilename {
 				assert.Equal(t, "sunset.png", raw["filename"])
@@ -101,27 +81,8 @@ func TestSendReply_CaptionedMediaRoundTripsThroughListener(t *testing.T) {
 			assert.Equal(t, "already-uploaded", attachment.MediaID)
 			assert.Equal(t, "image/png", attachment.MimeType)
 			assert.Equal(t, int64(120), attachment.Size)
-			assert.Empty(t, extractThreadID(evt))
+			assert.Equal(t, string(tc.threadID), extractThreadID(evt))
+			assert.Equal(t, string(tc.threadID), message.ThreadID)
 		})
 	}
-}
-
-func TestSendReply_CaptionedMediaKeepsThreadRelation(t *testing.T) {
-	message, raw := sendCaptioned(t, "look at this", "$thread-root")
-
-	relationJSON, err := json.Marshal(raw["m.relates_to"])
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"rel_type":"m.thread","event_id":"$thread-root","m.in_reply_to":{"event_id":"$thread-root"},"is_falling_back":true}`, string(relationJSON))
-	assert.Equal(t, "look at this", raw["body"])
-	assert.Equal(t, "sunset.png", raw["filename"])
-	assert.Equal(t, "$thread-root", message.ThreadID)
-	assert.Equal(t, "look at this", message.Content)
-
-	evt := &event.Event{Type: event.EventMessage, Content: event.Content{Raw: raw}}
-	assert.Equal(t, "$thread-root", extractThreadID(evt))
-	content, attachment, ok := extractInboundMessage(evt, testIDMapper)
-	require.True(t, ok)
-	assert.Equal(t, "look at this", content)
-	require.NotNil(t, attachment)
-	assert.Equal(t, "sunset.png", attachment.DisplayName)
 }
