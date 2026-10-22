@@ -27,10 +27,13 @@ const gatewayGuestActorID = "00000000-0000-0000-0000-000000000001"
 
 const (
 	// imageMemoryBudget bounds the bytes held at once by images read whole to
-	// be rewritten. With imagemeta.MaxRotationBytes, which bounds the JPEG
-	// rotations running at once, it leaves 160 MiB of the pod's 512 Mi limit
-	// for the service itself and garbage not yet collected.
-	imageMemoryBudget int64 = 192 << 20
+	// be rewritten, as imagemeta.MaxRotationBytes bounds those held by JPEG
+	// rotations. Together they are 320 MiB of the pod's 512 Mi limit. They
+	// bound live memory only: what the rewrites leave behind as garbage is
+	// bounded by the runtime's soft memory limit (package memlimit, 80% of the
+	// pod's limit), which makes the collector free it before the heap reaches
+	// the pod's limit. A 50 MiB image, the default attachment cap, fits.
+	imageMemoryBudget int64 = 160 << 20
 	// imageCopies is how many copies of an image can be live while it is
 	// rewritten: the bytes received, the rewritten bytes, and the copy made
 	// when an orientation-only segment is inserted. A rotation's decode and
@@ -42,6 +45,10 @@ const (
 	imageBudgetWait = 2 * time.Second
 	imageRetryAfter = "5"
 )
+
+// ImageMemoryBytes is the most live memory that images being rewritten may
+// hold at once. The process's memory limit must leave room above it.
+const ImageMemoryBytes = imageMemoryBudget + imagemeta.MaxRotationBytes
 
 type mediaUploader interface {
 	UploadMedia(context.Context, domain.Actor, io.Reader, int64, string, string) (id.ContentURI, error)
