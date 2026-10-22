@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/semaphore"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/id"
 
@@ -276,6 +277,12 @@ func TestMediaUpload_PassesGIFThroughUnchanged(t *testing.T) {
 	require.Equal(t, "image/gif", mimeType)
 }
 
+// withImageBudget gives h an image budget of budget bytes, waited on briefly.
+func withImageBudget(h *MediaUploadHandler, budget int64) *MediaUploadHandler {
+	h.sem, h.imageBudget, h.imageWait = semaphore.NewWeighted(budget), budget, 20*time.Millisecond
+	return h
+}
+
 // blockingUpload counts its calls and signals entered for each, then holds
 // the upload open until release is closed.
 func blockingUpload(calls *atomic.Int32, entered chan<- struct{}, release <-chan struct{}) uploadFunc {
@@ -315,7 +322,7 @@ func TestMediaUpload_RefusesImagesBeyondTheMemoryBudget(t *testing.T) {
 	release := make(chan struct{})
 	mux := http.NewServeMux()
 	// Room for exactly two photos being rewritten at once.
-	newMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20, 2*imageCopies*int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+	withImageBudget(NewMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20), 2*imageCopies*int64(len(photo))).RegisterRoutes(mux)
 
 	held := make(chan *httptest.ResponseRecorder, 2)
 	for range 2 {
@@ -361,7 +368,7 @@ func TestMediaUpload_ReturnsImageBudgetAfterFailure(t *testing.T) {
 	})
 	mux := http.NewServeMux()
 	// Room for one photo only, so any budget left behind refuses the next.
-	newMediaUploadHandler(upload, 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+	withImageBudget(NewMediaUploadHandler(upload, 1<<20), imageCopies*int64(len(photo))).RegisterRoutes(mux)
 
 	require.Equal(t, http.StatusBadGateway, serveUpload(mux, photo, "image/jpeg").Code)
 	require.Equal(t, http.StatusBadRequest, serveUpload(mux, photo[:len(photo)/2], "image/jpeg").Code)
@@ -376,7 +383,7 @@ func TestMediaUpload_AcceptsAnImageLargerThanTheWholeBudget(t *testing.T) {
 	var size int64
 	var mimeType string
 	mux := http.NewServeMux()
-	newMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 1<<20, int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+	withImageBudget(NewMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 1<<20), int64(len(photo))).RegisterRoutes(mux)
 
 	require.Equal(t, http.StatusCreated, serveUpload(mux, photo, "image/jpeg").Code)
 	require.Equal(t, "image/jpeg", mimeType)
@@ -388,7 +395,7 @@ func TestMediaUpload_DoesNotGateFilesThatAreNotImages(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	mux := http.NewServeMux()
-	newMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+	withImageBudget(NewMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20), imageCopies*int64(len(photo))).RegisterRoutes(mux)
 	held := make(chan *httptest.ResponseRecorder, 1)
 	go func() { held <- serveUpload(mux, photo, "image/jpeg") }()
 	awaitEntered(t, entered)
@@ -409,7 +416,7 @@ func TestMediaUpload_LimitsTheImagesOneActorHasInFlight(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	mux := http.NewServeMux()
-	newMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20, imageMemoryBudget, 20*time.Millisecond).RegisterRoutes(mux)
+	NewMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20).RegisterRoutes(mux)
 	const actor = "22222222-2222-4222-8222-222222222222"
 	upload := func(actorID, contentType string, body []byte) *httptest.ResponseRecorder {
 		r := mediaUploadRequest(string(body))
@@ -498,7 +505,7 @@ func TestMediaUpload_ChargesTheImageBudgetOnlyForBytesReceived(t *testing.T) {
 	var size int64
 	var mimeType string
 	const budget = 4 * imagePiece
-	h := newMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 64<<20, budget, imageBudgetWait)
+	h := withImageBudget(NewMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 64<<20), budget)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	server := httptest.NewServer(mux)
@@ -526,7 +533,7 @@ func TestMediaUpload_CutsOffAnImageSenderThatStalls(t *testing.T) {
 		called = true
 		return id.ContentURI{}, nil
 	})
-	h := newMediaUploadHandler(upload, 64<<20, imageMemoryBudget, imageBudgetWait)
+	h := NewMediaUploadHandler(upload, 64<<20)
 	h.pieceTimeout = 100 * time.Millisecond
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -565,7 +572,7 @@ func TestMediaUpload_ImageReadDeadlineDoesNotCutOffItsStorage(t *testing.T) {
 		_, err := io.Copy(io.Discard, reader)
 		return id.MustParseContentURI("mxc://local.test/stored"), err
 	})
-	h := newMediaUploadHandler(upload, 1<<20, imageMemoryBudget, imageBudgetWait)
+	h := NewMediaUploadHandler(upload, 1<<20)
 	h.pieceTimeout = 50 * time.Millisecond
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)

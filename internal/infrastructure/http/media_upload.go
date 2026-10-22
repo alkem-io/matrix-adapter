@@ -76,18 +76,12 @@ type MediaUploadHandler struct {
 
 // NewMediaUploadHandler creates the byte-upload bridge without message publication.
 func NewMediaUploadHandler(uploader mediaUploader, maxBytes int64) *MediaUploadHandler {
-	return newMediaUploadHandler(uploader, maxBytes, imageMemoryBudget, imageBudgetWait)
-}
-
-func newMediaUploadHandler(
-	uploader mediaUploader, maxBytes, imageBudget int64, imageWait time.Duration,
-) *MediaUploadHandler {
 	return &MediaUploadHandler{
 		uploader:     uploader,
 		maxBytes:     maxBytes,
-		sem:          semaphore.NewWeighted(imageBudget),
-		imageBudget:  imageBudget,
-		imageWait:    imageWait,
+		sem:          semaphore.NewWeighted(imageMemoryBudget),
+		imageBudget:  imageMemoryBudget,
+		imageWait:    imageBudgetWait,
 		actors:       actorSlots{held: map[uuid.UUID]int{}},
 		pieceTimeout: imagePieceTimeout,
 	}
