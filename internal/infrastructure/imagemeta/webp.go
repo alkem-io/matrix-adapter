@@ -33,9 +33,10 @@ type webpScan struct {
 
 // stripWebP rewrites a WebP losslessly, keeping only the chunks in webpKept,
 // clearing the EXIF and XMP flags in the extended header and recomputing the
-// RIFF size. Go has no WebP encoder, so an Exif orientation other than upright
-// is not applied to the pixels: it is kept as an orientation-only EXIF chunk,
-// and the image displays exactly as it did before wherever that was honoured.
+// RIFF size. An Exif orientation other than upright is kept as an
+// orientation-only EXIF chunk, and the image displays exactly as it did before
+// wherever that was honoured. The output is sized for that chunk up front, so
+// it never reallocates.
 func stripWebP(data []byte) ([]byte, error) {
 	if len(data) < 12 {
 		return nil, ErrMalformed
@@ -44,7 +45,7 @@ func stripWebP(data []byte) ([]byte, error) {
 	if end < 12 || end > uint64(len(data)) {
 		return nil, ErrMalformed
 	}
-	s := &webpScan{out: append(make([]byte, 0, end), data[:12]...), header: -1, orientation: upright}
+	s := &webpScan{out: append(make([]byte, 0, end+8+orientationOnlyLen), data[:12]...), header: -1, orientation: upright}
 	for pos := uint64(12); pos < end; {
 		next, err := s.chunk(data, pos, end)
 		if err != nil {

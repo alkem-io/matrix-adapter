@@ -13,7 +13,6 @@ import (
 	httpinfra "github.com/alkem-io/matrix-adapter/internal/infrastructure/http"
 	"github.com/alkem-io/matrix-adapter/internal/infrastructure/logger"
 	"github.com/alkem-io/matrix-adapter/internal/infrastructure/matrix"
-	"github.com/alkem-io/matrix-adapter/internal/infrastructure/memlimit"
 	"github.com/alkem-io/matrix-adapter/internal/infrastructure/queue"
 )
 
@@ -106,9 +105,6 @@ func NewApp(cfg *config.Config) (*App, error) {
 		OnSpaceUpdated:       eventService.HandleSpaceUpdated,
 	})
 
-	// 8. Bound the heap below the container's memory limit.
-	configureMemoryLimit(log)
-
 	return &App{
 		cfg:                cfg,
 		logger:             log,
@@ -119,19 +115,6 @@ func NewApp(cfg *config.Config) (*App, error) {
 		spaceHandler:       spaceHandler,
 		readReceiptHandler: readReceiptHandler,
 	}, nil
-}
-
-// configureMemoryLimit makes the garbage collector run before the heap reaches
-// the container's memory limit. The image upload budgets bound live memory
-// only, so without it the garbage they leave behind can push the process past
-// the limit.
-func configureMemoryLimit(log ports.Logger) {
-	limit, source := memlimit.ConfigureFromHost()
-	log.Info("Go memory limit", "bytes", limit, "source", string(source))
-	if limit < httpinfra.ImageMemoryBytes {
-		log.Warn("Go memory limit is below what image uploads may hold at once",
-			"limit_bytes", limit, "image_bytes", httpinfra.ImageMemoryBytes)
-	}
 }
 
 // Start starts the application adapters and servers.

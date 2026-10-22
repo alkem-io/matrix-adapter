@@ -29,20 +29,19 @@ import (
 const gatewayGuestActorID = "00000000-0000-0000-0000-000000000001"
 
 const (
-	// imageMemoryBudget bounds the bytes held at once by images read whole to
-	// be rewritten, as imagemeta.MaxRotationBytes bounds those held by JPEG
-	// rotations. Together they are 320 MiB of the pod's 512 Mi limit. They
-	// bound live memory only: what the rewrites leave behind as garbage is
-	// bounded by the runtime's soft memory limit (package memlimit, 80% of the
-	// pod's limit), which makes the collector free it before the heap reaches
-	// the pod's limit. A 50 MiB image, the default attachment cap, fits.
+	// imageMemoryBudget bounds the live bytes held at once by images read
+	// whole to be rewritten. With the collector at its default setting the
+	// heap grows to about twice the live memory before it is collected, so
+	// with the service's own memory (about 40 MiB) the heap peaks near
+	// 2×(160+40) = 400 MiB, under the pod's 512 Mi limit. A 50 MiB image, the
+	// default attachment cap, fits at imageCopies times its size.
 	imageMemoryBudget int64 = 160 << 20
 	// imageCopies is how many copies of an image can be live while it is
-	// rewritten: the bytes received, the rewritten bytes, and the copy made
-	// when an orientation-only segment is inserted. A rotation's decode and
-	// re-encode are charged to the rotation budget instead.
-	imageCopies = 3
-	// imageBudgetWait is how long an image waits for either budget before the
+	// read and rewritten: the pieces received and the whole they are joined
+	// into, then the whole and the rewritten bytes, which are sized up front
+	// so that building them never copies them again.
+	imageCopies = 2
+	// imageBudgetWait is how long an image waits for the budget before the
 	// upload is refused as busy; imageRetryAfter is the retry hint sent with
 	// that.
 	imageBudgetWait = 2 * time.Second
@@ -56,13 +55,9 @@ const (
 	// upload_timeout, so it cannot keep its share of the budget by stalling.
 	imagePieceTimeout = 32 * time.Second
 	// imagesPerActor is how many images one actor may have being read,
-	// rewritten and stored at once, across both budgets.
+	// rewritten and stored at once.
 	imagesPerActor = 2
 )
-
-// ImageMemoryBytes is the most live memory that images being rewritten may
-// hold at once. The process's memory limit must leave room above it.
-const ImageMemoryBytes = imageMemoryBudget + imagemeta.MaxRotationBytes
 
 type mediaUploader interface {
 	UploadMedia(context.Context, domain.Actor, io.Reader, int64, string, string) (id.ContentURI, error)
@@ -76,7 +71,6 @@ type MediaUploadHandler struct {
 	maxBytes     int64
 	images       waitingBudget
 	imageBudget  int64
-	rotations    waitingBudget
 	actors       actorSlots
 	pieceTimeout time.Duration
 }
@@ -93,9 +87,8 @@ func newMediaUploadHandler(
 		uploader:     uploader,
 		log:          log,
 		maxBytes:     maxBytes,
-		images:       waitingBudget{"image", semaphore.NewWeighted(imageBudget), imageWait},
+		images:       waitingBudget{semaphore.NewWeighted(imageBudget), imageWait},
 		imageBudget:  imageBudget,
-		rotations:    waitingBudget{"rotation", semaphore.NewWeighted(imagemeta.MaxRotationBytes), imageWait},
 		actors:       actorSlots{held: map[uuid.UUID]int{}},
 		pieceTimeout: imagePieceTimeout,
 	}
@@ -104,7 +97,6 @@ func newMediaUploadHandler(
 // waitingBudget is a memory budget that an upload waits on only briefly: a
 // share it cannot get within wait is refused as errImageBusy.
 type waitingBudget struct {
-	name string
 	sem  *semaphore.Weighted
 	wait time.Duration
 }
@@ -115,7 +107,7 @@ func (b waitingBudget) Acquire(ctx context.Context, n int64) error {
 	wait, cancel := context.WithTimeout(ctx, b.wait)
 	defer cancel()
 	if err := b.sem.Acquire(wait, n); err != nil {
-		return fmt.Errorf("%s budget: %w", b.name, errImageBusy)
+		return errImageBusy
 	}
 	return nil
 }
@@ -124,7 +116,7 @@ func (b waitingBudget) Acquire(ctx context.Context, n int64) error {
 func (b waitingBudget) Release(n int64) { b.sem.Release(n) }
 
 // actorSlots counts the images each actor has in flight, so one actor cannot
-// take every share of the budgets.
+// take every share of the budget.
 type actorSlots struct {
 	mu   sync.Mutex
 	held map[uuid.UUID]int
@@ -169,8 +161,8 @@ type MediaUploadResult struct {
 // without its location, device and time metadata, with the content type and
 // length of the rewritten bytes; a corrupt one is refused as invalid_media.
 // Images being rewritten share a fixed memory budget, charged as their bytes
-// arrive, and JPEG rotations a second one; an image that cannot get its share
-// of either within a short wait, or whose actor already has imagesPerActor
+// arrive; an image that cannot get its share of it within a short wait, or
+// whose actor already has imagesPerActor
 // images in flight, is refused with 503 upload_busy and Retry-After, and
 // nothing is uploaded. An image body that stops arriving is cut off with 408
 // upload_timeout. Every other body streams through unchanged.
@@ -268,7 +260,7 @@ func (h *MediaUploadHandler) uploadBody(
 		releaseMemory()
 		h.actors.give(actorID)
 	}
-	media, size, contentType, err := h.stripImage(ctx, format, whole)
+	media, size, contentType, err := stripImage(format, whole)
 	if err != nil {
 		release()
 		return nil, 0, "", nil, err
@@ -330,18 +322,12 @@ func (h *MediaUploadHandler) readImage(
 }
 
 // stripImage removes the metadata of a recognised image read whole. The
-// declared type gives way to the type of the rewritten bytes. Only a broken
-// image is invalid media; a rotation refused its budget or cut short by the
-// request ending keeps its own error.
-func (h *MediaUploadHandler) stripImage(
-	ctx context.Context, format imagemeta.Format, whole []byte,
-) (io.Reader, int64, string, error) {
-	stripped, err := imagemeta.Strip(ctx, format, whole, h.rotations)
-	if errors.Is(err, imagemeta.ErrMalformed) {
-		return nil, 0, "", fmt.Errorf("%w: %w", domain.ErrInvalidParam, err)
-	}
+// declared type gives way to the type of the rewritten bytes. A broken image
+// is invalid media.
+func stripImage(format imagemeta.Format, whole []byte) (io.Reader, int64, string, error) {
+	stripped, err := imagemeta.Strip(format, whole)
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", fmt.Errorf("%w: %w", domain.ErrInvalidParam, err)
 	}
 	return bytes.NewReader(stripped), int64(len(stripped)), format.ContentType(), nil
 }

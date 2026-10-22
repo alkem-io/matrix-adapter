@@ -22,12 +22,13 @@ var pngKept = map[string]bool{
 // Pixel data is copied untouched. An Exif orientation other than upright is
 // kept as an orientation-only eXIf chunk at the original position, so the
 // image displays exactly as before wherever eXIf orientation was honoured.
+// The output is sized for that chunk up front, so it never reallocates.
 func stripPNG(data []byte) ([]byte, error) {
 	if !bytes.HasPrefix(data, pngSignature) {
 		return nil, ErrMalformed
 	}
-	out := append(make([]byte, 0, len(data)), pngSignature...)
-	exifAt, o, sawData := -1, upright, false
+	out := append(make([]byte, 0, len(data)+12+orientationOnlyLen), pngSignature...)
+	sawExif, sawData := false, false
 	for pos := uint64(len(pngSignature)); ; {
 		if pos+12 > uint64(len(data)) {
 			return nil, ErrMalformed
@@ -42,8 +43,11 @@ func stripPNG(data []byte) ([]byte, error) {
 			return nil, ErrMalformed
 		}
 		switch {
-		case kind == "eXIf" && exifAt < 0:
-			exifAt, o = len(out), orientation(data[pos+8:end-4])
+		case kind == "eXIf" && !sawExif:
+			sawExif = true
+			if o := orientation(data[pos+8 : end-4]); o != upright {
+				out = append(out, pngChunk("eXIf", orientationOnlyTIFF(o))...)
+			}
 		case pngKept[kind]:
 			out = append(out, data[pos:end]...)
 		}
@@ -54,9 +58,6 @@ func stripPNG(data []byte) ([]byte, error) {
 		}
 		if !sawData {
 			return nil, ErrMalformed
-		}
-		if o != upright {
-			out = splice(out, exifAt, pngChunk("eXIf", orientationOnlyTIFF(o)))
 		}
 		return out, nil
 	}

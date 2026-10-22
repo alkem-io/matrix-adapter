@@ -59,6 +59,9 @@ func orientation(tiff []byte) byte {
 	return upright
 }
 
+// orientationOnlyLen is the length of orientationOnlyTIFF.
+const orientationOnlyLen = 26
+
 // orientationOnlyTIFF is a big-endian TIFF structure whose single IFD holds
 // nothing but the Orientation tag. It lets a lossless rewrite keep how an image
 // displays without keeping any other Exif field.

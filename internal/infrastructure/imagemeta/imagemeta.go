@@ -9,7 +9,6 @@
 package imagemeta
 
 import (
-	"context"
 	"errors"
 	"fmt"
 )
@@ -90,21 +89,19 @@ func (f Format) ContentType() string {
 	}
 }
 
-// Strip returns data without privacy-relevant metadata. A JPEG whose Exif
-// orientation is not upright is physically rotated and re-encoded so it still
-// displays upright, charging the rotation's estimated memory to budget, or
-// keeps an orientation-only Exif segment when it is too costly to rotate;
-// every other image is rewritten losslessly by removing metadata segments or
-// chunks. A rotation that budget refuses, or whose ctx is done, returns that
-// error and no image. The result is a new slice; data is not changed.
-func Strip(ctx context.Context, format Format, data []byte, budget Budget) ([]byte, error) {
+// Strip returns data without privacy-relevant metadata, rewritten losslessly
+// by removing metadata segments or chunks; the pixel data is never decoded.
+// An Exif orientation other than upright is kept as an orientation-only Exif
+// field, so the image still displays the right way up. The result is a new
+// slice, sized so that building it never copies it again; data is not changed.
+func Strip(format Format, data []byte) ([]byte, error) {
 	var (
 		out []byte
 		err error
 	)
 	switch format {
 	case FormatJPEG:
-		out, err = stripJPEG(ctx, data, budget)
+		out, err = stripJPEG(data)
 	case FormatPNG:
 		out, err = stripPNG(data)
 	case FormatWebP:
@@ -116,12 +113,4 @@ func Strip(ctx context.Context, format Format, data []byte, budget Budget) ([]by
 		return nil, fmt.Errorf("%s: %w", format.ContentType(), err)
 	}
 	return out, nil
-}
-
-// splice returns b with insert placed at offset at.
-func splice(b []byte, at int, insert []byte) []byte {
-	out := make([]byte, 0, len(b)+len(insert))
-	out = append(out, b[:at]...)
-	out = append(out, insert...)
-	return append(out, b[at:]...)
 }

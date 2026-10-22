@@ -34,7 +34,7 @@ func TestSniff_IdentifiesContainersFromBytesAlone(t *testing.T) {
 }
 
 func TestStrip_RefusesFormatsItDoesNotRewrite(t *testing.T) {
-	_, err := Strip(t.Context(), FormatNone, []byte("GIF89a"), ample())
+	_, err := Strip(FormatNone, []byte("GIF89a"))
 	require.Error(t, err)
 }
 
