@@ -16,11 +16,6 @@ import (
 // traceable: each one carries a "Secret…" marker the tests look for.
 
 var (
-	red   = color.RGBA{R: 255, A: 255}
-	green = color.RGBA{G: 255, A: 255}
-	blue  = color.RGBA{B: 255, A: 255}
-	white = color.RGBA{R: 255, G: 255, B: 255, A: 255}
-
 	secrets = [][]byte{
 		[]byte("SecretPhone"), []byte("SecretXMP"), []byte("SecretIPTC"),
 		[]byte("SecretComment"), []byte("SecretTrailer"), []byte("SecretText"),
@@ -31,28 +26,6 @@ var (
 	fakeProfile  = []byte("fake-colour-profile-bytes")
 	xmpNamespace = []byte("http://ns.adobe.com/xap/1.0/\x00")
 )
-
-// quadrants is a 32×16 image whose quarters are red, green / blue, white
-// (top-left, top-right / bottom-left, bottom-right).
-func quadrants() *image.RGBA {
-	const w, h = 32, 16
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := range h {
-		for x := range w {
-			c := red
-			switch {
-			case x >= w/2 && y < h/2:
-				c = green
-			case x < w/2 && y >= h/2:
-				c = blue
-			case x >= w/2 && y >= h/2:
-				c = white
-			}
-			img.Set(x, y, c)
-		}
-	}
-	return img
-}
 
 // exifTIFF is a little-endian TIFF structure with a device make, an
 // orientation and a GPS IFD holding a latitude.
@@ -94,12 +67,12 @@ func iccSegment() []byte {
 	return jpegSegment(markerAPP2, iccHeader, []byte{1, 1}, fakeProfile)
 }
 
-// jpegWithMetadata encodes img and inserts every kind of metadata segment
-// after SOI, plus a trailer after EOI.
-func jpegWithMetadata(t *testing.T, img image.Image, o uint16) []byte {
+// jpegWithMetadata encodes an 8×8 image and inserts every kind of metadata
+// segment after SOI, plus a trailer after EOI.
+func jpegWithMetadata(t *testing.T, o uint16) []byte {
 	t.Helper()
 	var encoded bytes.Buffer
-	require.NoError(t, jpeg.Encode(&encoded, img, &jpeg.Options{Quality: 100}))
+	require.NoError(t, jpeg.Encode(&encoded, image.NewGray(image.Rect(0, 0, 8, 8)), nil))
 	plain := encoded.Bytes()
 	jfif := append(append([]byte{}, jfifHeader...), 1, 2, 1, 0, 72, 0, 72, 1, 1)
 	segments := [][]byte{

@@ -10,7 +10,7 @@ import (
 
 func TestStripJPEG_RemovesMetadataLosslesslyWhenUpright(t *testing.T) {
 	for _, o := range []uint16{0, 1} { // absent-equivalent (invalid) and upright
-		original := jpegWithMetadata(t, quadrants(), o)
+		original := jpegWithMetadata(t, o)
 
 		out, err := Strip(FormatJPEG, original)
 		require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestStripJPEG_RemovesMetadataLosslesslyWhenUpright(t *testing.T) {
 
 func TestStripJPEG_KeepsOnlyTheOrientationOfAnOrientedImage(t *testing.T) {
 	for o := byte(2); o <= 8; o++ {
-		original := jpegWithMetadata(t, quadrants(), uint16(o))
+		original := jpegWithMetadata(t, uint16(o))
 
 		out, err := Strip(FormatJPEG, original)
 		require.NoError(t, err, "orientation %d", o)
@@ -57,7 +57,7 @@ func orientationOnlyExif(o byte) []byte {
 }
 
 func TestStripJPEG_SkipsExtraneousBytesBetweenSegments(t *testing.T) {
-	original := jpegWithMetadata(t, quadrants(), 1)
+	original := jpegWithMetadata(t, 1)
 	dqt := bytes.Index(original, []byte{0xFF, 0xDB})
 	require.Positive(t, dqt)
 	padded := append(append(append([]byte{}, original[:dqt]...), 0x00, 0x00), original[dqt:]...)
@@ -82,14 +82,14 @@ func mustStrip(t *testing.T, data []byte) []byte {
 }
 
 func TestStripJPEG_RefusesMalformedContainers(t *testing.T) {
-	valid := jpegWithMetadata(t, quadrants(), 1)
-	sos := bytes.Index(valid, []byte{0xFF, markerSOS})
+	valid := jpegWithMetadata(t, 1)
+	eoi := bytes.LastIndex(valid, []byte{0xFF, markerEOI})
 	for name, data := range map[string][]byte{
 		"only SOI":                 {0xFF, markerSOI, 0xFF},
 		"segment past the end":     {0xFF, markerSOI, 0xFF, markerAPP1, 0x40, 0x00, 'E', 'x', 'i', 'f'},
 		"segment length too small": {0xFF, markerSOI, 0xFF, markerCOM, 0x00, 0x01, 0xFF, markerEOI},
 		"no scan before EOI":       {0xFF, markerSOI, 0xFF, markerCOM, 0x00, 0x03, 'x', 0xFF, markerEOI},
-		"truncated scan":           valid[:sos+40],
+		"truncated scan":           valid[:eoi],
 		"no marker after garbage":  {0xFF, markerSOI, 0x00, 0x01, 0x02},
 		"second SOI":               {0xFF, markerSOI, 0xFF, markerSOI},
 	} {
