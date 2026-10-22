@@ -1,11 +1,6 @@
-// Package imagemeta removes privacy-relevant metadata (location, device
-// identifiers, timestamps, comments, embedded thumbnails) from uploaded images
-// before they are stored, keeping what is needed to render them faithfully:
-// pixel data, colour profiles, transparency and animation.
-//
-// The container is identified from its leading bytes, never from a declared
-// content type. JPEG, PNG and WebP are rewritten; every other format is left
-// to the caller to pass through unchanged.
+// Package imagemeta removes location, device, time and other privacy-relevant
+// metadata from JPEG, PNG and WebP images, identified from their bytes, keeping
+// pixels, colour profiles, transparency and animation.
 package imagemeta
 
 import (

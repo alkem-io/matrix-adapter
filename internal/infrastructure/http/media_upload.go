@@ -28,33 +28,20 @@ import (
 const gatewayGuestActorID = "00000000-0000-0000-0000-000000000001"
 
 const (
-	// imageMemoryBudget bounds the live bytes held at once by images read
-	// whole to be rewritten. With the collector at its default setting the
-	// heap grows to about twice the live memory before it is collected, so
-	// with the service's own memory (about 40 MiB) the heap peaks near
-	// 2×(160+40) = 400 MiB, under the pod's 512 Mi limit. A 50 MiB image, the
-	// default attachment cap, fits at imageCopies times its size.
+	// imageMemoryBudget bounds the live bytes of images held whole to be
+	// rewritten, so the heap peaks near 400 MiB, under the pod's 512 Mi limit.
 	imageMemoryBudget int64 = 160 << 20
-	// imageCopies is how many copies of an image can be live while it is
-	// read and rewritten: the pieces received and the whole they are joined
-	// into, then the whole and the rewritten bytes, which are sized up front
-	// so that building them never copies them again.
+	// imageCopies is how many copies of an image are live at once while it is read and rewritten.
 	imageCopies = 2
-	// imageBudgetWait is how long an image waits for the budget before the
-	// upload is refused as busy; imageRetryAfter is the retry hint sent with
-	// that.
+	// imageBudgetWait is how long an image waits for the budget before 503 upload_busy.
 	imageBudgetWait = 2 * time.Second
+	// imageRetryAfter is the Retry-After hint sent with upload_busy.
 	imageRetryAfter = "5"
-	// imagePiece is how much of an image body is charged to the budget, and
-	// then read, at a time, so a sender holds budget only for what it has
-	// sent rather than for what it declared.
+	// imagePiece is how much of an image body is charged to the budget, then read, at a time.
 	imagePiece = 1 << 20
-	// imagePieceTimeout is how long one piece of an image body may take to
-	// arrive. A sender slower than that (32 KiB/s) is cut off with 408
-	// upload_timeout, so it cannot keep its share of the budget by stalling.
+	// imagePieceTimeout is how long one piece may take to arrive before 408 upload_timeout.
 	imagePieceTimeout = 32 * time.Second
-	// imagesPerActor is how many images one actor may have being read,
-	// rewritten and stored at once.
+	// imagesPerActor is how many images one actor may have in flight at once.
 	imagesPerActor = 2
 )
 
@@ -129,15 +116,7 @@ type MediaUploadResult struct {
 // The body is raw binary, not JSON. Content-Length is required (including zero),
 // Content-Type is the original MIME type, X-Alkemio-Actor-Id is a trusted
 // non-guest actor UUID, and filename is an ordinary UTF-8 query parameter.
-// A JPEG, PNG or WebP body (recognised from its bytes) is read whole and stored
-// without its location, device and time metadata, with the content type and
-// length of the rewritten bytes; a corrupt one is refused as invalid_media.
-// Images being rewritten share a fixed memory budget, charged as their bytes
-// arrive; an image that cannot get its share of it within a short wait, or
-// whose actor already has imagesPerActor
-// images in flight, is refused with 503 upload_busy and Retry-After, and
-// nothing is uploaded. An image body that stops arriving is cut off with 408
-// upload_timeout. Every other body streams through unchanged.
+// A JPEG, PNG or WebP body is stripped of its metadata first (see uploadBody).
 // No event is published. Success is 201 only after synchronous provider storage;
 // failures use stable error categories and do not replay the stream.
 func (h *MediaUploadHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -196,11 +175,9 @@ var errImageBusy = errors.New("image memory budget exhausted")
 // errActorBusy refuses an image whose actor already has imagesPerActor in flight.
 var errActorBusy = fmt.Errorf("actor has %d images in flight: %w", imagesPerActor, errImageBusy)
 
-// uploadBody returns what to store for a body of size bytes, and a release to
-// call once it has been stored. Only the leading bytes needed to recognise an
-// image container are read up front, so any other upload still streams to
-// Synapse as it arrives and holds no budget. deadline bounds each read of an
-// image body.
+// uploadBody returns what to store and a release to call once it is stored.
+// Only a recognised image is read whole and charged to the budget; any other
+// body streams through as it arrives.
 func (h *MediaUploadHandler) uploadBody(
 	ctx context.Context, actorID uuid.UUID, body io.Reader, size int64, contentType string, deadline func(time.Time),
 ) (io.Reader, int64, string, func(), error) {
@@ -231,17 +208,9 @@ func (h *MediaUploadHandler) uploadBody(
 	return media, size, contentType, release, nil
 }
 
-// readImage reads a recognised image whole, after its leading bytes head,
-// because its metadata must be removed before any of it is stored. Each piece
-// is charged to the image budget before it is read and must arrive within
-// pieceTimeout, so a sender that stalls holds a share only for what it has
-// sent, and not for long. The charge is imageCopies times the bytes, the most
-// the rewrite holds at once, capped at the whole budget so an image larger
-// than the budget is still accepted, alone. The returned release gives the
-// charge back; on error nothing is left charged. The deadline is not cleared
-// here: the server clears it itself once the body ends, and after a failed
-// read it stays, so discarding the rest of the body cannot wait on a stalled
-// sender either.
+// readImage does not clear the read deadline: the server clears it itself once
+// the body ends, and after a failed read it stays, so discarding the rest of
+// the body cannot wait on a stalled sender either.
 func (h *MediaUploadHandler) readImage(
 	ctx context.Context, head []byte, body io.Reader, size int64, deadline func(time.Time),
 ) ([]byte, func(), error) {
