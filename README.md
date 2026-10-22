@@ -216,10 +216,13 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 
 ### Media Attachments
 
-`communication.message.send` publishes either non-empty `content` or one
-`existing_media` reference. Media sends contain a local `media_id`, display name
+`communication.message.send` publishes non-empty `content`, one
+`existing_media` reference, or both. Media sends contain a local `media_id`, display name
 and actual MIME/size/dimensions; they publish as the sender without transferring
-bytes again or emitting a document-ID hint.
+bytes again or emitting a document-ID hint. When `content` accompanies the media
+it becomes the Matrix media caption: `body` carries the caption and `filename`
+the display name. Without a caption, `body` is the display name and `filename`
+is omitted.
 
 Browsers POST raw original bytes to
 `/api/private/rest/messaging/media/upload?filename=...`. The gateway strips the

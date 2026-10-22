@@ -778,7 +778,7 @@ export interface SendMessageRequest {
   content: string; // Markdown supported (may be empty if only attachments)
   parent_message_id?: MessageID; // For threads
   timeout_ms?: number /* int64 */; // Operation budget, shorter than the caller RPC wait.
-  existing_media?: ExistingMediaRef; // Exclusive with content.
+  existing_media?: ExistingMediaRef; // May accompany content, which becomes its caption.
 }
 /**
  * SendMessageResponse returns the message ID and timestamp.
