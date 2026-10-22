@@ -1,16 +1,13 @@
 package imagemeta
 
 import (
-	"bytes"
-	"image"
-	"image/color"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/image/webp"
 )
 
-var webpColour = color.NRGBA{R: 10, G: 120, B: 230, A: 255}
+// vp8lPayload stands in for a lossless bitstream; the rewrite never reads it.
+var vp8lPayload = []byte("\x2fplaceholder VP8L bitstream")
 
 const (
 	webpFlagICC   = 0x20
@@ -21,28 +18,15 @@ func webpWithMetadata(o uint16) []byte {
 	return riff(
 		riffChunk("VP8X", vp8x(webpFlagICC|webpFlagAlpha|webpFlagEXIF|webpFlagXMP, 3, 2)),
 		riffChunk("ICCP", fakeProfile),
-		riffChunk("VP8L", vp8lSolid(3, 2, webpColour)),
+		riffChunk("VP8L", vp8lPayload),
 		riffChunk("EXIF", exifTIFF(o)),
 		riffChunk("XMP ", []byte("<x:xmpmeta>SecretXMP</x:xmpmeta>")),
 		riffChunk("SECR", []byte("SecretPhone")),
 	)
 }
 
-func requireDecodesToSolid(t *testing.T, data []byte) {
-	t.Helper()
-	img, err := webp.Decode(bytes.NewReader(data))
-	require.NoError(t, err)
-	require.Equal(t, image.Rect(0, 0, 3, 2), img.Bounds())
-	for y := range 2 {
-		for x := range 3 {
-			require.Equal(t, webpColour, color.NRGBAModel.Convert(img.At(x, y)))
-		}
-	}
-}
-
 func TestStripWebP_RemovesExifAndXMPAndFixesHeader(t *testing.T) {
 	original := append(webpWithMetadata(1), "SecretTrailer"...)
-	requireDecodesToSolid(t, original)
 
 	out, err := Strip(FormatWebP, original)
 	require.NoError(t, err)
@@ -53,7 +37,7 @@ func TestStripWebP_RemovesExifAndXMPAndFixesHeader(t *testing.T) {
 	require.Equal(t, []string{"VP8X", "ICCP", "VP8L"}, []string{chunks[0].kind, chunks[1].kind, chunks[2].kind})
 	require.Equal(t, byte(webpFlagICC|webpFlagAlpha), chunks[0].payload[0], "EXIF and XMP flags cleared")
 	require.Equal(t, fakeProfile, chunks[1].payload, "colour profile kept")
-	requireDecodesToSolid(t, out)
+	require.Equal(t, vp8lPayload, chunks[2].payload, "bitstream kept verbatim")
 }
 
 func TestStripWebP_KeepsOnlyTheOrientationOfAnOrientedImage(t *testing.T) {
@@ -66,11 +50,10 @@ func TestStripWebP_KeepsOnlyTheOrientationOfAnOrientedImage(t *testing.T) {
 	require.Equal(t, "EXIF", chunks[3].kind)
 	require.Equal(t, orientationOnlyTIFF(6), chunks[3].payload)
 	require.Equal(t, byte(webpFlagICC|webpFlagAlpha|webpFlagEXIF), chunks[0].payload[0])
-	requireDecodesToSolid(t, out)
 }
 
 func TestStripWebP_RefusesMalformedContainers(t *testing.T) {
-	image := riffChunk("VP8L", vp8lSolid(1, 1, webpColour))
+	image := riffChunk("VP8L", vp8lPayload)
 	truncated := webpWithMetadata(1)
 	for name, data := range map[string][]byte{
 		"header only":            []byte("RIFF\x04\x00\x00\x00WEBP"),

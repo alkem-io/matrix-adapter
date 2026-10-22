@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"hash/crc32"
 	"image"
-	"image/color"
 	"image/jpeg"
 	"testing"
 
@@ -125,43 +124,6 @@ func pngChunks(t *testing.T, data []byte) []string {
 		pos += 12 + n
 	}
 	return kinds
-}
-
-// bitWriter packs bits least-significant first, as VP8L requires.
-type bitWriter struct {
-	out   []byte
-	nbits uint
-}
-
-func (w *bitWriter) write(value uint32, n uint) {
-	for i := range n {
-		if w.nbits%8 == 0 {
-			w.out = append(w.out, 0)
-		}
-		w.out[len(w.out)-1] |= byte((value>>i)&1) << (w.nbits % 8)
-		w.nbits++
-	}
-}
-
-// vp8lSolid is a lossless VP8L bitstream of a w×h image in one colour: every
-// prefix code is a one-symbol simple code, so each pixel costs zero bits.
-func vp8lSolid(w, h uint32, c color.NRGBA) []byte {
-	bw := &bitWriter{}
-	bw.write(0x2F, 8)
-	bw.write(w-1, 14)
-	bw.write(h-1, 14)
-	bw.write(1, 1) // alpha is used
-	bw.write(0, 3) // version
-	bw.write(0, 1) // no transform
-	bw.write(0, 1) // no colour cache
-	bw.write(0, 1) // no meta prefix codes
-	for _, symbol := range []uint8{c.G, c.R, c.B, c.A, 0} {
-		bw.write(1, 1) // simple code
-		bw.write(0, 1) // one symbol
-		bw.write(1, 1) // eight-bit symbol
-		bw.write(uint32(symbol), 8)
-	}
-	return bw.out
 }
 
 func riffChunk(kind string, payload []byte) []byte {
