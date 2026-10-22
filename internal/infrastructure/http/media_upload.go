@@ -279,11 +279,7 @@ func (h *MediaUploadHandler) readImage(
 		pieces = append(pieces, piece)
 		read += n
 	}
-	whole := make([]byte, 0, size)
-	for _, piece := range pieces {
-		whole = append(whole, piece...)
-	}
-	return whole, release, nil
+	return bytes.Join(pieces, nil), release, nil
 }
 
 // stripImage removes the metadata of a recognised image read whole. The
