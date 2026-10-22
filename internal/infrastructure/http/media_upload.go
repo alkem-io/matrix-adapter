@@ -67,8 +67,9 @@ type mediaUploader interface {
 type MediaUploadHandler struct {
 	uploader     mediaUploader
 	maxBytes     int64
-	images       waitingBudget
+	sem          *semaphore.Weighted
 	imageBudget  int64
+	imageWait    time.Duration
 	actors       actorSlots
 	pieceTimeout time.Duration
 }
@@ -84,33 +85,13 @@ func newMediaUploadHandler(
 	return &MediaUploadHandler{
 		uploader:     uploader,
 		maxBytes:     maxBytes,
-		images:       waitingBudget{semaphore.NewWeighted(imageBudget), imageWait},
+		sem:          semaphore.NewWeighted(imageBudget),
 		imageBudget:  imageBudget,
+		imageWait:    imageWait,
 		actors:       actorSlots{held: map[uuid.UUID]int{}},
 		pieceTimeout: imagePieceTimeout,
 	}
 }
-
-// waitingBudget is a memory budget that an upload waits on only briefly: a
-// share it cannot get within wait is refused as errImageBusy.
-type waitingBudget struct {
-	sem  *semaphore.Weighted
-	wait time.Duration
-}
-
-// Acquire takes n bytes of the budget, or returns errImageBusy once the wait
-// runs out or ctx is done.
-func (b waitingBudget) Acquire(ctx context.Context, n int64) error {
-	wait, cancel := context.WithTimeout(ctx, b.wait)
-	defer cancel()
-	if err := b.sem.Acquire(wait, n); err != nil {
-		return errImageBusy
-	}
-	return nil
-}
-
-// Release returns n bytes taken by Acquire.
-func (b waitingBudget) Release(n int64) { b.sem.Release(n) }
 
 // actorSlots counts the images each actor has in flight, so one actor cannot
 // take every share of the budget.
@@ -271,14 +252,16 @@ func (h *MediaUploadHandler) readImage(
 	ctx context.Context, head []byte, body io.Reader, size int64, deadline func(time.Time),
 ) ([]byte, func(), error) {
 	var charged int64
-	release := func() { h.images.Release(charged) }
+	release := func() { h.sem.Release(charged) }
 	charge := func(n int64) error {
 		share := min(imageCopies*n, h.imageBudget-charged)
 		if share <= 0 {
 			return nil
 		}
-		if err := h.images.Acquire(ctx, share); err != nil {
-			return err
+		wait, cancel := context.WithTimeout(ctx, h.imageWait)
+		defer cancel()
+		if err := h.sem.Acquire(wait, share); err != nil {
+			return errImageBusy
 		}
 		charged += share
 		return nil

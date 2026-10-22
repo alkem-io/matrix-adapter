@@ -485,8 +485,8 @@ func slowImageUpload(t *testing.T, server *httptest.Server, actor string, declar
 
 // charged reports whether at least n bytes of the image budget are taken.
 func charged(h *MediaUploadHandler, budget, n int64) bool {
-	if h.images.sem.TryAcquire(budget - n + 1) {
-		h.images.sem.Release(budget - n + 1)
+	if h.sem.TryAcquire(budget - n + 1) {
+		h.sem.Release(budget - n + 1)
 		return false
 	}
 	return true
@@ -545,7 +545,7 @@ func TestMediaUpload_CutsOffAnImageSenderThatStalls(t *testing.T) {
 	}
 	require.Equal(t, http.StatusRequestTimeout, status)
 	require.False(t, called, "nothing is uploaded for the cut-off image")
-	require.True(t, h.images.sem.TryAcquire(imageMemoryBudget), "the cut-off image returns its charge")
+	require.True(t, h.sem.TryAcquire(imageMemoryBudget), "the cut-off image returns its charge")
 	for range imagesPerActor {
 		require.True(t, h.actors.take(uuid.MustParse(actor)), "and its actor's slot")
 	}
