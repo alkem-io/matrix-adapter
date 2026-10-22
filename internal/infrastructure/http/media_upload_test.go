@@ -1,7 +1,12 @@
 package httpinfra
 
 import (
+	"bytes"
 	"context"
+	"image"
+	"image/color"
+	"image/gif"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +20,7 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/infrastructure/imagemeta"
 )
 
 type uploadFunc func(context.Context, domain.Actor, io.Reader, int64, string, string) (id.ContentURI, error)
@@ -175,4 +181,94 @@ func TestMediaUpload_OldInternalRouteIsAbsent(t *testing.T) {
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/internal/media/upload", nil))
 	require.Equal(t, http.StatusNotFound, response.Code)
+}
+
+// photoWithLocation is a real JPEG carrying an Exif segment with a device make
+// and a GPS latitude, as a phone camera writes it.
+func photoWithLocation(t *testing.T) []byte {
+	t.Helper()
+	var encoded bytes.Buffer
+	require.NoError(t, jpeg.Encode(&encoded, image.NewGray(image.Rect(0, 0, 8, 8)), nil))
+	plain := encoded.Bytes()
+	const tiff = "MM\x00\x2A\x00\x00\x00\x08\x00\x01" +
+		"\x01\x0F\x00\x02\x00\x00\x00\x0C\x00\x00\x00\x1A\x00\x00\x00\x00" +
+		"SecretPhone\x00"
+	const payload = "Exif\x00\x00" + tiff + "GPS 52.3701N SecretGPS"
+	exif := append([]byte{0xFF, 0xE1, 0x00, byte(2 + len(payload))}, payload...)
+	return append(append(append([]byte{}, plain[:2]...), exif...), plain[2:]...)
+}
+
+func capturingUpload(t *testing.T, got *[]byte, size *int64, mimeType *string) uploadFunc {
+	t.Helper()
+	return func(_ context.Context, _ domain.Actor, reader io.Reader, n int64, mime, _ string) (id.ContentURI, error) {
+		bytes, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		*got, *size, *mimeType = bytes, n, mime
+		return id.MustParseContentURI("mxc://local.test/clean"), nil
+	}
+}
+
+func TestMediaUpload_HandsSynapseTheStrippedImage(t *testing.T) {
+	photo := photoWithLocation(t)
+	want, err := imagemeta.Strip(imagemeta.FormatJPEG, photo)
+	require.NoError(t, err)
+	var got []byte
+	var size int64
+	var mimeType string
+	mux := http.NewServeMux()
+	NewMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 1<<20).RegisterRoutes(mux)
+	r := mediaUploadRequest(string(photo))
+	// The declared type is not trusted: the bytes decide.
+	r.Header.Set("Content-Type", "application/octet-stream")
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, r)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.Equal(t, want, got)
+	require.NotContains(t, string(got), "SecretPhone")
+	require.NotContains(t, string(got), "SecretGPS")
+	require.Equal(t, int64(len(got)), size, "length sent onward is the stripped length")
+	require.Equal(t, "image/jpeg", mimeType, "type sent onward is the stripped image's")
+	_, err = jpeg.Decode(bytes.NewReader(got))
+	require.NoError(t, err)
+}
+
+func TestMediaUpload_RefusesCorruptImageWithoutUploading(t *testing.T) {
+	photo := photoWithLocation(t)
+	called := false
+	upload := uploadFunc(func(context.Context, domain.Actor, io.Reader, int64, string, string) (id.ContentURI, error) {
+		called = true
+		return id.ContentURI{}, nil
+	})
+	mux := http.NewServeMux()
+	NewMediaUploadHandler(upload, 1<<20).RegisterRoutes(mux)
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, mediaUploadRequest(string(photo[:len(photo)/2])))
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.JSONEq(t, `{"error":"invalid_media"}`, w.Body.String())
+	require.False(t, called, "unstripped bytes must never reach Synapse")
+}
+
+func TestMediaUpload_PassesGIFThroughUnchanged(t *testing.T) {
+	var animation bytes.Buffer
+	frame := image.NewPaletted(image.Rect(0, 0, 4, 4), color.Palette{color.Black, color.White})
+	require.NoError(t, gif.EncodeAll(&animation, &gif.GIF{Image: []*image.Paletted{frame, frame}, Delay: []int{10, 10}}))
+	var got []byte
+	var size int64
+	var mimeType string
+	mux := http.NewServeMux()
+	NewMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 1<<20).RegisterRoutes(mux)
+	r := mediaUploadRequest(animation.String())
+	r.Header.Set("Content-Type", "image/gif")
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, r)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.Equal(t, animation.Bytes(), got)
+	require.Equal(t, int64(animation.Len()), size)
+	require.Equal(t, "image/gif", mimeType)
 }
