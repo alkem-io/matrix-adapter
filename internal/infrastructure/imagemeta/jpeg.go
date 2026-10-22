@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/jpeg"
+	"sync"
 )
 
 const (
@@ -36,6 +37,10 @@ var (
 	// orientationOnlyAPP1 is the APP1 marker and length (2+6+26 bytes) of an
 	// Exif segment carrying orientationOnlyTIFF.
 	orientationOnlyAPP1 = []byte{0xFF, markerAPP1, 0x00, 0x22}
+	// uprightGate lets one rotation decode run at a time. maxUprightPixels
+	// bounds a single decode, whose pixel buffers can be many times the size
+	// of the file they come from; this bounds how many are held at once.
+	uprightGate sync.Mutex
 )
 
 // jpegScan is the result of walking a JPEG's marker structure.
@@ -200,6 +205,8 @@ func (s *jpegScan) upright() ([]byte, bool) {
 	if err != nil || int64(config.Width)*int64(config.Height) > maxUprightPixels {
 		return nil, false
 	}
+	uprightGate.Lock()
+	defer uprightGate.Unlock()
 	img, err := jpeg.Decode(bytes.NewReader(s.out))
 	if err != nil {
 		return nil, false

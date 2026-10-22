@@ -9,10 +9,12 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/semaphore"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/id"
 
@@ -23,6 +25,22 @@ import (
 // gatewayGuestActorID is the reserved guest identity emitted by the gateway resolver.
 const gatewayGuestActorID = "00000000-0000-0000-0000-000000000001"
 
+const (
+	// imageMemoryBudget bounds the bytes held at once by images read whole to
+	// be rewritten. It leaves 320 MiB of the pod's 512 Mi limit for the
+	// service itself, the one rotation decode imagemeta runs at a time (about
+	// 110 MB of pixels at its 24 MP bound) and garbage not yet collected.
+	imageMemoryBudget int64 = 192 << 20
+	// imageCopies is how many copies of an image can be live while it is
+	// rewritten: the bytes received, the rewritten bytes, and the copy made
+	// when an orientation-only segment is inserted.
+	imageCopies = 3
+	// imageBudgetWait is how long an image waits for budget before the upload
+	// is refused as busy; imageRetryAfter is the retry hint sent with that.
+	imageBudgetWait = 2 * time.Second
+	imageRetryAfter = "5"
+)
+
 type mediaUploader interface {
 	UploadMedia(context.Context, domain.Actor, io.Reader, int64, string, string) (id.ContentURI, error)
 }
@@ -30,13 +48,26 @@ type mediaUploader interface {
 // MediaUploadHandler accepts original streams through the authenticated gateway.
 // The gateway strips client actor headers and resolves the authenticated identity.
 type MediaUploadHandler struct {
-	uploader mediaUploader
-	maxBytes int64
+	uploader    mediaUploader
+	maxBytes    int64
+	images      *semaphore.Weighted
+	imageBudget int64
+	imageWait   time.Duration
 }
 
 // NewMediaUploadHandler creates the byte-upload bridge without message publication.
 func NewMediaUploadHandler(uploader mediaUploader, maxBytes int64) *MediaUploadHandler {
-	return &MediaUploadHandler{uploader: uploader, maxBytes: maxBytes}
+	return newMediaUploadHandler(uploader, maxBytes, imageMemoryBudget, imageBudgetWait)
+}
+
+func newMediaUploadHandler(uploader mediaUploader, maxBytes, imageBudget int64, imageWait time.Duration) *MediaUploadHandler {
+	return &MediaUploadHandler{
+		uploader:    uploader,
+		maxBytes:    maxBytes,
+		images:      semaphore.NewWeighted(imageBudget),
+		imageBudget: imageBudget,
+		imageWait:   imageWait,
+	}
 }
 
 // RegisterRoutes adds the gateway-routed upload to the appservice listener.
@@ -57,7 +88,9 @@ type MediaUploadResult struct {
 // A JPEG, PNG or WebP body (recognised from its bytes) is read whole and stored
 // without its location, device and time metadata, with the content type and
 // length of the rewritten bytes; a corrupt one is refused as invalid_media.
-// Every other body streams through unchanged.
+// Images being rewritten share a fixed memory budget; one that cannot get its
+// share within a short wait is refused with 503 upload_busy and Retry-After,
+// and nothing is uploaded. Every other body streams through unchanged.
 // No event is published. Success is 201 only after synchronous provider storage;
 // failures use stable error categories and do not replay the stream.
 func (h *MediaUploadHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -89,11 +122,14 @@ func (h *MediaUploadHandler) handleUpload(w http.ResponseWriter, r *http.Request
 	// image is buffered, and never beyond its declared length.
 	body := http.MaxBytesReader(w, r.Body, h.maxBytes)
 	defer func() { _ = body.Close() }()
-	media, size, contentType, err := uploadBody(body, r.ContentLength, contentType)
+	media, size, contentType, release, err := h.uploadBody(r.Context(), body, r.ContentLength, contentType)
 	if err != nil {
 		writeMediaUploadError(w, err)
 		return
 	}
+	// An image keeps its budget until the upload returns, since Synapse reads
+	// the rewritten bytes from memory.
+	defer release()
 	uri, err := h.uploader.UploadMedia(r.Context(), domain.NewActor(actorID), media, size, contentType, name)
 	if err != nil {
 		writeMediaUploadError(w, err)
@@ -102,29 +138,61 @@ func (h *MediaUploadHandler) handleUpload(w http.ResponseWriter, r *http.Request
 	WriteJSON(w, http.StatusCreated, MediaUploadResult{ContentURI: uri.String(), MediaID: uri.FileID})
 }
 
-// uploadBody returns what to store for a body of size bytes. Only the leading
-// bytes needed to recognise an image container are read up front, so any
-// other upload still streams to Synapse as it arrives. A recognised image is
-// read whole (bounded by the upload cap) because its metadata must be removed
-// before any of it is stored; the declared type then gives way to the type of
-// the rewritten bytes.
-func uploadBody(body io.Reader, size int64, contentType string) (io.Reader, int64, string, error) {
+// errImageBusy reports that an image could not get its share of the memory
+// budget in time.
+var errImageBusy = errors.New("image memory budget exhausted")
+
+// uploadBody returns what to store for a body of size bytes, and a release to
+// call once it has been stored. Only the leading bytes needed to recognise an
+// image container are read up front, so any other upload still streams to
+// Synapse as it arrives and holds no budget.
+func (h *MediaUploadHandler) uploadBody(
+	ctx context.Context, body io.Reader, size int64, contentType string,
+) (io.Reader, int64, string, func(), error) {
 	head, format, err := sniffImage(body, size)
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", nil, err
 	}
 	if format == imagemeta.FormatNone {
-		return io.MultiReader(bytes.NewReader(head), body), size, contentType, nil
+		return io.MultiReader(bytes.NewReader(head), body), size, contentType, func() {}, nil
 	}
-	var whole bytes.Buffer
-	whole.Write(head)
-	if _, err := whole.ReadFrom(io.LimitReader(body, size-int64(len(head)))); err != nil {
+	release, err := h.reserveImageMemory(ctx, size)
+	if err != nil {
+		return nil, 0, "", nil, err
+	}
+	media, size, contentType, err := stripImage(format, head, body, size)
+	if err != nil {
+		release()
+		return nil, 0, "", nil, err
+	}
+	return media, size, contentType, release, nil
+}
+
+// reserveImageMemory takes this image's share of the memory budget, waiting
+// briefly for other images to finish. An image larger than the whole budget
+// takes all of it, so it is still accepted, alone.
+func (h *MediaUploadHandler) reserveImageMemory(ctx context.Context, size int64) (func(), error) {
+	weight := min(imageCopies*size, h.imageBudget)
+	wait, cancel := context.WithTimeout(ctx, h.imageWait)
+	defer cancel()
+	if err := h.images.Acquire(wait, weight); err != nil {
+		return nil, errImageBusy
+	}
+	return func() { h.images.Release(weight) }, nil
+}
+
+// stripImage reads a recognised image whole, after its leading bytes head,
+// because its metadata must be removed before any of it is stored. The buffer
+// is sized from the declared length, which the caller has already capped, so
+// it never grows. The declared type gives way to the type of the rewritten
+// bytes.
+func stripImage(format imagemeta.Format, head []byte, body io.Reader, size int64) (io.Reader, int64, string, error) {
+	whole := make([]byte, size)
+	read := copy(whole, head)
+	if _, err := io.ReadFull(body, whole[read:]); err != nil {
 		return nil, 0, "", err
 	}
-	if int64(whole.Len()) != size {
-		return nil, 0, "", io.ErrUnexpectedEOF
-	}
-	stripped, err := imagemeta.Strip(format, whole.Bytes())
+	stripped, err := imagemeta.Strip(format, whole)
 	if err != nil {
 		return nil, 0, "", fmt.Errorf("%w: %w", domain.ErrInvalidParam, err)
 	}
@@ -156,6 +224,9 @@ func writeMediaUploadError(w http.ResponseWriter, err error) {
 	var sizeError *http.MaxBytesError
 	var upstream mautrix.HTTPError
 	switch {
+	case errors.Is(err, errImageBusy):
+		w.Header().Set("Retry-After", imageRetryAfter)
+		WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "upload_busy"})
 	case errors.As(err, &sizeError):
 		WriteJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "media_too_large"})
 	case errors.Is(err, context.DeadlineExceeded):

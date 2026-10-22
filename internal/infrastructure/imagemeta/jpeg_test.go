@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -124,5 +125,33 @@ func requireNear(t *testing.T, want color.RGBA, got color.Color, msgAndArgs ...a
 	for i, pair := range [][2]uint32{{uint32(want.R), r >> 8}, {uint32(want.G), g >> 8}, {uint32(want.B), b >> 8}} {
 		diff := int(pair[0]) - int(pair[1])
 		require.LessOrEqual(t, diff*diff, 24*24, append(msgAndArgs, "channel", i, "want", want, "got", got)...)
+	}
+}
+
+func TestStripJPEG_RotatesOneImageAtATime(t *testing.T) {
+	oriented := jpegWithMetadata(t, quadrants(64, 32), 6)
+	upright := jpegWithMetadata(t, quadrants(64, 32), 1)
+	uprightGate.Lock()
+	rotated := make(chan error, 1)
+	go func() {
+		_, err := Strip(FormatJPEG, oriented)
+		rotated <- err
+	}()
+
+	_, err := Strip(FormatJPEG, upright)
+	require.NoError(t, err, "an image that needs no rotation does not wait")
+	select {
+	case <-rotated:
+		uprightGate.Unlock()
+		t.Fatal("a rotation ran while another held the decode")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	uprightGate.Unlock()
+	select {
+	case err := <-rotated:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("rotation did not resume once the decode was free")
 	}
 }

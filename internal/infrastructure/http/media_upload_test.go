@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -271,4 +272,128 @@ func TestMediaUpload_PassesGIFThroughUnchanged(t *testing.T) {
 	require.Equal(t, animation.Bytes(), got)
 	require.Equal(t, int64(animation.Len()), size)
 	require.Equal(t, "image/gif", mimeType)
+}
+
+// blockingUpload counts its calls and signals entered for each, then holds
+// the upload open until release is closed.
+func blockingUpload(calls *atomic.Int32, entered chan<- struct{}, release <-chan struct{}) uploadFunc {
+	return func(_ context.Context, _ domain.Actor, reader io.Reader, _ int64, _, _ string) (id.ContentURI, error) {
+		calls.Add(1)
+		entered <- struct{}{}
+		<-release
+		_, err := io.Copy(io.Discard, reader)
+		return id.MustParseContentURI("mxc://local.test/held"), err
+	}
+}
+
+func serveUpload(mux *http.ServeMux, body []byte, contentType string) *httptest.ResponseRecorder {
+	r := mediaUploadRequest(string(body))
+	r.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	return w
+}
+
+func awaitEntered(t *testing.T, entered <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upload did not reach the uploader")
+	}
+}
+
+func TestMediaUpload_RefusesImagesBeyondTheMemoryBudget(t *testing.T) {
+	photo := photoWithLocation(t)
+	var calls atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	mux := http.NewServeMux()
+	// Room for exactly two photos being rewritten at once.
+	newMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20, 2*imageCopies*int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+
+	held := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() { held <- serveUpload(mux, photo, "image/jpeg") }()
+		awaitEntered(t, entered)
+	}
+
+	excess := make(chan *httptest.ResponseRecorder, 1)
+	go func() { excess <- serveUpload(mux, photo, "image/jpeg") }()
+	var busy *httptest.ResponseRecorder
+	select {
+	case busy = <-excess:
+	case <-entered:
+		close(release)
+		t.Fatal("an image beyond the budget reached the uploader")
+	}
+
+	require.Equal(t, http.StatusServiceUnavailable, busy.Code)
+	require.JSONEq(t, `{"error":"upload_busy"}`, busy.Body.String())
+	require.Equal(t, imageRetryAfter, busy.Header().Get("Retry-After"))
+	require.Equal(t, int32(2), calls.Load(), "nothing is uploaded for the refused image")
+
+	close(release)
+	for range 2 {
+		require.Equal(t, http.StatusCreated, (<-held).Code)
+	}
+	go func() { held <- serveUpload(mux, photo, "image/jpeg") }()
+	awaitEntered(t, entered)
+	require.Equal(t, http.StatusCreated, (<-held).Code, "budget is returned once uploads succeed")
+}
+
+func TestMediaUpload_ReturnsImageBudgetAfterFailure(t *testing.T) {
+	photo := photoWithLocation(t)
+	fail := true
+	upload := uploadFunc(func(_ context.Context, _ domain.Actor, reader io.Reader, _ int64, _, _ string) (id.ContentURI, error) {
+		if _, err := io.Copy(io.Discard, reader); err != nil {
+			return id.ContentURI{}, err
+		}
+		if fail {
+			return id.ContentURI{}, io.ErrUnexpectedEOF
+		}
+		return id.MustParseContentURI("mxc://local.test/after"), nil
+	})
+	mux := http.NewServeMux()
+	// Room for one photo only, so any budget left behind refuses the next.
+	newMediaUploadHandler(upload, 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+
+	require.Equal(t, http.StatusBadGateway, serveUpload(mux, photo, "image/jpeg").Code)
+	require.Equal(t, http.StatusBadRequest, serveUpload(mux, photo[:len(photo)/2], "image/jpeg").Code)
+
+	fail = false
+	require.Equal(t, http.StatusCreated, serveUpload(mux, photo, "image/jpeg").Code)
+}
+
+func TestMediaUpload_AcceptsAnImageLargerThanTheWholeBudget(t *testing.T) {
+	photo := photoWithLocation(t)
+	var got []byte
+	var size int64
+	var mimeType string
+	mux := http.NewServeMux()
+	newMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 1<<20, int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+
+	require.Equal(t, http.StatusCreated, serveUpload(mux, photo, "image/jpeg").Code)
+	require.Equal(t, "image/jpeg", mimeType)
+}
+
+func TestMediaUpload_DoesNotGateFilesThatAreNotImages(t *testing.T) {
+	photo := photoWithLocation(t)
+	var calls atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	mux := http.NewServeMux()
+	newMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+	held := make(chan *httptest.ResponseRecorder, 1)
+	go func() { held <- serveUpload(mux, photo, "image/jpeg") }()
+	awaitEntered(t, entered)
+
+	document := make(chan *httptest.ResponseRecorder, 1)
+	go func() { document <- serveUpload(mux, []byte("plain document bytes"), "application/pdf") }()
+	awaitEntered(t, entered)
+	require.Equal(t, int32(2), calls.Load(), "a document streams while the image budget is fully held")
+
+	close(release)
+	require.Equal(t, http.StatusCreated, (<-held).Code)
+	require.Equal(t, http.StatusCreated, (<-document).Code)
 }

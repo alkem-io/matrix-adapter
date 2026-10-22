@@ -118,6 +118,22 @@ responses:
             error:
               type: string
               enum: [upstream_rejected, upstream_upload_failed]
+  "503":
+    description: Too many images are being processed; nothing was uploaded. Retry after the Retry-After interval.
+    headers:
+      Retry-After:
+        description: Seconds to wait before retrying.
+        schema:
+          type: integer
+    content:
+      application/json:
+        schema:
+          type: object
+          required: [error]
+          properties:
+            error:
+              type: string
+              enum: [upload_busy]
   "504":
     description: Upload timed out.
     content:
