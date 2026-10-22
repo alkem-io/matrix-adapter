@@ -56,6 +56,31 @@ func orientationOnlyExif(o byte) []byte {
 	return append(append([]byte{0xFF, markerAPP1, 0x00, 0x22}, exifHeader...), orientationOnlyTIFF(o)...)
 }
 
+func TestStripJPEG_SkipsExtraneousBytesBetweenSegments(t *testing.T) {
+	original := jpegWithMetadata(t, quadrants(), 1)
+	dqt := bytes.Index(original, []byte{0xFF, 0xDB})
+	require.Positive(t, dqt)
+	padded := append(append(append([]byte{}, original[:dqt]...), 0x00, 0x00), original[dqt:]...)
+
+	out, err := Strip(FormatJPEG, padded)
+	require.NoError(t, err)
+
+	requireNoSecrets(t, out)
+	want, err := jpeg.Decode(bytes.NewReader(original))
+	require.NoError(t, err)
+	got, err := jpeg.Decode(bytes.NewReader(out))
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+	require.Len(t, out, len(mustStrip(t, original)), "the skipped bytes are not copied")
+}
+
+func mustStrip(t *testing.T, data []byte) []byte {
+	t.Helper()
+	out, err := Strip(FormatJPEG, data)
+	require.NoError(t, err)
+	return out
+}
+
 func TestStripJPEG_RefusesMalformedContainers(t *testing.T) {
 	valid := jpegWithMetadata(t, quadrants(), 1)
 	sos := bytes.Index(valid, []byte{0xFF, markerSOS})
@@ -65,7 +90,7 @@ func TestStripJPEG_RefusesMalformedContainers(t *testing.T) {
 		"segment length too small": {0xFF, markerSOI, 0xFF, markerCOM, 0x00, 0x01, 0xFF, markerEOI},
 		"no scan before EOI":       {0xFF, markerSOI, 0xFF, markerCOM, 0x00, 0x03, 'x', 0xFF, markerEOI},
 		"truncated scan":           valid[:sos+40],
-		"garbage between segments": append(append([]byte{}, valid[:20]...), 0x00, 0x01, 0x02),
+		"no marker after garbage":  {0xFF, markerSOI, 0x00, 0x01, 0x02},
 		"second SOI":               {0xFF, markerSOI, 0xFF, markerSOI},
 	} {
 		_, err := Strip(FormatJPEG, data)

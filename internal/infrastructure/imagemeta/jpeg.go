@@ -90,19 +90,27 @@ func (s *jpegScan) consume(data []byte, at int, marker byte) (int, error) {
 	return s.copyEntropyData(data, end)
 }
 
-// nextMarker expects a marker at pos, skipping fill bytes, and returns the
-// offset of the 0xFF that immediately precedes the marker code.
+// nextMarker finds the first marker at or after pos and returns the offset of
+// the 0xFF that immediately precedes its code. Bytes before it that are not a
+// marker, which standard decoders ignore, are skipped and not copied.
 func nextMarker(data []byte, pos int) (int, byte, error) {
-	if pos >= len(data) || data[pos] != 0xFF {
-		return 0, 0, ErrMalformed
+	for {
+		next := bytes.IndexByte(data[pos:], 0xFF)
+		if next < 0 {
+			return 0, 0, ErrMalformed
+		}
+		pos += next
+		for pos+1 < len(data) && data[pos+1] == 0xFF {
+			pos++
+		}
+		if pos+1 >= len(data) {
+			return 0, 0, ErrMalformed
+		}
+		if data[pos+1] != 0x00 {
+			return pos, data[pos+1], nil
+		}
+		pos += 2
 	}
-	for pos+1 < len(data) && data[pos+1] == 0xFF {
-		pos++
-	}
-	if pos+1 >= len(data) || data[pos+1] == 0x00 {
-		return 0, 0, ErrMalformed
-	}
-	return pos, data[pos+1], nil
 }
 
 // copyEntropyData copies the entropy-coded data after a scan header up to the
