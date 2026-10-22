@@ -75,7 +75,7 @@ responses:
               type: string
               enum: [invalid_actor]
   "408":
-    description: Upload was canceled.
+    description: Upload was canceled, or an image body stopped arriving (slower than 32 KiB/s) and was cut off.
     content:
       application/json:
         schema:
@@ -84,7 +84,7 @@ responses:
           properties:
             error:
               type: string
-              enum: [upload_canceled]
+              enum: [upload_canceled, upload_timeout]
   "411":
     description: Content-Length is required.
     content:
@@ -119,7 +119,7 @@ responses:
               type: string
               enum: [upstream_rejected, upstream_upload_failed]
   "503":
-    description: Too many images are being processed; nothing was uploaded. Retry after the Retry-After interval.
+    description: Too many images are being processed, or the actor already has two images in flight; nothing was uploaded. Retry after the Retry-After interval.
     headers:
       Retry-After:
         description: Seconds to wait before retrying.

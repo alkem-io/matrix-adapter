@@ -3,6 +3,7 @@ package httpinfra
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"image/gif"
@@ -12,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,7 +24,9 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
+	"github.com/alkem-io/matrix-adapter/internal/core/ports"
 	"github.com/alkem-io/matrix-adapter/internal/infrastructure/imagemeta"
+	"github.com/alkem-io/matrix-adapter/internal/testutil"
 )
 
 type uploadFunc func(context.Context, domain.Actor, io.Reader, int64, string, string) (id.ContentURI, error)
@@ -55,7 +59,7 @@ func TestMediaUpload_StreamsTrustedActorAndDecodedName(t *testing.T) {
 				return id.MustParseContentURI("mxc://local.test/uploaded"), nil
 			})
 			mux := http.NewServeMux()
-			NewMediaUploadHandler(upload, 100).RegisterRoutes(mux)
+			NewMediaUploadHandler(upload, 100, &testutil.MockLogger{}).RegisterRoutes(mux)
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, mediaUploadRequest(body))
 			require.Equal(t, http.StatusCreated, w.Code)
@@ -95,7 +99,7 @@ func TestMediaUpload_RejectsInvalidInputBeforeUpload(t *testing.T) {
 				return id.ContentURI{}, nil
 			})
 			mux := http.NewServeMux()
-			NewMediaUploadHandler(upload, 100).RegisterRoutes(mux)
+			NewMediaUploadHandler(upload, 100, &testutil.MockLogger{}).RegisterRoutes(mux)
 			r := mediaUploadRequest("data")
 			tc.change(r)
 			w := httptest.NewRecorder()
@@ -115,7 +119,7 @@ func TestMediaUpload_CancellationAndUpstreamFailureAreNotSuccess(t *testing.T) {
 			return id.ContentURI{}, failure
 		})
 		mux := http.NewServeMux()
-		NewMediaUploadHandler(upload, 100).RegisterRoutes(mux)
+		NewMediaUploadHandler(upload, 100, &testutil.MockLogger{}).RegisterRoutes(mux)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		w := httptest.NewRecorder()
@@ -143,7 +147,7 @@ func TestMediaUpload_ForwardsBeforeRequestEOF(t *testing.T) {
 		return id.MustParseContentURI("mxc://local.test/streamed"), nil
 	})
 	mux := http.NewServeMux()
-	NewMediaUploadHandler(upload, 100).RegisterRoutes(mux)
+	NewMediaUploadHandler(upload, 100, &testutil.MockLogger{}).RegisterRoutes(mux)
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	reader, writer := io.Pipe()
@@ -179,7 +183,7 @@ func TestMediaUpload_ForwardsBeforeRequestEOF(t *testing.T) {
 
 func TestMediaUpload_OldInternalRouteIsAbsent(t *testing.T) {
 	mux := http.NewServeMux()
-	NewMediaUploadHandler(nil, 100).RegisterRoutes(mux)
+	NewMediaUploadHandler(nil, 100, &testutil.MockLogger{}).RegisterRoutes(mux)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/internal/media/upload", nil))
 	require.Equal(t, http.StatusNotFound, response.Code)
@@ -233,7 +237,7 @@ func TestMediaUpload_HandsSynapseTheStrippedImage(t *testing.T) {
 	var size int64
 	var mimeType string
 	mux := http.NewServeMux()
-	NewMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 1<<20).RegisterRoutes(mux)
+	NewMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 1<<20, &testutil.MockLogger{}).RegisterRoutes(mux)
 	r := mediaUploadRequest(string(photo))
 	// The declared type is not trusted: the bytes decide.
 	r.Header.Set("Content-Type", "application/octet-stream")
@@ -259,7 +263,7 @@ func TestMediaUpload_RefusesCorruptImageWithoutUploading(t *testing.T) {
 		return id.ContentURI{}, nil
 	})
 	mux := http.NewServeMux()
-	NewMediaUploadHandler(upload, 1<<20).RegisterRoutes(mux)
+	NewMediaUploadHandler(upload, 1<<20, &testutil.MockLogger{}).RegisterRoutes(mux)
 	w := httptest.NewRecorder()
 
 	mux.ServeHTTP(w, mediaUploadRequest(string(photo[:len(photo)/2])))
@@ -277,7 +281,7 @@ func TestMediaUpload_PassesGIFThroughUnchanged(t *testing.T) {
 	var size int64
 	var mimeType string
 	mux := http.NewServeMux()
-	NewMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 1<<20).RegisterRoutes(mux)
+	NewMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 1<<20, &testutil.MockLogger{}).RegisterRoutes(mux)
 	r := mediaUploadRequest(animation.String())
 	r.Header.Set("Content-Type", "image/gif")
 	w := httptest.NewRecorder()
@@ -302,9 +306,12 @@ func blockingUpload(calls *atomic.Int32, entered chan<- struct{}, release <-chan
 	}
 }
 
+// serveUpload sends body as a new actor each time, so only the shared budgets
+// limit how many uploads run at once.
 func serveUpload(mux *http.ServeMux, body []byte, contentType string) *httptest.ResponseRecorder {
 	r := mediaUploadRequest(string(body))
 	r.Header.Set("Content-Type", contentType)
+	r.Header.Set("X-Alkemio-Actor-Id", uuid.NewString())
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	return w
@@ -326,7 +333,7 @@ func TestMediaUpload_RefusesImagesBeyondTheMemoryBudget(t *testing.T) {
 	release := make(chan struct{})
 	mux := http.NewServeMux()
 	// Room for exactly two photos being rewritten at once.
-	newMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20, 2*imageCopies*int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+	newMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20, 2*imageCopies*int64(len(photo)), 20*time.Millisecond, &testutil.MockLogger{}).RegisterRoutes(mux)
 
 	held := make(chan *httptest.ResponseRecorder, 2)
 	for range 2 {
@@ -372,7 +379,7 @@ func TestMediaUpload_ReturnsImageBudgetAfterFailure(t *testing.T) {
 	})
 	mux := http.NewServeMux()
 	// Room for one photo only, so any budget left behind refuses the next.
-	newMediaUploadHandler(upload, 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+	newMediaUploadHandler(upload, 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond, &testutil.MockLogger{}).RegisterRoutes(mux)
 
 	require.Equal(t, http.StatusBadGateway, serveUpload(mux, photo, "image/jpeg").Code)
 	require.Equal(t, http.StatusBadRequest, serveUpload(mux, photo[:len(photo)/2], "image/jpeg").Code)
@@ -387,7 +394,7 @@ func TestMediaUpload_AcceptsAnImageLargerThanTheWholeBudget(t *testing.T) {
 	var size int64
 	var mimeType string
 	mux := http.NewServeMux()
-	newMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 1<<20, int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+	newMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 1<<20, int64(len(photo)), 20*time.Millisecond, &testutil.MockLogger{}).RegisterRoutes(mux)
 
 	require.Equal(t, http.StatusCreated, serveUpload(mux, photo, "image/jpeg").Code)
 	require.Equal(t, "image/jpeg", mimeType)
@@ -399,7 +406,7 @@ func TestMediaUpload_DoesNotGateFilesThatAreNotImages(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	mux := http.NewServeMux()
-	newMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond).RegisterRoutes(mux)
+	newMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond, &testutil.MockLogger{}).RegisterRoutes(mux)
 	held := make(chan *httptest.ResponseRecorder, 1)
 	go func() { held <- serveUpload(mux, photo, "image/jpeg") }()
 	awaitEntered(t, entered)
@@ -426,7 +433,7 @@ func TestMediaUpload_RefusesARotationBeyondTheRotationBudget(t *testing.T) {
 		return capture(ctx, actor, r, n, mime, name)
 	})
 	// Room for one photo only, so a buffer share left behind refuses the next.
-	h := newMediaUploadHandler(upload, 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond)
+	h := newMediaUploadHandler(upload, 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond, &testutil.MockLogger{})
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	require.True(t, h.rotations.sem.TryAcquire(imagemeta.MaxRotationBytes), "another rotation holds the budget")
@@ -449,14 +456,14 @@ func TestMediaUpload_RefusesARotationBeyondTheRotationBudget(t *testing.T) {
 
 func TestMediaUpload_StopsARotationForARequestThatEnded(t *testing.T) {
 	photo := sidewaysPhoto(t)
-	h := newMediaUploadHandler(nil, 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond)
+	h := newMediaUploadHandler(nil, 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond, &testutil.MockLogger{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// The request ends as its last byte arrives: after the buffer share is
 	// taken, before the rotation is charged.
 	body := &endingReader{r: bytes.NewReader(photo), end: cancel}
 
-	_, _, _, _, err := h.uploadBody(ctx, body, int64(len(photo)), "image/jpeg")
+	_, _, _, _, err := h.uploadBody(ctx, uuid.New(), body, int64(len(photo)), "image/jpeg", func(time.Time) {})
 
 	require.Error(t, err)
 	require.True(t, body.ended, "the whole body was read")
@@ -483,3 +490,211 @@ func (e *endingReader) Read(p []byte) (int, error) {
 
 // semaphoreIsABudget keeps the handler's semaphores usable as a rotation budget.
 var _ imagemeta.Budget = (*semaphore.Weighted)(nil)
+
+// warnings records the warnings a handler logs.
+type warnings struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (w *warnings) Debug(string, ...interface{}) {}
+func (w *warnings) Info(string, ...interface{})  {}
+func (w *warnings) Error(string, ...interface{}) {}
+func (w *warnings) With(...interface{}) ports.Logger {
+	return w
+}
+
+func (w *warnings) Warn(msg string, fields ...interface{}) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.lines = append(w.lines, fmt.Sprintln(append([]interface{}{msg}, fields...)...))
+}
+
+func (w *warnings) logged() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return strings.Join(w.lines, "")
+}
+
+func TestMediaUpload_LimitsTheImagesOneActorHasInFlight(t *testing.T) {
+	photo := photoWithLocation(t)
+	var calls atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	log := &warnings{}
+	mux := http.NewServeMux()
+	newMediaUploadHandler(blockingUpload(&calls, entered, release), 1<<20, imageMemoryBudget, 20*time.Millisecond, log).RegisterRoutes(mux)
+	const actor = "22222222-2222-4222-8222-222222222222"
+	upload := func(actorID, contentType string, body []byte) *httptest.ResponseRecorder {
+		r := mediaUploadRequest(string(body))
+		r.Header.Set("Content-Type", contentType)
+		r.Header.Set("X-Alkemio-Actor-Id", actorID)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w
+	}
+	held := make(chan *httptest.ResponseRecorder, imagesPerActor+2)
+	for range imagesPerActor {
+		go func() { held <- upload(actor, "image/jpeg", photo) }()
+		awaitEntered(t, entered)
+	}
+
+	excess := make(chan *httptest.ResponseRecorder, 1)
+	go func() { excess <- upload(actor, "image/jpeg", photo) }()
+	var busy *httptest.ResponseRecorder
+	select {
+	case busy = <-excess:
+	case <-entered:
+		close(release)
+		t.Fatal("an image beyond the actor's limit reached the uploader")
+	}
+
+	require.Equal(t, http.StatusServiceUnavailable, busy.Code)
+	require.JSONEq(t, `{"error":"upload_busy"}`, busy.Body.String())
+	require.Equal(t, imageRetryAfter, busy.Header().Get("Retry-After"))
+	require.Equal(t, int32(imagesPerActor), calls.Load(), "nothing is uploaded for the refused image")
+	require.Contains(t, log.logged(), actor, "the refusal names the actor")
+
+	go func() { held <- upload(uuid.NewString(), "image/jpeg", photo) }()
+	awaitEntered(t, entered)
+	go func() { held <- upload(actor, "application/pdf", []byte("plain document bytes")) }()
+	awaitEntered(t, entered)
+	require.Equal(t, int32(imagesPerActor+2), calls.Load(), "other actors' images and this actor's documents still go through")
+
+	close(release)
+	for range imagesPerActor + 2 {
+		require.Equal(t, http.StatusCreated, (<-held).Code)
+	}
+	go func() { held <- upload(actor, "image/jpeg", photo) }()
+	awaitEntered(t, entered)
+	require.Equal(t, http.StatusCreated, (<-held).Code, "the actor's slots are returned")
+}
+
+// slowImageUpload starts an upload that declares declared bytes of JPEG but
+// sends only its first bytes, then waits for writer to send more or close. The
+// response status, or zero when there is none, arrives on the channel.
+func slowImageUpload(t *testing.T, server *httptest.Server, actor string, declared int64) (*io.PipeWriter, <-chan int) {
+	t.Helper()
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = reader.Close(); _ = writer.Close() })
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/rest/messaging/media/upload?filename=slow.jpg", reader)
+	require.NoError(t, err)
+	request.ContentLength = declared
+	request.Header.Set("X-Alkemio-Actor-Id", actor)
+	request.Header.Set("Content-Type", "image/jpeg")
+	statuses := make(chan int, 1)
+	go func() {
+		response, err := server.Client().Do(request)
+		if err != nil {
+			statuses <- 0
+			return
+		}
+		_ = response.Body.Close()
+		statuses <- response.StatusCode
+	}()
+	_, err = writer.Write([]byte{0xFF, 0xD8, 0xFF, 0xE0})
+	require.NoError(t, err)
+	return writer, statuses
+}
+
+// charged reports whether at least n bytes of the image budget are taken.
+func charged(h *MediaUploadHandler, budget, n int64) bool {
+	if h.images.sem.TryAcquire(budget - n + 1) {
+		h.images.sem.Release(budget - n + 1)
+		return false
+	}
+	return true
+}
+
+func TestMediaUpload_ChargesTheImageBudgetOnlyForBytesReceived(t *testing.T) {
+	photo := photoWithLocation(t)
+	var got []byte
+	var size int64
+	var mimeType string
+	const budget = 4 * imagePiece
+	h := newMediaUploadHandler(capturingUpload(t, &got, &size, &mimeType), 64<<20, budget, imageBudgetWait, &testutil.MockLogger{})
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	server := httptest.NewServer(mux)
+	// Registered first so it runs last, after the stalled request is closed.
+	t.Cleanup(server.Close)
+	// Declares 50 MiB, three times the whole budget, and sends four bytes.
+	writer, statuses := slowImageUpload(t, server, uuid.NewString(), 50<<20)
+	require.Eventually(t, func() bool { return charged(h, budget, imageCopies*imagePiece) }, 2*time.Second, 5*time.Millisecond,
+		"the stalled sender is charged for the piece it is sending")
+	require.False(t, charged(h, budget, imageCopies*imagePiece+imageCopies*imagePiece), "and for nothing it has not sent")
+
+	require.Equal(t, http.StatusCreated, serveUpload(mux, photo, "image/jpeg").Code,
+		"another image fits beside a sender that declared more than the budget")
+	require.Equal(t, "image/jpeg", mimeType)
+
+	require.NoError(t, writer.CloseWithError(io.ErrClosedPipe))
+	<-statuses
+	require.Eventually(t, func() bool { return !charged(h, budget, 1) }, 2*time.Second, 5*time.Millisecond,
+		"an abandoned image returns its charge")
+}
+
+func TestMediaUpload_CutsOffAnImageSenderThatStalls(t *testing.T) {
+	called := false
+	upload := uploadFunc(func(context.Context, domain.Actor, io.Reader, int64, string, string) (id.ContentURI, error) {
+		called = true
+		return id.ContentURI{}, nil
+	})
+	log := &warnings{}
+	h := newMediaUploadHandler(upload, 64<<20, imageMemoryBudget, imageBudgetWait, log)
+	h.pieceTimeout = 100 * time.Millisecond
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	server := httptest.NewServer(mux)
+	// Registered first so it runs last, after the stalled request is closed.
+	t.Cleanup(server.Close)
+	const actor = "33333333-3333-4333-8333-333333333333"
+
+	_, statuses := slowImageUpload(t, server, actor, 10<<20)
+
+	var status int
+	select {
+	case status = <-statuses:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stalled image sender was not cut off")
+	}
+	require.Equal(t, http.StatusRequestTimeout, status)
+	require.False(t, called, "nothing is uploaded for the cut-off image")
+	require.Contains(t, log.logged(), actor, "the cut-off names the actor")
+	require.True(t, h.images.sem.TryAcquire(imageMemoryBudget), "the cut-off image returns its charge")
+	for range imagesPerActor {
+		require.True(t, h.actors.take(uuid.MustParse(actor)), "and its actor's slot")
+	}
+}
+
+// The handler leaves the last piece's read deadline in place; this pins that
+// the server clears it once the body ends, so a slow store is not cancelled.
+func TestMediaUpload_ImageReadDeadlineDoesNotCutOffItsStorage(t *testing.T) {
+	photo := photoWithLocation(t)
+	upload := uploadFunc(func(ctx context.Context, _ domain.Actor, reader io.Reader, _ int64, _, _ string) (id.ContentURI, error) {
+		// Storage outlasts the read deadline of every piece.
+		select {
+		case <-ctx.Done():
+			return id.ContentURI{}, ctx.Err()
+		case <-time.After(300 * time.Millisecond):
+		}
+		_, err := io.Copy(io.Discard, reader)
+		return id.MustParseContentURI("mxc://local.test/stored"), err
+	})
+	h := newMediaUploadHandler(upload, 1<<20, imageMemoryBudget, imageBudgetWait, &testutil.MockLogger{})
+	h.pieceTimeout = 50 * time.Millisecond
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/rest/messaging/media/upload?filename=photo.jpg", bytes.NewReader(photo))
+	require.NoError(t, err)
+	request.Header.Set("X-Alkemio-Actor-Id", uuid.NewString())
+	request.Header.Set("Content-Type", "image/jpeg")
+
+	response, err := server.Client().Do(request)
+
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	require.Equal(t, http.StatusCreated, response.StatusCode)
+}
