@@ -338,7 +338,7 @@ func (s *jpegScan) upright(ctx context.Context, budget Budget) (out []byte, ok b
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
-	img, err := jpeg.Decode(contextReader{ctx: ctx, r: bytes.NewReader(s.out)})
+	img, err := jpeg.Decode(untilDone(ctx, bytes.NewReader(s.out)))
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, false, ctxErr
@@ -370,18 +370,19 @@ func (s *jpegScan) upright(ctx context.Context, budget Budget) (out []byte, ok b
 	return append(out, body[2:]...), true, nil
 }
 
-// contextReader stops a read, and so the decode reading it, once ctx is done.
-type contextReader struct {
-	ctx context.Context
-	r   io.Reader
+// untilDone reads r until ctx is done, which stops the decode reading it.
+func untilDone(ctx context.Context, r io.Reader) io.Reader {
+	return readFunc(func(p []byte) (int, error) {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		return r.Read(p)
+	})
 }
 
-func (c contextReader) Read(p []byte) (int, error) {
-	if err := c.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return c.r.Read(p)
-}
+type readFunc func([]byte) (int, error)
+
+func (f readFunc) Read(p []byte) (int, error) { return f(p) }
 
 func profileSize(segments [][]byte) int {
 	size := 0

@@ -205,9 +205,9 @@ func TestStripJPEG_DoesNotDecodeOnceTheContextIsDone(t *testing.T) {
 	require.Equal(t, budget.acquired, budget.released)
 }
 
-func TestContextReader_StopsOnceTheContextIsDone(t *testing.T) {
+func TestUntilDone_StopsReadingOnceTheContextIsDone(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
-	r := contextReader{ctx: ctx, r: strings.NewReader("abcd")}
+	r := untilDone(ctx, strings.NewReader("abcd"))
 	buf := make([]byte, 2)
 	n, err := r.Read(buf)
 	require.NoError(t, err)
