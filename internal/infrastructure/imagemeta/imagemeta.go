@@ -9,6 +9,7 @@
 package imagemeta
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 )
@@ -36,43 +37,18 @@ const SniffLen = 12
 
 var pngSignature = []byte("\x89PNG\r\n\x1a\n")
 
-type signature struct {
-	format Format
-	magic  []byte
-	// wildFrom/wildTo bound a half-open range of bytes that may hold anything.
-	wildFrom, wildTo int
-}
-
-var signatures = []signature{
-	{format: FormatJPEG, magic: []byte{0xFF, 0xD8, 0xFF}},
-	{format: FormatPNG, magic: pngSignature},
-	{format: FormatWebP, magic: []byte("RIFF\x00\x00\x00\x00WEBP"), wildFrom: 4, wildTo: 8},
-}
-
-func (s signature) prefixOf(head []byte) bool {
-	for i := 0; i < len(head) && i < len(s.magic); i++ {
-		if (i < s.wildFrom || i >= s.wildTo) && head[i] != s.magic[i] {
-			return false
-		}
+// Sniff identifies the container from its leading bytes.
+func Sniff(head []byte) Format {
+	switch {
+	case bytes.HasPrefix(head, []byte{0xFF, 0xD8, 0xFF}):
+		return FormatJPEG
+	case bytes.HasPrefix(head, pngSignature):
+		return FormatPNG
+	case len(head) >= SniffLen && string(head[:4]) == "RIFF" && string(head[8:12]) == "WEBP":
+		return FormatWebP
+	default:
+		return FormatNone
 	}
-	return true
-}
-
-// Sniff identifies the container from the leading bytes read so far. decided
-// is false while head is still too short to tell, so a caller sniffing a
-// stream can stop reading as soon as the answer is known.
-func Sniff(head []byte) (format Format, decided bool) {
-	undecided := false
-	for _, s := range signatures {
-		if !s.prefixOf(head) {
-			continue
-		}
-		if len(head) >= len(s.magic) {
-			return s.format, true
-		}
-		undecided = true
-	}
-	return FormatNone, !undecided
 }
 
 // ContentType is the media type of a rewritten image of this format.

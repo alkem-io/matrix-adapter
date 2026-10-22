@@ -332,25 +332,16 @@ func stripImage(format imagemeta.Format, whole []byte) (io.Reader, int64, string
 	return bytes.NewReader(stripped), int64(len(stripped)), format.ContentType(), nil
 }
 
-// sniffImage reads leading bytes only until the container is known, so a body
-// that cannot be an image is never held back waiting for more of it.
+// sniffImage reads the leading bytes that identify an image container. A body
+// that ends before them is classified on what arrived and fails where any
+// short body does.
 func sniffImage(body io.Reader, size int64) ([]byte, imagemeta.Format, error) {
-	head := make([]byte, 0, min(size, imagemeta.SniffLen))
-	for len(head) < cap(head) {
-		if format, decided := imagemeta.Sniff(head); decided {
-			return head, format, nil
-		}
-		n, err := body.Read(head[len(head):cap(head)])
-		head = head[:len(head)+n]
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, imagemeta.FormatNone, err
-		}
+	head := make([]byte, min(size, imagemeta.SniffLen))
+	n, err := io.ReadFull(body, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, imagemeta.FormatNone, err
 	}
-	format, _ := imagemeta.Sniff(head)
-	return head, format, nil
+	return head[:n], imagemeta.Sniff(head[:n]), nil
 }
 
 func writeMediaUploadError(w http.ResponseWriter, err error) {

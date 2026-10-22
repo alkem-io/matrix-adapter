@@ -20,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
@@ -132,10 +133,10 @@ func TestMediaUpload_CancellationAndUpstreamFailureAreNotSuccess(t *testing.T) {
 func TestMediaUpload_ForwardsBeforeRequestEOF(t *testing.T) {
 	firstBytes := make(chan struct{})
 	upload := uploadFunc(func(_ context.Context, _ domain.Actor, reader io.Reader, size int64, _, _ string) (id.ContentURI, error) {
-		if size != 8 {
+		if size != 24 {
 			return id.ContentURI{}, io.ErrUnexpectedEOF
 		}
-		var first [4]byte
+		var first [12]byte
 		if _, err := io.ReadFull(reader, first[:]); err != nil {
 			return id.ContentURI{}, err
 		}
@@ -153,7 +154,7 @@ func TestMediaUpload_ForwardsBeforeRequestEOF(t *testing.T) {
 	defer func() { _ = reader.Close(); _ = writer.Close() }()
 	request, err := http.NewRequest(http.MethodPost, server.URL+"/rest/messaging/media/upload?filename=stream.bin", reader)
 	require.NoError(t, err)
-	request.ContentLength = 8
+	request.ContentLength = 24
 	request.Header.Set("X-Alkemio-Actor-Id", "11111111-1111-4111-8111-111111111111")
 	request.Header.Set("Content-Type", "application/octet-stream")
 	finished := make(chan error, 1)
@@ -167,14 +168,14 @@ func TestMediaUpload_ForwardsBeforeRequestEOF(t *testing.T) {
 		}
 		finished <- err
 	}()
-	_, err = writer.Write([]byte("half"))
+	_, err = writer.Write([]byte("first twelve"))
 	require.NoError(t, err)
 	select {
 	case <-firstBytes:
 	case <-time.After(2 * time.Second):
 		t.Fatal("upload reader was not forwarded before request EOF")
 	}
-	_, err = writer.Write([]byte("rest"))
+	_, err = writer.Write([]byte("the rest...."))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 	require.NoError(t, <-finished)
@@ -485,8 +486,9 @@ func TestMediaUpload_LimitsTheImagesOneActorHasInFlight(t *testing.T) {
 }
 
 // slowImageUpload starts an upload that declares declared bytes of JPEG but
-// sends only its first bytes, then waits for writer to send more or close. The
-// response status, or zero when there is none, arrives on the channel.
+// sends only the bytes that identify it, then waits for writer to send more or
+// close. The response status, or zero when there is none, arrives on the
+// channel.
 func slowImageUpload(t *testing.T, server *httptest.Server, actor string, declared int64) (*io.PipeWriter, <-chan int) {
 	t.Helper()
 	reader, writer := io.Pipe()
@@ -506,7 +508,7 @@ func slowImageUpload(t *testing.T, server *httptest.Server, actor string, declar
 		_ = response.Body.Close()
 		statuses <- response.StatusCode
 	}()
-	_, err = writer.Write([]byte{0xFF, 0xD8, 0xFF, 0xE0})
+	_, err = writer.Write([]byte("\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01"))
 	require.NoError(t, err)
 	return writer, statuses
 }
@@ -611,4 +613,51 @@ func TestMediaUpload_ImageReadDeadlineDoesNotCutOffItsStorage(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = response.Body.Close() }()
 	require.Equal(t, http.StatusCreated, response.StatusCode)
+}
+
+// truncatedBody ends early as net/http's request body does when a client
+// disconnects before sending its declared Content-Length.
+type truncatedBody struct{ io.Reader }
+
+func (b truncatedBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if err == io.EOF {
+		err = io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
+func TestMediaUpload_BodyShorterThanItsLengthFailsAsBadGateway(t *testing.T) {
+	photo := photoWithLocation(t)
+	// As the Matrix adapter does, the stream is read to its end and a failed
+	// read comes back as a mautrix transport error.
+	upload := uploadFunc(func(_ context.Context, _ domain.Actor, reader io.Reader, _ int64, _, _ string) (id.ContentURI, error) {
+		if _, err := io.Copy(io.Discard, reader); err != nil {
+			return id.ContentURI{}, fmt.Errorf("media upload failed: %w", mautrix.HTTPError{Message: "request error", WrappedError: err})
+		}
+		return id.MustParseContentURI("mxc://local.test/short"), nil
+	})
+	for name, tc := range map[string]struct {
+		sent     []byte
+		declared int
+		error    string
+	}{
+		"image":             {photo[:len(photo)/2], len(photo), "upstream_upload_failed"},
+		"file":              {[]byte("plain document bytes"), 64, "upstream_rejected"},
+		"file of few bytes": {[]byte("doc"), 64, "upstream_rejected"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			NewMediaUploadHandler(upload, 1<<20, &testutil.MockLogger{}).RegisterRoutes(mux)
+			r := mediaUploadRequest("")
+			r.Body = io.NopCloser(truncatedBody{bytes.NewReader(tc.sent)})
+			r.ContentLength = int64(tc.declared)
+			w := httptest.NewRecorder()
+
+			mux.ServeHTTP(w, r)
+
+			require.Equal(t, http.StatusBadGateway, w.Code)
+			require.JSONEq(t, `{"error":"`+tc.error+`"}`, w.Body.String())
+		})
+	}
 }
