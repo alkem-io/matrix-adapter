@@ -43,7 +43,7 @@ func pngWithMetadata(t *testing.T, o uint16) ([]byte, image.Image) {
 func TestStripPNG_RemovesMetadataAndKeepsPixelsAndProfile(t *testing.T) {
 	original, img := pngWithMetadata(t, 1)
 
-	out, err := Strip(FormatPNG, original)
+	out, err := Strip(t.Context(), FormatPNG, original, ample())
 	require.NoError(t, err)
 
 	requireNoSecrets(t, out)
@@ -57,7 +57,7 @@ func TestStripPNG_RemovesMetadataAndKeepsPixelsAndProfile(t *testing.T) {
 func TestStripPNG_KeepsOnlyTheOrientationOfAnOrientedImage(t *testing.T) {
 	original, img := pngWithMetadata(t, 6)
 
-	out, err := Strip(FormatPNG, original)
+	out, err := Strip(t.Context(), FormatPNG, original, ample())
 	require.NoError(t, err)
 
 	requireNoSecrets(t, out)
@@ -82,7 +82,7 @@ func TestStripPNG_RefusesMalformedContainers(t *testing.T) {
 		"second IHDR":      join(ihdr, ihdr, iend),
 		"oversized length": join(ihdr, []byte{0xFF, 0xFF, 0xFF, 0xFF, 'I', 'D', 'A', 'T', 0, 0, 0, 0}),
 	} {
-		_, err := Strip(FormatPNG, data)
+		_, err := Strip(t.Context(), FormatPNG, data, ample())
 		require.ErrorIs(t, err, ErrMalformed, name)
 	}
 }

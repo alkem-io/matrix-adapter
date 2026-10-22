@@ -27,16 +27,18 @@ const gatewayGuestActorID = "00000000-0000-0000-0000-000000000001"
 
 const (
 	// imageMemoryBudget bounds the bytes held at once by images read whole to
-	// be rewritten. It leaves 320 MiB of the pod's 512 Mi limit for the
-	// service itself, the one rotation decode imagemeta runs at a time (about
-	// 110 MB of pixels at its 24 MP bound) and garbage not yet collected.
+	// be rewritten. With imagemeta.MaxRotationBytes, which bounds the JPEG
+	// rotations running at once, it leaves 160 MiB of the pod's 512 Mi limit
+	// for the service itself and garbage not yet collected.
 	imageMemoryBudget int64 = 192 << 20
 	// imageCopies is how many copies of an image can be live while it is
 	// rewritten: the bytes received, the rewritten bytes, and the copy made
-	// when an orientation-only segment is inserted.
+	// when an orientation-only segment is inserted. A rotation's decode and
+	// re-encode are charged to the rotation budget instead.
 	imageCopies = 3
-	// imageBudgetWait is how long an image waits for budget before the upload
-	// is refused as busy; imageRetryAfter is the retry hint sent with that.
+	// imageBudgetWait is how long an image waits for either budget before the
+	// upload is refused as busy; imageRetryAfter is the retry hint sent with
+	// that.
 	imageBudgetWait = 2 * time.Second
 	imageRetryAfter = "5"
 )
@@ -50,9 +52,9 @@ type mediaUploader interface {
 type MediaUploadHandler struct {
 	uploader    mediaUploader
 	maxBytes    int64
-	images      *semaphore.Weighted
+	images      waitingBudget
 	imageBudget int64
-	imageWait   time.Duration
+	rotations   waitingBudget
 }
 
 // NewMediaUploadHandler creates the byte-upload bridge without message publication.
@@ -64,11 +66,32 @@ func newMediaUploadHandler(uploader mediaUploader, maxBytes, imageBudget int64, 
 	return &MediaUploadHandler{
 		uploader:    uploader,
 		maxBytes:    maxBytes,
-		images:      semaphore.NewWeighted(imageBudget),
+		images:      waitingBudget{semaphore.NewWeighted(imageBudget), imageWait},
 		imageBudget: imageBudget,
-		imageWait:   imageWait,
+		rotations:   waitingBudget{semaphore.NewWeighted(imagemeta.MaxRotationBytes), imageWait},
 	}
 }
+
+// waitingBudget is a memory budget that an upload waits on only briefly: a
+// share it cannot get within wait is refused as errImageBusy.
+type waitingBudget struct {
+	sem  *semaphore.Weighted
+	wait time.Duration
+}
+
+// Acquire takes n bytes of the budget, or returns errImageBusy once the wait
+// runs out or ctx is done.
+func (b waitingBudget) Acquire(ctx context.Context, n int64) error {
+	wait, cancel := context.WithTimeout(ctx, b.wait)
+	defer cancel()
+	if err := b.sem.Acquire(wait, n); err != nil {
+		return errImageBusy
+	}
+	return nil
+}
+
+// Release returns n bytes taken by Acquire.
+func (b waitingBudget) Release(n int64) { b.sem.Release(n) }
 
 // RegisterRoutes adds the gateway-routed upload to the appservice listener.
 func (h *MediaUploadHandler) RegisterRoutes(mux *http.ServeMux) {
@@ -88,9 +111,10 @@ type MediaUploadResult struct {
 // A JPEG, PNG or WebP body (recognised from its bytes) is read whole and stored
 // without its location, device and time metadata, with the content type and
 // length of the rewritten bytes; a corrupt one is refused as invalid_media.
-// Images being rewritten share a fixed memory budget; one that cannot get its
-// share within a short wait is refused with 503 upload_busy and Retry-After,
-// and nothing is uploaded. Every other body streams through unchanged.
+// Images being rewritten share a fixed memory budget, and JPEG rotations a
+// second one; an image that cannot get its share of either within a short
+// wait is refused with 503 upload_busy and Retry-After, and nothing is
+// uploaded. Every other body streams through unchanged.
 // No event is published. Success is 201 only after synchronous provider storage;
 // failures use stable error categories and do not replay the stream.
 func (h *MediaUploadHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +184,7 @@ func (h *MediaUploadHandler) uploadBody(
 	if err != nil {
 		return nil, 0, "", nil, err
 	}
-	media, size, contentType, err := stripImage(format, head, body, size)
+	media, size, contentType, err := h.stripImage(ctx, format, head, body, size)
 	if err != nil {
 		release()
 		return nil, 0, "", nil, err
@@ -173,10 +197,8 @@ func (h *MediaUploadHandler) uploadBody(
 // takes all of it, so it is still accepted, alone.
 func (h *MediaUploadHandler) reserveImageMemory(ctx context.Context, size int64) (func(), error) {
 	weight := min(imageCopies*size, h.imageBudget)
-	wait, cancel := context.WithTimeout(ctx, h.imageWait)
-	defer cancel()
-	if err := h.images.Acquire(wait, weight); err != nil {
-		return nil, errImageBusy
+	if err := h.images.Acquire(ctx, weight); err != nil {
+		return nil, err
 	}
 	return func() { h.images.Release(weight) }, nil
 }
@@ -185,16 +207,22 @@ func (h *MediaUploadHandler) reserveImageMemory(ctx context.Context, size int64)
 // because its metadata must be removed before any of it is stored. The buffer
 // is sized from the declared length, which the caller has already capped, so
 // it never grows. The declared type gives way to the type of the rewritten
-// bytes.
-func stripImage(format imagemeta.Format, head []byte, body io.Reader, size int64) (io.Reader, int64, string, error) {
+// bytes. Only a broken image is invalid media; a rotation refused its budget
+// or cut short by the request ending keeps its own error.
+func (h *MediaUploadHandler) stripImage(
+	ctx context.Context, format imagemeta.Format, head []byte, body io.Reader, size int64,
+) (io.Reader, int64, string, error) {
 	whole := make([]byte, size)
 	read := copy(whole, head)
 	if _, err := io.ReadFull(body, whole[read:]); err != nil {
 		return nil, 0, "", err
 	}
-	stripped, err := imagemeta.Strip(format, whole)
-	if err != nil {
+	stripped, err := imagemeta.Strip(ctx, format, whole, h.rotations)
+	if errors.Is(err, imagemeta.ErrMalformed) {
 		return nil, 0, "", fmt.Errorf("%w: %w", domain.ErrInvalidParam, err)
+	}
+	if err != nil {
+		return nil, 0, "", err
 	}
 	return bytes.NewReader(stripped), int64(len(stripped)), format.ContentType(), nil
 }

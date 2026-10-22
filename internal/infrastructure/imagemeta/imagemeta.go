@@ -9,6 +9,7 @@
 package imagemeta
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -91,16 +92,19 @@ func (f Format) ContentType() string {
 
 // Strip returns data without privacy-relevant metadata. A JPEG whose Exif
 // orientation is not upright is physically rotated and re-encoded so it still
-// displays upright; every other image is rewritten losslessly by removing
-// metadata segments or chunks. The result is a new slice; data is not changed.
-func Strip(format Format, data []byte) ([]byte, error) {
+// displays upright, charging the rotation's estimated memory to budget, or
+// keeps an orientation-only Exif segment when it is too costly to rotate;
+// every other image is rewritten losslessly by removing metadata segments or
+// chunks. A rotation that budget refuses, or whose ctx is done, returns that
+// error and no image. The result is a new slice; data is not changed.
+func Strip(ctx context.Context, format Format, data []byte, budget Budget) ([]byte, error) {
 	var (
 		out []byte
 		err error
 	)
 	switch format {
 	case FormatJPEG:
-		out, err = stripJPEG(data)
+		out, err = stripJPEG(ctx, data, budget)
 	case FormatPNG:
 		out, err = stripPNG(data)
 	case FormatWebP:

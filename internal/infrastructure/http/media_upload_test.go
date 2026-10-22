@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/semaphore"
 	"maunium.net/go/mautrix/id"
 
 	"github.com/alkem-io/matrix-adapter/internal/core/domain"
@@ -199,6 +200,21 @@ func photoWithLocation(t *testing.T) []byte {
 	return append(append(append([]byte{}, plain[:2]...), exif...), plain[2:]...)
 }
 
+// sidewaysPhoto is a real JPEG whose Exif asks for a 90° turn, as a phone
+// camera writes a portrait photo.
+func sidewaysPhoto(t *testing.T) []byte {
+	t.Helper()
+	var encoded bytes.Buffer
+	require.NoError(t, jpeg.Encode(&encoded, image.NewGray(image.Rect(0, 0, 16, 8)), nil))
+	plain := encoded.Bytes()
+	const tiff = "MM\x00\x2A\x00\x00\x00\x08\x00\x01" +
+		"\x01\x12\x00\x03\x00\x00\x00\x01\x00\x06\x00\x00" +
+		"\x00\x00\x00\x00"
+	const payload = "Exif\x00\x00" + tiff
+	exif := append([]byte{0xFF, 0xE1, 0x00, byte(2 + len(payload))}, payload...)
+	return append(append(append([]byte{}, plain[:2]...), exif...), plain[2:]...)
+}
+
 func capturingUpload(t *testing.T, got *[]byte, size *int64, mimeType *string) uploadFunc {
 	t.Helper()
 	return func(_ context.Context, _ domain.Actor, reader io.Reader, n int64, mime, _ string) (id.ContentURI, error) {
@@ -211,7 +227,7 @@ func capturingUpload(t *testing.T, got *[]byte, size *int64, mimeType *string) u
 
 func TestMediaUpload_HandsSynapseTheStrippedImage(t *testing.T) {
 	photo := photoWithLocation(t)
-	want, err := imagemeta.Strip(imagemeta.FormatJPEG, photo)
+	want, err := imagemeta.Strip(t.Context(), imagemeta.FormatJPEG, photo, semaphore.NewWeighted(imagemeta.MaxRotationBytes))
 	require.NoError(t, err)
 	var got []byte
 	var size int64
@@ -397,3 +413,73 @@ func TestMediaUpload_DoesNotGateFilesThatAreNotImages(t *testing.T) {
 	require.Equal(t, http.StatusCreated, (<-held).Code)
 	require.Equal(t, http.StatusCreated, (<-document).Code)
 }
+
+func TestMediaUpload_RefusesARotationBeyondTheRotationBudget(t *testing.T) {
+	photo := sidewaysPhoto(t)
+	var got []byte
+	var size int64
+	var mimeType string
+	calls := 0
+	capture := capturingUpload(t, &got, &size, &mimeType)
+	upload := uploadFunc(func(ctx context.Context, actor domain.Actor, r io.Reader, n int64, mime, name string) (id.ContentURI, error) {
+		calls++
+		return capture(ctx, actor, r, n, mime, name)
+	})
+	// Room for one photo only, so a buffer share left behind refuses the next.
+	h := newMediaUploadHandler(upload, 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	require.True(t, h.rotations.sem.TryAcquire(imagemeta.MaxRotationBytes), "another rotation holds the budget")
+
+	busy := serveUpload(mux, photo, "image/jpeg")
+
+	require.Equal(t, http.StatusServiceUnavailable, busy.Code)
+	require.JSONEq(t, `{"error":"upload_busy"}`, busy.Body.String())
+	require.Equal(t, imageRetryAfter, busy.Header().Get("Retry-After"))
+	require.Zero(t, calls, "nothing is uploaded for the refused image")
+
+	h.rotations.sem.Release(imagemeta.MaxRotationBytes)
+	require.Equal(t, http.StatusCreated, serveUpload(mux, photo, "image/jpeg").Code)
+	require.Equal(t, 1, calls)
+	rotated, err := jpeg.Decode(bytes.NewReader(got))
+	require.NoError(t, err)
+	require.Equal(t, image.Rect(0, 0, 8, 16), rotated.Bounds(), "turned upright once the budget is free")
+	require.True(t, h.rotations.sem.TryAcquire(imagemeta.MaxRotationBytes), "the rotation returns its charge")
+}
+
+func TestMediaUpload_StopsARotationForARequestThatEnded(t *testing.T) {
+	photo := sidewaysPhoto(t)
+	h := newMediaUploadHandler(nil, 1<<20, imageCopies*int64(len(photo)), 20*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The request ends as its last byte arrives: after the buffer share is
+	// taken, before the rotation is charged.
+	body := &endingReader{r: bytes.NewReader(photo), end: cancel}
+
+	_, _, _, _, err := h.uploadBody(ctx, body, int64(len(photo)), "image/jpeg")
+
+	require.Error(t, err)
+	require.True(t, body.ended, "the whole body was read")
+	require.NotErrorIs(t, err, domain.ErrInvalidParam, "an ended request is not a corrupt image")
+	require.True(t, h.rotations.sem.TryAcquire(imagemeta.MaxRotationBytes), "no rotation charge is left behind")
+	require.True(t, h.images.sem.TryAcquire(imageCopies*int64(len(photo))), "no buffer share is left behind")
+}
+
+// endingReader calls end once r is exhausted.
+type endingReader struct {
+	r     *bytes.Reader
+	end   func()
+	ended bool
+}
+
+func (e *endingReader) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if e.r.Len() == 0 {
+		e.ended = true
+		e.end()
+	}
+	return n, err
+}
+
+// semaphoreIsABudget keeps the handler's semaphores usable as a rotation budget.
+var _ imagemeta.Budget = (*semaphore.Weighted)(nil)

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/semaphore"
 )
 
 // Fixtures are built in code so every privacy-relevant field is known and
@@ -87,6 +88,31 @@ func jpegSegment(marker byte, payload ...[]byte) []byte {
 	body := bytes.Join(payload, nil)
 	segment := binary.BigEndian.AppendUint32([]byte{0xFF, marker}, fixtureLen(body)+2)
 	return append(append(segment[:2], segment[4:]...), body...) // keep the low 16 bits
+}
+
+// ample is a rotation budget that admits any one rotation at once.
+func ample() Budget {
+	return semaphore.NewWeighted(MaxRotationBytes)
+}
+
+// component is one frame-header component: its identifier and its horizontal
+// and vertical sampling factors.
+type component struct{ id, h, v byte }
+
+// withFrame replaces a JPEG fixture's baseline frame header, so a small stream
+// declares the size, coding and components of a much larger image. Only the
+// header changes: nothing in these tests decodes the result.
+func withFrame(t *testing.T, data []byte, marker byte, w, h uint16, components ...component) []byte {
+	t.Helper()
+	at := bytes.Index(data, []byte{0xFF, markerSOF0})
+	require.Positive(t, at)
+	end := at + 2 + int(binary.BigEndian.Uint16(data[at+2:]))
+	payload := binary.BigEndian.AppendUint16(binary.BigEndian.AppendUint16([]byte{8}, h), w)
+	payload = append(payload, byte(len(components))) //nolint:gosec // a frame has at most four components
+	for _, c := range components {
+		payload = append(payload, c.id, c.h<<4|c.v, 0)
+	}
+	return append(append(append([]byte{}, data[:at]...), jpegSegment(marker, payload)...), data[end:]...)
 }
 
 func iccSegment() []byte {

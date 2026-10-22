@@ -44,7 +44,7 @@ func TestStripWebP_RemovesExifAndXMPAndFixesHeader(t *testing.T) {
 	original := append(webpWithMetadata(1), "SecretTrailer"...)
 	requireDecodesToSolid(t, original)
 
-	out, err := Strip(FormatWebP, original)
+	out, err := Strip(t.Context(), FormatWebP, original, ample())
 	require.NoError(t, err)
 
 	requireNoSecrets(t, out)
@@ -57,7 +57,7 @@ func TestStripWebP_RemovesExifAndXMPAndFixesHeader(t *testing.T) {
 }
 
 func TestStripWebP_KeepsOnlyTheOrientationOfAnOrientedImage(t *testing.T) {
-	out, err := Strip(FormatWebP, webpWithMetadata(6))
+	out, err := Strip(t.Context(), FormatWebP, webpWithMetadata(6), ample())
 	require.NoError(t, err)
 
 	requireNoSecrets(t, out)
@@ -80,7 +80,7 @@ func TestStripWebP_RefusesMalformedContainers(t *testing.T) {
 		"short VP8X":             riff(riffChunk("VP8X", []byte{0, 0, 0}), image),
 		"second VP8X":            riff(riffChunk("VP8X", vp8x(0, 1, 1)), riffChunk("VP8X", vp8x(0, 1, 1)), image),
 	} {
-		_, err := Strip(FormatWebP, data)
+		_, err := Strip(t.Context(), FormatWebP, data, ample())
 		require.ErrorIs(t, err, ErrMalformed, name)
 	}
 }
