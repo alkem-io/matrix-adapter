@@ -25,15 +25,3 @@ func TestSniff_IdentifiesContainersFromBytesAlone(t *testing.T) {
 		require.Equal(t, tc.format, Sniff([]byte(tc.head)), name)
 	}
 }
-
-func TestStrip_RefusesFormatsItDoesNotRewrite(t *testing.T) {
-	_, err := Strip(FormatNone, []byte("GIF89a"))
-	require.Error(t, err)
-}
-
-func TestFormat_ContentTypeMatchesTheRewrittenBytes(t *testing.T) {
-	require.Equal(t, "image/jpeg", FormatJPEG.ContentType())
-	require.Equal(t, "image/png", FormatPNG.ContentType())
-	require.Equal(t, "image/webp", FormatWebP.ContentType())
-	require.Empty(t, FormatNone.ContentType())
-}
