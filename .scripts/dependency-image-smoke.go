@@ -53,6 +53,10 @@ func serve() {
 			_ = json.NewEncoder(w).Encode(requests)
 			return
 		}
+		if r.Method == "GET" && r.URL.Path == "/_matrix/client/v3/login" {
+			_, _ = w.Write([]byte(`{"flows":[]}`))
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer fixture-as-token" {
 			http.Error(w, `{"errcode":"M_FORBIDDEN"}`, http.StatusForbidden)
 			return
@@ -77,6 +81,8 @@ func serve() {
 			response = map[string]interface{}{"user_id": "@00000000-0000-0000-0000-000000000000:fixture.invalid"}
 		case strings.HasPrefix(r.URL.Path, "/_synapse/admin/v2/users/"):
 			response = map[string]interface{}{"admin": true, "name": "@00000000-0000-0000-0000-000000000000:fixture.invalid"}
+		case strings.HasSuffix(r.URL.Path, "/displayname") && r.Method == "GET":
+			response = map[string]interface{}{"displayname": ""}
 		case strings.HasSuffix(r.URL.Path, "/displayname") && r.Method == "PUT":
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -136,7 +142,7 @@ func verify() error {
 	for _, actor := range []string{goodActor, badActor} {
 		payload, _ := json.Marshal(map[string]string{"actor_id": actor, "display_name": "Fixture Actor"})
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err = ch.PublishWithContext(ctx, "", topic, true, false, amqp.Publishing{ContentType: "application/json", MessageId: actor, CorrelationId: actor, ReplyTo: reply.Name, Body: payload})
+		err = ch.PublishWithContext(ctx, "", topic, true, false, amqp.Publishing{Headers: amqp.Table{"_watermill_message_uuid": actor}, ContentType: "application/json", MessageId: actor, CorrelationId: actor, ReplyTo: reply.Name, Body: payload})
 		if err != nil {
 			cancel()
 			return err
