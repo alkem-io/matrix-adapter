@@ -3,6 +3,7 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/alkem-io/matrix-adapter/internal/core/ports"
@@ -45,3 +46,19 @@ func (m *MockLogger) Info(_ string, _ ...interface{})    {}           //nolint:r
 func (m *MockLogger) Warn(_ string, _ ...interface{})    {}           //nolint:revive
 func (m *MockLogger) Error(_ string, _ ...interface{})   {}           //nolint:revive
 func (m *MockLogger) With(_ ...interface{}) ports.Logger { return m } //nolint:revive
+
+// RecordingLogger captures every message and key/value it is given, so a test
+// can assert a sentinel credential appears in none of them (workspace#091).
+type RecordingLogger struct{ Entries []string }
+
+var _ ports.Logger = (*RecordingLogger)(nil)
+
+func (l *RecordingLogger) record(msg string, fields ...interface{}) {
+	l.Entries = append(l.Entries, fmt.Sprint(append([]interface{}{msg}, fields...)...))
+}
+
+func (l *RecordingLogger) Debug(msg string, fields ...interface{}) { l.record(msg, fields...) } //nolint:revive
+func (l *RecordingLogger) Info(msg string, fields ...interface{})  { l.record(msg, fields...) } //nolint:revive
+func (l *RecordingLogger) Warn(msg string, fields ...interface{})  { l.record(msg, fields...) } //nolint:revive
+func (l *RecordingLogger) Error(msg string, fields ...interface{}) { l.record(msg, fields...) } //nolint:revive
+func (l *RecordingLogger) With(_ ...interface{}) ports.Logger      { return l }                 //nolint:revive

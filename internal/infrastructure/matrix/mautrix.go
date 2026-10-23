@@ -486,7 +486,9 @@ func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret st
 
 // newDirectClient creates a mautrix.Client that talks directly to Synapse
 // without appservice impersonation. Uses config URL so it works before as.Start().
-// NOTE: Only used for shared secret registration (non-admin). For admin API, use m.admin.
+// Callers: waitForSynapse (no token), registerSharedSecretUser (no token, shared
+// secret in the body) and CreateUserSession (application-service token). For the
+// Synapse admin API, use m.admin.
 func (m *MautrixAdapter) newDirectClient(accessToken string) *mautrix.Client {
 	hsURL, _ := url.Parse(m.cfg.Matrix.HomeserverURL)
 	return &mautrix.Client{
@@ -634,6 +636,45 @@ func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id
 	}
 
 	return userID, nil
+}
+
+// CreateUserSession mints a Matrix access token for the actor by logging in as
+// them with the application-service token (MSC2778). A fresh device is created
+// on every call.
+func (m *MautrixAdapter) CreateUserSession(ctx context.Context, actor domain.Actor) (*domain.ActorSession, error) {
+	userID, err := m.EnsureUser(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+
+	client := m.newDirectClient(m.cfg.Matrix.AppServiceToken)
+	resp, err := client.Login(ctx, &mautrix.ReqLogin{
+		Type: mautrix.AuthTypeAppservice,
+		Identifier: mautrix.UserIdentifier{
+			Type: mautrix.IdentifierTypeUser,
+			User: string(userID),
+		},
+		InitialDeviceDisplayName: "Alkemio App",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to mint actor session: %w", err)
+	}
+	if resp.UserID == "" || resp.DeviceID == "" || resp.AccessToken == "" {
+		return nil, fmt.Errorf("incomplete login response for %s", userID)
+	}
+	if resp.UserID != userID {
+		return nil, fmt.Errorf("minted session identity mismatch: got %s, requested %s", resp.UserID, userID)
+	}
+
+	m.logger.Info("actor session minted",
+		"user_id", resp.UserID, "device_id", resp.DeviceID,
+		"expires_in_ms", resp.ExpiresInMS)
+
+	return &domain.ActorSession{
+		UserID:      resp.UserID,
+		DeviceID:    resp.DeviceID,
+		AccessToken: resp.AccessToken,
+	}, nil
 }
 
 // InviteUser invites a user to a room and auto-joins them.

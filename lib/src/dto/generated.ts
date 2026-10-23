@@ -13,6 +13,24 @@ export interface SyncActorRequest {
   display_name: string;
   avatar_url?: string;
 }
+/**
+ * CreateActorSessionRequest mints a Matrix access token for ONE actor — the
+ * authenticated caller on the server side. There is deliberately no other
+ * field: no subject can be named (workspace#091 M1/D4).
+ * Topic: communication.actor.session.create
+ */
+export interface CreateActorSessionRequest {
+  actor_id: AlkemioActorID;
+}
+/**
+ * CreateActorSessionResponse carries the credential triple a Matrix client
+ * needs. AccessToken is a live credential: it must never be logged.
+ */
+export interface CreateActorSessionResponse extends BaseResponse {
+  user_id: string;
+  device_id: string;
+  access_token: string;
+}
 
 //////////
 // source: batch.go
@@ -173,6 +191,10 @@ export const TopicRoomMemberBatchRemove = "communication.room.member.batch.remov
  * TopicActorSync is the topic for actor synchronization commands.
  */
 export const TopicActorSync = "communication.actor.sync";
+/**
+ * TopicActorSessionCreate is the topic for minting a Matrix session for an actor.
+ */
+export const TopicActorSessionCreate = "communication.actor.session.create";
 /**
  * Space command topics
  */

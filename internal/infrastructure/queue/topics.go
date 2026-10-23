@@ -39,6 +39,8 @@ const (
 
 	// TopicActorSync is the topic for actor synchronization commands.
 	TopicActorSync = dto.TopicActorSync
+	// TopicActorSessionCreate is the topic for minting a Matrix session for an actor.
+	TopicActorSessionCreate = dto.TopicActorSessionCreate
 
 	// TopicSpaceCreate is the topic for space creation commands.
 	TopicSpaceCreate = dto.TopicSpaceCreate
