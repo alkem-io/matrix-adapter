@@ -216,10 +216,13 @@ The Matrix Adapter implements a structured RabbitMQ protocol for communication w
 
 ### Media Attachments
 
-`communication.message.send` publishes either non-empty `content` or one
-`existing_media` reference. Media sends contain a local `media_id`, display name
+`communication.message.send` publishes non-empty `content`, one
+`existing_media` reference, or both. Media sends contain a local `media_id`, display name
 and actual MIME/size/dimensions; they publish as the sender without transferring
-bytes again or emitting a document-ID hint.
+bytes again or emitting a document-ID hint. When `content` accompanies the media
+it becomes the Matrix media caption: `body` carries the caption and `filename`
+the display name. Without a caption, `body` is the display name and `filename`
+is omitted.
 
 Browsers POST raw original bytes to
 `/api/private/rest/messaging/media/upload?filename=...`. The gateway strips the
@@ -228,11 +231,18 @@ and forwards to `/rest/messaging/media/upload`. The adapter accepts only the
 trusted `X-Alkemio-Actor-Id` UUID; absent, anonymous and guest identities are rejected.
 Uploads are room-neutral. Sending and placement apply current destination checks.
 
-The body streams directly to Synapse with a required exact Content-Length and the
-existing attachment-size cap; the adapter neither accumulates nor spools the file.
-Zero bytes use the SDK empty-body form. Failed uploads and uncertain sends are
-not replayed automatically. `timeout_ms` bounds message publication below the
-caller RPC wait; it defaults to 25 seconds.
+Every upload needs an exact Content-Length within the existing attachment-size
+cap. A body that is not an image streams directly to Synapse; the adapter neither
+accumulates nor spools it. A JPEG, PNG or WebP body, recognised from its bytes
+rather than its declared type, is read whole into memory and stored without its
+location, device and time metadata, with the content type and length of the
+rewritten bytes; of its Exif data only the orientation tag is kept. A corrupt
+image is refused with `400 invalid_media`. Images share a fixed memory budget, and
+an image that cannot get its share within a short wait is refused with `503
+upload_busy` and a `Retry-After` header. An image body that stalls is cut off with
+`408 upload_timeout`. Zero bytes use the SDK empty-body form. Failed uploads and
+uncertain sends are not replayed automatically. `timeout_ms` bounds message
+publication below the caller RPC wait; it defaults to 25 seconds.
 
 Incoming events and history expose local media references plus event metadata.
 Old `io.alkemio.document_id` hints are ignored. The server handles shared bucket

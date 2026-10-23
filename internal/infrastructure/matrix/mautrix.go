@@ -875,8 +875,8 @@ func (m *MautrixAdapter) SendReply(
 	ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID,
 	attachments []domain.Attachment,
 ) (*domain.Message, error) {
-	if len(attachments) > 1 || (content == "") == (len(attachments) == 0) {
-		return nil, fmt.Errorf("send requires either text or one attachment")
+	if len(attachments) > 1 || (content == "" && len(attachments) == 0) {
+		return nil, fmt.Errorf("send requires text, one attachment, or both")
 	}
 	if len(attachments) == 1 {
 		if err := m.validateExistingMedia(attachments[0]); err != nil {
@@ -890,7 +890,7 @@ func (m *MautrixAdapter) SendReply(
 	intent := m.as.Intent(userID)
 	var message *domain.Message
 	if len(attachments) == 1 {
-		message, err = m.sendAttachment(ctx, intent, roomID, attachments[0], threadID)
+		message, err = m.sendAttachment(ctx, intent, roomID, attachments[0], content, threadID)
 	} else {
 		var response *mautrix.RespSendEvent
 		if threadID == "" {
@@ -915,16 +915,24 @@ func (m *MautrixAdapter) SendReply(
 	return message, nil
 }
 
-// sendAttachment publishes the existing Matrix reference without transferring bytes.
+// sendAttachment publishes the existing Matrix reference without transferring
+// bytes. A non-empty caption travels in the same event as the media caption.
 func (m *MautrixAdapter) sendAttachment(
-	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, threadID id.EventID,
+	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, caption string,
+	threadID id.EventID,
 ) (*domain.Message, error) {
 	uri := id.ContentURI{Homeserver: m.idMapper.HomeserverDomain(), FileID: att.MediaID}
-	return publishMedia(ctx, intent, roomID, att, uri, baseType(att.MimeType), att.Size, threadID)
+	return publishMedia(ctx, intent, roomID, att, caption, uri, baseType(att.MimeType), att.Size, threadID)
 }
 
-func publishMedia(ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, uri id.ContentURI, contentType string, size int64, threadID id.EventID) (*domain.Message, error) {
-	content := buildMediaContent(att, uri, contentType, size, threadID)
+// publishMedia sends one media event. The returned Content is the event body —
+// the caption when there is one, otherwise the display name — which is exactly
+// what the inbound path reads back as Content for the same event.
+func publishMedia(
+	ctx context.Context, intent intentAPI, roomID id.RoomID, att domain.Attachment, caption string,
+	uri id.ContentURI, contentType string, size int64, threadID id.EventID,
+) (*domain.Message, error) {
+	content := buildMediaContent(att, caption, uri, contentType, size, threadID)
 	sent, err := intent.SendMessageEvent(ctx, roomID, event.EventMessage, content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send media event: %w", err)
@@ -932,7 +940,8 @@ func publishMedia(ctx context.Context, intent intentAPI, roomID id.RoomID, att d
 	att.MediaID = uri.FileID
 	att.MimeType = contentType
 	att.Size = size
-	return &domain.Message{ID: sent.EventID.String(), Content: att.DisplayName, Attachments: []domain.Attachment{att}}, nil
+	body, _ := content["body"].(string)
+	return &domain.Message{ID: sent.EventID.String(), Content: body, Attachments: []domain.Attachment{att}}, nil
 }
 
 // uploadRequest builds the ReqUploadMedia for a body of exactly uploadLen bytes.
@@ -968,9 +977,16 @@ func uploadRequest(body io.Reader, uploadLen int64, contentType string) mautrix.
 	return mautrix.ReqUploadMedia{Content: body, ContentLength: uploadLen, ContentType: contentType}
 }
 
-// buildMediaContent constructs the native Matrix msgtype, filename, mxc and info.
+// buildMediaContent constructs the native Matrix msgtype, body, mxc and info.
+//
+// Media captions follow the Matrix media-caption rule: with a caption, `body`
+// carries the caption and `filename` carries the file's name; without one,
+// `body` is the file's name and `filename` is omitted, so an uncaptioned event
+// keeps its original shape. The inbound path resolves the display name from
+// `filename` when present and surfaces `body` as Content, so both shapes read
+// back as sent.
 func buildMediaContent(
-	att domain.Attachment, mxc id.ContentURI, bareMimeType string, size int64,
+	att domain.Attachment, caption string, mxc id.ContentURI, bareMimeType string, size int64,
 	threadID id.EventID,
 ) map[string]any {
 	info := map[string]any{
@@ -989,6 +1005,10 @@ func buildMediaContent(
 		"body":    att.DisplayName,
 		"url":     mxc.String(),
 		"info":    info,
+	}
+	if caption != "" {
+		content["body"] = caption
+		content["filename"] = att.DisplayName
 	}
 
 	if threadID != "" {

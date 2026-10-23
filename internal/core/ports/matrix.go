@@ -53,9 +53,9 @@ type MatrixPort interface {
 	// no membership left to remove is reported as domain.ErrForbidden.
 	KickUser(ctx context.Context, roomID id.RoomID, userID id.UserID, reason string) error
 
-	// SendMessage publishes one text or media event and returns its content.
+	// SendMessage publishes one text, media, or captioned media event and returns its content.
 	SendMessage(ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, attachments []domain.Attachment) (*domain.Message, error)
-	// SendReply sends one text or media reply to an existing message.
+	// SendReply sends one text, media, or captioned media reply to an existing message.
 	SendReply(
 		ctx context.Context, roomID id.RoomID, senderID domain.Actor, content string, threadID id.EventID, attachments []domain.Attachment,
 	) (*domain.Message, error)
