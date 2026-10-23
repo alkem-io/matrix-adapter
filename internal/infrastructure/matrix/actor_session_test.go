@@ -27,25 +27,18 @@ const testASToken = "as-token-sentinel-091"
 // testAccessTokenSentinel is the minted credential; no log entry may contain it.
 const testAccessTokenSentinel = "syt_SENTINEL_minted_access_token" //nolint:gosec // test sentinel
 
-// newSessionTestAdapter builds a MautrixAdapter whose direct client talks to
-// hsURL. No other helper in this package sets Matrix.HomeserverURL, which
-// newDirectClient dereferences, so this test declares its own.
+// newSessionTestAdapter points the package's standard test adapter at hsURL.
+// No other helper sets Matrix.HomeserverURL, which newDirectClient dereferences.
 func newSessionTestAdapter(
 	hsURL string, intent *mockIntentAPI, log *testutil.RecordingLogger,
 ) *MautrixAdapter {
-	mapper := domain.NewIDMapper("test.local")
-	cfg := &config.Config{}
-	cfg.Matrix.HomeserverURL = hsURL
-	cfg.Matrix.AppServiceToken = testASToken
-	return &MautrixAdapter{
-		cfg:      cfg,
-		logger:   log,
-		idMapper: mapper,
-		as: &mockAppserviceAPI{
-			homeserverDomain: "test.local",
-			intents:          map[id.UserID]intentAPI{mapper.UserID(testActorID): intent},
-		},
-	}
+	as := newMockAS(intent, map[id.UserID]intentAPI{expectedUserID(testActorID): intent})
+	a := newFullTestAdapter(as, &mockAdminAPI{})
+	a.logger = log
+	a.cfg = &config.Config{}
+	a.cfg.Matrix.HomeserverURL = hsURL
+	a.cfg.Matrix.AppServiceToken = testASToken
+	return a
 }
 
 // loginCapture records what the homeserver received for the one login call.
@@ -80,7 +73,7 @@ func serveLogin(
 // completeLoginResponse is the shape HG-0 observed from Synapse v1.132.0.
 func completeLoginResponse() map[string]interface{} {
 	return map[string]interface{}{
-		"user_id":       string(domain.NewIDMapper("test.local").UserID(testActorID)),
+		"user_id":       string(expectedUserID(testActorID)),
 		"device_id":     "BOEPBOALLR",
 		"access_token":  testAccessTokenSentinel,
 		"expires_in_ms": 172800000,
@@ -115,12 +108,9 @@ func TestCreateUserSession_LogsExpiryButNeverTheToken(t *testing.T) {
 	_, err := adapter.CreateUserSession(context.Background(), domain.Actor{ID: testActorID})
 	require.NoError(t, err)
 
-	for _, entry := range log.Entries {
-		assert.NotContains(t, entry, testAccessTokenSentinel, "access token leaked into a log entry")
-	}
-
 	var expiryLogged bool
 	for _, entry := range log.Entries {
+		assert.NotContains(t, entry, testAccessTokenSentinel, "access token leaked into a log entry")
 		if strings.Contains(entry, "expires_in_ms") && strings.Contains(entry, "172800000") {
 			expiryLogged = true
 		}
@@ -140,7 +130,7 @@ func TestCreateUserSession_RegistersGhostBeforeLogin(t *testing.T) {
 }
 
 func TestCreateUserSession_RejectsDivergentMXID(t *testing.T) {
-	mapped := domain.NewIDMapper("test.local").UserID(testActorID)
+	mapped := expectedUserID(testActorID)
 
 	tests := map[string]string{
 		"different localpart":  "@" + testActorID2.String() + ":test.local",

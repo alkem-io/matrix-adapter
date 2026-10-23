@@ -51,8 +51,6 @@ func (m *MockLogger) With(_ ...interface{}) ports.Logger { return m } //nolint:r
 // can assert a sentinel credential appears in none of them (workspace#091).
 type RecordingLogger struct{ Entries []string }
 
-var _ ports.Logger = (*RecordingLogger)(nil)
-
 func (l *RecordingLogger) record(msg string, fields ...interface{}) {
 	l.Entries = append(l.Entries, fmt.Sprint(append([]interface{}{msg}, fields...)...))
 }
