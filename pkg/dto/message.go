@@ -44,7 +44,7 @@ type SendMessageRequest struct {
 	Content         string            `json:"content"`                     // Markdown supported (may be empty if only attachments)
 	ParentMessageID *MessageID        `json:"parent_message_id,omitempty"` // For threads
 	TimeoutMS       int64             `json:"timeout_ms,omitempty"`        // Operation budget, shorter than the caller RPC wait.
-	ExistingMedia   *ExistingMediaRef `json:"existing_media,omitempty"`    // Exclusive with content.
+	ExistingMedia   *ExistingMediaRef `json:"existing_media,omitempty"`    // May accompany content, which becomes its caption.
 }
 
 // SendMessageResponse returns the message ID and timestamp.
