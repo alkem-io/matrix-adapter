@@ -486,9 +486,8 @@ func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret st
 
 // newDirectClient creates a mautrix.Client that talks directly to Synapse
 // without appservice impersonation. Uses config URL so it works before as.Start().
-// Callers: waitForSynapse (no token), registerSharedSecretUser (no token, shared
-// secret in the body) and CreateUserSession (application-service token). For the
-// Synapse admin API, use m.admin.
+// NOTE: pass "" for unauthenticated calls (shared-secret registration carries
+// its secret in the body). For the Synapse admin API, use m.admin.
 func (m *MautrixAdapter) newDirectClient(accessToken string) *mautrix.Client {
 	hsURL, _ := url.Parse(m.cfg.Matrix.HomeserverURL)
 	return &mautrix.Client{
