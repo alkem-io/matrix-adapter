@@ -35,6 +35,7 @@
     - [28. Get Room Members](#28-get-room-members) - `communication.room.members.get`
   - **Actor Commands**
     - [11. Sync Actor Profile](#11-sync-actor-profile) - `communication.actor.sync`
+    - [11a. Create Actor Session](#11a-create-actor-session) - `communication.actor.session.create`
   - **Space Commands**
     - [15. Create Space](#15-create-space) - `communication.space.create`
     - [16. Update Space](#16-update-space) - `communication.space.update`
@@ -507,6 +508,40 @@ type SyncActorRequest struct {
 #### Response Payload
 
 Returns `BaseResponse` directly.
+
+---
+
+### 11a. Create Actor Session
+
+Mints a Matrix access token for one actor by logging in as them with the Adapter's
+application-service token (MSC2778). The ghost is registered first, so an actor who has never
+been synced is handled. A fresh device is created on every call.
+
+*   **Event Subject**: `communication.actor.session.create`
+
+#### Request Payload
+
+```go
+type CreateActorSessionRequest struct {
+    ActorID AlkemioActorID `json:"actor_id"`
+}
+```
+
+The actor is the authenticated caller on the Server side; no other subject can be named.
+
+#### Response Payload
+
+```go
+type CreateActorSessionResponse struct {
+    BaseResponse
+    UserID      string `json:"user_id"`
+    DeviceID    string `json:"device_id"`
+    AccessToken string `json:"access_token"`
+}
+```
+
+**Security**: `access_token` is a live Matrix credential. It must never be logged, cached in a
+shared store, or returned to anyone but the actor it was minted for.
 
 ---
 

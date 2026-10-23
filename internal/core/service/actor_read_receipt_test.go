@@ -27,6 +27,12 @@ type arMockMatrixPort struct {
 	setUserProfileErr    error
 	setUserProfileCalled bool
 
+	// CreateUserSession behaviour
+	createSessionResult *domain.ActorSession
+	createSessionErr    error
+	createSessionActor  domain.Actor
+	createSessionCalls  int
+
 	// SendReadReceipt behaviour
 	sendReadReceiptErr    error
 	sendReadReceiptCalled bool
@@ -51,6 +57,12 @@ func (m *arMockMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (id.Use
 func (m *arMockMatrixPort) SetUserProfile(_ context.Context, _ domain.Actor) error {
 	m.setUserProfileCalled = true
 	return m.setUserProfileErr
+}
+
+func (m *arMockMatrixPort) CreateUserSession(_ context.Context, actor domain.Actor) (*domain.ActorSession, error) {
+	m.createSessionActor = actor
+	m.createSessionCalls++
+	return m.createSessionResult, m.createSessionErr
 }
 
 func (m *arMockMatrixPort) SendReadReceipt(_ context.Context, actor domain.Actor, roomID id.RoomID, eventID id.EventID, threadRootID *id.EventID) error {

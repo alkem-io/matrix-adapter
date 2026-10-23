@@ -23,6 +23,10 @@ type MatrixPort interface {
 	EnsureUser(ctx context.Context, actorID domain.Actor) (id.UserID, error)
 	// SetUserProfile updates the display name and avatar for a Matrix user.
 	SetUserProfile(ctx context.Context, actorID domain.Actor) error
+	// CreateUserSession mints a Matrix access token for the actor by logging in as
+	// them with the application-service token. Registers the ghost first, so an
+	// actor who has never been synced is handled. Returns a fresh device each call.
+	CreateUserSession(ctx context.Context, actor domain.Actor) (*domain.ActorSession, error)
 
 	// CreateRoomWithAlias creates a new Matrix room with the specified alias and initial members.
 	CreateRoomWithAlias(ctx context.Context, alkemioRoomID uuid.UUID, roomType string, name, topic, avatarURL, joinRule string, customState map[string]map[string]interface{}, initialMembers []domain.Actor) (id.RoomID, error)
