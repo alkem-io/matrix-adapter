@@ -5,8 +5,14 @@ description: |
   client actor headers and forwards its resolved actor identity. The request body
   is original bytes, never JSON or multipart. Content-Type is required and
   must contain the original MIME type. Content-Length is exact and required,
-  including for a zero-byte file. The stream is not retried. Success is 201 only
-  after the synchronous Synapse media provider has stored the upload.
+  including for a zero-byte file. A body that is not an image streams through
+  unchanged. A JPEG, PNG or WebP body, recognised from its bytes, is read whole and
+  stored without its location, device and time metadata, with the content type and
+  length of the rewritten bytes; of its Exif data only the orientation tag is kept.
+  A corrupt image is refused with 400 invalid_media; an image the memory budget cannot take
+  in time with 503 upload_busy and Retry-After; an image body that stalls with 408
+  upload_timeout. The stream is not retried. Success is 201 only after the
+  synchronous Synapse media provider has stored the upload.
 parameters:
   - in: header
     name: X-Alkemio-Actor-Id
@@ -75,7 +81,7 @@ responses:
               type: string
               enum: [invalid_actor]
   "408":
-    description: Upload was canceled.
+    description: Upload was canceled, or an image body stopped arriving (slower than 32 KiB/s) and was cut off.
     content:
       application/json:
         schema:
@@ -84,7 +90,7 @@ responses:
           properties:
             error:
               type: string
-              enum: [upload_canceled]
+              enum: [upload_canceled, upload_timeout]
   "411":
     description: Content-Length is required.
     content:
@@ -118,6 +124,22 @@ responses:
             error:
               type: string
               enum: [upstream_rejected, upstream_upload_failed]
+  "503":
+    description: Too many images are being processed, or the actor already has two images in flight; nothing was uploaded. Retry after the Retry-After interval.
+    headers:
+      Retry-After:
+        description: Seconds to wait before retrying.
+        schema:
+          type: integer
+    content:
+      application/json:
+        schema:
+          type: object
+          required: [error]
+          properties:
+            error:
+              type: string
+              enum: [upload_busy]
   "504":
     description: Upload timed out.
     content:
