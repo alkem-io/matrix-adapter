@@ -193,6 +193,9 @@ func (m *mockExtendedMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (
 	return "@bot:test.local", nil
 }
 func (m *mockExtendedMatrixPort) SetUserProfile(_ context.Context, _ domain.Actor) error { return nil }
+func (m *mockExtendedMatrixPort) CreateUserSession(_ context.Context, _ domain.Actor) (*domain.ActorSession, error) {
+	return nil, nil
+}
 func (m *mockExtendedMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor, _ domain.Actor) error {
 	return nil
 }

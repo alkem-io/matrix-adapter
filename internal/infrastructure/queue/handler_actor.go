@@ -48,3 +48,28 @@ func (h *ActorHandler) HandleSyncActor(ctx context.Context, payload []byte) (int
 
 	return dto.NewSuccessResponse(), nil
 }
+
+// HandleCreateActorSession handles communication.actor.session.create topic.
+// The response carries a live Matrix credential for the requested actor.
+func (h *ActorHandler) HandleCreateActorSession(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.CreateActorSessionRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.ActorID, "actor_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	session, err := h.service.CreateSession(ctx, req.ActorID.UUID())
+	if err != nil {
+		return MapServiceError(err), nil
+	}
+
+	return dto.CreateActorSessionResponse{
+		BaseResponse: dto.NewSuccessResponse(),
+		UserID:       session.UserID.String(),
+		DeviceID:     session.DeviceID.String(),
+		AccessToken:  session.AccessToken,
+	}, nil
+}

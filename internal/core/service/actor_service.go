@@ -57,3 +57,15 @@ func (s *ActorService) SyncActor(
 	s.logger.Info("Actor profile synced successfully", "actor_id", actorID)
 	return nil
 }
+
+// CreateSession mints a Matrix session for one actor. The caller (server) has
+// already authenticated that actor; this method takes no other subject.
+func (s *ActorService) CreateSession(ctx context.Context, actorID uuid.UUID) (*domain.ActorSession, error) {
+	session, err := s.matrix.CreateUserSession(ctx, domain.Actor{ID: actorID})
+	if err != nil {
+		return nil, err
+	}
+
+	s.logger.Info("Actor session created", "actor_id", actorID, "device_id", session.DeviceID)
+	return session, nil
+}

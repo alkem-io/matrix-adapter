@@ -18,6 +18,8 @@ import type {
   BatchRemoveSpaceMemberResponse,
   CheckRoomRequest,
   CheckRoomResponse,
+  CreateActorSessionRequest,
+  CreateActorSessionResponse,
   CreateRoomRequest,
   CreateSpaceRequest,
   DMRequestedEvent,
@@ -82,6 +84,10 @@ import type {
  * Use RequestFor<T> and ResponseFor<T> type helpers for type-safe access.
  */
 export const Commands = {
+  'communication.actor.session.create': {
+    request: {} as CreateActorSessionRequest,
+    response: {} as CreateActorSessionResponse,
+  },
   'communication.actor.sync': {
     request: {} as SyncActorRequest,
     response: {} as BaseResponse,

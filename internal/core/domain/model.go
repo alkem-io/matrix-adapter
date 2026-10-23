@@ -16,6 +16,13 @@ type Actor struct {
 	AvatarURL   string
 }
 
+// ActorSession is one minted Matrix login for an actor.
+type ActorSession struct {
+	UserID      id.UserID
+	DeviceID    id.DeviceID
+	AccessToken string
+}
+
 // NewActor creates a new Actor with the given Alkemio actor ID.
 func NewActor(id uuid.UUID) Actor {
 	return Actor{ID: id}
