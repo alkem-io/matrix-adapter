@@ -488,12 +488,17 @@ func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret st
 // without appservice impersonation. Uses config URL so it works before as.Start().
 // NOTE: pass "" for unauthenticated calls (shared-secret registration carries
 // its secret in the body). For the Synapse admin API, use m.admin.
+//
+// The timeout matches what mautrix gives every appservice-derived client, so a
+// Synapse that accepts the connection and never answers cannot park the caller
+// forever. Without it the mint would wedge its consumer goroutine, which
+// processes one message at a time, for the lifetime of the pod.
 func (m *MautrixAdapter) newDirectClient(accessToken string) *mautrix.Client {
 	hsURL, _ := url.Parse(m.cfg.Matrix.HomeserverURL)
 	return &mautrix.Client{
 		HomeserverURL: hsURL,
 		AccessToken:   accessToken,
-		Client:        http.DefaultClient,
+		Client:        &http.Client{Timeout: 180 * time.Second},
 	}
 }
 
