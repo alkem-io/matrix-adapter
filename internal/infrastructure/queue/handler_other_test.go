@@ -1050,6 +1050,82 @@ func TestHandleSyncActor_SetProfileError(t *testing.T) {
 	assertErrorCode(t, resp, dto.ErrCodeMatrixError)
 }
 
+func TestHandleCreateActorSession_Success(t *testing.T) {
+	matrix := otherNewMatrixPort()
+	matrix.createUserSessionResult = &domain.ActorSession{ //nolint:gosec // test sentinel token
+		UserID:      "@actor1:matrix.example.com",
+		DeviceID:    "DEVICEABC",
+		AccessToken: "syt_minted_token",
+	}
+
+	handler := newTestActorHandler(matrix)
+
+	payload := mustMarshal(t, dto.CreateActorSessionRequest{
+		ActorID: dto.AlkemioActorID(uuid.New()),
+	})
+
+	resp, err := handler.HandleCreateActorSession(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sessionResp, ok := resp.(dto.CreateActorSessionResponse)
+	if !ok {
+		t.Fatalf("expected CreateActorSessionResponse, got %T", resp)
+	}
+	if !sessionResp.Success {
+		t.Error("expected a success response")
+	}
+	if sessionResp.UserID != "@actor1:matrix.example.com" {
+		t.Errorf("unexpected user_id %q", sessionResp.UserID)
+	}
+	if sessionResp.DeviceID != "DEVICEABC" {
+		t.Errorf("unexpected device_id %q", sessionResp.DeviceID)
+	}
+	if sessionResp.AccessToken != "syt_minted_token" {
+		t.Errorf("unexpected access_token %q", sessionResp.AccessToken)
+	}
+}
+
+func TestHandleCreateActorSession_InvalidJSON(t *testing.T) {
+	handler := newTestActorHandler(otherNewMatrixPort())
+
+	resp, err := handler.HandleCreateActorSession(context.Background(), []byte(`not json`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
+}
+
+func TestHandleCreateActorSession_MissingActorID(t *testing.T) {
+	handler := newTestActorHandler(otherNewMatrixPort())
+
+	payload := mustMarshal(t, dto.CreateActorSessionRequest{})
+
+	resp, err := handler.HandleCreateActorSession(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
+}
+
+func TestHandleCreateActorSession_ServiceError(t *testing.T) {
+	matrix := otherNewMatrixPort()
+	matrix.createUserSessionErr = errors.New("login rejected") //nolint:err113
+
+	handler := newTestActorHandler(matrix)
+
+	payload := mustMarshal(t, dto.CreateActorSessionRequest{
+		ActorID: dto.AlkemioActorID(uuid.New()),
+	})
+
+	resp, err := handler.HandleCreateActorSession(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertErrorCode(t, resp, dto.ErrCodeMatrixError)
+}
+
 // ============================================================================
 // ReadReceiptHandler Tests
 // ============================================================================
