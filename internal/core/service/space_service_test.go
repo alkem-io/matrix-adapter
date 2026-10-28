@@ -283,6 +283,9 @@ func (m *mockSpaceMatrixPort) EnsureUser(_ context.Context, _ domain.Actor) (id.
 	return "@bot:test.local", nil
 }
 func (m *mockSpaceMatrixPort) SetUserProfile(_ context.Context, _ domain.Actor) error { return nil }
+func (m *mockSpaceMatrixPort) CreateUserSession(_ context.Context, _ domain.Actor) (*domain.ActorSession, error) {
+	return nil, nil
+}
 func (m *mockSpaceMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, _, _, _, _, _ string, _ map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
 	return "", nil
 }

@@ -486,13 +486,19 @@ func (m *MautrixAdapter) promoteViaTemporaryAdmin(ctx context.Context, secret st
 
 // newDirectClient creates a mautrix.Client that talks directly to Synapse
 // without appservice impersonation. Uses config URL so it works before as.Start().
-// NOTE: Only used for shared secret registration (non-admin). For admin API, use m.admin.
+// NOTE: pass "" for unauthenticated calls (shared-secret registration carries
+// its secret in the body). For the Synapse admin API, use m.admin.
+//
+// The timeout matches what mautrix gives every appservice-derived client, so a
+// Synapse that accepts the connection and never answers cannot park the caller
+// forever. Without it the mint would wedge its consumer goroutine, which
+// processes one message at a time, for the lifetime of the pod.
 func (m *MautrixAdapter) newDirectClient(accessToken string) *mautrix.Client {
 	hsURL, _ := url.Parse(m.cfg.Matrix.HomeserverURL)
 	return &mautrix.Client{
 		HomeserverURL: hsURL,
 		AccessToken:   accessToken,
-		Client:        http.DefaultClient,
+		Client:        &http.Client{Timeout: 180 * time.Second},
 	}
 }
 
@@ -634,6 +640,45 @@ func (m *MautrixAdapter) EnsureUser(ctx context.Context, actor domain.Actor) (id
 	}
 
 	return userID, nil
+}
+
+// CreateUserSession mints a Matrix access token for the actor by logging in as
+// them with the application-service token (MSC2778). A fresh device is created
+// on every call.
+func (m *MautrixAdapter) CreateUserSession(ctx context.Context, actor domain.Actor) (*domain.ActorSession, error) {
+	userID, err := m.EnsureUser(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+
+	client := m.newDirectClient(m.cfg.Matrix.AppServiceToken)
+	resp, err := client.Login(ctx, &mautrix.ReqLogin{
+		Type: mautrix.AuthTypeAppservice,
+		Identifier: mautrix.UserIdentifier{
+			Type: mautrix.IdentifierTypeUser,
+			User: string(userID),
+		},
+		InitialDeviceDisplayName: "Alkemio App",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to mint actor session: %w", err)
+	}
+	if resp.UserID == "" || resp.DeviceID == "" || resp.AccessToken == "" {
+		return nil, fmt.Errorf("incomplete login response for %s", userID)
+	}
+	if resp.UserID != userID {
+		return nil, fmt.Errorf("minted session identity mismatch: got %s, requested %s", resp.UserID, userID)
+	}
+
+	m.logger.Info("actor session minted",
+		"user_id", resp.UserID, "device_id", resp.DeviceID,
+		"expires_in_ms", resp.ExpiresInMS)
+
+	return &domain.ActorSession{
+		UserID:      resp.UserID,
+		DeviceID:    resp.DeviceID,
+		AccessToken: resp.AccessToken,
+	}, nil
 }
 
 // InviteUser invites a user to a room and auto-joins them.

@@ -38,6 +38,9 @@ const (
 // TopicActorSync is the topic for actor synchronization commands.
 const TopicActorSync = "communication.actor.sync"
 
+// TopicActorSessionCreate is the topic for minting a Matrix session for an actor.
+const TopicActorSessionCreate = "communication.actor.session.create"
+
 // Space command topics
 const (
 	TopicSpaceCreate = "communication.space.create"
@@ -175,6 +178,7 @@ var CommandRegistry = []CommandDef{
 
 	// Actor commands
 	{Topic: TopicActorSync, RequestType: "SyncActorRequest", ResponseType: "BaseResponse"},
+	{Topic: TopicActorSessionCreate, RequestType: "CreateActorSessionRequest", ResponseType: "CreateActorSessionResponse"},
 
 	// Space commands
 	{Topic: TopicSpaceCreate, RequestType: "CreateSpaceRequest", ResponseType: "BaseResponse"},
