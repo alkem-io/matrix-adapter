@@ -156,6 +156,17 @@ def test_missing_reference_returns_miss(provider):
     response.connection.stopProducing.assert_called_once_with()
 
 
+def test_miss_with_body_already_received_returns_miss(provider):
+    # Small error bodies usually arrive with the headers: the client has
+    # finished the response and released the connection before fetch reads it.
+    response = error_response(404)
+    response._bodyDataFinished()
+    response._transport.stopProxying()
+    provider.http.request.return_value = response
+    assert run(provider.fetch("unused", info())) is None
+    response.connection.stopProducing.assert_not_called()
+
+
 def test_backend_failure_is_not_a_missing_reference(provider):
     response = error_response(503)
     provider.http.request.return_value = response
