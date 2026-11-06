@@ -95,9 +95,12 @@ class FileServiceStorageProvider(StorageProvider):
                 "GET", f"{self.base_url}/internal/file/by-reference/content?ref={reference}"
             )
             if response.code > 299:
+                # Drop the error body unread. Twisted hands a body protocol a
+                # producer proxy, not the socket, so stopProducing() is the call
+                # it offers for abandoning the download and the connection.
                 discarded = Protocol()
                 response.deliverBody(discarded)
-                discarded.transport.abortConnection()
+                discarded.transport.stopProducing()
                 if response.code == 404:
                     spool.close()
                     return None

@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from twisted.internet import defer
 from twisted.python.failure import Failure
+from twisted.web._newclient import Response, TransportProxyProducer
+from twisted.web.http_headers import Headers
 import alkemio_fileservice_provider as mod
 
 
@@ -26,12 +28,18 @@ def info(**overrides):
 
 
 def error_response(code):
-    transport = SimpleNamespace(abortConnection=Mock())
-    return SimpleNamespace(
-        code=code,
-        transport=transport,
-        deliverBody=Mock(side_effect=lambda protocol: protocol.makeConnection(transport)),
+    """A real Twisted response, so its body protocol gets the real transport proxy.
+
+    The connection underneath is a double: it records whether the provider
+    asked to stop the body download.
+    """
+    connection = Mock(spec=["stopProducing", "pauseProducing", "resumeProducing"])
+    response = Response._construct(
+        (b"HTTP", 1, 1), code, b"", Headers(), TransportProxyProducer(connection), None,
     )
+    response.deliverBody = Mock(wraps=response.deliverBody)
+    response.connection = connection
+    return response
 
 
 @pytest.fixture
@@ -145,15 +153,27 @@ def test_missing_reference_returns_miss(provider):
     provider.http.request.return_value = response
     assert run(provider.fetch("unused", info())) is None
     response.deliverBody.assert_called_once()
-    response.transport.abortConnection.assert_called_once_with()
+    response.connection.stopProducing.assert_called_once_with()
+
+
+def test_miss_with_body_already_received_returns_miss(provider):
+    # Small error bodies usually arrive with the headers: the client has
+    # finished the response and released the connection before fetch reads it.
+    response = error_response(404)
+    response._bodyDataFinished()
+    response._transport.stopProxying()
+    provider.http.request.return_value = response
+    assert run(provider.fetch("unused", info())) is None
+    response.connection.stopProducing.assert_not_called()
 
 
 def test_backend_failure_is_not_a_missing_reference(provider):
     response = error_response(503)
     provider.http.request.return_value = response
-    with pytest.raises(mod.HttpResponseException):
+    with pytest.raises(mod.HttpResponseException) as raised:
         run(provider.fetch("unused", info()))
-    response.transport.abortConnection.assert_called_once_with()
+    assert raised.value.code == 503
+    response.connection.stopProducing.assert_called_once_with()
 
 
 def test_failed_download_closes_partial_spool(provider):
@@ -192,7 +212,7 @@ def test_deleted_reference_returns_miss_without_retry(provider, monkeypatch):
         "GET", "http://file-service:4003/internal/file/by-reference/content?ref=media123"
     )
     assert all(value.closed for value in opened)
-    response.transport.abortConnection.assert_called_once_with()
+    response.connection.stopProducing.assert_called_once_with()
 
 
 @pytest.mark.parametrize("status", [403, 500, 503])
@@ -215,7 +235,7 @@ def test_content_http_failure_propagates_without_retry(provider, monkeypatch, st
     mod.read_body_with_max_size.assert_not_called()
     assert opened[0].closed
     response.deliverBody.assert_called_once()
-    response.transport.abortConnection.assert_called_once_with()
+    response.connection.stopProducing.assert_called_once_with()
 
 
 def test_reference_is_encoded_as_one_query_value(provider):
