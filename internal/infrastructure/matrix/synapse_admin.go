@@ -76,6 +76,33 @@ func (s *SynapseAdmin) DeactivateUser(ctx context.Context, userID id.UserID, era
 	return err
 }
 
+// ListDevices returns the IDs of every device of a user.
+func (s *SynapseAdmin) ListDevices(ctx context.Context, userID id.UserID) ([]id.DeviceID, error) {
+	var resp struct {
+		Devices []struct {
+			DeviceID id.DeviceID `json:"device_id"`
+		} `json:"devices"`
+	}
+	_, err := s.client.MakeRequest(ctx, http.MethodGet, s.buildURL("v2", "users", userID, "devices"), nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	devices := make([]id.DeviceID, len(resp.Devices))
+	for i, d := range resp.Devices {
+		devices[i] = d.DeviceID
+	}
+	return devices, nil
+}
+
+// DeleteDevices deletes the given devices of a user, and with them their
+// access and refresh tokens.
+func (s *SynapseAdmin) DeleteDevices(ctx context.Context, userID id.UserID, devices []id.DeviceID) error {
+	_, err := s.client.MakeRequest(ctx, http.MethodPost, s.buildURL("v2", "users", userID, "delete_devices"), map[string]interface{}{
+		"devices": devices,
+	}, nil)
+	return err
+}
+
 // ============================================================================
 // Registration (Shared Secret)
 // ============================================================================
