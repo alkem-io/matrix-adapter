@@ -196,6 +196,9 @@ func (m *mockExtendedMatrixPort) SetUserProfile(_ context.Context, _ domain.Acto
 func (m *mockExtendedMatrixPort) CreateUserSession(_ context.Context, _ domain.Actor) (*domain.ActorSession, error) {
 	return nil, nil
 }
+func (m *mockExtendedMatrixPort) RevokeUserSessions(_ context.Context, _ domain.Actor) (int, error) {
+	return 0, nil
+}
 func (m *mockExtendedMatrixPort) InviteUser(_ context.Context, _ id.RoomID, _ domain.Actor, _ domain.Actor) error {
 	return nil
 }
