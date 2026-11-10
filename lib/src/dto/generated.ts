@@ -31,6 +31,20 @@ export interface CreateActorSessionResponse extends BaseResponse {
   device_id: string;
   access_token: string;
 }
+/**
+ * RevokeActorSessionsRequest deletes every Matrix device of ONE actor, and with
+ * them their access and refresh tokens. Sent when the Alkemio user is deleted.
+ * Topic: communication.actor.sessions.revoke
+ */
+export interface RevokeActorSessionsRequest {
+  actor_id: AlkemioActorID;
+}
+/**
+ * RevokeActorSessionsResponse reports how many devices were deleted.
+ */
+export interface RevokeActorSessionsResponse extends BaseResponse {
+  devices_revoked: number /* int */;
+}
 
 //////////
 // source: batch.go
@@ -195,6 +209,10 @@ export const TopicActorSync = "communication.actor.sync";
  * TopicActorSessionCreate is the topic for minting a Matrix session for an actor.
  */
 export const TopicActorSessionCreate = "communication.actor.session.create";
+/**
+ * TopicActorSessionsRevoke is the topic for deleting every Matrix device of an actor.
+ */
+export const TopicActorSessionsRevoke = "communication.actor.sessions.revoke";
 /**
  * Space command topics
  */
