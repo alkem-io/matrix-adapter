@@ -38,8 +38,9 @@ func RegisterRoutes(q ports.QueuePort, room *RoomHandler, actor *ActorHandler, s
 		TopicRoomMemberBatchRemove: room.HandleBatchRemoveMember,
 
 		// Actor Routes (communication.actor.*)
-		TopicActorSync:          actor.HandleSyncActor,
-		TopicActorSessionCreate: actor.HandleCreateActorSession,
+		TopicActorSync:           actor.HandleSyncActor,
+		TopicActorSessionCreate:  actor.HandleCreateActorSession,
+		TopicActorSessionsRevoke: actor.HandleRevokeActorSessions,
 
 		// Space Routes (communication.space.*)
 		TopicSpaceCreate: space.HandleCreateSpace,
