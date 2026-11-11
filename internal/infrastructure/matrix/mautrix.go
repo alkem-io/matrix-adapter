@@ -681,6 +681,24 @@ func (m *MautrixAdapter) CreateUserSession(ctx context.Context, actor domain.Act
 	}, nil
 }
 
+// RevokeUserSessions deletes every Matrix device of the actor, and with them
+// their access and refresh tokens. Returns how many devices were deleted.
+func (m *MautrixAdapter) RevokeUserSessions(ctx context.Context, actor domain.Actor) (int, error) {
+	userID := m.idMapper.UserID(actor.ID)
+
+	devices, err := m.admin.ListDevices(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to list devices of %s: %w", userID, err)
+	}
+	if len(devices) == 0 {
+		return 0, nil
+	}
+	if err := m.admin.DeleteDevices(ctx, userID, devices); err != nil {
+		return 0, fmt.Errorf("failed to delete devices of %s: %w", userID, err)
+	}
+	return len(devices), nil
+}
+
 // InviteUser invites a user to a room and auto-joins them.
 // InviteUser joins a ghost user directly to a room (no invite event).
 // Since all users are appservice ghosts, we skip the invite and join directly

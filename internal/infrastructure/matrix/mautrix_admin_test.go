@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
@@ -45,6 +46,11 @@ type mockAdminAPI struct {
 	getRelationsResult         []*event.Event
 	getRelationsErr            error
 	joinRoomErr                error
+	listDevicesResult          []id.DeviceID
+	listDevicesUser            id.UserID
+	listDevicesErr             error
+	deleteDevicesErr           error
+	deleteDevicesCalls         [][]id.DeviceID
 
 	// Call tracking
 	getRoomMessagesCalls  []getRoomMessagesCall
@@ -66,6 +72,16 @@ type joinRoomCall struct {
 
 func (m *mockAdminAPI) GetUser(_ context.Context, _ id.UserID) (*UserInfo, error) {
 	return m.getUserResult, m.getUserErr
+}
+
+func (m *mockAdminAPI) ListDevices(_ context.Context, userID id.UserID) ([]id.DeviceID, error) {
+	m.listDevicesUser = userID
+	return m.listDevicesResult, m.listDevicesErr
+}
+
+func (m *mockAdminAPI) DeleteDevices(_ context.Context, _ id.UserID, devices []id.DeviceID) error {
+	m.deleteDevicesCalls = append(m.deleteDevicesCalls, devices)
+	return m.deleteDevicesErr
 }
 
 func (m *mockAdminAPI) ListRooms(_ context.Context, _ int) ([]AdminRoom, error) {
@@ -149,6 +165,47 @@ func newAdminTestAdapter(admin adminAPI) *MautrixAdapter {
 		idMapper: domain.NewIDMapper("test.local"),
 		logger:   &adapterMockLogger{},
 	}
+}
+
+// ============================================================================
+// RevokeUserSessions (admin.ListDevices + admin.DeleteDevices)
+// ============================================================================
+
+func TestAdminAPI_RevokeUserSessions(t *testing.T) {
+	actor := domain.Actor{ID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")}
+	wantUser := domain.NewIDMapper("test.local").UserID(actor.ID)
+
+	t.Run("deletes every listed device", func(t *testing.T) {
+		mock := &mockAdminAPI{listDevicesResult: []id.DeviceID{"DEV1", "DEV2"}}
+		n, err := newAdminTestAdapter(mock).RevokeUserSessions(context.Background(), actor)
+		if err != nil || n != 2 {
+			t.Fatalf("expected 2, nil; got %d, %v", n, err)
+		}
+		if mock.listDevicesUser != wantUser {
+			t.Errorf("expected devices of %s, got %s", wantUser, mock.listDevicesUser)
+		}
+		if len(mock.deleteDevicesCalls) != 1 || len(mock.deleteDevicesCalls[0]) != 2 {
+			t.Errorf("expected one delete of both devices, got %v", mock.deleteDevicesCalls)
+		}
+	})
+
+	t.Run("no devices: success without a delete call", func(t *testing.T) {
+		mock := &mockAdminAPI{}
+		n, err := newAdminTestAdapter(mock).RevokeUserSessions(context.Background(), actor)
+		if err != nil || n != 0 {
+			t.Fatalf("expected 0, nil; got %d, %v", n, err)
+		}
+		if len(mock.deleteDevicesCalls) != 0 {
+			t.Errorf("expected no delete call, got %v", mock.deleteDevicesCalls)
+		}
+	})
+
+	t.Run("delete error is returned", func(t *testing.T) {
+		mock := &mockAdminAPI{listDevicesResult: []id.DeviceID{"DEV1"}, deleteDevicesErr: errors.New("boom")}
+		if n, err := newAdminTestAdapter(mock).RevokeUserSessions(context.Background(), actor); err == nil || n != 0 {
+			t.Fatalf("expected 0, error; got %d, %v", n, err)
+		}
+	})
 }
 
 // ============================================================================

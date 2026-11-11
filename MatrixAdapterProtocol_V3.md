@@ -36,6 +36,7 @@
   - **Actor Commands**
     - [11. Sync Actor Profile](#11-sync-actor-profile) - `communication.actor.sync`
     - [11a. Create Actor Session](#11a-create-actor-session) - `communication.actor.session.create`
+    - [11b. Revoke Actor Sessions](#11b-revoke-actor-sessions) - `communication.actor.sessions.revoke`
   - **Space Commands**
     - [15. Create Space](#15-create-space) - `communication.space.create`
     - [16. Update Space](#16-update-space) - `communication.space.update`
@@ -542,6 +543,33 @@ type CreateActorSessionResponse struct {
 
 **Security**: `access_token` is a live Matrix credential. It must never be logged, cached in a
 shared store, or returned to anyone but the actor it was minted for.
+
+---
+
+### 11b. Revoke Actor Sessions
+
+Deletes every Matrix device of one actor through the Synapse admin API, and with them their
+access and refresh tokens. The Server sends it when the Alkemio user is deleted. An actor with no
+devices is a success with `devices_revoked: 0`.
+
+*   **Event Subject**: `communication.actor.sessions.revoke`
+
+#### Request Payload
+
+```go
+type RevokeActorSessionsRequest struct {
+    ActorID AlkemioActorID `json:"actor_id"`
+}
+```
+
+#### Response Payload
+
+```go
+type RevokeActorSessionsResponse struct {
+    BaseResponse
+    DevicesRevoked int `json:"devices_revoked"`
+}
+```
 
 ---
 

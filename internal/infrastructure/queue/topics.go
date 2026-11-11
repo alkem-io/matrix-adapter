@@ -41,6 +41,8 @@ const (
 	TopicActorSync = dto.TopicActorSync
 	// TopicActorSessionCreate is the topic for minting a Matrix session for an actor.
 	TopicActorSessionCreate = dto.TopicActorSessionCreate
+	// TopicActorSessionsRevoke is the topic for deleting every Matrix device of an actor.
+	TopicActorSessionsRevoke = dto.TopicActorSessionsRevoke
 
 	// TopicSpaceCreate is the topic for space creation commands.
 	TopicSpaceCreate = dto.TopicSpaceCreate
