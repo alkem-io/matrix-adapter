@@ -43,7 +43,7 @@ docker start "$rabbit" >/dev/null
 ready=false
 for _ in $(seq 1 60); do
   [[ $(docker inspect --format '{{.State.Running}}' "$rabbit") == true ]]
-  if docker logs "$rabbit" 2>&1 | rg -q "Server startup complete"; then ready=true; break; fi
+  if docker logs "$rabbit" 2>&1 | grep -q "Server startup complete"; then ready=true; break; fi
   sleep 1
 done
 [[ $ready == true ]]
