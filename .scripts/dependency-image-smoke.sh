@@ -34,6 +34,8 @@ for name in "$run-rabbit" "$run-matrix" "$run-adapter" "$run-client"; do
 done
 if docker network inspect "$run" >/dev/null 2>&1; then exit 1; fi
 # The fixture runs inside the image under test, so build it for that platform, not the host.
+# Pull a registry reference that is not cached; a locally built image is left as is.
+docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image" >/dev/null
 arch=$(docker image inspect --format '{{.Architecture}}' "$image")
 CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -o "$fixture_dir/smoke" .scripts/dependency-image-smoke.go
 chmod 755 "$fixture_dir/smoke"
