@@ -33,7 +33,9 @@ for name in "$run-rabbit" "$run-matrix" "$run-adapter" "$run-client"; do
   if docker container inspect "$name" >/dev/null 2>&1; then echo "Fixture name already exists" >&2; exit 1; fi
 done
 if docker network inspect "$run" >/dev/null 2>&1; then exit 1; fi
-CGO_ENABLED=0 go build -o "$fixture_dir/smoke" .scripts/dependency-image-smoke.go
+# The fixture runs inside the image under test, so build it for that platform, not the host.
+arch=$(docker image inspect --format '{{.Architecture}}' "$image")
+CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -o "$fixture_dir/smoke" .scripts/dependency-image-smoke.go
 chmod 755 "$fixture_dir/smoke"
 network=$(docker network create --internal "$run")
 printf '%s\n' "$network" > "$fixture_dir/network.id"
@@ -60,6 +62,12 @@ containers+=("$client"); printf '%s\n' "$client" >> "$fixture_dir/containers.ids
 docker inspect "${containers[@]}" > "$fixture_dir/created-resources.json"
 docker start -a "$client"
 [[ $(docker inspect --format '{{.State.ExitCode}}' "$client") == 0 ]]
-docker exec -e ERL_FLAGS="+S 2:2" "$rabbit" rabbitmqctl -q list_queues name messages_ready messages_unacknowledged > "$fixture_dir/queue-state.txt"
-awk '$1 == "communication.actor.sync" { found=1; if ($2 != 0 || $3 != 0) exit 1 } END { if (!found) exit 1 }' "$fixture_dir/queue-state.txt"
+# The adapter replies before it acks, so the client can finish before the ack lands; poll briefly.
+deadline=$((SECONDS + 10))
+while :; do
+  docker exec -e ERL_FLAGS="+S 2:2" "$rabbit" rabbitmqctl -q list_queues name messages_ready messages_unacknowledged > "$fixture_dir/queue-state.txt"
+  awk '$1 == "communication.actor.sync" { found=1; if ($2 != 0 || $3 != 0) exit 1 } END { if (!found) exit 1 }' "$fixture_dir/queue-state.txt" && break
+  (( SECONDS < deadline )) || { echo "communication.actor.sync was not drained and acknowledged within 10s" >&2; exit 1; }
+  sleep 1
+done
 echo "Final image broker-to-Matrix RPC success, forbidden error, correlation and acknowledgement checks passed"
