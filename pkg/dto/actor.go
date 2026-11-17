@@ -29,3 +29,16 @@ type CreateActorSessionResponse struct {
 	DeviceID     string `json:"device_id"`
 	AccessToken  string `json:"access_token"`
 }
+
+// RevokeActorSessionsRequest deletes every Matrix device of ONE actor, and with
+// them their access and refresh tokens. Sent when the Alkemio user is deleted.
+// Topic: communication.actor.sessions.revoke
+type RevokeActorSessionsRequest struct {
+	ActorID AlkemioActorID `json:"actor_id"`
+}
+
+// RevokeActorSessionsResponse reports how many devices were deleted.
+type RevokeActorSessionsResponse struct {
+	BaseResponse   `tstype:",extends"`
+	DevicesRevoked int `json:"devices_revoked"`
+}

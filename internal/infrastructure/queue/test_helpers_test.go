@@ -266,6 +266,10 @@ type testMockMatrixPort struct {
 	createUserSessionResult *domain.ActorSession
 	createUserSessionErr    error
 
+	// RevokeUserSessions
+	revokeUserSessionsResult int
+	revokeUserSessionsErr    error
+
 	// Space operations
 	capturedCreateSpaceAlkemioID uuid.UUID
 	capturedCreateSpaceName      string
@@ -329,6 +333,10 @@ func (m *testMockMatrixPort) SetUserProfile(_ context.Context, actor domain.Acto
 
 func (m *testMockMatrixPort) CreateUserSession(_ context.Context, _ domain.Actor) (*domain.ActorSession, error) {
 	return m.createUserSessionResult, m.createUserSessionErr
+}
+
+func (m *testMockMatrixPort) RevokeUserSessions(_ context.Context, _ domain.Actor) (int, error) {
+	return m.revokeUserSessionsResult, m.revokeUserSessionsErr
 }
 
 func (m *testMockMatrixPort) CreateRoomWithAlias(_ context.Context, alkemioRoomID uuid.UUID, roomType, name, _, _, joinRule string, customState map[string]map[string]interface{}, members []domain.Actor) (id.RoomID, error) {

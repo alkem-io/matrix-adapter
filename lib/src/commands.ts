@@ -62,6 +62,8 @@ import type {
   ReactionRemovedEvent,
   ReadReceiptUpdatedEvent,
   RemoveReactionRequest,
+  RevokeActorSessionsRequest,
+  RevokeActorSessionsResponse,
   RoomCreatedEvent,
   RoomMemberLeftEvent,
   RoomMemberUpdatedEvent,
@@ -87,6 +89,10 @@ export const Commands = {
   'communication.actor.session.create': {
     request: {} as CreateActorSessionRequest,
     response: {} as CreateActorSessionResponse,
+  },
+  'communication.actor.sessions.revoke': {
+    request: {} as RevokeActorSessionsRequest,
+    response: {} as RevokeActorSessionsResponse,
   },
   'communication.actor.sync': {
     request: {} as SyncActorRequest,

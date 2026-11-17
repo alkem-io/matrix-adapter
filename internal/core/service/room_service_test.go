@@ -39,6 +39,9 @@ func (m *mockMatrixPort) SetUserProfile(_ context.Context, _ domain.Actor) error
 func (m *mockMatrixPort) CreateUserSession(_ context.Context, _ domain.Actor) (*domain.ActorSession, error) {
 	return nil, nil
 }
+func (m *mockMatrixPort) RevokeUserSessions(_ context.Context, _ domain.Actor) (int, error) {
+	return 0, nil
+}
 
 func (m *mockMatrixPort) CreateRoomWithAlias(_ context.Context, _ uuid.UUID, roomType string, _, _, _ string, joinRule string, _ map[string]map[string]interface{}, _ []domain.Actor) (id.RoomID, error) {
 	m.createRoomCalled = true

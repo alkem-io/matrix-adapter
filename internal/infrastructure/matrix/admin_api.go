@@ -13,6 +13,8 @@ import (
 // This enables unit testing by allowing injection of mock implementations.
 type adminAPI interface {
 	GetUser(ctx context.Context, userID id.UserID) (*UserInfo, error)
+	ListDevices(ctx context.Context, userID id.UserID) ([]id.DeviceID, error)
+	DeleteDevices(ctx context.Context, userID id.UserID, devices []id.DeviceID) error
 	ListRooms(ctx context.Context, limit int) ([]AdminRoom, error)
 	GetRoomMembers(ctx context.Context, roomID id.RoomID) ([]string, error)
 	GetRoomMemberIDs(ctx context.Context, roomID id.RoomID) ([]id.UserID, error)

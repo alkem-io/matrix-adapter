@@ -76,3 +76,25 @@ func TestActorService_CreateSession_NeverLogsTheToken(t *testing.T) {
 		}
 	}
 }
+
+func TestActorService_RevokeSessions(t *testing.T) {
+	t.Run("count passed through", func(t *testing.T) {
+		matrix := &arMockMatrixPort{revokeSessionsResult: 2}
+		n, err := NewActorService(matrix, &testutil.MockLogger{}).RevokeSessions(context.Background(), sessionTestActorID)
+		if err != nil || n != 2 {
+			t.Fatalf("expected 2, nil; got %d, %v", n, err)
+		}
+		if matrix.revokeSessionsActor.ID != sessionTestActorID {
+			t.Errorf("expected actor %s, got %s", sessionTestActorID, matrix.revokeSessionsActor.ID)
+		}
+	})
+
+	t.Run("port error returned", func(t *testing.T) {
+		revokeErr := errors.New("synapse unavailable")
+		matrix := &arMockMatrixPort{revokeSessionsResult: 2, revokeSessionsErr: revokeErr}
+		n, err := NewActorService(matrix, &testutil.MockLogger{}).RevokeSessions(context.Background(), sessionTestActorID)
+		if !errors.Is(err, revokeErr) || n != 0 {
+			t.Fatalf("expected 0 and the port error, got %d, %v", n, err)
+		}
+	})
+}

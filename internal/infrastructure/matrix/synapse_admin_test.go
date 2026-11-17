@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -224,6 +225,59 @@ func TestDeactivateUser_Error(t *testing.T) {
 	err := sa.DeactivateUser(context.Background(), "@alice:example.com", false)
 	if err == nil {
 		t.Fatal("expected error for 500")
+	}
+}
+
+// --------------------------------------------------------------------------
+// ListDevices / DeleteDevices
+// --------------------------------------------------------------------------
+
+func TestSynapseAdmin_ListAndDeleteDevices(t *testing.T) {
+	// A "/" in the user ID proves the ID is sent as one escaped path segment.
+	const userID id.UserID = "@ali/ce:example.com"
+	userSegment := "/_synapse/admin/v2/users/" + url.PathEscape(string(userID))
+
+	var deleteBody struct {
+		Devices []id.DeviceID `json:"devices"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.EscapedPath() {
+		case userSegment + "/devices":
+			if r.Method != http.MethodGet {
+				t.Errorf("list: expected GET, got %s", r.Method)
+			}
+			_, _ = w.Write([]byte(`{"devices":[{"device_id":"DEV1","display_name":"a"},{"device_id":"DEV2"}],"total":2}`))
+		case userSegment + "/delete_devices":
+			if r.Method != http.MethodPost {
+				t.Errorf("delete: expected POST, got %s", r.Method)
+			}
+			body, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(body, &deleteBody); err != nil {
+				t.Errorf("delete: bad body %q: %v", body, err)
+			}
+			_, _ = w.Write([]byte("{}"))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.EscapedPath())
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	sa := newTestSynapseAdmin(t, srv)
+	devices, err := sa.ListDevices(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("ListDevices: %v", err)
+	}
+	if len(devices) != 2 || devices[0] != "DEV1" || devices[1] != "DEV2" {
+		t.Fatalf("expected [DEV1 DEV2], got %v", devices)
+	}
+
+	if err := sa.DeleteDevices(context.Background(), userID, devices); err != nil {
+		t.Fatalf("DeleteDevices: %v", err)
+	}
+	if len(deleteBody.Devices) != 2 || deleteBody.Devices[0] != "DEV1" || deleteBody.Devices[1] != "DEV2" {
+		t.Errorf("expected posted devices [DEV1 DEV2], got %v", deleteBody.Devices)
 	}
 }
 
