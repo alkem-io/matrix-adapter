@@ -1126,6 +1126,54 @@ func TestHandleCreateActorSession_ServiceError(t *testing.T) {
 	assertErrorCode(t, resp, dto.ErrCodeMatrixError)
 }
 
+func TestHandleRevokeActorSessions(t *testing.T) {
+	validPayload := mustMarshal(t, dto.RevokeActorSessionsRequest{ActorID: dto.AlkemioActorID(uuid.New())})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		resp, err := newTestActorHandler(otherNewMatrixPort()).HandleRevokeActorSessions(context.Background(), []byte(`not json`))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
+	})
+
+	t.Run("invalid UUID", func(t *testing.T) {
+		for _, payload := range [][]byte{[]byte(`{"actor_id":"not-a-uuid"}`), mustMarshal(t, dto.RevokeActorSessionsRequest{})} {
+			resp, err := newTestActorHandler(otherNewMatrixPort()).HandleRevokeActorSessions(context.Background(), payload)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertErrorCode(t, resp, dto.ErrCodeInvalidParam)
+		}
+	})
+
+	t.Run("service error", func(t *testing.T) {
+		matrix := otherNewMatrixPort()
+		matrix.revokeUserSessionsErr = errors.New("synapse unavailable") //nolint:err113
+		resp, err := newTestActorHandler(matrix).HandleRevokeActorSessions(context.Background(), validPayload)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		assertErrorCode(t, resp, dto.ErrCodeMatrixError)
+	})
+
+	t.Run("success with count", func(t *testing.T) {
+		matrix := otherNewMatrixPort()
+		matrix.revokeUserSessionsResult = 3
+		resp, err := newTestActorHandler(matrix).HandleRevokeActorSessions(context.Background(), validPayload)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		revokeResp, ok := resp.(dto.RevokeActorSessionsResponse)
+		if !ok {
+			t.Fatalf("expected RevokeActorSessionsResponse, got %T", resp)
+		}
+		if !revokeResp.Success || revokeResp.DevicesRevoked != 3 {
+			t.Errorf("expected success with 3 devices revoked, got %+v", revokeResp)
+		}
+	})
+}
+
 // ============================================================================
 // ReadReceiptHandler Tests
 // ============================================================================

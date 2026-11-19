@@ -73,3 +73,25 @@ func (h *ActorHandler) HandleCreateActorSession(ctx context.Context, payload []b
 		AccessToken:  session.AccessToken,
 	}, nil
 }
+
+// HandleRevokeActorSessions handles communication.actor.sessions.revoke topic.
+func (h *ActorHandler) HandleRevokeActorSessions(ctx context.Context, payload []byte) (interface{}, error) {
+	var req dto.RevokeActorSessionsRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return NewInvalidPayloadError(err), nil
+	}
+
+	if errResp := RequireUUID(req.ActorID, "actor_id"); errResp != nil {
+		return *errResp, nil
+	}
+
+	n, err := h.service.RevokeSessions(ctx, req.ActorID.UUID())
+	if err != nil {
+		return MapServiceError(err), nil
+	}
+
+	return dto.RevokeActorSessionsResponse{
+		BaseResponse:   dto.NewSuccessResponse(),
+		DevicesRevoked: n,
+	}, nil
+}

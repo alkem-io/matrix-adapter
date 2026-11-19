@@ -69,3 +69,15 @@ func (s *ActorService) CreateSession(ctx context.Context, actorID uuid.UUID) (*d
 	s.logger.Info("Actor session created", "actor_id", actorID, "device_id", session.DeviceID)
 	return session, nil
 }
+
+// RevokeSessions deletes every Matrix device of one actor (account deletion).
+// Returns how many devices were deleted.
+func (s *ActorService) RevokeSessions(ctx context.Context, actorID uuid.UUID) (int, error) {
+	n, err := s.matrix.RevokeUserSessions(ctx, domain.Actor{ID: actorID})
+	if err != nil {
+		return 0, err
+	}
+
+	s.logger.Info("Actor sessions revoked", "actor_id", actorID, "devices_revoked", n)
+	return n, nil
+}

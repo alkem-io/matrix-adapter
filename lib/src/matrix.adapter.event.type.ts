@@ -1,5 +1,6 @@
 export enum MatrixAdapterEventType {
 
+  COMMUNICATION_ACTOR_SESSIONS_REVOKE = 'communication.actor.sessions.revoke',
   COMMUNICATION_ACTOR_SESSION_CREATE = 'communication.actor.session.create',
   COMMUNICATION_ACTOR_SYNC = 'communication.actor.sync',
   COMMUNICATION_HIERARCHY_SET_CHILDREN = 'communication.hierarchy.set_children',

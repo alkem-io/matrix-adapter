@@ -33,6 +33,11 @@ type arMockMatrixPort struct {
 	createSessionActor  domain.Actor
 	createSessionCalls  int
 
+	// RevokeUserSessions behaviour
+	revokeSessionsResult int
+	revokeSessionsErr    error
+	revokeSessionsActor  domain.Actor
+
 	// SendReadReceipt behaviour
 	sendReadReceiptErr    error
 	sendReadReceiptCalled bool
@@ -63,6 +68,11 @@ func (m *arMockMatrixPort) CreateUserSession(_ context.Context, actor domain.Act
 	m.createSessionActor = actor
 	m.createSessionCalls++
 	return m.createSessionResult, m.createSessionErr
+}
+
+func (m *arMockMatrixPort) RevokeUserSessions(_ context.Context, actor domain.Actor) (int, error) {
+	m.revokeSessionsActor = actor
+	return m.revokeSessionsResult, m.revokeSessionsErr
 }
 
 func (m *arMockMatrixPort) SendReadReceipt(_ context.Context, actor domain.Actor, roomID id.RoomID, eventID id.EventID, threadRootID *id.EventID) error {

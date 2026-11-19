@@ -27,6 +27,9 @@ type MatrixPort interface {
 	// them with the application-service token. Registers the ghost first, so an
 	// actor who has never been synced is handled. Returns a fresh device each call.
 	CreateUserSession(ctx context.Context, actor domain.Actor) (*domain.ActorSession, error)
+	// RevokeUserSessions deletes every Matrix device of the actor, and with them
+	// their access and refresh tokens. Returns how many devices were deleted.
+	RevokeUserSessions(ctx context.Context, actor domain.Actor) (int, error)
 
 	// CreateRoomWithAlias creates a new Matrix room with the specified alias and initial members.
 	CreateRoomWithAlias(ctx context.Context, alkemioRoomID uuid.UUID, roomType string, name, topic, avatarURL, joinRule string, customState map[string]map[string]interface{}, initialMembers []domain.Actor) (id.RoomID, error)

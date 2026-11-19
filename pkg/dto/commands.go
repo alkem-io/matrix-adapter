@@ -41,6 +41,9 @@ const TopicActorSync = "communication.actor.sync"
 // TopicActorSessionCreate is the topic for minting a Matrix session for an actor.
 const TopicActorSessionCreate = "communication.actor.session.create"
 
+// TopicActorSessionsRevoke is the topic for deleting every Matrix device of an actor.
+const TopicActorSessionsRevoke = "communication.actor.sessions.revoke"
+
 // Space command topics
 const (
 	TopicSpaceCreate = "communication.space.create"
@@ -179,6 +182,7 @@ var CommandRegistry = []CommandDef{
 	// Actor commands
 	{Topic: TopicActorSync, RequestType: "SyncActorRequest", ResponseType: "BaseResponse"},
 	{Topic: TopicActorSessionCreate, RequestType: "CreateActorSessionRequest", ResponseType: "CreateActorSessionResponse"},
+	{Topic: TopicActorSessionsRevoke, RequestType: "RevokeActorSessionsRequest", ResponseType: "RevokeActorSessionsResponse"},
 
 	// Space commands
 	{Topic: TopicSpaceCreate, RequestType: "CreateSpaceRequest", ResponseType: "BaseResponse"},
