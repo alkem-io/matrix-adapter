@@ -14,8 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
+
+	"github.com/alkem-io/matrix-adapter/internal/core/domain"
 )
 
 // newTestSynapseAdmin creates a SynapseAdmin backed by the given httptest.Server.
@@ -278,6 +281,59 @@ func TestSynapseAdmin_ListAndDeleteDevices(t *testing.T) {
 	}
 	if len(deleteBody.Devices) != 2 || deleteBody.Devices[0] != "DEV1" || deleteBody.Devices[1] != "DEV2" {
 		t.Errorf("expected posted devices [DEV1 DEV2], got %v", deleteBody.Devices)
+	}
+}
+
+// A user Synapse does not know answers the device list with 404 M_NOT_FOUND
+// rather than an empty list. Such a user has no devices, so revoking its
+// sessions succeeds with nothing deleted; every other failure still fails.
+func TestSynapseAdmin_RevokeSessions_ListDevicesFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		body    string
+		wantErr bool
+	}{
+		{"unknown user", http.StatusNotFound, `{"errcode":"M_NOT_FOUND","error":"Unknown user"}`, false},
+		{"server error", http.StatusInternalServerError, `{"errcode":"M_UNKNOWN","error":"Internal server error"}`, true},
+		{"404 without errcode", http.StatusNotFound, `not found`, true},
+		{"404 with another errcode", http.StatusNotFound, `{"errcode":"M_UNRECOGNIZED","error":"Unrecognized request"}`, true},
+		{"M_NOT_FOUND on another status", http.StatusBadRequest, `{"errcode":"M_NOT_FOUND","error":"Unknown user"}`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var deleteCalls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/delete_devices") {
+					deleteCalls++
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte("{}"))
+					return
+				}
+				if !strings.HasSuffix(r.URL.Path, "/devices") {
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			adapter := newAdminTestAdapter(newTestSynapseAdmin(t, srv))
+			n, err := adapter.RevokeUserSessions(context.Background(), domain.Actor{ID: uuid.New()})
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected an error, got %d revoked", n)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected success, got %v", err)
+			}
+			if n != 0 {
+				t.Errorf("expected 0 revoked, got %d", n)
+			}
+			if deleteCalls != 0 {
+				t.Errorf("expected no delete_devices request, got %d", deleteCalls)
+			}
+		})
 	}
 }
 
