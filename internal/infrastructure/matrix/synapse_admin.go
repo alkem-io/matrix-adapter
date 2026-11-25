@@ -76,7 +76,9 @@ func (s *SynapseAdmin) DeactivateUser(ctx context.Context, userID id.UserID, era
 	return err
 }
 
-// ListDevices returns the IDs of every device of a user.
+// ListDevices returns the IDs of every device of a user. A user Synapse does
+// not know has no devices: Synapse answers 404 M_NOT_FOUND for it instead of
+// an empty list, and that answer is returned as an empty list.
 func (s *SynapseAdmin) ListDevices(ctx context.Context, userID id.UserID) ([]id.DeviceID, error) {
 	var resp struct {
 		Devices []struct {
@@ -84,6 +86,9 @@ func (s *SynapseAdmin) ListDevices(ctx context.Context, userID id.UserID) ([]id.
 		} `json:"devices"`
 	}
 	_, err := s.client.MakeRequest(ctx, http.MethodGet, s.buildURL("v2", "users", userID, "devices"), nil, &resp)
+	if isUnknownUser(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +97,16 @@ func (s *SynapseAdmin) ListDevices(ctx context.Context, userID id.UserID) ([]id.
 		devices[i] = d.DeviceID
 	}
 	return devices, nil
+}
+
+// isUnknownUser reports whether err is Synapse's answer for a user it does not
+// know: HTTP 404 with errcode M_NOT_FOUND. mautrix.MNotFound alone matches the
+// errcode on any status, so the status is checked as well.
+func isUnknownUser(err error) bool {
+	var httpErr mautrix.HTTPError
+	return errors.As(err, &httpErr) &&
+		httpErr.IsStatus(http.StatusNotFound) &&
+		errors.Is(httpErr, mautrix.MNotFound)
 }
 
 // DeleteDevices deletes the given devices of a user, and with them their
